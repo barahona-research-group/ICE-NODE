@@ -1,6 +1,7 @@
 from collections import defaultdict
 import json
 import re
+import os
 
 import pandas as pd
 
@@ -13,13 +14,21 @@ class CCSDAG:
     related to the hierarchical structure of CCS,
     like retrieving ancestry and descedants.
     """
-    def __init__(self, diag_single_ccs_file: str, diag_multi_ccs_file: str,
-                 proc_single_ccs_file: str, proc_multi_ccs_file: str):
+    DIR = os.path.dirname(__file__)
+    CCS_DIR = os.path.join(DIR, 'resources', 'CCS')
+    DIAG_SINGLE_CCS_FILE = os.path.join(CCS_DIR, '$dxref 2015.csv')
+    PROC_SINGLE_CCS_FILE = os.path.join(CCS_DIR, '$prref 2015.csv')
+    DIAG_MULTI_CCS_FILE = os.path.join(CCS_DIR, 'ccs_multi_dx_tool_2015.csv')
+    PROC_MULTI_CCS_FILE = os.path.join(CCS_DIR, 'ccs_multi_pr_tool_2015.csv')
 
-        self.diag_single_ccs_df = pd.read_csv(diag_single_ccs_file, skiprows=1)
-        self.diag_multi_ccs_df = pd.read_csv(diag_multi_ccs_file, skiprows=1)
-        self.proc_single_ccs_df = pd.read_csv(proc_single_ccs_file)
-        self.proc_multi_ccs_df = pd.read_csv(proc_multi_ccs_file)
+    def __init__(self):
+
+        self.diag_single_ccs_df = pd.read_csv(self.DIAG_SINGLE_CCS_FILE,
+                                              skiprows=1)
+        self.proc_single_ccs_df = pd.read_csv(self.PROC_SINGLE_CCS_FILE,
+                                              skiprows=1)
+        self.diag_multi_ccs_df = pd.read_csv(self.DIAG_MULTI_CCS_FILE)
+        self.proc_multi_ccs_df = pd.read_csv(self.PROC_MULTI_CCS_FILE)
 
         self.diag_icd_label = self.make_diag_icd_dict()
         self.proc_icd_label = self.make_proc_icd_dict()
@@ -95,7 +104,7 @@ class CCSDAG:
         df['ICD'] = df['\'ICD-9-CM CODE\''].apply(
             lambda l: l.strip('\'').strip())
 
-        df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4']]
+        df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4', 'ICD']]
         diag_multi_ccs_pt2ch = defaultdict(list)
         diag_multi_icd2ccs = {}
         diag_multi_ccs2icd = defaultdict(list)
@@ -136,6 +145,9 @@ class CCSDAG:
             lambda l: l.strip('\'').strip())
         df['ICD'] = df['\'ICD-9-CM CODE\''].apply(
             lambda l: l.strip('\'').strip())
+
+        df = df[['I1', 'I2', 'I3', 'L1', 'L2', 'L3', 'ICD']]
+
 
         proc_multi_ccs_pt2ch = defaultdict(list)
         proc_multi_icd2ccs = {}
