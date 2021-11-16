@@ -1,0 +1,66 @@
+,ITEMID,VALUEUOM,LABEL,CATEGORY,N_UNITS
+0,50889,mg/L,C-Reactive Protein,,4
+1,50889,mg/dL,C-Reactive Protein,,4
+2,50889,MG/DL,C-Reactive Protein,,4
+3,50889,,C-Reactive Protein,,4
+4,50964,mOsm/kg,"Osmolality, Measured",,3
+5,50964,MOSM/L,"Osmolality, Measured",,3
+6,50964,MOSM/KG,"Osmolality, Measured",,3
+7,50994,uG/DL,Thyroxine (T4),,2
+8,50994,ug/dL,Thyroxine (T4),,2
+9,51464,mg/dL,Bilirubin,,2
+10,51464,EU/dL,Bilirubin,,2
+11,50909,,Cortisol,,2
+12,50909,ug/dL,Cortisol,,2
+13,51127,#/uL,"RBC, Ascites",,2
+14,51127,#/CU MM,"RBC, Ascites",,2
+15,51003,ng/ml,Troponin T,,2
+16,51003,ng/mL,Troponin T,,2
+17,50831,,pH,,2
+18,50831,units,pH,,2
+19,51001,NG/DL,Triiodothyronine (T3),,2
+20,51001,ng/dL,Triiodothyronine (T3),,2
+21,51466,,Blood,,2
+22,51466,mg/dL,Blood,,2
+23,50995,ng/dL,"Thyroxine (T4), Free",,2
+24,50995,ng/dl,"Thyroxine (T4), Free",,2
+25,51000,mg/dL,Triglycerides,,2
+26,51000,MG/DL,Triglycerides,,2
+27,50820,units,pH,,2
+28,50820,UNITS,pH,,2
+29,50864,nG/ML,Alpha-Fetoprotein,,2
+30,50864,ng/mL,Alpha-Fetoprotein,,2
+31,50993,uIU/mL,Thyroid Stimulating Hormone,,2
+32,50993,uU/ML,Thyroid Stimulating Hormone,,2
+33,51196,,D-Dimer,,2
+34,51196,ng/mL,D-Dimer,,2
+35,50963,,NTproBNP,,2
+36,50963,pg/mL,NTproBNP,,2
+37,50974,ng/mL,Prostate Specific Antigen,,2
+38,50974,ug/L,Prostate Specific Antigen,,2
+39,50821,mm Hg,pO2,,2
+40,50821,MM HG,pO2,,2
+41,51128,#/uL,"WBC, Ascites",,2
+42,51128,#/CU MM,"WBC, Ascites",,2
+43,51274,SECONDS,PT,,2
+44,51274,sec,PT,,2
+45,50817,,Oxygen Saturation,,2
+46,50817,%,Oxygen Saturation,,2
+47,50935,mg/dL,Haptoglobin,,2
+48,50935,MG/DL,Haptoglobin,,2
+49,50804,MEQ/L,Calculated Total CO2,,2
+50,50804,mEq/L,Calculated Total CO2,,2
+51,51098,,"Prot. Electrophoresis, Urine",,2
+52,51098,+/-,"Prot. Electrophoresis, Urine",,2
+53,50816,,Oxygen,,2
+54,50816,%,Oxygen,,2
+55,51514,mg/dL,Urobilinogen,,2
+56,51514,EU/dL,Urobilinogen,,2
+57,50801,,Alveolar-arterial Gradient,,2
+58,50801,mm Hg,Alveolar-arterial Gradient,,2
+59,50924,ng/ml,Ferritin,,2
+60,50924,ng/mL,Ferritin,,2
+61,50937,,Hepatitis A Virus Antibody,,2
+62,50937,Pos/Neg,Hepatitis A Virus Antibody,,2
+63,50818,mm Hg,pCO2,,2
+64,50818,MM HG,pCO2,,2

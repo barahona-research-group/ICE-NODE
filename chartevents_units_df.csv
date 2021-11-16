@@ -1,0 +1,1299 @@
+,ITEMID,VALUEUOM,LABEL,CATEGORY
+0,578,.,Pressure Support,Pressure Support
+1,578,,Pressure Support,Pressure Support
+2,578,cmH20,Pressure Support,Pressure Support
+3,113,,CVP,CVP
+4,113,mmHg,CVP,CVP
+5,113,%,CVP,CVP
+6,543,,Plateau Pressure,Plateau Pressure
+7,543,cmH2O,Plateau Pressure,Plateau Pressure
+8,114,,CaO2,CaO2
+9,114,ml/dl,CaO2,CaO2
+10,69,,BSA,BSA
+11,69,m2,BSA,BSA
+12,1707,,Vent Stim Thresh mA,Vent Stim Thresh mA
+13,1707,V-mA,Vent Stim Thresh mA,Vent Stim Thresh mA
+14,1705,,Vent Sens Thresh mV,Vent Sens Thresh mV
+15,1705,V-mA,Vent Sens Thresh mV,Vent Sens Thresh mV
+16,1704,,PA line cm Mark,PA line cm Mark
+17,1704,cm,PA line cm Mark,PA line cm Mark
+18,1696,,Atr Stim Thresh mA,Atr Stim Thresh mA
+19,1696,V-mA,Atr Stim Thresh mA,Atr Stim Thresh mA
+20,1695,,Atr Sens Thresh mV,Atr Sens Thresh mV
+21,1695,V-mA,Atr Sens Thresh mV,Atr Sens Thresh mV
+22,89,,C.O. (fick),C.O. (fick)
+23,89,L/min,C.O. (fick),C.O. (fick)
+24,90,,C.O.(thermodilution),C.O.(thermodilution)
+25,90,L/min,C.O.(thermodilution),C.O.(thermodilution)
+26,1534,,Phosphorous,Phosphorous
+27,1534,mEq/L,Phosphorous,Phosphorous
+28,116,,Cardiac Index,Cardiac Index
+29,116,...,Cardiac Index,Cardiac Index
+30,7151,,HOB Measurement,HOB Measurement
+31,7151,mmHg,HOB Measurement,HOB Measurement
+32,1524,,Cholesterol,Cholesterol
+33,1524,mg/dl,Cholesterol,Cholesterol
+34,1522,,Calcium,Calcium
+35,1522,mg/dl,Calcium,Calcium
+36,131,,Compliance (40-60ml),Compliance (40-60ml)
+37,131,ml/cmH,Compliance (40-60ml),Compliance (40-60ml)
+38,141,,Cuff Pressure-Airway,Cuff Pressure-Airway
+39,141,cmH2O,Cuff Pressure-Airway,Cuff Pressure-Airway
+40,1397,,RSBI (<100),RSBI (<100)
+41,1397,units,RSBI (<100),RSBI (<100)
+42,1391,,DO2I,DO2I
+43,1391,ml/m/m,DO2I,DO2I
+44,185,,FIO2 Alarm-High,FIO2 Alarm-High
+45,185,decFrc,FIO2 Alarm-High,FIO2 Alarm-High
+46,186,,FIO2 Alarm-Low,FIO2 Alarm-Low
+47,186,decFrc,FIO2 Alarm-Low,FIO2 Alarm-Low
+48,190,,FiO2 Set,FiO2 Set
+49,190,torr,FiO2 Set,FiO2 Set
+50,211,BPM,Heart Rate,Heart Rate
+51,211,bpm,Heart Rate,Heart Rate
+52,218,,High Insp. Pressure,High Insp. Pressure
+53,218,cmH2O,High Insp. Pressure,High Insp. Pressure
+54,52,,Arterial BP Mean,Arterial BP Mean
+55,52,mmHg,Arterial BP Mean,Arterial BP Mean
+56,51,,Arterial BP [Systolic],Arterial BP [Systolic]
+57,51,mmHg,Arterial BP [Systolic],Arterial BP [Systolic]
+58,920,,Admit Ht,Admit Ht
+59,920,inches,Admit Ht,Admit Ht
+60,25,,AV Interval,AV Interval
+61,25,msec,AV Interval,AV Interval
+62,225672,IU/L,Lipase,Lipase
+63,225672,,Lipase,Lipase
+64,225677,,Phosphorous,Phosphorous
+65,225677,mg/dL,Phosphorous,Phosphorous
+66,225684,,Serum Osmolality,Serum Osmolality
+67,225684,mOsm/kg,Serum Osmolality,Serum Osmolality
+68,225690,,Total Bilirubin,Total Bilirubin
+69,225690,mg/dL,Total Bilirubin,Total Bilirubin
+70,225698,,TCO2 (calc) Arterial,TCO2 (calc) Arterial
+71,225698,mEq/L,TCO2 (calc) Arterial,TCO2 (calc) Arterial
+72,226534,,Sodium (whole blood),Sodium (whole blood)
+73,226534,mEq/L,Sodium (whole blood),Sodium (whole blood)
+74,226536,,Chloride (whole blood),Chloride (whole blood)
+75,226536,mEq/L,Chloride (whole blood),Chloride (whole blood)
+76,226537,,Glucose (whole blood),Glucose (whole blood)
+77,226537,mg/dL,Glucose (whole blood),Glucose (whole blood)
+78,226540,,Hematocrit (whole blood - calc),Hematocrit (whole blood - calc)
+79,226540,%,Hematocrit (whole blood - calc),Hematocrit (whole blood - calc)
+80,227073,,Anion gap,Anion gap
+81,227073,mEq/L,Anion gap,Anion gap
+82,227429,,Troponin-T,Troponin-T
+83,227429,ng/mL,Troponin-T,Troponin-T
+84,227442,,Potassium (serum),Potassium (serum)
+85,227442,mEq/L,Potassium (serum),Potassium (serum)
+86,227443,,HCO3 (serum),HCO3 (serum)
+87,227443,mEq/L,HCO3 (serum),HCO3 (serum)
+88,227445,,CK-MB,CK-MB
+89,227445,ng/mL,CK-MB,CK-MB
+90,227454,,Vancomycin (Random),Vancomycin (Random)
+91,227454,ug/mL,Vancomycin (Random),Vancomycin (Random)
+92,227455,,Vancomycin (Trough),Vancomycin (Trough)
+93,227455,ug/mL,Vancomycin (Trough),Vancomycin (Trough)
+94,227456,,Albumin,Albumin
+95,227456,g/dL,Albumin,Albumin
+96,227457,,Platelet Count,Platelet Count
+97,227457,K/uL,Platelet Count,Platelet Count
+98,227463,,Cortisol,Cortisol
+99,227463,ug/dL,Cortisol,Cortisol
+100,227464,,Potassium (whole blood),Potassium (whole blood)
+101,227464,mEq/L,Potassium (whole blood),Potassium (whole blood)
+102,227465,,Prothrombin time,Prothrombin time
+103,227465,sec,Prothrombin time,Prothrombin time
+104,227466,,PTT,PTT
+105,227466,sec,PTT,PTT
+106,227468,,Fibrinogen,Fibrinogen
+107,227468,mg/dL,Fibrinogen,Fibrinogen
+108,219,,High Resp. Rate,High Resp. Rate
+109,219,BPM,High Resp. Rate,High Resp. Rate
+110,860,,Venous pH,Venous pH
+111,860,pH,Venous pH,Venous pH
+112,225667,,Ionized Calcium,Ionized Calcium
+113,225667,mmol/L,Ionized Calcium,Ionized Calcium
+114,762,,Admit Wt,Admit Wt
+115,762,kg,Admit Wt,Admit Wt
+116,721,,Ventilator No.,Ventilator No.
+117,721,#,Ventilator No.,Ventilator No.
+118,595,,RSBI (<200),RSBI (<200)
+119,595,units,RSBI (<200),RSBI (<200)
+120,684,,Tidal Volume (Spont),Tidal Volume (Spont)
+121,684,ml/B,Tidal Volume (Spont),Tidal Volume (Spont)
+122,601,,RVSW,RVSW
+123,601,g * m,RVSW,RVSW
+124,602,,RVSWI,RVSWI
+125,602,g*m/m2,RVSWI,RVSWI
+126,683,,Tidal Volume (Set),Tidal Volume (Set)
+127,683,ml/B,Tidal Volume (Set),Tidal Volume (Set)
+128,682,,Tidal Volume (Obser),Tidal Volume (Obser)
+129,682,ml/B,Tidal Volume (Obser),Tidal Volume (Obser)
+130,679,,Temperature F (calc),Temperature F (calc)
+131,679,Deg. F,Temperature F (calc),Temperature F (calc)
+132,614,,Resp Rate (Spont),Resp Rate (Spont)
+133,614,BPM,Resp Rate (Spont),Resp Rate (Spont)
+134,615,,Resp Rate (Total),Resp Rate (Total)
+135,615,BPM,Resp Rate (Total),Resp Rate (Total)
+136,678,,Temperature F,Temperature F
+137,678,Deg. F,Temperature F,Temperature F
+138,677,,Temperature C (calc),Temperature C (calc)
+139,677,Deg. C,Temperature C (calc),Temperature C (calc)
+140,618,,Respiratory Rate,Respiratory Rate
+141,618,BPM,Respiratory Rate,Respiratory Rate
+142,619,,Respiratory Rate Set,Respiratory Rate Set
+143,619,BPM,Respiratory Rate Set,Respiratory Rate Set
+144,676,,Temperature C,Temperature C
+145,676,Deg. C,Temperature C,Temperature C
+146,664,,Swan SVO2,Swan SVO2
+147,664,%,Swan SVO2,Swan SVO2
+148,625,,SVI,SVI
+149,625,...,SVI,SVI
+150,626,,SVR,SVR
+151,626,...,SVR,SVR
+152,627,,SVRI,SVRI
+153,627,...,SVRI,SVRI
+154,662,,Stroke Volume,Stroke Volume
+155,662,ml,Stroke Volume,Stroke Volume
+156,631,,Sensitivity-Vent,Sensitivity-Vent
+157,631,cmH2O,Sensitivity-Vent,Sensitivity-Vent
+158,652,,Spon. Vt (L) (Mech.),Spon. Vt (L) (Mech.)
+159,652,L,Spon. Vt (L) (Mech.),Spon. Vt (L) (Mech.)
+160,651,,Spon RR (Mech.),Spon RR (Mech.)
+161,651,BPM,Spon RR (Mech.),Spon RR (Mech.)
+162,730,,Vital Cap (>1.0)L,Vital Cap (>1.0)L
+163,730,liters,Vital Cap (>1.0)L,Vital Cap (>1.0)L
+164,535,,Peak Insp. Pressure,Peak Insp. Pressure
+165,535,cmH2O,Peak Insp. Pressure,Peak Insp. Pressure
+166,859,,Venous PvO2,Venous PvO2
+167,859,mmHg,Venous PvO2,Venous PvO2
+168,530,,Peak Flow,Peak Flow
+169,530,L/m,Peak Flow,Peak Flow
+170,858,,Venous PvCO2,Venous PvCO2
+171,858,mmHg,Venous PvCO2,Venous PvCO2
+172,838,,SvO2,SvO2
+173,838,%,SvO2,SvO2
+174,834,,SaO2,SaO2
+175,834,%,SaO2,SaO2
+176,417,,Inspired Gas Temp,Inspired Gas Temp
+177,417,Deg. C,Inspired Gas Temp,Inspired Gas Temp
+178,430,,LVSW,LVSW
+179,430,g * m,LVSW,LVSW
+180,431,,LVSWI,LVSWI
+181,431,g*m/m2,LVSWI,LVSWI
+182,436,,Low Insp. Pressure,Low Insp. Pressure
+183,436,cmH2O,Low Insp. Pressure,Low Insp. Pressure
+184,444,,Mean Airway Pressure,Mean Airway Pressure
+185,444,cmH2O,Mean Airway Pressure,Mean Airway Pressure
+186,450,,Minute Volume(Obser),Minute Volume(Obser)
+187,450,L/min,Minute Volume(Obser),Minute Volume(Obser)
+188,456,,NBP Mean,NBP Mean
+189,456,mmHg,NBP Mean,NBP Mean
+190,459,,Neg Insp Force(>-25),Neg Insp Force(>-25)
+191,459,.,Neg Insp Force(>-25),Neg Insp Force(>-25)
+192,470,lpm,O2 Flow (lpm),O2 Flow (lpm)
+193,470,,O2 Flow (lpm),O2 Flow (lpm)
+194,471,lpm,O2 Flow (lpm) #2,O2 Flow (lpm) #2
+195,471,,O2 Flow (lpm) #2,O2 Flow (lpm) #2
+196,789,,Cholesterol (<200),Cholesterol (<200)
+197,789,mg/dl,Cholesterol (<200),Cholesterol (<200)
+198,491,,PAP Mean,PAP Mean
+199,491,mmHg,PAP Mean,PAP Mean
+200,786,,Calcium (8.4-10.2),Calcium (8.4-10.2)
+201,786,mg/dl,Calcium (8.4-10.2),Calcium (8.4-10.2)
+202,504,,PCWP,PCWP
+203,504,mmHg,PCWP,PCWP
+204,506,,PEEP Set,PEEP Set
+205,506,cmH2O,PEEP Set,PEEP Set
+206,512,,PVR,PVR
+207,512,...,PVR,PVR
+208,513,,PVRI,PVRI
+209,513,...,PVRI,PVRI
+210,517,,Pacer Rate,Pacer Rate
+211,517,BPM,Pacer Rate,Pacer Rate
+212,779,,Arterial PaO2,Arterial PaO2
+213,779,mmHg,Arterial PaO2,Arterial PaO2
+214,778,,Arterial PaCO2,Arterial PaCO2
+215,778,mmHg,Arterial PaCO2,Arterial PaCO2
+216,225668,,Lactic Acid,Lactic Acid
+217,225668,mmol/L,Lactic Acid,Lactic Acid
+218,646,,SpO2,SpO2
+219,646,%,SpO2,SpO2
+220,220635,,Magnesium,Magnesium
+221,220635,mg/dL,Magnesium,Magnesium
+222,220546,,WBC,WBC
+223,220546,K/uL,WBC,WBC
+224,225625,,Calcium non-ionized,Calcium non-ionized
+225,225625,mg/dL,Calcium non-ionized,Calcium non-ionized
+226,5814,,CVP Alarm [Low],CVP Alarm [Low]
+227,5814,mmHg,CVP Alarm [Low],CVP Alarm [Low]
+228,225612,IU/L,Alkaline Phosphate,Alkaline Phosphate
+229,225612,,Alkaline Phosphate,Alkaline Phosphate
+230,220545,,Hematocrit (serum),Hematocrit (serum)
+231,220545,%,Hematocrit (serum),Hematocrit (serum)
+232,5817,,NBP Alarm [Low],NBP Alarm [Low]
+233,5817,mmHg,NBP Alarm [Low],NBP Alarm [Low]
+234,220734,,PH (dipstick),PH (dipstick)
+235,220734,units,PH (dipstick),PH (dipstick)
+236,492,,PAP [Systolic],PAP [Systolic]
+237,492,mmHg,PAP [Systolic],PAP [Systolic]
+238,455,,NBP [Systolic],NBP [Systolic]
+239,455,mmHg,NBP [Systolic],NBP [Systolic]
+240,223830,,PH (Arterial),PH (Arterial)
+241,223830,units,PH (Arterial),PH (Arterial)
+242,223679,,TCO2 (calc) Venous,TCO2 (calc) Venous
+243,223679,mEq/L,TCO2 (calc) Venous,TCO2 (calc) Venous
+244,224828,,Arterial Base Excess,Arterial Base Excess
+245,224828,mEq/L,Arterial Base Excess,Arterial Base Excess
+246,5818,,PAP Alarm [Low],PAP Alarm [Low]
+247,5818,mmHg,PAP Alarm [Low],PAP Alarm [Low]
+248,5816,,ICP Alarm [Low],ICP Alarm [Low]
+249,5816,mmHg,ICP Alarm [Low],ICP Alarm [Low]
+250,5819,,Resp Alarm [Low],Resp Alarm [Low]
+251,5819,BPM,Resp Alarm [Low],Resp Alarm [Low]
+252,5815,,HR Alarm [Low],HR Alarm [Low]
+253,5815,BPM,HR Alarm [Low],HR Alarm [Low]
+254,5820,,SpO2 Alarm [Low],SpO2 Alarm [Low]
+255,5820,%,SpO2 Alarm [Low],SpO2 Alarm [Low]
+256,5813,,ABP Alarm [Low],ABP Alarm [Low]
+257,5813,mmHg,ABP Alarm [Low],ABP Alarm [Low]
+258,220645,,Sodium (serum),Sodium (serum)
+259,220645,mEq/L,Sodium (serum),Sodium (serum)
+260,225624,,BUN,BUN
+261,225624,mg/dL,BUN,BUN
+262,220581,IU/L,Amylase,Amylase
+263,220581,,Amylase,Amylase
+264,220644,IU/L,ALT,ALT
+265,220644,,ALT,ALT
+266,225643,,Differential-Neuts,Differential-Neuts
+267,225643,%,Differential-Neuts,Differential-Neuts
+268,225642,,Differential-Monos,Differential-Monos
+269,225642,%,Differential-Monos,Differential-Monos
+270,225641,,Differential-Lymphs,Differential-Lymphs
+271,225641,%,Differential-Lymphs,Differential-Lymphs
+272,225640,,Differential-Eos,Differential-Eos
+273,225640,%,Differential-Eos,Differential-Eos
+274,220632,IU/L,LDH,LDH
+275,220632,,LDH,LDH
+276,225639,,Differential-Basos,Differential-Basos
+277,225639,%,Differential-Basos,Differential-Basos
+278,220621,,Glucose (serum),Glucose (serum)
+279,220621,mg/dL,Glucose (serum),Glucose (serum)
+280,220587,IU/L,AST,AST
+281,220587,,AST,AST
+282,220602,,Chloride (serum),Chloride (serum)
+283,220602,mEq/L,Chloride (serum),Chloride (serum)
+284,220615,,Creatinine,Creatinine
+285,220615,mg/dL,Creatinine,Creatinine
+286,225651,,Direct Bilirubin,Direct Bilirubin
+287,225651,mg/dL,Direct Bilirubin,Direct Bilirubin
+288,225638,,Differential-Bands,Differential-Bands
+289,225638,%,Differential-Bands,Differential-Bands
+290,225628,,CK-MB fraction (%),CK-MB fraction (%)
+291,225628,%,CK-MB fraction (%),CK-MB fraction (%)
+292,225634,IU/L,CK (CPK),CK (CPK)
+293,225634,,CK (CPK),CK (CPK)
+294,220274,,PH (Venous),PH (Venous)
+295,220274,units,PH (Venous),PH (Venous)
+296,225637,,Differential-Atyps,Differential-Atyps
+297,225637,%,Differential-Atyps,Differential-Atyps
+298,224281,,Multi Lumen Site Appear,Multi Lumen Site Appear
+299,224291,,Arterial line Waveform Appear,Arterial line Waveform Appear
+300,224297,,Cordis/Introducer Site Appear,Cordis/Introducer Site Appear
+301,224283,,Multi Lumen Waveform Appear,Multi Lumen Waveform Appear
+302,224226,,Impaired Skin Wound Base #1,Impaired Skin Wound Base #1
+303,224289,,Arterial line Site Appear,Arterial line Site Appear
+304,224308,,Capillary Refill L,Capillary Refill L
+305,224188,,PICC Line Site Appear,PICC Line Site Appear
+306,224369,,Sputum Consistency,Sputum Consistency
+307,224327,,PCA medication,PCA medication
+308,224259,,Impaired Skin Drainage #1,Impaired Skin Drainage #1
+309,223849,,Ventilator Mode,Ventilator Mode
+310,224173,,MDI #2 Drug,MDI #2 Drug
+311,224084,,Activity,Activity
+312,224058,,Braden Nutrition,Braden Nutrition
+313,224059,,Braden Friction/Shear,Braden Friction/Shear
+314,224065,,Circulation/Skin Integrity,Circulation/Skin Integrity
+315,224067,,Range of Motion,Range of Motion
+316,224072,,Education Learner,Education Learner
+317,224073,,Education Topic,Education Topic
+318,8469,,LLE [Sensation],LLE [Sensation]
+319,224075,,Education Readiness,Education Readiness
+320,224076,,Education Barrier,Education Barrier
+321,8468,,RLE [Color],RLE [Color]
+322,224077,,Education Method,Education Method
+323,224079,,Education Response,Education Response
+324,224080,,Head of Bed,Head of Bed
+325,224082,,Turn,Turn
+326,224085,,Assistance Device,Assistance Device
+327,8463,,Pressure Sore #1 [Length],Pressure Sore #1 [Length]
+328,224086,,Activity Tolerance,Activity Tolerance
+329,224087,,Therapeutic Bed,Therapeutic Bed
+330,224088,,Pressure Reducing Device,Pressure Reducing Device
+331,224089,,Anti Embolic Device,Anti Embolic Device
+332,224092,,Range of Motion Location,Range of Motion Location
+333,224093,,Position,Position
+334,224101,,Chest PT R/L,Chest PT R/L
+335,224105,,Warming Device,Warming Device
+336,224119,,22 Gauge Site Appear,22 Gauge Site Appear
+337,224370,,Sputum Color,Sputum Color
+338,8467,,Pupil Size [Left],Pupil Size [Left]
+339,8466,,Pupil Response [Left],Pupil Response [Left]
+340,224168,,Parameters Checked,Parameters Checked
+341,224170,,MDI #1 Drug,MDI #1 Drug
+342,224121,,22 Gauge Reason Discontinued,22 Gauge Reason Discontinued
+343,224438,,Chest Tube Site # 2,Chest Tube Site # 2
+344,224372,,Sputum Source,Sputum Source
+345,224756,,Response,Response
+346,8449,,Patient controlled analgesia (PCA) [Attempt],Patient controlled analgesia (PCA) [Attempt]
+347,8448,mmHg,PAP [Diastolic],PAP [Diastolic]
+348,224740,,RSBI Deferred,RSBI Deferred
+349,8441,mmHg,NBP [Diastolic],NBP [Diastolic]
+350,8438,,MDI #2 [Drug],MDI #2 [Drug]
+351,8437,,MDI #1 [Drug],MDI #1 [Drug]
+352,8436,,LUE [Color],LUE [Color]
+353,8435,,LLE [Color],LLE [Color]
+354,8430,,Inc #3 [Status],Inc #3 [Status]
+355,8429,,Inc #2 [Status],Inc #2 [Status]
+356,8428,,Inc #1 [Status],Inc #1 [Status]
+357,8424,,Inc #3 [Amount],Inc #3 [Amount]
+358,8456,,PostTib. Pulses [Left],PostTib. Pulses [Left]
+359,8423,,Inc #2 [Amount],Inc #2 [Amount]
+360,8422,,Inc #1 [Amount],Inc #1 [Amount]
+361,8418,,Inc #3 [Appearance],Inc #3 [Appearance]
+362,224758,,RUE Sensation,RUE Sensation
+363,8417,,Inc #2 [Appearance],Inc #2 [Appearance]
+364,8416,,Inc #1 [Appearance],Inc #1 [Appearance]
+365,224759,,LUE Sensation,LUE Sensation
+366,224762,,LLE Sensation,LLE Sensation
+367,224767,,RUE Temp,RUE Temp
+368,8411,,ImpSkin #2 [Length],ImpSkin #2 [Length]
+369,8410,,ImpSkin #1 [Length],ImpSkin #1 [Length]
+370,8454,,Pain Management [Route/Status #2],Pain Management [Route/Status #2]
+371,8457,,Pressure Sore #1 [Heal],Pressure Sore #1 [Heal]
+372,224373,,Sputum Amount,Sputum Amount
+373,224633,,Undermining Present #1,Undermining Present #1
+374,224390,,Temporary Atrial Sens,Temporary Atrial Sens
+375,224391,,ETT Mark (location),ETT Mark (location)
+376,224409,,Pain Level Response,Pain Level Response
+377,224415,,ETT Mark (cm),ETT Mark (cm)
+378,224056,,Braden Activity,Braden Activity
+379,224447,,Family Meeting,Family Meeting
+380,224561,,Impaired Skin Type #1,Impaired Skin Type #1
+381,224564,,Impaired Skin Odor #1,Impaired Skin Odor #1
+382,224565,,Surrounding Tissue #1,Surrounding Tissue #1
+383,224631,,Pressure Ulcer Stage #1,Pressure Ulcer Stage #1
+384,224632,,Tunneling Present #1,Tunneling Present #1
+385,224640,,Service,Service
+386,224735,,Flow Rate (variable/fixed),Flow Rate (variable/fixed)
+387,224641,,Alarms On,Alarms On
+388,224642,,Temperature Site,Temperature Site
+389,224650,,Ectopy Type 1,Ectopy Type 1
+390,224651,,Ectopy Frequency 1,Ectopy Frequency 1
+391,224692,,Flow Pattern,Flow Pattern
+392,224715,,SBT Started,SBT Started
+393,224717,,SBT Successfully Completed,SBT Successfully Completed
+394,224730,,Corneal Reflex Right,Corneal Reflex Right
+395,224731,,Corneal Reflex Left,Corneal Reflex Left
+396,224733,,Pupil Size Left,Pupil Size Left
+397,8460,,Pressure Sore #1 [Amount],Pressure Sore #1 [Amount]
+398,224057,,Braden Mobility,Braden Mobility
+399,224042,,Incision Dressing #1,Incision Dressing #1
+400,8474,,Responds to Stimuli [Value],Responds to Stimuli [Value]
+401,223758,,Code Status,Code Status
+402,223782,,Pain Type,Pain Type
+403,223938,,Ulnar Pulse R,Ulnar Pulse R
+404,223781,,Pain Present,Pain Present
+405,223943,,Dorsal PedPulse L,Dorsal PedPulse L
+406,223947,,PostTib. Pulses L,PostTib. Pulses L
+407,223948,,Radial Pulse L,Radial Pulse L
+408,223949,,Ulnar Pulse L,Ulnar Pulse L
+409,223780,,Daily Wake Up Deferred,Daily Wake Up Deferred
+410,223951,,Capillary Refill R,Capillary Refill R
+411,223955,,Temporary Pacemaker Type,Temporary Pacemaker Type
+412,223760,,Health Care Proxy,Health Care Proxy
+413,223956,,Temporary Pacemaker Mode,Temporary Pacemaker Mode
+414,223759,,Precautions: Standard +,Precautions: Standard +
+415,223754,,Risk for Falls,Risk for Falls
+416,8475,,Skin Condition,Skin Condition
+417,223753,,Riker-SAS Scale,Riker-SAS Scale
+418,223961,,Temporary Pacemaker Wire Condition,Temporary Pacemaker Wire Condition
+419,223967,,Angio Site # 1,Angio Site # 1
+420,223968,,Angio Appearance # 1,Angio Appearance # 1
+421,223970,,Angio Dressing # 1,Angio Dressing # 1
+422,223976,,RUE Color,RUE Color
+423,223979,,RLE Color,RLE Color
+424,223982,,LUE Color,LUE Color
+425,223983,,LLE Color,LLE Color
+426,220739,,GCS - Eye Opening,GCS - Eye Opening
+427,220048,,Heart Rhythm,Heart Rhythm
+428,8554,%,SpO2 Alarm [High],SpO2 Alarm [High]
+429,223985,,Respiratory Pattern,Respiratory Pattern
+430,223936,,Radial Pulse R,Radial Pulse R
+431,223935,,PostTib. Pulses R,PostTib. Pulses R
+432,223934,,Dorsal PedPulse R,Dorsal PedPulse R
+433,223924,,RLE Sensation,RLE Sensation
+434,223898,,Orientation,Orientation
+435,223900,,GCS - Verbal Response,GCS - Verbal Response
+436,223901,,GCS - Motor Response,GCS - Motor Response
+437,223902,,Speech,Speech
+438,223903,,Communication,Communication
+439,223904,,Gag Reflex,Gag Reflex
+440,223905,,Cough Reflex,Cough Reflex
+441,223907,,Pupil Size Right,Pupil Size Right
+442,223910,,Follows Commands,Follows Commands
+443,223911,,Spontaneous Movement,Spontaneous Movement
+444,223916,,Response to Stimuli (Type),Response to Stimuli (Type)
+445,223917,,RU Strength/Movement,RU Strength/Movement
+446,223918,,RL Strength/Movement,RL Strength/Movement
+447,223848,,Ventilator Type,Ventilator Type
+448,223838,,ETT Location,ETT Location
+449,223919,,LU Strength/Movement,LU Strength/Movement
+450,223837,,ETT Size (ID),ETT Size (ID)
+451,223796,,Untoward Effect,Untoward Effect
+452,223795,,Pain Assessment Method,Pain Assessment Method
+453,223794,,Pain Level Acceptable,Pain Level Acceptable
+454,223792,,Pain Management,Pain Management
+455,223791,,Pain Level,Pain Level
+456,223784,,Pain Cause,Pain Cause
+457,223783,,Pain Location,Pain Location
+458,223920,,LL Strength/Movement,LL Strength/Movement
+459,223921,,Neuro Symptoms,Neuro Symptoms
+460,223923,,Seizure Activity,Seizure Activity
+461,223986,,RUL Lung Sounds,RUL Lung Sounds
+462,223987,,RLL Lung Sounds,RLL Lung Sounds
+463,224769,,LUE Temp,LUE Temp
+464,224012,,Stool Management,Stool Management
+465,8484,,Ventricular Pacemaker [Sensitivity],Ventricular Pacemaker [Sensitivity]
+466,224013,,Stool Guaiac,Stool Guaiac
+467,8482,,Ventricular Pacemaker [Capture],Ventricular Pacemaker [Capture]
+468,224015,,Urine Source,Urine Source
+469,224016,,Urine Color,Urine Color
+470,224017,,GU Catheter Size,GU Catheter Size
+471,224023,,Support Systems,Support Systems
+472,224024,,Family Communication,Family Communication
+473,224025,,Spiritual Support,Spiritual Support
+474,8480,,Urine [Appearance],Urine [Appearance]
+475,224026,,Skin Integrity,Skin Integrity
+476,224027,,Skin Temperature,Skin Temperature
+477,8479,,Trach [Fenestra],Trach [Fenestra]
+478,8478,,Stool [Consistency],Stool [Consistency]
+479,224028,,Skin Color,Skin Color
+480,224031,,Edema Location,Edema Location
+481,224032,,Impaired Skin Site #1,Impaired Skin Site #1
+482,224037,,Impaired Skin Cleanse #1,Impaired Skin Cleanse #1
+483,224038,,Impaired Skin Treatment #1,Impaired Skin Treatment #1
+484,224040,,Incision Closure #1,Incision Closure #1
+485,224041,,Incision Drainage #1,Incision Drainage #1
+486,8477,,Sputum [Amount],Sputum [Amount]
+487,224043,,Incision Cleansing #1,Incision Cleansing #1
+488,224044,,Incision Packing #1,Incision Packing #1
+489,224054,,Braden Sensory Perception,Braden Sensory Perception
+490,224055,,Braden Moisture,Braden Moisture
+491,8476,,Sputum Consistency,Sputum Consistency
+492,8485,,Warming [Status],Warming [Status]
+493,224011,,Stool Consistency,Stool Consistency
+494,223989,,LLL Lung Sounds,LLL Lung Sounds
+495,224010,,GI #1 Tube Place Check,GI #1 Tube Place Check
+496,223990,,Respiratory Effort,Respiratory Effort
+497,8553,BPM,Resp Alarm [High],Resp Alarm [High]
+498,8552,mmHg,PAP Alarm [High],PAP Alarm [High]
+499,8551,mmHg,NBP Alarm [High],NBP Alarm [High]
+500,223991,,Cough Effort,Cough Effort
+501,223992,,Cough Type,Cough Type
+502,8549,BPM,HR Alarm [High],HR Alarm [High]
+503,223993,,Chest Tube Site # 1,Chest Tube Site # 1
+504,8548,mmHg,CVP Alarm [High],CVP Alarm [High]
+505,8547,mmHg,ABP Alarm [High],ABP Alarm [High]
+506,223994,,CT #1 Suction Amount,CT #1 Suction Amount
+507,223995,,CT #1 Fluctuate,CT #1 Fluctuate
+508,223996,,CT #1 Drainage,CT #1 Drainage
+509,223997,,CT #1 Dressing,CT #1 Dressing
+510,223998,,CT #1 Crepitus,CT #1 Crepitus
+511,8492,,GI Tube #1 [Site],GI Tube #1 [Site]
+512,223999,,Oral Cavity,Oral Cavity
+513,224000,,Nares R,Nares R
+514,224001,,Diet Type,Diet Type
+515,224003,,Abdominal Assessment,Abdominal Assessment
+516,224004,,Bowel Sounds,Bowel Sounds
+517,224005,,Flatus,Flatus
+518,8491,,Atrial Pacemaker Sense [mA],Atrial Pacemaker Sense [mA]
+519,8488,,GI Prophylaxis [Drug #2],GI Prophylaxis [Drug #2]
+520,224006,,Emesis Appearance,Emesis Appearance
+521,224007,,GI #1 Intub Site,GI #1 Intub Site
+522,224009,,GI #1 Tube Drainage,GI #1 Tube Drainage
+523,223988,,LUL Lung Sounds,LUL Lung Sounds
+524,220045,bpm,Heart Rate,Heart Rate
+525,224771,,RLE Temp,RLE Temp
+526,227517,,Humidification,Humidification
+527,227663,,Immobilizer,Immobilizer
+528,227662,,Patient/Family Informed_V2,Patient/Family Informed_V2
+529,227588,,GI #1 Tube Place Method,GI #1 Tube Place Method
+530,227585,,GI Guaiac,GI Guaiac
+531,227570,,Small Volume Neb Drug/Dose #1,Small Volume Neb Drug/Dose #1
+532,227539,,ART Blood Pressure Alarm Source,ART Blood Pressure Alarm Source
+533,227473,,Incision Site #2,Incision Site #2
+534,226180,,Sexuality / reproductive problems,Sexuality / reproductive problems
+535,227472,,Incision Site #1,Incision Site #1
+536,227378,,Patient Location,Patient Location
+537,227375,,Daily Wake Up,Daily Wake Up
+538,227369,,22 Gauge Dressing Occlusive,22 Gauge Dressing Occlusive
+539,227368,,20 Gauge Dressing Occlusive,20 Gauge Dressing Occlusive
+540,227367,,18 Gauge Dressing Occlusive,18 Gauge Dressing Occlusive
+541,227664,,Immobilizer Device,Immobilizer Device
+542,227665,,Immobilizer Evaluated,Immobilizer Evaluated
+543,227666,,Immobilizer Location,Immobilizer Location
+544,227667,,Reason for Immobilizer,Reason for Immobilizer
+545,227668,,Side Rails_V2,Side Rails_V2
+546,227684,,Safety Measures,Safety Measures
+547,227687,,Tobacco Use History,Tobacco Use History
+548,227688,,Smoking Cessation Info Offered through BIDMC Inpatient Guide,Smoking Cessation Info Offered through BIDMC Inpatient Guide
+549,227700,,Safety Measures,Safety Measures
+550,227752,,Cordis/Introducer Placement Confirmed by X-ray,Cordis/Introducer Placement Confirmed by X-ray
+551,227756,,Multi Lumen Placement Confirmed by X-ray,Multi Lumen Placement Confirmed by X-ray
+552,227759,,PICC Line Placement Confirmed by X-ray,PICC Line Placement Confirmed by X-ray
+553,227780,,Impaired Skin  - Dressing Status #1,Impaired Skin  - Dressing Status #1
+554,227781,,Impaired Skin  - Dressing Status #2,Impaired Skin  - Dressing Status #2
+555,227782,,Impaired Skin  - Dressing Status #3,Impaired Skin  - Dressing Status #3
+556,227801,,Stool Guaiac QC,Stool Guaiac QC
+557,227802,,GI Guaiac QC,GI Guaiac QC
+558,227366,,16 Gauge Dressing Occlusive,16 Gauge Dressing Occlusive
+559,227358,,PICC Line Dressing Occlusive,PICC Line Dressing Occlusive
+560,227357,,Dialysis Catheter Dressing Occlusive,Dialysis Catheter Dressing Occlusive
+561,227089,,Discharge to,Discharge to
+562,226228,,Gender,Gender
+563,226381,,Marital Status,Marital Status
+564,226473,,Blood Transfusion Consent,Blood Transfusion Consent
+565,226479,,Ectopy Type 2,Ectopy Type 2
+566,226480,,Ectopy Frequency 2,Ectopy Frequency 2
+567,226543,,Religion,Religion
+568,226544,,Language,Language
+569,226545,,Race,Race
+570,226586,,Stool Estimate,Stool Estimate
+571,226713,,Incontinent (estimate),Incontinent (estimate)
+572,226732,,O2 Delivery Device(s),O2 Delivery Device(s)
+573,226814,,Known difficult intubation,Known difficult intubation
+574,226889,,Legal Guardian,Legal Guardian
+575,227088,,Admit from,Admit from
+576,227121,,Pupil Response Right,Pupil Response Right
+577,227350,,Cordis/Introducer Dressing Occlusive,Cordis/Introducer Dressing Occlusive
+578,227130,,Trach Care,Trach Care
+579,227239,,ABP Alarm Source,ABP Alarm Source
+580,227240,,NBP Alarm Source,NBP Alarm Source
+581,227241,,PAP Alarm Source,PAP Alarm Source
+582,227288,,Pupil Response Left,Pupil Response Left
+583,227292,,Arterial Line Dressing Occlusive,Arterial Line Dressing Occlusive
+584,227293,,Multi Lumen Dressing Occlusive,Multi Lumen Dressing Occlusive
+585,227341,,History of falling (within 3 mnths),History of falling (within 3 mnths)
+586,227342,,Secondary diagnosis,Secondary diagnosis
+587,227343,,Ambulatory aid,Ambulatory aid
+588,227344,,IV/Saline lock,IV/Saline lock
+589,227345,,Gait/Transferring,Gait/Transferring
+590,227346,,Mental status,Mental status
+591,227349,,High risk (>51) interventions,High risk (>51) interventions
+592,227809,,ETT Position Change,ETT Position Change
+593,227810,,ETT Re-taped,ETT Re-taped
+594,227944,,Side Rails,Side Rails
+595,228344,,"OCAT - Saliva secretions, Voice quality","OCAT - Saliva secretions, Voice quality"
+596,228297,,Daily Wake Up Deferred,Daily Wake Up Deferred
+597,228298,,Daily Wake Up,Daily Wake Up
+598,228299,,Goal Richmond-RAS Scale,Goal Richmond-RAS Scale
+599,228300,,CAM-ICU MS change,CAM-ICU MS change
+600,228303,,CAM-ICU Disorganized thinking,CAM-ICU Disorganized thinking
+601,228305,,ST Segment Monitoring On,ST Segment Monitoring On
+602,228306,,Assistance Device,Assistance Device
+603,228307,,GI #1 Tube Place Check,GI #1 Tube Place Check
+604,228308,,GI #1 Tube Place Method,GI #1 Tube Place Method
+605,228332,,Delirium assessment,Delirium assessment
+606,228334,,CAM-ICU Altered LOC,CAM-ICU Altered LOC
+607,228336,,CAM-ICU Inattention,CAM-ICU Inattention
+608,228337,,CAM-ICU MS Change,CAM-ICU MS Change
+609,228343,,OCAT - Lips Tongue Gums Palate,OCAT - Lips Tongue Gums Palate
+610,228345,,OCAT - Swallow,OCAT - Swallow
+611,228137,,CHG Bath,CHG Bath
+612,228346,,OCAT - Teeth,OCAT - Teeth
+613,228393,,Bath,Bath
+614,228394,,Orientation to Person,Orientation to Person
+615,228395,,Orientation to Place,Orientation to Place
+616,228396,,Orientation to Time,Orientation to Time
+617,228397,,Commands Response,Commands Response
+618,228398,,Commands,Commands
+619,228399,,Facial Droop,Facial Droop
+620,228400,,Visual Field Cut,Visual Field Cut
+621,228401,,Pronator Drift,Pronator Drift
+622,228409,,Strength L Arm,Strength L Arm
+623,228410,,Strength L Leg,Strength L Leg
+624,228411,,Strength R Leg,Strength R Leg
+625,228412,,Strength R Arm,Strength R Arm
+626,228236,,Insulin pump,Insulin pump
+627,228101,,22 Gauge placed in the field,22 Gauge placed in the field
+628,227945,,Restraint (Non-violent),Restraint (Non-violent)
+629,227960,,Patient/Family Informed,Patient/Family Informed
+630,227946,,Restraint Ordered (Non-violent),Restraint Ordered (Non-violent)
+631,227947,,Reason for Restraint (Non-violent),Reason for Restraint (Non-violent)
+632,227948,,Restraint Device (Non-violent),Restraint Device (Non-violent)
+633,227949,,Face to Face Eval (Non-violent),Face to Face Eval (Non-violent)
+634,227950,,Restraint Location,Restraint Location
+635,227951,,Circulation/Skin Integrity,Circulation/Skin Integrity
+636,227952,,Position Change,Position Change
+637,227953,,Range of Motion,Range of Motion
+638,227954,,Status and Comfort,Status and Comfort
+639,227955,,Food and Fluid,Food and Fluid
+640,227956,,Urinal/Bedpan,Urinal/Bedpan
+641,227957,,Signs of Injury from Intervention,Signs of Injury from Intervention
+642,227958,,Less Restrictive Measures,Less Restrictive Measures
+643,227959,,Restraints Evaluated,Restraints Evaluated
+644,227961,,Side  Rails,Side  Rails
+645,228100,,20 Gauge placed in the field,20 Gauge placed in the field
+646,227968,,All Medications Tolerated without Adverse Side Effects,All Medications Tolerated without Adverse Side Effects
+647,227969,,Safety Measures_U_1,Safety Measures_U_1
+648,227988,,Pronator drift present,Pronator drift present
+649,228009,,16 G Phlebitis Scale,16 G Phlebitis Scale
+650,228010,,16 G Infiltration Scale,16 G Infiltration Scale
+651,228011,,18 G Phlebitis Scale,18 G Phlebitis Scale
+652,228012,,18 G Infiltration Scale,18 G Infiltration Scale
+653,228013,,20 G Phlebitis Scale,20 G Phlebitis Scale
+654,228014,,20 G Infiltration Scale,20 G Infiltration Scale
+655,228015,,22 G Phlebitis Scale,22 G Phlebitis Scale
+656,228016,,22 G Infiltration Scale,22 G Infiltration Scale
+657,228096,,Richmond-RAS Scale,Richmond-RAS Scale
+658,228098,,16 Gauge placed in the field,16 Gauge placed in the field
+659,228099,,18 Gauge placed in the field,18 Gauge placed in the field
+660,226185,,ICU Consent Signed,ICU Consent Signed
+661,226179,,No wallet / money,No wallet / money
+662,224773,,LLE Temp,LLE Temp
+663,224945,,Impaired Skin Type #3,Impaired Skin Type #3
+664,224966,,Pressure Ulcer Stage #3,Pressure Ulcer Stage #3
+665,224965,,Pressure Ulcer Stage #2,Pressure Ulcer Stage #2
+666,224960,,Impaired Skin Wound Base #4,Impaired Skin Wound Base #4
+667,224959,,Impaired Skin Wound Base #3,Impaired Skin Wound Base #3
+668,224958,,Impaired Skin Wound Base #2,Impaired Skin Wound Base #2
+669,224946,,Impaired Skin Type #4,Impaired Skin Type #4
+670,224944,,Impaired Skin Type #2,Impaired Skin Type #2
+671,226169,,Subglottal Suctioning,Subglottal Suctioning
+672,224939,,Impaired Skin Treatment #4,Impaired Skin Treatment #4
+673,224938,,Impaired Skin Treatment #3,Impaired Skin Treatment #3
+674,224937,,Impaired Skin Treatment #2,Impaired Skin Treatment #2
+675,224933,,Impaired Skin Site #5,Impaired Skin Site #5
+676,8406,,ImpSkin #1 [Amount],ImpSkin #1 [Amount]
+677,224932,,Impaired Skin Site #4,Impaired Skin Site #4
+678,224972,,Surrounding Tissue #2,Surrounding Tissue #2
+679,224973,,Surrounding Tissue #3,Surrounding Tissue #3
+680,224974,,Surrounding Tissue #4,Surrounding Tissue #4
+681,224979,,Tunneling Present #2,Tunneling Present #2
+682,224980,,Tunneling Present #3,Tunneling Present #3
+683,224986,,Undermining Present #2,Undermining Present #2
+684,224993,,Incision Appearance #2,Incision Appearance #2
+685,224998,,Incision Cleansing #2,Incision Cleansing #2
+686,225004,,Incision Closure #2,Incision Closure #2
+687,225013,,Incision Drainage #2,Incision Drainage #2
+688,225018,,Incision Drainage Amount #2,Incision Drainage Amount #2
+689,225023,,Incision Dressing #2,Incision Dressing #2
+690,225028,,Dressing Status #2,Dressing Status #2
+691,225050,,Warming Device Status,Warming Device Status
+692,225054,,Anti Embolic Device Status,Anti Embolic Device Status
+693,225059,,Past medical history,Past medical history
+694,225067,,Is the spokesperson the Health Care Proxy,Is the spokesperson the Health Care Proxy
+695,224931,,Impaired Skin Site #3,Impaired Skin Site #3
+696,224930,,Impaired Skin Site #2,Impaired Skin Site #2
+697,224925,,Impaired Skin Odor #4,Impaired Skin Odor #4
+698,224860,,Skin Condition,Skin Condition
+699,224775,,CT #1 Leak,CT #1 Leak
+700,224785,,GI #1 Tube Type,GI #1 Tube Type
+701,224786,,GI #1 Tube Status,GI #1 Tube Status
+702,224794,,Stool Color,Stool Color
+703,224806,,CT #1 Suction Type,CT #1 Suction Type
+704,224808,,CT #2 Suction Type,CT #2 Suction Type
+705,224832,,ETT Type,ETT Type
+706,224833,,SBT Deferred,SBT Deferred
+707,224834,,Temporary Ventricular Sens,Temporary Ventricular Sens
+708,224835,,Temporary Ventricular Capture,Temporary Ventricular Capture
+709,224847,,Impaired Skin Drainage Amount #1,Impaired Skin Drainage Amount #1
+710,224848,,Incision Appearance #1,Incision Appearance #1
+711,224850,,Incision Drainage Amount #1,Incision Drainage Amount #1
+712,224851,,Dressing Status #1,Dressing Status #1
+713,224862,,Edema Amount,Edema Amount
+714,224924,,Impaired Skin Odor #3,Impaired Skin Odor #3
+715,224865,,Flow Sensitivity,Flow Sensitivity
+716,224866,,Temporary Atrial Capture,Temporary Atrial Capture
+717,224876,,Urine Appearance,Urine Appearance
+718,224879,,Nares L,Nares L
+719,224888,,Impaired Skin Cleanse #2,Impaired Skin Cleanse #2
+720,224889,,Impaired Skin Cleanse #3,Impaired Skin Cleanse #3
+721,224890,,Impaired Skin Cleanse #4,Impaired Skin Cleanse #4
+722,224902,,Impaired Skin Drainage #2,Impaired Skin Drainage #2
+723,224903,,Impaired Skin Drainage #3,Impaired Skin Drainage #3
+724,224904,,Impaired Skin Drainage #4,Impaired Skin Drainage #4
+725,224909,,Impaired Skin Drainage Amount #2,Impaired Skin Drainage Amount #2
+726,224910,,Impaired Skin Drainage Amount #3,Impaired Skin Drainage Amount #3
+727,224911,,Impaired Skin Drainage Amount #4,Impaired Skin Drainage Amount #4
+728,224923,,Impaired Skin Odor #2,Impaired Skin Odor #2
+729,225070,,Unable to assess psychological,Unable to assess psychological
+730,225072,,Living situation,Living situation
+731,225074,,Any fear in relationships,Any fear in relationships
+732,225737,,Arterial Line Discontinued,Arterial Line Discontinued
+733,225188,,Cough/Deep Breath,Cough/Deep Breath
+734,225189,,Incentive Spirometry,Incentive Spirometry
+735,225206,,Multi Lumen Zero/Calibrate,Multi Lumen Zero/Calibrate
+736,225210,,Arterial Line Zero/Calibrate,Arterial Line Zero/Calibrate
+737,225230,,20 Gauge Reason Discontinued,20 Gauge Reason Discontinued
+738,225231,,20 Gauge Site Appear,20 Gauge Site Appear
+739,225233,,18 Gauge Reason Discontinued,18 Gauge Reason Discontinued
+740,225234,,18 Gauge Site Appear,18 Gauge Site Appear
+741,225237,,16 Gauge Site Appear,16 Gauge Site Appear
+742,225280,,Called Out,Called Out
+743,225313,,Bed Bath,Bed Bath
+744,225323,,Dialysis Catheter Site Appear,Dialysis Catheter Site Appear
+745,225722,,Arterial Line Tip Cultured,Arterial Line Tip Cultured
+746,225729,,Multi Lumen Line Tip Cultured,Multi Lumen Line Tip Cultured
+747,225744,,Multi Lumen Line Discontinued,Multi Lumen Line Discontinued
+748,225185,,Skin Care,Skin Care
+749,225811,,CV - past medical history,CV - past medical history
+750,225813,,Baseline pain level,Baseline pain level
+751,225978,,Slope,Slope
+752,226104,,Level of Consciousness,Level of Consciousness
+753,226105,,Behavior,Behavior
+754,226107,,Arterial Line placed in outside facility,Arterial Line placed in outside facility
+755,226109,,Cordis/Introducer placed in outside facility,Cordis/Introducer placed in outside facility
+756,226113,,Multi Lumen placed in outside facility,Multi Lumen placed in outside facility
+757,226115,,PICC Line placed in outside facility,PICC Line placed in outside facility
+758,226136,,16 Gauge placed in outside facility,16 Gauge placed in outside facility
+759,226137,,18 Gauge placed in outside facility,18 Gauge placed in outside facility
+760,226138,,20 Gauge placed in outside facility,20 Gauge placed in outside facility
+761,226139,,22 Gauge placed in outside facility,22 Gauge placed in outside facility
+762,226168,,Oral Care,Oral Care
+763,225187,,Back Care,Back Care
+764,225184,,Eye Care,Eye Care
+765,225076,,Emotional / physical / sexual harm by partner or close relation,Emotional / physical / sexual harm by partner or close relation
+766,225106,,ETOH,ETOH
+767,225078,,Social work consult,Social work consult
+768,225082,,Pregnant,Pregnant
+769,225085,,Post menopausal,Post menopausal
+770,225086,,Unable to assess cognitive / perceptual,Unable to assess cognitive / perceptual
+771,225087,,Visual / hearing deficit,Visual / hearing deficit
+772,225090,,Interpreter,Interpreter
+773,225091,,Unable to assess activity / mobility,Unable to assess activity / mobility
+774,225092,,Self ADL,Self ADL
+775,225094,,History of slips / falls,History of slips / falls
+776,225097,,Balance,Balance
+777,225099,,Judgement,Judgement
+778,225101,,Use of assistive devices,Use of assistive devices
+779,225103,,Intravenous  / IV access prior to admission,Intravenous  / IV access prior to admission
+780,225105,,Unable to assess habits,Unable to assess habits
+781,225110,,Recreational drug use,Recreational drug use
+782,225176,,Range of Motion Status,Range of Motion Status
+783,225112,,Unable to assess pain,Unable to assess pain
+784,225113,,Currently experiencing pain,Currently experiencing pain
+785,225117,,Unable to assess nutrition / education,Unable to assess nutrition / education
+786,225118,,Difficulty swallowing,Difficulty swallowing
+787,225120,,Appetite,Appetite
+788,225122,,Special diet,Special diet
+789,225124,,Unintentional weight loss >10 lbs.,Unintentional weight loss >10 lbs.
+790,225126,,Dialysis patient,Dialysis patient
+791,225129,,Unable to assess teaching / learning needs,Unable to assess teaching / learning needs
+792,225131,,Teaching directed toward,Teaching directed toward
+793,225133,,Discharge needs,Discharge needs
+794,225135,,Consults,Consults
+795,225137,,Patient valuables,Patient valuables
+796,225175,,See chart for initial patient assessment,See chart for initial patient assessment
+797,8407,,ImpSkin #2 [Amount],ImpSkin #2 [Amount]
+798,386,,Inc #1 [Closure],Inc #1 [Closure]
+799,8403,,IV #4 [Size],IV #4 [Size]
+800,248,,INV Line#4 Zero/Cal,INV Line#4 Zero/Cal
+801,202,,GI#1 Tube PlaceCheck,GI#1 Tube PlaceCheck
+802,207,,GU Catheter Size,GU Catheter Size
+803,208,,Gag Reflex,Gag Reflex
+804,210,,HOB,HOB
+805,212,,Heart Rhythm,Heart Rhythm
+806,216,,Height of Bed,Height of Bed
+807,221,,I:E Ratio,I:E Ratio
+808,230,,INV Line#1 Zero/Cal,INV Line#1 Zero/Cal
+809,232,,INV Line#1SiteAppear,INV Line#1SiteAppear
+810,236,,INV Line#2 Zero/Cal,INV Line#2 Zero/Cal
+811,238,,INV Line#2SiteAppear,INV Line#2SiteAppear
+812,242,,INV Line#3 Zero/Cal,INV Line#3 Zero/Cal
+813,244,,INV Line#3SiteAppear,INV Line#3SiteAppear
+814,250,,INV Line#4SiteAppear,INV Line#4SiteAppear
+815,94,,CT #1 Drainage,CT #1 Drainage
+816,283,,INV#1 WaveformAppear,INV#1 WaveformAppear
+817,284,,INV#2 WaveformAppear,INV#2 WaveformAppear
+818,285,,INV#3 WaveformAppear,INV#3 WaveformAppear
+819,286,,INV#4 WaveformAppear,INV#4 WaveformAppear
+820,324,,IV Site Appear #1,IV Site Appear #1
+821,325,,IV Site Appear #2,IV Site Appear #2
+822,326,,IV Site Appear #3,IV Site Appear #3
+823,327,,IV Site Appear #4,IV Site Appear #4
+824,338,,Imp Skin Cleanse #1,Imp Skin Cleanse #1
+825,339,,Imp Skin Cleanse #2,Imp Skin Cleanse #2
+826,340,,Imp Skin Cleanse #3,Imp Skin Cleanse #3
+827,344,,ImpSkin Character #1,ImpSkin Character #1
+828,345,,ImpSkin Character #2,ImpSkin Character #2
+829,198,points,GCS Total,GCS Total
+830,197,,Follows Commands,Follows Commands
+831,187,,Family Communication,Family Communication
+832,184,,Eye Opening,Eye Opening
+833,97,,CT #1 Suction Amount,CT #1 Suction Amount
+834,99,,CT #2 Drainage,CT #2 Drainage
+835,100,,CT #2 Dressing,CT #2 Dressing
+836,102,,CT #2 Suction Amount,CT #2 Suction Amount
+837,122,,Chest Tube Site #1,Chest Tube Site #1
+838,123,,Chest Tube Site #2,Chest Tube Site #2
+839,127,,Circulation/SkinInt,Circulation/SkinInt
+840,128,,Code Status,Code Status
+841,130,,Communication,Communication
+842,136,,Cough Effort,Cough Effort
+843,137,,Cough Reflex,Cough Reflex
+844,138,,Cough Type,Cough Type
+845,139,,Cough/Deep Breathe,Cough/Deep Breathe
+846,140,,Cuff Leak,Cuff Leak
+847,154,,Diet Type,Diet Type
+848,158,,ETT Position Change,ETT Position Change
+849,159,,Ectopy Frequency,Ectopy Frequency
+850,161,,Ectopy Type,Ectopy Type
+851,165,,Education Barrier,Education Barrier
+852,166,,Education Handout,Education Handout
+853,167,,Education Learner,Education Learner
+854,168,,Education Method,Education Method
+855,169,,Education Readiness,Education Readiness
+856,170,,Education Response,Education Response
+857,171,,Education Topic #1,Education Topic #1
+858,172,,Education Topic #2,Education Topic #2
+859,183,,Eye Care,Eye Care
+860,346,,ImpSkin Character #3,ImpSkin Character #3
+861,356,,ImpSkin Treatment #1,ImpSkin Treatment #1
+862,357,,ImpSkin Treatment #2,ImpSkin Treatment #2
+863,478,,Oral Cavity,Oral Cavity
+864,490,mmHg,PAO2,PAO2
+865,493,,PCA 1 Hr Limit (mg),PCA 1 Hr Limit (mg)
+866,496,,PCA Dose,PCA Dose
+867,498,,PCA Lockout (Min),PCA Lockout (Min)
+868,499,,PCA Medication,PCA Medication
+869,500,,PCA Total Dose,PCA Total Dose
+870,515,,Pacemaker Mode,Pacemaker Mode
+871,516,,Pacemaker Type,Pacemaker Type
+872,518,,Pacer Wire Condition,Pacer Wire Condition
+873,519,,Pacer Wires Atrial,Pacer Wires Atrial
+874,521,,Pacer Wires Vent,Pacer Wires Vent
+875,522,,Pain Cause,Pain Cause
+876,524,,Pain Level (Rest),Pain Level (Rest)
+877,525,,Pain Location,Pain Location
+878,527,,Pain Type,Pain Type
+879,545,,Plateau-Off,Plateau-Off
+880,547,,Position,Position
+881,548,,Position Change,Position Change
+882,550,,Precautions,Precautions
+883,555,,PressSore Depth #1,PressSore Depth #1
+884,564,,PressSoreCleansing#1,PressSoreCleansing#1
+885,567,,PressSoreTreatment#1,PressSoreTreatment#1
+886,570,,PressSoreWoundBase#1,PressSoreWoundBase#1
+887,573,,Pressure Sore Odor#1,Pressure Sore Odor#1
+888,576,,Pressure Sore Site#1,Pressure Sore Site#1
+889,579,,PressureReduceDevice,PressureReduceDevice
+890,580,kg,Previous Weight,Previous Weight
+891,479,,Orientation,Orientation
+892,477,,Oral Care,Oral Care
+893,358,,ImpSkin Treatment #3,ImpSkin Treatment #3
+894,473,ml/m/m,O2AVI,O2AVI
+895,362,,ImpSkin Wound Base#1,ImpSkin Wound Base#1
+896,363,,ImpSkin Wound Base#2,ImpSkin Wound Base#2
+897,364,,ImpSkin Wound Base#3,ImpSkin Wound Base#3
+898,374,,Impaired Skin Site#1,Impaired Skin Site#1
+899,375,,Impaired Skin Site#2,Impaired Skin Site#2
+900,376,,Impaired Skin Site#3,Impaired Skin Site#3
+901,380,,Inc Cleansing #1,Inc Cleansing #1
+902,381,,Inc Cleansing #2,Inc Cleansing #2
+903,410,,Incentive Spirometry,Incentive Spirometry
+904,411,,Incision/Wound #1,Incision/Wound #1
+905,412,,Incision/Wound #2,Incision/Wound #2
+906,413,,Incision/Wound #3,Incision/Wound #3
+907,421,kg x m,LCW,LCW
+908,422,...,LCWI,LCWI
+909,423,,LL Strength/Movement,LL Strength/Movement
+910,425,,LLL Lung Sounds,LLL Lung Sounds
+911,426,,LU Strength/Movement,LU Strength/Movement
+912,428,,LUL Lung Sounds,LUL Lung Sounds
+913,432,,Level of Conscious,Level of Conscious
+914,434,,Low Exhaled Min Vol,Low Exhaled Min Vol
+915,446,,Micro-Neb Treatment,Micro-Neb Treatment
+916,454,,Motor Response,Motor Response
+917,465,,Neuro Symptoms,Neuro Symptoms
+918,466,,Nursing Consultation,Nursing Consultation
+919,467,,O2 Delivery Device,O2 Delivery Device
+920,468,,O2 Delivery Device#2,O2 Delivery Device#2
+921,472,ml/min,O2AV,O2AV
+922,95,,CT #1 Dressing,CT #1 Dressing
+923,93,,CT #1 Crepitus,CT #1 Crepitus
+924,582,,Procedures,Procedures
+925,224169,,MDI #1 Puff,MDI #1 Puff
+926,223770,%,O2 Saturation Pulseoxymetry Alarm - Low,O2 Saturation Pulseoxymetry Alarm - Low
+927,223773,cm,PA Line cm Mark,PA Line cm Mark
+928,223834,L/min,O2 Flow,O2 Flow
+929,223835,,Inspired O2 Fraction,Inspired O2 Fraction
+930,223872,?C,Inspired Gas Temp.,Inspired Gas Temp.
+931,223873,cmH2O,Paw High,Paw High
+932,223874,mL,Vti High,Vti High
+933,223875,insp/min,Fspn High,Fspn High
+934,223876,sec,Apnea Interval,Apnea Interval
+935,223958,mV,Temporary Venticular Sens Threshold mV,Temporary Venticular Sens Threshold mV
+936,223962,,Temporary Pacemaker Wires Venticular,Temporary Pacemaker Wires Venticular
+937,224161,insp/min,Resp Alarm - High,Resp Alarm - High
+938,224162,insp/min,Resp Alarm - Low,Resp Alarm - Low
+939,224172,,MDI #2 Puff,MDI #2 Puff
+940,88,,Braden SensoryPercep,Braden SensoryPercep
+941,224417,cmH2O,Cuff Pressure,Cuff Pressure
+942,224418,mL,Cuff Volume (mL),Cuff Volume (mL)
+943,224421,mL,Spont Vt,Spont Vt
+944,224422,bpm,Spont RR,Spont RR
+945,224562,cm,Impaired Skin Length #1,Impaired Skin Length #1
+946,224563,cm,Impaired Skin Depth #1,Impaired Skin Depth #1
+947,224639,kg,Daily Weight,Daily Weight
+948,224684,mL,Tidal Volume (set),Tidal Volume (set)
+949,224685,mL,Tidal Volume (observed),Tidal Volume (observed)
+950,224686,mL,Tidal Volume (spontaneous),Tidal Volume (spontaneous)
+951,224687,L/min,Minute Volume,Minute Volume
+952,224688,insp/min,Respiratory Rate (Set),Respiratory Rate (Set)
+953,224689,insp/min,Respiratory Rate (spontaneous),Respiratory Rate (spontaneous)
+954,223769,%,O2 Saturation Pulseoxymetry Alarm - High,O2 Saturation Pulseoxymetry Alarm - High
+955,223762,?C,Temperature Celsius,Temperature Celsius
+956,223761,?F,Temperature Fahrenheit,Temperature Fahrenheit
+957,223752,mmHg,Non-Invasive Blood Pressure Alarm - Low,Non-Invasive Blood Pressure Alarm - Low
+958,220047,bpm,Heart Rate Alarm - Low,Heart Rate Alarm - Low
+959,220050,mmHg,Arterial Blood Pressure systolic,Arterial Blood Pressure systolic
+960,220051,mmHg,Arterial Blood Pressure diastolic,Arterial Blood Pressure diastolic
+961,220052,mmHg,Arterial Blood Pressure mean,Arterial Blood Pressure mean
+962,220056,mmHg,Arterial Blood Pressure Alarm - Low,Arterial Blood Pressure Alarm - Low
+963,220058,mmHg,Arterial Blood Pressure Alarm - High,Arterial Blood Pressure Alarm - High
+964,220059,mmHg,Pulmonary Artery Pressure systolic,Pulmonary Artery Pressure systolic
+965,220060,mmHg,Pulmonary Artery Pressure diastolic,Pulmonary Artery Pressure diastolic
+966,220061,mmHg,Pulmonary Artery Pressure mean,Pulmonary Artery Pressure mean
+967,220063,mmHg,Pulmonary Artery Pressure Alarm - High,Pulmonary Artery Pressure Alarm - High
+968,220066,mmHg,Pulmonary Artery Pressure Alarm - Low,Pulmonary Artery Pressure Alarm - Low
+969,220072,mmHg,Central Venous Pressure Alarm - High,Central Venous Pressure Alarm - High
+970,220073,mmHg,Central Venous Pressure  Alarm - Low,Central Venous Pressure  Alarm - Low
+971,220074,mmHg,Central Venous Pressure,Central Venous Pressure
+972,220179,mmHg,Non Invasive Blood Pressure systolic,Non Invasive Blood Pressure systolic
+973,220180,mmHg,Non Invasive Blood Pressure diastolic,Non Invasive Blood Pressure diastolic
+974,220181,mmHg,Non Invasive Blood Pressure mean,Non Invasive Blood Pressure mean
+975,220210,insp/min,Respiratory Rate,Respiratory Rate
+976,220224,mmHg,Arterial O2 pressure,Arterial O2 pressure
+977,220227,%,Arterial O2 Saturation,Arterial O2 Saturation
+978,220228,g/dl,Hemoglobin,Hemoglobin
+979,220235,mmHg,Arterial CO2 Pressure,Arterial CO2 Pressure
+980,220277,%,O2 saturation pulseoxymetry,O2 saturation pulseoxymetry
+981,220292,L/min,Minute Volume Alarm - Low,Minute Volume Alarm - Low
+982,220293,L/min,Minute Volume Alarm - High,Minute Volume Alarm - High
+983,220339,cmH2O,PEEP set,PEEP set
+984,223751,mmHg,Non-Invasive Blood Pressure Alarm - High,Non-Invasive Blood Pressure Alarm - High
+985,224690,insp/min,Respiratory Rate (Total),Respiratory Rate (Total)
+986,224695,cmH2O,Peak Insp. Pressure,Peak Insp. Pressure
+987,224696,cmH2O,Plateau Pressure,Plateau Pressure
+988,227467,,INR,INR
+989,227516,mmHg,PO2 (Mixed Venous),PO2 (Mixed Venous)
+990,227537,mmHg,ART Blood Pressure Alarm - High,ART Blood Pressure Alarm - High
+991,227538,mmHg,ART Blood Pressure Alarm - Low,ART Blood Pressure Alarm - Low
+992,227565,,Ventilator Tank #1,Ventilator Tank #1
+993,227566,,Ventilator Tank #2,Ventilator Tank #2
+994,26,mmHg,AaDO2,AaDO2
+995,27,,Abdominal Assessment,Abdominal Assessment
+996,31,,Activity,Activity
+997,32,,Activity Tolerance,Activity Tolerance
+998,39,,Airway Size,Airway Size
+999,40,,Airway Type,Airway Type
+1000,45,,Angio Dressing #1,Angio Dressing #1
+1001,47,,Angio Site #1,Angio Site #1
+1002,50,,Apnea Time Interval,Apnea Time Interval
+1003,54,,Assistance Device,Assistance Device
+1004,70,m2,BSA - English,BSA - English
+1005,71,m2,BSA - Metric,BSA - Metric
+1006,72,,Back Care,Back Care
+1007,76,,Bath,Bath
+1008,77,,Behavior,Behavior
+1009,80,,Bowel Sounds,Bowel Sounds
+1010,82,,Braden Activity,Braden Activity
+1011,83,,Braden Frict/Shear,Braden Frict/Shear
+1012,84,,Braden Mobility,Braden Mobility
+1013,85,,Braden Moisture,Braden Moisture
+1014,86,,Braden Nutrition,Braden Nutrition
+1015,87,number,Braden Score,Braden Score
+1016,227471,,Specific Gravity (urine),Specific Gravity (urine)
+1017,227446,pg/mL,Brain Natiuretic Peptide (BNP),Brain Natiuretic Peptide (BNP)
+1018,224697,cmH2O,Mean Airway Pressure,Mean Airway Pressure
+1019,227287,L/min,O2 Flow (additional cannula),O2 Flow (additional cannula)
+1020,224700,cmH2O,Total PEEP Level,Total PEEP Level
+1021,224701,cmH2O,PSV Level,PSV Level
+1022,224738,sec,Inspiratory Time,Inspiratory Time
+1023,224751,bpm,Temporary Pacemaker Rate,Temporary Pacemaker Rate
+1024,224839,,Temporary Pacemaker Wires Atrial,Temporary Pacemaker Wires Atrial
+1025,224846,cm,Impaired Skin Width #1,Impaired Skin Width #1
+1026,224916,cm,Impaired Skin Length #2,Impaired Skin Length #2
+1027,224917,cm,Impaired Skin Length #3,Impaired Skin Length #3
+1028,224951,cm,Impaired Skin Width #2,Impaired Skin Width #2
+1029,224952,cm,Impaired Skin Width #3,Impaired Skin Width #3
+1030,225209,,Cash amount,Cash amount
+1031,225309,mmHg,ART BP Systolic,ART BP Systolic
+1032,225310,mmHg,ART BP Diastolic,ART BP Diastolic
+1033,225312,mmHg,ART BP mean,ART BP mean
+1034,225664,,Glucose finger stick,Glucose finger stick
+1035,225674,%,Mixed Venous O2% Sat,Mixed Venous O2% Sat
+1036,225693,mg/dL,Triglyceride,Triglyceride
+1037,226062,mmHg,Venous CO2 Pressure,Venous CO2 Pressure
+1038,226063,mmHg,Venous O2 Pressure,Venous O2 Pressure
+1039,226253,%,SpO2 Desat Limit,SpO2 Desat Limit
+1040,226512,kg,Admission Weight (Kg),Admission Weight (Kg)
+1041,226531,,Admission Weight (lbs.),Admission Weight (lbs.)
+1042,226707,Inch,Height,Height
+1043,226730,cm,Height (cm),Height (cm)
+1044,226846,kg,Feeding Weight,Feeding Weight
+1045,226871,,Expiratory Ratio,Expiratory Ratio
+1046,226873,,Inspiratory Ratio,Inspiratory Ratio
+1047,581,kg,Previous WeightF,Previous WeightF
+1048,588,kg * m,RCW,RCW
+1049,8402,,IV #3 [Size],IV #3 [Size]
+1050,203,,GI#1 Tube [Status],GI#1 Tube [Status]
+1051,49,,Anti-Embolism [Device],Anti-Embolism [Device]
+1052,56,,Atrial Pacemaker [Sense],Atrial Pacemaker [Sense]
+1053,58,,Atrial Pacemaker [mA],Atrial Pacemaker [mA]
+1054,96,,CT #1 [Fluctuate],CT #1 [Fluctuate]
+1055,101,,CT #2 [Fluctuate],CT #2 [Fluctuate]
+1056,121,,Chest PT [Right],Chest PT [Right]
+1057,135,,Corneal Reflex [Right],Corneal Reflex [Right]
+1058,156,,Dorsal PedPulse [Right],Dorsal PedPulse [Right]
+1059,157,,ETT [Mark],ETT [Mark]
+1060,163,,Edema #1 [Location],Edema #1 [Location]
+1061,199,,GI [Guaiac],GI [Guaiac]
+1062,200,,GI Intub #1 [Type],GI Intub #1 [Type]
+1063,201,,GI Intub #2 [Type],GI Intub #2 [Type]
+1064,205,,GI#2 Tube [Status],GI#2 Tube [Status]
+1065,1402,ml/m/m,zzO2AVI,zzO2AVI
+1066,229,,INV Line#1 [Type],INV Line#1 [Type]
+1067,235,,INV Line#2 [Type],INV Line#2 [Type]
+1068,241,,INV Line#3 [Type],INV Line#3 [Type]
+1069,247,,INV Line#4 [Type],INV Line#4 [Type]
+1070,294,,IV #1 [Site],IV #1 [Site]
+1071,297,,IV #2 [Site],IV #2 [Site]
+1072,300,,IV #3 [Site],IV #3 [Site]
+1073,303,,IV #4 [Site],IV #4 [Site]
+1074,350,,ImpSkin #3 [Drain],ImpSkin #3 [Drain]
+1075,352,,ImpSkin #1 [Drain],ImpSkin #1 [Drain]
+1076,353,,ImpSkin #2 [Drain],ImpSkin #2 [Drain]
+1077,368,,ImpSkin #1 [Width],ImpSkin #1 [Width]
+1078,369,,ImpSkin #2 [Width],ImpSkin #2 [Width]
+1079,43,,Angio Appearance #1 [Attribute 1],Angio Appearance #1 [Attribute 1]
+1080,7915,,Pt./Family Informed,Pt./Family Informed
+1081,7914,,Insulin Guideline,Insulin Guideline
+1082,6208,,Ve High,Ve High
+1083,1479,,IV #1 Reason DC'D,IV #1 Reason DC'D
+1084,1480,,IV #2 Reason DC'D,IV #2 Reason DC'D
+1085,1481,,IV #3 Reason DC'D,IV #3 Reason DC'D
+1086,1482,,IV #4 Reason DC'D,IV #4 Reason DC'D
+1087,1483,,RSBI Not Completed,RSBI Not Completed
+1088,1484,,Risk for Falls,Risk for Falls
+1089,1517,,Readmit <48 hrs,Readmit <48 hrs
+1090,1521,,Albumin,Albumin
+1091,1523,,Chloride,Chloride
+1092,1525,,Creatinine,Creatinine
+1093,1527,,Direct Bili,Direct Bili
+1094,1528,,Fibrinogen,Fibrinogen
+1095,1529,,Glucose,Glucose
+1096,1530,,INR,INR
+1097,1531,,Lactic Acid,Lactic Acid
+1098,1532,,Magnesium,Magnesium
+1099,1533,,PTT,PTT
+1100,1535,,Potassium,Potassium
+1101,1536,,Sodium,Sodium
+1102,1538,,Total Bili,Total Bili
+1103,1540,,Triglyceride,Triglyceride
+1104,1542,,WBC,WBC
+1105,1622,,Alarms,Alarms
+1106,1623,,Parameters Checked,Parameters Checked
+1107,1703,,Health Care Proxy,Health Care Proxy
+1108,6206,,Tank A psi.,Tank A psi.
+1109,6207,,Tank B psi.,Tank B psi.
+1110,220046,bpm,Heart rate Alarm - High,Heart rate Alarm - High
+1111,387,,Inc #2 [Closure],Inc #2 [Closure]
+1112,388,,Inc #3 [Closure],Inc #3 [Closure]
+1113,719,,Ventricular Pacemaker [mA],Ventricular Pacemaker [mA]
+1114,1329,,Initials (2 RNs) [RN #1],Initials (2 RNs) [RN #1]
+1115,1330,,Med Wasted [Drug],Med Wasted [Drug]
+1116,1427,,GI Prophylaxis [Drug #1],GI Prophylaxis [Drug #1]
+1117,1697,,Atrial Pacemaker Sense [mV],Atrial Pacemaker Sense [mV]
+1118,1698,,GI Tube #1 [Site],GI Tube #1 [Site]
+1119,1706,,Ventricular Pacemaker Sense [mV],Ventricular Pacemaker Sense [mV]
+1120,8365,,Angio Appearance #1 [Attribute 2],Angio Appearance #1 [Attribute 2]
+1121,8367,,Anti-Embolism [Status],Anti-Embolism [Status]
+1122,8368,mmHg,Arterial BP [Diastolic],Arterial BP [Diastolic]
+1123,8369,,Atrial Pacemaker [Capture],Atrial Pacemaker [Capture]
+1124,8371,,Atrial Pacemaker [Sensitivity],Atrial Pacemaker [Sensitivity]
+1125,8373,,CT #1 [Leak],CT #1 [Leak]
+1126,8374,,CT #2 [Leak],CT #2 [Leak]
+1127,8378,,Chest PT [Left],Chest PT [Left]
+1128,8380,,Corneal Reflex [Left],Corneal Reflex [Left]
+1129,8381,,Dorsal PedPulse [Left],Dorsal PedPulse [Left]
+1130,8382,,ETT [Location],ETT [Location]
+1131,8383,,Edema #1 [Amount],Edema #1 [Amount]
+1132,8388,,GI Intub #1 [Site],GI Intub #1 [Site]
+1133,8389,,GI Intub #2 [Site],GI Intub #2 [Site]
+1134,8390,,GI#1 Tube [Drain],GI#1 Tube [Drain]
+1135,8392,,INV Line#1 [Site],INV Line#1 [Site]
+1136,8393,,INV Line#2 [Site],INV Line#2 [Site]
+1137,8394,,INV Line#3 [Site],INV Line#3 [Site]
+1138,8395,,INV Line#4 [Site],INV Line#4 [Site]
+1139,8400,,IV #1 [Size],IV #1 [Size]
+1140,8401,,IV #2 [Size],IV #2 [Size]
+1141,731,,Warming [Device],Warming [Device]
+1142,717,,Ventricular Pacemaker [Sense],Ventricular Pacemaker [Sense]
+1143,392,,Inc #1 [Drainage],Inc #1 [Drainage]
+1144,706,,Urine [Color],Urine [Color]
+1145,393,,Inc #2 [Drainage],Inc #2 [Drainage]
+1146,394,,Inc #3 [Drainage],Inc #3 [Drainage]
+1147,398,,Inc #1 [Dressing],Inc #1 [Dressing]
+1148,399,,Inc #2 [Dressing],Inc #2 [Dressing]
+1149,400,,Inc #3 [Dressing],Inc #3 [Dressing]
+1150,419,,KneeImmobilizeLoc [Right],KneeImmobilizeLoc [Right]
+1151,424,,LLE [Temp],LLE [Temp]
+1152,427,,LUE [Temp],LUE [Temp]
+1153,439,,MDI #1 [Puff],MDI #1 [Puff]
+1154,440,,MDI #2 [Puff],MDI #2 [Puff]
+1155,497,,Patient controlled analgesia (PCA) [Inject],Patient controlled analgesia (PCA) [Inject]
+1156,526,,Pain Management [Route/Status #1],Pain Management [Route/Status #1]
+1157,549,,PostTib. Pulses [Right],PostTib. Pulses [Right]
+1158,551,,Pressure Sore #1 [Stage],Pressure Sore #1 [Stage]
+1159,558,,Pressure Sore #1 [Drainage],Pressure Sore #1 [Drainage]
+1160,561,,Pressure Sore #1 [Width],Pressure Sore #1 [Width]
+1161,584,,Pupil Response [Right],Pupil Response [Right]
+1162,585,,Pupil Size [Right],Pupil Size [Right]
+1163,591,,RLE [Temperature],RLE [Temperature]
+1164,592,,RLE [Sensation],RLE [Sensation]
+1165,594,,ROM [Type],ROM [Type]
+1166,620,,Responds to Stimuli [Type],Responds to Stimuli [Type]
+1167,645,,Skin [Temperature],Skin [Temperature]
+1168,656,,Sputum [Color],Sputum [Color]
+1169,657,,Sputum Source,Sputum Source
+1170,659,,Stool [Color],Stool [Color]
+1171,688,,Trach [Cuff],Trach [Cuff]
+1172,1425,,Daily Wake Up,Daily Wake Up
+1173,1401,ml/min,zzO2AV,zzO2AV
+1174,589,...,RCWI,RCWI
+1175,770,,AST,AST
+1176,692,,Tracheostomy Type,Tracheostomy Type
+1177,704,,Turn,Turn
+1178,705,,Untoward Effect,Untoward Effect
+1179,707,,Urine Source,Urine Source
+1180,720,,Ventilator Mode,Ventilator Mode
+1181,722,,Ventilator Type,Ventilator Type
+1182,723,,Verbal Response,Verbal Response
+1183,732,,Waveform-Vent,Waveform-Vent
+1184,733,kg,Weight Change,Weight Change
+1185,742,kg,calprevflg,calprevflg
+1186,763,kg,Daily Weight,Daily Weight
+1187,768,,ACT (102-142),ACT (102-142)
+1188,769,,ALT,ALT
+1189,772,,Albumin (>3.2),Albumin (>3.2)
+1190,1390,ml/min,DO2,DO2
+1191,773,,Alk. Phosphate,Alk. Phosphate
+1192,775,,Amylase,Amylase
+1193,776,,Arterial Base Excess,Arterial Base Excess
+1194,777,,Arterial CO2(Calc),Arterial CO2(Calc)
+1195,780,,Arterial pH,Arterial pH
+1196,781,,BUN (6-20),BUN (6-20)
+1197,783,,Blood Products,Blood Products
+1198,784,,CPK,CPK
+1199,785,,CPK/MB,CPK/MB
+1200,787,,Carbon Dioxide,Carbon Dioxide
+1201,788,,Chloride (100-112),Chloride (100-112)
+1202,791,,Creatinine (0-1.3),Creatinine (0-1.3)
+1203,793,,D-Dimer (0-500),D-Dimer (0-500)
+1204,691,,Tracheostomy Cuff,Tracheostomy Cuff
+1205,690,,Trach Size,Trach Size
+1206,687,,Trach Care,Trach Care
+1207,680,,Therapeutic Bed,Therapeutic Bed
+1208,590,,RL Strength/Movement,RL Strength/Movement
+1209,593,,RLL Lung Sounds,RLL Lung Sounds
+1210,596,,RU Strength/Movement,RU Strength/Movement
+1211,599,,RUL Lung Sounds,RUL Lung Sounds
+1212,604,,Radiologic Study,Radiologic Study
+1213,605,,Reason For Restraint,Reason For Restraint
+1214,609,,Remote Alarm,Remote Alarm
+1215,610,,Removed x 5 Mins,Removed x 5 Mins
+1216,616,,Respiratory Effort,Respiratory Effort
+1217,617,,Respiratory Pattern,Respiratory Pattern
+1218,621,,Restraint Location,Restraint Location
+1219,622,,Restraint Type,Restraint Type
+1220,623,,Restraints Evaluated,Restraints Evaluated
+1221,628,,Sedation Score,Sedation Score
+1222,629,,Seizure Activity,Seizure Activity
+1223,637,,Side Rails,Side Rails
+1224,640,,Significant Events,Significant Events
+1225,642,,Skin Care,Skin Care
+1226,643,,Skin Color,Skin Color
+1227,644,,Skin Integrity,Skin Integrity
+1228,648,,Speech,Speech
+1229,649,,Spiritual Support,Spiritual Support
+1230,655,,Spontaneous Movement,Spontaneous Movement
+1231,660,,Stool Guaiac,Stool Guaiac
+1232,661,,Stool Management,Stool Management
+1233,663,,Support Systems,Support Systems
+1234,674,,Temp. Site,Temp. Site
+1235,795,,Differential-Bands,Differential-Bands
+1236,796,,Differential-Basos,Differential-Basos
+1237,797,,Differential-Eos,Differential-Eos
+1238,855,,Vancomycin/Random,Vancomycin/Random
+1239,857,,Venous CO2(Calc),Venous CO2(Calc)
+1240,861,,"WBC (4-11,000)","WBC (4-11,000)"
+1241,916,,Allergy 1,Allergy 1
+1242,917,,Diagnosis/op,Diagnosis/op
+1243,919,,Service,Service
+1244,924,,Readmission,Readmission
+1245,925,,Marital Status,Marital Status
+1246,926,,Religion,Religion
+1247,927,,Allergy 2,Allergy 2
+1248,930,,Ext,Ext
+1249,935,,Allergy 3,Allergy 3
+1250,1043,,Less Restrict Meas.,Less Restrict Meas.
+1251,1044,,Pain Level,Pain Level
+1252,1045,,Pain Level/Response,Pain Level/Response
+1253,1046,,Pain Present,Pain Present
+1254,1047,,Range of Motion,Range of Motion
+1255,1063,,bath,bath
+1256,1078,,BATH,BATH
+1257,1087,,Pain Assess Method,Pain Assess Method
+1258,1089,,PainLevel Acceptable,PainLevel Acceptable
+1259,1125,,Service Type,Service Type
+1260,1126,,Art.pH,Art.pH
+1261,1127,,"WBC   (4-11,000)","WBC   (4-11,000)"
+1262,1162,,BUN,BUN
+1263,1286,,PT,PT
+1264,1328,,Cartridge/Bag Change,Cartridge/Bag Change
+1265,1337,,Riker-SAS Scale,Riker-SAS Scale
+1266,856,,Vancomycin/Trough,Vancomycin/Trough
+1267,853,,Uric Acid (2.7-7.0),Uric Acid (2.7-7.0)
+1268,798,,Differential-Lymphs,Differential-Lymphs
+1269,851,,Troponin,Troponin
+1270,799,,Differential-Monos,Differential-Monos
+1271,800,,Differential-Polys,Differential-Polys
+1272,802,,Dilantin,Dilantin
+1273,803,,Direct Bili (0-0.3),Direct Bili (0-0.3)
+1274,806,,Fibrinogen (150-400),Fibrinogen (150-400)
+1275,807,,Fingerstick Glucose,Fingerstick Glucose
+1276,811,,Glucose (70-105),Glucose (70-105)
+1277,813,%,Hematocrit,Hematocrit
+1278,814,gm/dl,Hemoglobin,Hemoglobin
+1279,815,,INR (2-4 ref. range),INR (2-4 ref. range)
+1280,816,,Ionized Calcium,Ionized Calcium
+1281,817,,LDH,LDH
+1282,818,,Lactic Acid(0.5-2.0),Lactic Acid(0.5-2.0)
+1283,821,,Magnesium (1.6-2.6),Magnesium (1.6-2.6)
+1284,822,,Mixed Venous O2,Mixed Venous O2
+1285,823,,Mixed Venous O2% Sat,Mixed Venous O2% Sat
+1286,824,,PT(11-13.5),PT(11-13.5)
+1287,825,,PTT(22-35),PTT(22-35)
+1288,827,mEq/L,Phosphorous(2.7-4.5),Phosphorous(2.7-4.5)
+1289,828,,Platelets,Platelets
+1290,829,,Potassium (3.5-5.3),Potassium (3.5-5.3)
+1291,833,/mic l,RBC,RBC
+1292,836,,Serum Osmolality,Serum Osmolality
+1293,837,,Sodium (135-148),Sodium (135-148)
+1294,848,,Total Bili (0-1.5),Total Bili (0-1.5)
+1295,849,,Total Protein(6.5-8),Total Protein(6.5-8)
+1296,850,,Triglyceride (0-200),Triglyceride (0-200)
+1297,228414,,Speech,Speech
