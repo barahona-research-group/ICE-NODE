@@ -12,282 +12,296 @@ import pandas as pd
 concept_logger = logging.getLogger("concept")
 
 
-class LabTest:
-    def __init__(self, test_id: int, unit: str, value: float):
-        self.test_id = test_id
-        self.unit = unit
+class Test:
+    def __init__(self, item_id: int, value: float, date: date):
+        self.item_id = item_id
         self.value = value
-
-    def __str__(self):
-        return f'{self.test_id}: {self.value} {self.unit}'
-
-
-class Day:
-    def __init__(self,
-                 date: date = None,
-                 icd9_diag_codes: Set[str] = set(),
-                 icd9_proc_codes: Set[str] = set(),
-                 lab_tests: Dict[str, Any] = dict()):
         self.date = date
+
+
+class HospitalAdmission:
+    def __init__(self, admission_id: int, admission_dates: Tuple[date, date],
+                 icd9_diag_codes: Set[str], icd9_proc_codes: Set[str]):
+        self.admission_id = admission_id
+        self.admission_dates = admission_dates
         self.icd9_diag_codes = icd9_diag_codes
         self.icd9_proc_codes = icd9_proc_codes
-        self.lab_tests = lab_tests
 
     DERIVED_AGE_HOLDER = 'age: ???'
 
     def __str__(self):
         lines = []
-        lines.append(f'date: {self.date} | {self.DERIVED_AGE_HOLDER}')
+        lines.append(
+            f'admission dates: {self.admission_dates} | {self.DERIVED_AGE_HOLDER}'
+        )
         if self.icd9_diag_codes:
             lines.append(f'ICD9 Diagnosis: {" ".join(self.icd9_diag_codes)}')
         if self.icd9_proc_codes:
             lines.append(f'ICD9 Procedures: {" ".join(self.icd9_proc_codes)}')
-        if self.lab_tests:
-            lines.append("Lab tests: " + "\t".join(self.lab_tests))
         return '\n'.join(lines)
 
 
-class Patient:
+class Subject:
     """
-    Patient class encapsulates the patient EHRs as a list of
-    tuple(visit_date, Day) sorted chornologically by visit_date.
+    Subject class encapsulates the patient EHRs.
     """
-
-    DATE_FORMAT = '%Y-%m-%d'
-
-    def __init__(self, person_id: int, days: Dict[date, Day],
-                 static_features: Dict[str, Any], birth_year: date):
+    def __init__(self, subject_id: int, admissions: List[HospitalAdmission],
+                 tests: List[Test], gender: str, ethnic_group: str,
+                 date_of_birth: date):
         """
 
         """
-        self.person_id = person_id
-        self.days = days
-        self.static_features = static_features
-        self.birth_year = birth_year
+        self.subject_id = subject_id
+        self.admissions = sorted(admissions,
+                                 key=lambda a: a.admission_dates[0])
+        self.tests = sorted(tests, key=lambda t: t.date)
+        self.ethnic_group = ethnic_group
+        self.gender = gender
+        self.date_of_birth = date_of_birth
 
     def __str__(self):
         lines = []
-        lines.append(f'id: {self.person_id}')
-        for day_dt, day in self.days.items():
-            day_str = str(day).replace(Day.DERIVED_AGE_HOLDER,
-                                       f'age: {self.age(day_dt)}')
-            lines.extend(map(lambda ln: '\t' + ln, day_str.split('\n')))
+        lines.append(
+            f'id: {self.subject_id}, gender: {self.gender}, ethnic_group: {self.ethnic_group}'
+        )
+        for i, admission in enumerate(self.admissions):
+            interval = (admission.date[1] - admission.date[0]).days
+            age = self.age(admission.date[0])
+            lines.append(f'Admission #{i}, days: {interval}, age: {age}')
+            lines.append(f'\tDiagnoses: {admission.icd9_diag_codes}')
+            lines.append(f'\tProcedures: {admission.icd9_proc_codes}')
+
+        tests_by_date = defaultdict(list)
+        for t in self.tests:
+            tests_by_date[t.date].append(
+                f'\titem_id: {t.item_id}  value: {t.value}')
+
+        for date, tests in tests_by_date.items():
+            age = self.age(date)
+            lines.append(f'Tests, age: {age}')
+            lines.extend(tests)
         return '\n'.join(lines)
 
-    def __eq__(self, other):
-        return self.person_id == other.person_id and self.days == other.days
-
     def age(self, date: date) -> int:
-        return int((date - self.birth_year).days / 365.25)
+        return (date - self.date_of_birth).days / 365.25
 
     @classmethod
-    def pydate(cls, dt: str) -> date:
-        """
-        Create datetime.date object from date string of pattern '%Y-%m-%d'.
-        """
-        return datetime.strptime(dt, cls.DATE_FORMAT).date()
+    def mimic_to_list(cls):
+        pass
 
     @classmethod
-    def strdate(cls, pydate: datetime) -> str:
-        """
-        Represent date object as string of format '%Y-%m-%d'.
-        """
-        return datetime.strftime(pydate, cls.DATE_FORMAT)
-
-    @classmethod
-    def to_list(cls, static_df: pd.DataFrame, ehr_diag_df: pd.DataFrame,
-                ehr_proc_df: pd.DataFrame,
-                ehr_lab_df: pd.DataFrame) -> List[Patient]:
+    def to_list(cls, static_df: pd.DataFrame, adm_df: pd.DataFrame,
+                diag_df: pd.DataFrame, proc_df: pd.DataFrame,
+                tests_df: pd.DataFrame) -> List[Subject]:
         """
         Convert DataFrame representation of patients EHR to list of Patient
         representation List[Patient].
 
-        The tabular layout of the static_df should have the following columns:
-            person_id: same.
-            birth_year: the year of birth of the patient
-            ethnic_code: values that represent certain ethnic groups.
-            gender:.
+        The tabular layout of static_df should have the following columns:
+            SUBJECT_ID: patient id, linked to the Subject.subject_id.
+            DOB: date of birth, linked to Subject.date_of_birth.
+            ETHNIC_GROUP: values that represent certain ethnic groups.
+            GENDER: 'M' or 'F'.
 
-        The tablular layout of 'ehr_diag_df' and 'ehr_proc_df' should have the following columns:
-            person_id: which corresponds to the Patient.person_id attribute.
-            date: which corresponds to the visit_date.
-            code: the ICD9 code.
+        The tabular layout of adm_df:
+            SUBJECT_ID: same as above.
+            HADM_ID: admission id, used to link with diagnosis and procedure codes in diag_df and proc_df, respectively.
+            ADMITTIME: start of admission date.
+            DISCHTIME: end of admission date.
 
-        The tabular layout of 'ehr_lab_df' should have the following columns:
-            person_id: which corresponds to the Patient.person_id attribute.
-            date: which corresponds to the visit_date.
-            test_id: a unique identifier for the test type.
-            unit: the physical unit used in case the
-                concept corresponds to a numerical value.
-            value: the numerical value of the lab test.
+        The tablular layout of 'diag_df' and 'proc_df' should have the following columns:
+            SUBJECT_ID: same as above.
+            HADM_ID: admission id, used to link with admissions in adm_df
+            ICD9_CODE: an ICD9 code recorded for this SUBJECT_ID patient during HADM_ID admission.
+
+        The tabular layout of 'tests_df' should have the following columns:
+            SUBJECT_ID: same as above.
+            ITEMID: the test type, linked to Test.item_id.
+            DATE: test date (e.g. fluid extraction date).
+            VALUE: the numerical value of the lab test.
         """
-        assert all([
-            col in static_df.columns
-            for col in ['person_id', 'birth_year', 'ethnic_code', 'gender']
+        assert set(static_df.columns) == set([
+            'SUBJECT_ID', 'DOB', 'ETHNIC_GROUP', 'GENDER'
         ]), "Columns provided for static_df doesn't match the expected"
 
-        assert (static_df.person_id.is_unique
-                ), "person_id column should be unique in static_df"
+        # TODO: Add remaining tests.
 
         ehr = {}
 
         # Static features
         for row in static_df.itertuples():
-            demographics = {
-                'ethnic_code': row.ethnic_code,
-                'gender': row.gender
+            ehr[row.SUBJECT_ID] = {
+                'subject_id': row.SUBJECT_ID,
+                'admissions': {},
+                'tests': [],
+                'gender': row.GENDER,
+                'ethnic_group': row.ETHNIC_GROUP,
+                'date_of_birth': row.DOB
             }
-            ehr[row.person_id] = Patient(person_id=row.person_id,
-                                         days=defaultdict(Day),
-                                         static_features=demographics,
-                                         birth_year=cls.pydate(row.birth_year))
+
+        # Admissions
+        for subject_id, subject_admissions_df in adm_df.groupby('SUBJECT_ID'):
+            for adm_row in subject_admissions_df.itertuples():
+                ehr[subject_id]['admissions'][adm_row.HADM_ID] = {
+                    'admission_id': adm_row.HADM_ID,
+                    'admission_dates': (adm_row.ADMITTIME, adm_row.DISCHTIME),
+                    'icd9_diag_codes': set(),
+                    'icd9_proc_codes': set()
+                }
 
         # Diag concepts
-        for person_id, diag_df in ehr_diag_df.groupby('person_id'):
-            for dt, day_df in diag_df.groupby('date'):
-                ehr[person_id].days[dt].date = dt
-                codes = set(day_df.code.tolist())
-                ehr[person_id].days[dt].icd9_diag_codes = codes
+        for subject_id, subject_diag_df in diag_df.groupby('SUBJECT_ID'):
+            for adm_id, codes_df in subject_diag_df.groupby('HADM_ID'):
+                ehr[subject_id]['admissions'][adm_id]['icd9_diag_codes'] = set(
+                    codes_df.ICD9_CODE)
 
         # Proc concepts
-        for person_id, proc_df in ehr_proc_df.groupby('person_id'):
-            for dt, day_df in proc_df.groupby('date'):
-                ehr[person_id].days[dt].date = dt
-                codes = set(day_df.code.tolist())
-                ehr[person_id].days[dt].icd9_proc_codes = codes
+        for subject_id, subject_proc_df in proc_df.groupby('SUBJECT_ID'):
+            for adm_id, codes_df in subject_proc_df.groupby('HADM_ID'):
+                ehr[subject_id]['admissions'][adm_id]['icd9_proc_codes'] = set(
+                    codes_df.ICD9_CODE)
+
+        for subject_id in ehr.keys():
+            ehr[subject_id]['admissions'] = list(
+                map(lambda args: HospitalAdmission(**args),
+                    ehr[subject_id]['admissions'].values()))
 
         # Lab tests
-        for person_id, lab_df in ehr_lab_df.groupby('person_id'):
-            for dt, day_df in lab_df.groupby('date'):
-                assert day_df.test_id.is_unique, "No duplicate test_id are expected in ai single day for a patient"
-                ehr[person_id].days[dt].date = dt
-                lab_tests = map(LabTest, day_df.test_id, day_df.unit,
-                                day_df.value)
-                ehr[person_id].days[dt].lab_tests = dict(
-                    zip(day_df.test_id, lab_tests))
+        for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
+            tests = []
+            for tests_date, date_df in subject_tests_df.groupby('DATE'):
+                for test_row in date_df.itertuples():
+                    tests.append(
+                        Test(item_id=test_row.ITEMID,
+                             date=tests_date,
+                             value=test_row.VALUE))
+            ehr[subject_id]['tests'] = tests
 
-        return list(ehr.values())
+        return list(map(lambda args: Subject(**args), ehr.values()))
 
     @classmethod
     def to_df(
-            cls,
-            patients_list: List[Patient]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        cls, patients_list: List[Subject]
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame,
+               pd.DataFrame]:
         """
-        Convert List[Patient] representation of patients EHR to DataFrame
+        Convert List[Subject] representation of patients EHR to DataFrame
         representation.
 
         Returns:
             static_df: DataFrame for the demographic info for patients, see 'to_list' for documentation of table columns.
+            adm_df: DataFrame for hospital admissions info of patients, see 'to_list' for documentation of table columns.
             diag_df: DataFrame for diagnoses, see 'to_list' for documentation of table columns.
             proc_df: DataFrame for procedures, see 'to_list' for documentation of table columns.
-            lab_df: DataFrame for lab tests, see 'to_list' for documentation of table columns.
+            tests_df: DataFrame for tests, see 'to_list' for documentation of table columns.
         """
-        diag_tuples = []
-        proc_tuples = []
-        lab_tuples = []
-        static_tuples = []
+        diag_t = []
+        proc_t = []
+        tests_t = []
+        static_t = []
+        adm_t = []
         for p in patients_list:
-            for dt, day in sorted(p.days.items()):
-                str_date = cls.strdate(dt)
-                for c in day.icd9_diag_codes:
-                    diag_tuples.append((p.person_id, str_date, c))
-                for c in day.icd9_proc_codes:
-                    proc_tuples.append((p.person_id, str_date, c))
-                for t in day.lab_tests.items():
-                    lab_tuples.append(
-                        (p.person_id, str_date, t.test_id, t.unit, t.value))
+            static_t.append(
+                (p.subject_id, p.date_of_birth, p.ethnic_group, p.gender))
 
-            static_tuples.append((p.person_id, cls.strdate(p.birth_year),
-                                  p.static_features['ethnic_code'],
-                                  p.static_features['gender']))
+            for adm in p.admissions:
+                adm_t.append((p.subject_id, adm.admission_id,
+                              adm.admission_dates[0], adm.admission_dates[1]))
+                for diag_code in adm.icd9_diag_codes:
+                    diag_t.append((p.subject_id, adm.admission_id, diag_code))
+                for proc_code in adm.icd9_proc_codes:
+                    diag_t.append((p.subject_id, adm.admission_id, proc_code))
 
-        diag_df = pd.DataFrame(diag_tuples,
-                               columns=['person_id', 'date', 'code'])
-        proc_df = pd.DataFrame(proc_tuples,
-                               columns=['person_id', 'date', 'code'])
-        lab_df = pd.DataFrame(
-            lab_tuples,
-            columns=['person_id', 'date', 'test_id', 'unit', 'value'])
+            for test in p.tests:
+                tests_t.append(
+                    (p.subject_id, test.item_id, test.date, test.value))
+
         static_df = pd.DataFrame(
-            static_tuples,
-            columns=['person_id', 'birth_year', 'ethnic_code', 'gender'])
-        return static_df, diag_df, proc_df, lab_df
+            static_t, columns=['SUBJECT_ID', 'DOB', 'ETHNIC_GROUP', 'GENDER'])
+        adm_df = pd.DataFrame(
+            adm_t, columns=['SUBJECT_ID', 'HADM_ID', 'ADMITTIME', 'DISCHTIME'])
+        diag_df = pd.DataFrame(diag_t,
+                               columns=['SUBJECT_ID', 'HADM_ID', 'ICD9_CODE'])
+        proc_df = pd.DataFrame(proc_t,
+                               columns=['SUBJECT_ID', 'HADM_ID', 'ICD9_CODE'])
+        tests_df = pd.DataFrame(
+            tests_t, columns=['SUBJECT_ID', 'ITEMID', 'DATE', 'VALUE'])
+        return static_df, adm_df, diag_df, proc_df, tests_df
 
-
-    ZScoreScaler = Dict[str, Dict[str, Tuple[float, float]]]
+    ZScoreScaler = Dict[str, Tuple[float, float]]
 
     @classmethod
     def make_zscore_concept_scaler(
-            cls, lab_df: pd.DataFrame) -> Patient.ZScoreScaler:
+            cls, test_df: pd.DataFrame) -> Subject.ZScoreScaler:
         """
         Z-score normalization for concepts with numerical values.
 
         Returns:
-            A dictionary object of {test_id: {unit: (mean, std)}}, which
+            A dictionary object of {test_id: (mean, std)}, which
             will be used to standardize values by (x-mean)/std for each
-            test_id for each unit.
+            test_id.
         """
-        numeric_df = lab_df[lab_df.value.notnull()].reset_index(drop=True)
-        zscore_scaler: Patient.ZScoreScaler = defaultdict(dict)
-        for i in set(numeric_df.test_id):
-            test_df = numeric_df[numeric_df.test_id == i]
-            for u in set(test_df.unit):
-                test_unit_df = test_df[test_df.unit == u]
-                vals = test_unit_df.value.to_numpy()
-                zscore_scaler[i][u] = (vals.mean(), vals.std())
+        assert isinstance(
+            test_df, pd.DataFrame
+        ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
+        assert test_df['VALUENUM'].notnull().all(
+        ), "All values are expected to be not NaN"
+
+        zscore_scaler: Patient.ZScoreScaler = {}
+        for test_id, df in test_df.groupby('ITEMID'):
+            vals = df['VALUENUM'].to_numpy()
+            zscore_scaler[test_id] = (vals.mean(), vals.std())
         return zscore_scaler
 
     @classmethod
     def apply_zscore_concept_scaler(
-            cls, lab_df: pd.DataFrame,
+            cls, test_df: pd.DataFrame,
             zscore_scaler: Patient.ZScoreScaler) -> pd.DataFrame:
         assert isinstance(
-            lab_df, pd.DataFrame
+            test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
-        lab_df = lab_df.copy(deep=True)
-        for test_id, units in zscore_scaler.items():
-            test_df = lab_df[lab_df.test_id == test_id]
-            for u, (mean, std) in units.items():
-                unit_df = test_df[test_df.unit == u]
-                vals = unit_df.value.to_numpy()
-                lab_df.loc[unit_df.index, 'value'] = (vals - mean) / std
-        return lab_df
+        new_test_df = test_df.copy(deep=True)
+        mean, std = zip(*list(map(zscore_scaler.get, test_df.ITEMID)))
+        mean = np.array(mean)
+        std = np.array(std)
+        vals = test_df['VALUENUM'].to_numpy()
+        new_test_df['VALUENUM'] = (vals - mean) / std
+        return new_test_df
 
-    IQRFilter = Dict[str, Dict[str, Tuple[float, float]]]
+    IQRFilter = Dict[str, Tuple[float, float]]
 
     @classmethod
-    def make_iqr_concept_filter(
-            cls, lab_df: pd.DataFrame) -> Patient.IQRFilter:
+    def make_iqr_concept_filter(cls,
+                                test_df: pd.DataFrame) -> Patient.IQRFilter:
         """
         Make outlier removal filter using Inter-quartile (IQR) method.
         https://machinelearningmastery.com/how-to-use-statistics-to-identify-outliers-in-data://machinelearningmastery.com/how-to-use-statistics-to-identify-outliers-in-data/
 
         Args:
-            patients_df: DataFrame representation of patients EHRs.
+            test_df: DataFrame representation of tests.
         Returns:
-            A dictionary object of {test_id: {unit: (min, max)}}, which
+            A dictionary object of {test_id: (min, max)}, which
             will be used to discard values outside (min, max) range for each
-            snomed_code for each unit.
+            ITEMID.
         """
         assert isinstance(
-            lab_df, pd.DataFrame
+            test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
-        numeric_df = lab_df[lab_df.value.notnull()]
-        iqr_filter: Patient.IQRFilter = defaultdict(dict)
-        for i in set(numeric_df.test_id):
-            test_df = numeric_df[numeric_df.test_id == i]
-            for u in set(test_df.unit):
-                test_unit_df = test_df[test_df.unit == u]
-                vals = test_unit_df.value.to_numpy()
-                upper_q = np.percentile(vals, 75)
-                lower_q = np.percentile(vals, 25)
-                iqr = (upper_q - lower_q) * 1.5
-                iqr_filter[i][u] = (lower_q - iqr, upper_q + iqr)
+        assert test_df['VALUENUM'].notnull().all(
+        ), "All values are expected to be not NaN"
+
+        iqr_filter: Patient.IQRFilter = {}
+        for test_id, df in test_df.groupby('ITEMID'):
+            vals = df['VALUENUM'].to_numpy()
+            upper_q = np.percentile(vals, 75)
+            lower_q = np.percentile(vals, 25)
+            iqr = (upper_q - lower_q) * 1.5
+            iqr_filter[test_id] = (lower_q - iqr, upper_q + iqr)
         return iqr_filter
 
     @classmethod
     def apply_iqr_concept_filter(
-            cls, lab_df: pd.DataFrame,
+            cls, test_df: pd.DataFrame,
             iqr_filter: Patient.IQRFilter) -> pd.DataFrame:
         """
         Apply outlier removal filter using Inter-quartile (IQR) method.
@@ -297,13 +311,11 @@ class Patient:
             iqr_filter: dictionary object of the filter, generated by make_iqr_concept_filter function.
         """
         assert isinstance(
-            lab_df, pd.DataFrame
+            test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
         drop = []
-        for i, units in iqr_filter.items():
-            test_df = lab_df[lab_df.test_id == i]
-            for u, (mn, mx) in units.items():
-                unit_df = test_df[test_df.unit == u]
-                outliers = unit_df[(unit_df.value > mx) | (unit_df.value < mn)]
-                drop.extend(outliers.index)
-        return lab_df.drop(drop)
+        for i, (mn, mx) in iqr_filter.items():
+            df = test_df[test_df['ITEMID'] == i]
+            outliers = df[(df['VALUENUM'] > mx) | (df['VALUENUM'] < mn)]
+            drop.extend(outliers.index)
+        return test_df.drop(drop)
