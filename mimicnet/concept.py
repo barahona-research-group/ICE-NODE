@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Set
 
 import numpy as np
 import pandas as pd
+import pandas.api.types as ptypes
 
 concept_logger = logging.getLogger("concept")
 
@@ -64,12 +65,12 @@ class Subject:
         lines.append(
             f'id: {self.subject_id}, gender: {self.gender}, ethnic_group: {self.ethnic_group}'
         )
-        for i, admission in enumerate(self.admissions):
-            interval = (admission.date[1] - admission.date[0]).days
-            age = self.age(admission.date[0])
+        for i, adm in enumerate(self.admissions):
+            interval = (adm.admission_dates[1] - adm.admission_dates[0]).days
+            age = self.age(adm.admission_dates[0])
             lines.append(f'Admission #{i}, days: {interval}, age: {age}')
-            lines.append(f'\tDiagnoses: {admission.icd9_diag_codes}')
-            lines.append(f'\tProcedures: {admission.icd9_proc_codes}')
+            lines.append(f'\tDiagnoses: {adm.icd9_diag_codes}')
+            lines.append(f'\tProcedures: {adm.icd9_proc_codes}')
 
         tests_by_date = defaultdict(list)
         for t in self.tests:
@@ -82,12 +83,16 @@ class Subject:
             lines.extend(tests)
         return '\n'.join(lines)
 
-    def age(self, date: date) -> int:
-        return (date - self.date_of_birth).days / 365.25
+    @classmethod
+    def days(cls, d1, d2):
+        return (d1.to_pydatetime() - d2.to_pydatetime()).days
 
     @classmethod
-    def mimic_to_list(cls):
-        pass
+    def years(cls, d1, d2):
+        return cls.days(d1, d2) / 365.25
+
+    def age(self, date: date) -> int:
+        return self.years(date, self.date_of_birth)
 
     @classmethod
     def to_list(cls, static_df: pd.DataFrame, adm_df: pd.DataFrame,
@@ -125,6 +130,12 @@ class Subject:
         ]), "Columns provided for static_df doesn't match the expected"
 
         # TODO: Add remaining tests.
+
+        assert all(
+            map(ptypes.is_datetime64_any_dtype, [
+                static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME'],
+                tests_df['DATE']
+            ])), "Columns of dates should be casted to datetime64 type first."
 
         ehr = {}
 
@@ -210,7 +221,7 @@ class Subject:
                 for diag_code in adm.icd9_diag_codes:
                     diag_t.append((p.subject_id, adm.admission_id, diag_code))
                 for proc_code in adm.icd9_proc_codes:
-                    diag_t.append((p.subject_id, adm.admission_id, proc_code))
+                    proc_t.append((p.subject_id, adm.admission_id, proc_code))
 
             for test in p.tests:
                 tests_t.append(
@@ -232,7 +243,9 @@ class Subject:
 
     @classmethod
     def make_zscore_concept_scaler(
-            cls, test_df: pd.DataFrame) -> Subject.ZScoreScaler:
+            cls,
+            test_df: pd.DataFrame,
+            value_col: Optional[str] = 'VALUENUM') -> Subject.ZScoreScaler:
         """
         Z-score normalization for concepts with numerical values.
 
@@ -244,19 +257,21 @@ class Subject:
         assert isinstance(
             test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
-        assert test_df['VALUENUM'].notnull().all(
+        assert test_df[value_col].notnull().all(
         ), "All values are expected to be not NaN"
 
-        zscore_scaler: Patient.ZScoreScaler = {}
+        zscore_scaler: Subject.ZScoreScaler = {}
         for test_id, df in test_df.groupby('ITEMID'):
-            vals = df['VALUENUM'].to_numpy()
+            vals = df[value_col].to_numpy()
             zscore_scaler[test_id] = (vals.mean(), vals.std())
         return zscore_scaler
 
     @classmethod
     def apply_zscore_concept_scaler(
-            cls, test_df: pd.DataFrame,
-            zscore_scaler: Patient.ZScoreScaler) -> pd.DataFrame:
+            cls,
+            test_df: pd.DataFrame,
+            zscore_scaler: Subject.ZScoreScaler,
+            value_col: Optional[str] = 'VALUENUM') -> pd.DataFrame:
         assert isinstance(
             test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
@@ -264,15 +279,17 @@ class Subject:
         mean, std = zip(*list(map(zscore_scaler.get, test_df.ITEMID)))
         mean = np.array(mean)
         std = np.array(std)
-        vals = test_df['VALUENUM'].to_numpy()
-        new_test_df['VALUENUM'] = (vals - mean) / std
+        vals = test_df[value_col].to_numpy()
+        new_test_df[value_col] = (vals - mean) / std
         return new_test_df
 
     IQRFilter = Dict[str, Tuple[float, float]]
 
     @classmethod
-    def make_iqr_concept_filter(cls,
-                                test_df: pd.DataFrame) -> Patient.IQRFilter:
+    def make_iqr_concept_filter(
+            cls,
+            test_df: pd.DataFrame,
+            value_col: Optional[str] = 'VALUENUM') -> Subject.IQRFilter:
         """
         Make outlier removal filter using Inter-quartile (IQR) method.
         https://machinelearningmastery.com/how-to-use-statistics-to-identify-outliers-in-data://machinelearningmastery.com/how-to-use-statistics-to-identify-outliers-in-data/
@@ -287,12 +304,12 @@ class Subject:
         assert isinstance(
             test_df, pd.DataFrame
         ), "Only pandas.DataFrame is accepted in this function. You may need to convert List[Patient] into dataframe format using Patient.to_df class method."
-        assert test_df['VALUENUM'].notnull().all(
+        assert test_df[value_col].notnull().all(
         ), "All values are expected to be not NaN"
 
-        iqr_filter: Patient.IQRFilter = {}
+        iqr_filter: Subject.IQRFilter = {}
         for test_id, df in test_df.groupby('ITEMID'):
-            vals = df['VALUENUM'].to_numpy()
+            vals = df[value_col].to_numpy()
             upper_q = np.percentile(vals, 75)
             lower_q = np.percentile(vals, 25)
             iqr = (upper_q - lower_q) * 1.5
@@ -301,8 +318,10 @@ class Subject:
 
     @classmethod
     def apply_iqr_concept_filter(
-            cls, test_df: pd.DataFrame,
-            iqr_filter: Patient.IQRFilter) -> pd.DataFrame:
+            cls,
+            test_df: pd.DataFrame,
+            iqr_filter: Subject.IQRFilter,
+            value_col: Optional[str] = 'VALUENUM') -> pd.DataFrame:
         """
         Apply outlier removal filter using Inter-quartile (IQR) method.
 
@@ -316,6 +335,65 @@ class Subject:
         drop = []
         for i, (mn, mx) in iqr_filter.items():
             df = test_df[test_df['ITEMID'] == i]
-            outliers = df[(df['VALUENUM'] > mx) | (df['VALUENUM'] < mn)]
+            outliers = df[(df[value_col] > mx) | (df[value_col] < mn)]
             drop.extend(outliers.index)
         return test_df.drop(drop)
+
+
+class SubjectPoint:
+    def __init__(self, subject_id: int, days_ahead: int, age: float,
+                 icd9_diag_codes: Set[str], icd9_proc_codes: Set[set],
+                 tests: List[Test]):
+        self.subject_id = subject_id
+        self.days_ahead = days_ahead
+        self.age = age
+        self.icd9_diag_codes = icd9_diag_codes
+        self.icd9_proc_codes = icd9_proc_codes
+        self.tests = tests
+
+    @classmethod
+    def subject_to_points(cls, subject: Subject) -> Dict[int, SubjectPoint]:
+        def _first_day_date(subject):
+            first_admission_date = subject.admissions[0].admission_dates[0]
+            first_test_date = subject.tests[0].date
+            if Subject.days(first_test_date, first_admission_date) > 0:
+                return first_admission_date
+            else:
+                return first_test_date
+
+        first_day_date = _first_day_date(subject)
+
+        points = {}
+        for adm in subject.admissions:
+            for i, adm_date in enumerate(pd.date_range(*adm.admission_dates)):
+                days_ahead = Subject.days(adm_date, first_day_date)
+                age = subject.age(adm_date)
+
+                # Strong assumption: diagnosis only for first day in the
+                # admission interval.
+                if i == 0:
+                    icd9_diag_codes = adm.icd9_diag_codes
+                else:
+                    icd9_diag_codes = set()
+
+                points[days_ahead] = cls(subject_id=subject.subject_id,
+                                         days_ahead=days_ahead,
+                                         age=age,
+                                         icd9_diag_codes=icd9_diag_codes,
+                                         icd9_proc_codes=adm.icd9_proc_codes,
+                                         tests=[])
+
+        for test in subject.tests:
+            days_ahead = Subject.days(test.date, first_day_date)
+            if days_ahead in points:
+                points[days_ahead].tests.append(test)
+            else:
+                age = subject.age(test.date)
+                points[days_ahead] = cls(subject_id=subject.subject_id,
+                                         days_ahead=days_ahead,
+                                         age=age,
+                                         icd9_diag_codes=set(),
+                                         icd9_proc_codes=set(),
+                                         tests=[test])
+
+        return list(sorted(points.values(), key=lambda p: p.days_ahead))

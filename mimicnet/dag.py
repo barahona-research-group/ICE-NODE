@@ -33,6 +33,9 @@ class CCSDAG:
         self.diag_icd_label = self.make_diag_icd_dict()
         self.proc_icd_label = self.make_proc_icd_dict()
 
+        self.diag_icd_codes = list(self.diag_icd_label.keys())
+        self.proc_icd_codes = list(self.proc_icd_label.keys())
+
         (self.diag_single_icd2ccs_dict,
          self.diag_single_ccs2icd_dict) = self.make_diag_icd2ccs_dict()
         (self.proc_signle_icd2ccs_dict,

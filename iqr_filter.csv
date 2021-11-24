@@ -1,19 +1,19 @@
 ,ITEMID,LABEL,CATEGORY,MIN,MAX
-0,26,AaDO2,,-262.90000915527344,767.5000152587891
+0,26,AaDO2,,-234.15001678466797,745.4500198364258
 1,50,Apnea Time Interval,,20.0,20.0
-2,51,Arterial BP [Systolic],,53.5,185.5
+2,51,Arterial BP [Systolic],,52.0,188.0
 3,52,Arterial BP Mean,,37.5,121.5
 4,58,Atrial Pacemaker [mA],,-13.75,24.25
-5,69,BSA,,1.1802948713302617,2.7134550809860225
-6,70,BSA - English,,0.8272576034069061,1.7847773730754852
-7,71,BSA - Metric,,0.9756025075912476,2.0704625844955444
+5,69,BSA,,1.18264140188694,2.7157910019159317
+6,70,BSA - English,,0.8334348797798157,1.784835159778595
+7,71,BSA - Metric,,0.9837199449539185,2.069480061531067
 8,87,Braden Score,,7.0,23.0
-9,89,C.O. (fick),,0.9917839169502258,10.270333588123322
-10,90,C.O.(thermodilution),,1.3400001525878906,9.5
+9,89,C.O. (fick),,1.0835201740264906,10.039679765701292
+10,90,C.O.(thermodilution),,1.4000000953674316,9.400000095367432
 11,113,CVP,,-3.5,24.5
-12,114,CaO2,,8.751699924468994,18.822100162506104
-13,116,Cardiac Index,,0.8716697990894318,4.674790173768997
-14,131,Compliance (40-60ml),,5.392096519470215,53.235304832458496
+12,114,CaO2,,8.739088296890255,18.83298707008362
+13,116,Cardiac Index,,0.8802350759506214,4.6505950689315805
+14,131,Compliance (40-60ml),,5.61873722076416,52.54023838043213
 15,141,Cuff Pressure-Airway,,12.5,32.5
 16,184,Eye Opening,,1.5,5.5
 17,190,FiO2 Set,,0.09999997913837433,0.9000000506639481
@@ -21,13 +21,13 @@
 19,211,Heart Rate,,36.0,132.0
 20,218,High Insp. Pressure,,20.0,60.0
 21,219,High Resp. Rate,,-27.5,72.5
-22,221,I:E Ratio,,-4.440892098500626e-16,6.4
+22,221,I:E Ratio,,-0.25000000000000044,6.550000000000001
 23,417,Inspired Gas Temp,,32.0,40.0
-24,421,LCW,,0.6590210199356079,10.521471619606018
-25,422,LCWI,,0.5818346738815308,5.1097153425216675
-26,430,LVSW,,4.712400436401367,126.29640007019043
-27,431,LVSWI,,4.99530029296875,61.708099365234375
-28,434,Low Exhaled Min Vol,,1.9999999999999996,6.800000000000001
+24,421,LCW,,0.6383903026580846,10.541350126266476
+25,422,LCWI,,0.574989914894104,5.10955011844635
+26,430,LVSW,,4.52880096435549,126.27599334716795
+27,431,LVSWI,,5.107398986816406,61.390602111816406
+28,434,Low Exhaled Min Vol,,2.5,6.5
 29,436,Low Insp. Pressure,,10.0,10.0
 30,439,MDI #1 [Puff],,6.0,6.0
 31,440,MDI #2 [Puff],,6.0,6.0
@@ -38,19 +38,19 @@
 36,456,NBP Mean,,35.66680908203125,118.33319091796875
 37,470,O2 Flow (lpm),,-2.5,9.5
 38,471,O2 Flow (lpm) #2,,-7.5,20.5
-39,472,O2AV,,156.5625,1307.0625
-40,473,O2AVI,,103.8464813232421,626.9225311279298
-41,490,PAO2,,-165.8500442504883,956.950065612793
+39,472,O2AV,,148.4999771118164,1319.6999893188477
+40,473,O2AVI,,102.12748718261727,629.7875213623046
+41,490,PAO2,,-168.3500442504883,958.450065612793
 42,491,PAP Mean,,7.0,55.0
 43,492,PAP [Systolic],,8.5,68.5
-44,493,PCA 1 Hr Limit (mg),,-12.000000000000002,23.200000000000003
+44,493,PCA 1 Hr Limit (mg),,-5.999999999999999,13.2
 45,497,Patient controlled analgesia (PCA) [Inject],,-5.0,11.0
 46,498,PCA Lockout (Min),,6.0,6.0
 47,500,PCA Total Dose,,-6.299999999999999,11.78
 48,504,PCWP,,-0.5,35.5
-49,506,PEEP Set,,2.0,10.0
-50,512,PVR,,-96.51926040649406,519.7107505798339
-51,513,PVRI,,-195.0004730224612,978.5394439697268
+49,506,PEEP Set,,4.700000286102295,5.499999523162842
+50,512,PVR,,-101.76203918457031,528.7500457763672
+51,513,PVRI,,-201.7080307006836,984.8280410766602
 52,517,Pacer Rate,,30.0,110.0
 53,519,Pacer Wires Atrial,,2.0,2.0
 54,521,Pacer Wires Vent,,2.0,2.0
@@ -58,133 +58,133 @@
 56,535,Peak Insp. Pressure,,7.5,43.5
 57,543,Plateau Pressure,,6.5,34.5
 58,578,Pressure Support,,-2.5,17.5
-59,580,Previous Weight,,24.000003814697266,134.39999771118164
-60,581,Previous WeightF,,24.549995422363303,133.7500076293945
-61,588,RCW,,-0.2951198816299425,5.014319777488707
-62,589,RCWI,,-0.12501691281795502,2.5766381174325943
-63,595,RSBI (<200),,-32.55566787719729,155.55764389038086
-64,601,RVSW,,-5.008199214935292,61.876600742340074
-65,602,RVSWI,,-1.7624634504318184,31.195638775825497
+59,580,Previous Weight,,25.00000762939453,133.79999542236328
+60,581,Previous WeightF,,25.5,133.5
+61,588,RCW,,-0.27336031198501654,4.916400372982025
+62,589,RCWI,,-0.09216246008872986,2.495633512735367
+63,595,RSBI (<200),,-33.18687868118286,160.70272779464722
+64,601,RVSW,,-4.549199104309082,59.91479778289795
+65,602,RVSWI,,-1.5459494590759277,30.27284860610962
 66,614,Resp Rate (Spont),,-6.0,10.0
 67,615,Resp Rate (Total),,0.5,36.5
 68,618,Respiratory Rate,,3.0,35.0
 69,619,Respiratory Rate Set,,3.0,27.0
-70,625,SVI,,7.991998672485352,57.96720314025879
-71,626,SVR,,51.397491455077784,1902.2175598144534
-72,627,SVRI,,339.895263671875,3438.334716796875
+70,625,SVI,,8.186697959899892,57.369902610778816
+71,626,SVR,,59.6099853515625,1900.6500244140625
+72,627,SVRI,,340.59124755859375,3452.7811889648438
 73,631,Sensitivity-Vent,,2.0,2.0
 74,646,SpO2,,91.5,103.5
-75,651,Spon RR (Mech.),,2.0,42.0
-76,652,Spon. Vt (L) (Mech.),,-0.008750006556510925,0.7772500067949295
-77,662,Stroke Volume,,10.256296157836914,118.29070472717285
+75,651,Spon RR (Mech.),,4.5,40.5
+76,652,Spon. Vt (L) (Mech.),,-0.012499988079071045,0.7674999833106995
+77,662,Stroke Volume,,10.679824829101541,117.13642883300784
 78,664,Swan SVO2,,45.0,93.0
 79,676,Temperature C,,35.09999847412109,39.09999847412109
 80,677,Temperature C (calc),,34.91655158996579,38.694551467895536
 81,678,Temperature F,,94.85000610351555,101.64999389648442
 82,679,Temperature F (calc),,95.17999267578122,102.38000488281253
-83,682,Tidal Volume (Obser),,257.5,853.5
+83,682,Tidal Volume (Obser),,267.5,839.5
 84,683,Tidal Volume (Set),,350.0,750.0
-85,684,Tidal Volume (Spont),,60.5,864.5
-86,719,Ventricular Pacemaker [mA],,-7.0,17.0
+85,684,Tidal Volume (Spont),,62.5,858.5
+86,719,Ventricular Pacemaker [mA],,-8.5,19.5
 87,721,Ventilator No.,,-12.5,39.5
-88,723,Verbal Response,,-2.5,9.5
+88,723,Verbal Response,,-5.0,11.0
 89,733,Weight Change,,0.0,0.0
 90,742,calprevflg,,1.0,1.0
 91,762,Admit Wt,,26.149997711181683,129.7500038146972
-92,763,Daily Weight,,25.72499656677246,133.52499961853027
-93,768,ACT (102-142),Coags,76.5,224.5
+92,763,Daily Weight,,26.062499046325684,133.9625005722046
+93,768,ACT (102-142),Coags,76.375,227.375
 94,769,ALT,Enzymes,-109.5,230.5
-95,770,AST,Enzymes,-138.125,296.875
+95,770,AST,Enzymes,-136.25,293.75
 96,772,Albumin (>3.2),Chemistry,1.4000000000000004,4.6
 97,773,Alk. Phosphate,Enzymes,-41.5,242.5
-98,775,Amylase,Enzymes,-77.5,226.5
+98,775,Amylase,Enzymes,-77.0,227.0
 99,776,Arterial Base Excess,ABG,-10.5,9.5
 100,777,Arterial CO2(Calc),ABG,11.5,39.5
 101,778,Arterial PaCO2,ABG,19.5,63.5
-102,779,Arterial PaO2,ABG,-34.5,289.5
+102,779,Arterial PaO2,ABG,-31.5,284.5
 103,780,Arterial pH,ABG,7.180000000000001,7.579999999999999
 104,781,BUN (6-20),Chemistry,-23.0,73.0
-105,784,CPK,Enzymes,-478.0,962.0
+105,784,CPK,Enzymes,-493.0,987.0
 106,785,CPK/MB,Enzymes,-21.5,46.5
 107,786,Calcium (8.4-10.2),Chemistry,6.549999952316282,10.150000333786013
 108,787,Carbon Dioxide,Chemistry,12.0,36.0
 109,788,Chloride (100-112),Chemistry,89.0,121.0
-110,789,Cholesterol (<200),Chemistry,24.5,284.5
+110,789,Cholesterol (<200),Chemistry,23.75,281.75
 111,791,Creatinine (0-1.3),Chemistry,-0.8,3.2
 112,795,Differential-Bands,Hematology,-7.5,12.5
 113,796,Differential-Basos,Hematology,-0.44999999999999996,0.75
-114,797,Differential-Eos,Hematology,-1.9500000000000002,3.25
-115,798,Differential-Lymphs,Hematology,-9.649999999999999,29.949999999999996
-116,799,Differential-Monos,Hematology,-2.500000000000001,10.3
-117,800,Differential-Polys,Hematology,52.30000000000002,109.89999999999998
-118,802,Dilantin,Drug Level,-2.8499999999999996,23.15
-119,803,Direct Bili (0-0.3),Chemistry,-0.9000000000000001,2.3000000000000003
-120,806,Fibrinogen (150-400),Coags,-117.75,672.25
-121,807,Fingerstick Glucose,Chemistry,8.5,276.5
+114,797,Differential-Eos,Hematology,-2.0999999999999996,3.4999999999999996
+115,798,Differential-Lymphs,Hematology,-9.950000000000003,30.450000000000003
+116,799,Differential-Monos,Hematology,-2.2500000000000004,10.15
+117,800,Differential-Polys,Hematology,52.05,110.05
+118,802,Dilantin,Drug Level,-2.6000000000000014,23.0
+119,803,Direct Bili (0-0.3),Chemistry,-1.0499999999999998,2.55
+120,806,Fibrinogen (150-400),Coags,-122.0,686.0
+121,807,Fingerstick Glucose,Chemistry,11.5,271.5
 122,811,Glucose (70-105),Chemistry,22.0,238.0
 123,813,Hematocrit,Hematology,17.999998092651367,42.80000114440918
-124,814,Hemoglobin,Hematology,6.099998474121087,14.900001525878913
+124,814,Hemoglobin,Hematology,6.249999046325679,14.650000572204593
 125,815,INR (2-4 ref. range),Coags,0.3500000000000001,2.35
 126,816,Ionized Calcium,Chemistry,0.9150000000000003,1.3549999999999998
-127,817,LDH,Enzymes,-111.125,699.875
-128,818,Lactic Acid(0.5-2.0),Chemistry,-1.68125,6.12875
+127,817,LDH,Enzymes,-118.0,714.0
+128,818,Lactic Acid(0.5-2.0),Chemistry,-1.6500000000000001,5.95
 129,821,Magnesium (1.6-2.6),Chemistry,1.1999999999999997,2.8000000000000003
 130,822,Mixed Venous O2,Blood Gases,18.0,58.0
-131,823,Mixed Venous O2% Sat,Blood Gases,42.0,90.0
+131,823,Mixed Venous O2% Sat,Blood Gases,43.5,87.5
 132,824,PT(11-13.5),Coags,8.4,21.199999999999996
-133,825,PTT(22-35),Coags,1.9499999999999922,71.15
-134,827,Phosphorous(2.7-4.5),Chemistry,0.20000004768371582,6.599999666213989
-135,828,Platelets,Hematology,-63.0,449.0
+133,825,PTT(22-35),Coags,2.2499999999999964,70.65
+134,827,Phosphorous(2.7-4.5),Chemistry,0.4500004053115845,6.449999451637268
+135,828,Platelets,Hematology,-64.5,451.5
 136,829,Potassium (3.5-5.3),Chemistry,2.5000000000000004,5.699999999999999
-137,833,RBC,Hematology,1.974999904632569,4.9749999046325675
+137,833,RBC,Hematology,1.989999890327453,4.949999928474427
 138,834,SaO2,ABG's,93.0,101.0
-139,836,Serum Osmolality,Chemistry,253.625,350.625
+139,836,Serum Osmolality,Chemistry,252.5,352.5
 140,837,Sodium (135-148),Chemistry,128.5,148.5
-141,838,SvO2,Mixed Venous Gases,41.0,105.0
-142,848,Total Bili (0-1.5),Chemistry,-2.4499999999999997,5.1499999999999995
-143,849,Total Protein(6.5-8),Chemistry,2.9375,8.4375
-144,850,Triglyceride (0-200),Chemistry,-66.25,311.75
-145,851,Troponin,Enzymes,-11.537500000000001,20.5625
-146,853,Uric Acid (2.7-7.0),Chemistry,-2.112499999999998,15.587499999999999
-147,855,Vancomycin/Random,Drug Level,-4.450000000000001,36.75
-148,856,Vancomycin/Trough,Drug Level,-3.025000000000002,32.375
+141,838,SvO2,Mixed Venous Gases,40.25,106.25
+142,848,Total Bili (0-1.5),Chemistry,-2.3000000000000003,4.9
+143,849,Total Protein(6.5-8),Chemistry,2.8999999999999995,8.5
+144,850,Triglyceride (0-200),Chemistry,-61.875,309.125
+145,851,Troponin,Enzymes,-11.575000000000001,20.625
+146,853,Uric Acid (2.7-7.0),Chemistry,-2.4624999999999995,16.6375
+147,855,Vancomycin/Random,Drug Level,-4.900000000000002,37.5
+148,856,Vancomycin/Trough,Drug Level,-5.400000000000004,34.60000000000001
 149,857,Venous CO2(Calc),VBG'S,4.5,48.5
-150,858,Venous PvCO2,VBG's,13.625,78.625
+150,858,Venous PvCO2,VBG's,12.5,80.5
 151,859,Venous PvO2,Mixed Venous Gases,10.0,82.0
 152,860,Venous pH,VBG's,7.18500065803528,7.544999361038206
-153,861,"WBC (4-11,000)",Hematology,-2.3999999999999995,23.2
+153,861,"WBC (4-11,000)",Hematology,-2.249999999999999,22.95
 154,920,Admit Ht,,55.0,79.0
 155,1126,Art.pH,ABG,7.180000000000001,7.579999999999999
-156,1127,"WBC   (4-11,000)",Hematology,-2.3999999999999995,23.2
-157,1162,BUN,,-23.0,73.0
+156,1127,"WBC   (4-11,000)",Hematology,-2.249999999999999,22.95
+157,1162,BUN,,-24.5,75.5
 158,1286,PT,,7.949999999999999,21.95
-159,1390,DO2,,174.66253662109375,1303.5624389648438
-160,1391,DO2I,,120.90002822875977,649.6999855041504
-161,1397,RSBI (<100),,-33.60922336578369,156.20337581634521
-162,1401,zzO2AV,,174.66253662109375,1303.5624389648438
-163,1402,zzO2AVI,,115.73849105834961,621.8384971618652
-164,1521,Albumin,Chemistry,1.4000000000000004,4.6
+159,1390,DO2,,170.20001220703125,1306.2000122070312
+160,1391,DO2I,,121.46252822875977,648.7624855041504
+161,1397,RSBI (<100),,-33.63762283325195,161.22697067260742
+162,1401,zzO2AV,,170.20001220703125,1306.2000122070312
+163,1402,zzO2AVI,,114.20103454589844,622.7609710693359
+164,1521,Albumin,Chemistry,1.1500000000000001,4.75
 165,1522,Calcium,Chemistry,6.549999952316282,10.150000333786013
 166,1523,Chloride,Chemistry,89.0,121.0
-167,1524,Cholesterol,Chemistry,22.75,280.75
+167,1524,Cholesterol,Chemistry,23.875,274.875
 168,1525,Creatinine,Chemistry,-0.9500000000000002,3.45
-169,1527,Direct Bili,Chemistry,-3.4750000000000005,7.125000000000001
-170,1528,Fibrinogen,Coags,-127.0,681.0
+169,1527,Direct Bili,Chemistry,-3.5500000000000007,7.250000000000001
+170,1528,Fibrinogen,Coags,-136.0,704.0
 171,1529,Glucose,Chemistry,24.0,232.0
 172,1530,INR,Coags,0.3500000000000001,2.35
-173,1531,Lactic Acid,Chemistry,-1.8,6.2
+173,1531,Lactic Acid,Chemistry,-1.6500000000000001,5.95
 174,1532,Magnesium,Chemistry,1.1999999999999997,2.8000000000000003
-175,1533,PTT,Coags,2.7500000000000036,69.55
+175,1533,PTT,Coags,2.900000000000002,69.3
 176,1534,Phosphorous,Chemistry,0.20000004768371582,6.599999666213989
 177,1535,Potassium,Chemistry,2.5000000000000004,5.699999999999999
 178,1536,Sodium,Chemistry,127.0,151.0
-179,1538,Total Bili,Chemistry,-4.75,9.25
-180,1540,Triglyceride,Chemistry,-63.5,300.5
+179,1538,Total Bili,Chemistry,-4.449999999999999,8.75
+180,1540,Triglyceride,Chemistry,-70.0,314.0
 181,1542,WBC,Hematology,-2.6500000000000004,23.35
-182,1695,Atr Sens Thresh mV,,-0.5000000298023224,2.7000000178813934
+182,1695,Atr Sens Thresh mV,,-0.3499999940395355,2.4499999582767487
 183,1696,Atr Stim Thresh mA,,-5.0,19.0
 184,1697,Atrial Pacemaker Sense [mV],,-0.20000000000000007,1.4000000000000001
-185,1704,PA line cm Mark,,38.0,62.0
+185,1704,PA line cm Mark,,36.5,64.5
 186,1705,Vent Sens Thresh mV,,-4.0,12.0
 187,1707,Vent Stim Thresh mA,,-6.0,18.0
 188,5813,ABP Alarm [Low],,65.0,105.0
@@ -196,12 +196,12 @@
 194,5820,SpO2 Alarm [Low],,87.0,95.0
 195,6206,Tank A psi.,,750.0,2750.0
 196,6207,Tank B psi.,,750.0,2750.0
-197,6208,Ve High,,9.0,25.0
+197,6208,Ve High,,10.5,22.5
 198,7151,HOB Measurement,,27.0,35.0
 199,8368,Arterial BP [Diastolic],,27.0,91.0
-200,8371,Atrial Pacemaker [Sensitivity],,-16.75,29.25
+200,8371,Atrial Pacemaker [Sensitivity],,-18.25,31.75
 201,8441,NBP [Diastolic],,16.5,100.5
-202,8448,PAP [Diastolic],,3.0,35.0
+202,8448,PAP [Diastolic],,1.5,37.5
 203,8449,Patient controlled analgesia (PCA) [Attempt],,-9.5,18.5
 204,8484,Ventricular Pacemaker [Sensitivity],,-11.25,22.75
 205,8491,Atrial Pacemaker Sense [mA],,-9.5,34.5
@@ -209,19 +209,19 @@
 207,8548,CVP Alarm [High],,14.0,30.0
 208,8549,HR Alarm [High],,120.0,120.0
 209,8551,NBP Alarm [High],,160.0,160.0
-210,8552,PAP Alarm [High],,10.0,58.0
+210,8552,PAP Alarm [High],,2.5,70.5
 211,8553,Resp Alarm [High],,22.5,42.5
 212,8554,SpO2 Alarm [High],,100.0,100.0
-213,50801,Alveolar-arterial Gradient,Blood Gas,27.25,893.25
+213,50801,Alveolar-arterial Gradient,Blood Gas,32.5,892.5
 214,50802,Base Excess,Blood Gas,-12.0,12.0
 215,50803,"Calculated Bicarbonate, Whole Blood",Blood Gas,8.0,40.0
 216,50804,Calculated Total CO2,Blood Gas,14.0,38.0
 217,50805,Carboxyhemoglobin,Blood Gas,-0.5,3.5
 218,50806,"Chloride, Whole Blood",Blood Gas,88.0,120.0
-219,50808,Free Calcium,Blood Gas,0.8900000000000002,1.3699999999999997
+219,50808,Free Calcium,Blood Gas,0.9150000000000003,1.3549999999999998
 220,50809,Glucose,Blood Gas,21.5,249.5
-221,50810,"Hematocrit, Calculated",Blood Gas,15.0,47.0
-222,50811,Hemoglobin,Blood Gas,4.55,16.150000000000002
+221,50810,"Hematocrit, Calculated",Blood Gas,12.5,48.5
+222,50811,Hemoglobin,Blood Gas,4.300000000000001,16.3
 223,50813,Lactate,Blood Gas,-1.2,5.199999999999999
 224,50814,Methemoglobin,Blood Gas,-1.5,2.5
 225,50815,O2 Flow,Blood Gas,-7.0,17.0
@@ -230,115 +230,115 @@
 228,50818,pCO2,Blood Gas,18.0,66.0
 229,50819,PEEP,Blood Gas,0.5,12.5
 230,50820,pH,Blood Gas,7.180000000000001,7.579999999999999
-231,50821,pO2,Blood Gas,-67.5,328.5
+231,50821,pO2,Blood Gas,-64.5,323.5
 232,50822,"Potassium, Whole Blood",Blood Gas,2.4499999999999993,6.050000000000001
-233,50823,Required O2,Blood Gas,17.0,137.0
+233,50823,Required O2,Blood Gas,19.5,135.5
 234,50824,"Sodium, Whole Blood",Blood Gas,126.5,146.5
 235,50825,Temperature,Blood Gas,34.849999999999994,39.25
 236,50826,Tidal Volume,Blood Gas,225.0,825.0
 237,50831,pH,Blood Gas,7.175000000000001,7.695
 238,50849,"Total Protein, Ascites",Chemistry,-1.9000000000000001,5.300000000000001
 239,50852,% Hemoglobin A1c,Chemistry,2.8,10.8
-240,50861,Alanine Aminotransferase (ALT),Chemistry,-39.5,108.5
+240,50861,Alanine Aminotransferase (ALT),Chemistry,-41.0,111.0
 241,50862,Albumin,Chemistry,1.2499999999999998,5.65
 242,50863,Alkaline Phosphatase,Chemistry,-43.5,264.5
-243,50864,Alpha-Fetoprotein,Chemistry,-4.949999999999999,15.45
-244,50866,Ammonia,Chemistry,-53.0,171.0
+243,50864,Alpha-Fetoprotein,Chemistry,-5.199999999999999,15.599999999999998
+244,50866,Ammonia,Chemistry,-54.375,170.625
 245,50867,Amylase,Chemistry,-51.0,189.0
 246,50868,Anion Gap,Chemistry,6.0,22.0
-247,50878,Asparate Aminotransferase (AST),Chemistry,-40.5,123.5
+247,50878,Asparate Aminotransferase (AST),Chemistry,-42.0,126.0
 248,50882,Bicarbonate,Chemistry,14.0,38.0
 249,50883,"Bilirubin, Direct",Chemistry,-0.5499999999999998,1.4499999999999997
-250,50884,"Bilirubin, Indirect",Chemistry,-9.799999999999999,17.4
+250,50884,"Bilirubin, Indirect",Chemistry,-8.899999999999999,15.899999999999999
 251,50885,"Bilirubin, Total",Chemistry,-1.25,3.1500000000000004
-252,50889,C-Reactive Protein,Chemistry,-94.3125,173.1875
-253,50891,C4,Chemistry,-14.0,66.0
+252,50889,C-Reactive Protein,Chemistry,-98.10000000000001,179.5
+253,50891,C4,Chemistry,-13.375,65.625
 254,50893,"Calcium, Total",Chemistry,6.6,10.6
-255,50900,Carcinoembyronic Antigen (CEA),Chemistry,-21.0,41.4
+255,50900,Carcinoembyronic Antigen (CEA),Chemistry,-21.125,41.875
 256,50902,Chloride,Chemistry,88.5,116.5
 257,50903,Cholesterol Ratio (Total/HDL),Chemistry,0.3000000000000007,6.699999999999999
 258,50904,"Cholesterol, HDL",Chemistry,5.0,93.0
 259,50905,"Cholesterol, LDL, Calculated",Chemistry,-2.0,174.0
-260,50906,"Cholesterol, LDL, Measured",Chemistry,11.0,195.0
-261,50907,"Cholesterol, Total",Chemistry,44.5,288.5
-262,50908,CK-MB Index,Chemistry,-7.950000000000001,21.25
-263,50909,Cortisol,Chemistry,-14.550000000000008,63.45000000000001
-264,50910,Creatine Kinase (CK),Chemistry,-199.5,460.5
+260,50906,"Cholesterol, LDL, Measured",Chemistry,8.5,196.5
+261,50907,"Cholesterol, Total",Chemistry,46.0,286.0
+262,50908,CK-MB Index,Chemistry,-7.899999999999999,20.9
+263,50909,Cortisol,Chemistry,-14.825,63.77499999999999
+264,50910,Creatine Kinase (CK),Chemistry,-202.5,465.5
 265,50911,"Creatine Kinase, MB Isoenzyme",Chemistry,-7.5,20.5
 266,50912,Creatinine,Chemistry,-0.5499999999999998,3.05
 267,50917,Digoxin,Chemistry,-0.45000000000000007,2.35
-268,50924,Ferritin,Chemistry,-442.375,886.625
-269,50925,Folate,Chemistry,-0.6499999999999986,24.549999999999997
-270,50927,Gamma Glutamyltransferase,Chemistry,-274.75,567.25
-271,50929,Gentamicin,Chemistry,-2.75,7.25
+268,50924,Ferritin,Chemistry,-439.5,884.5
+269,50925,Folate,Chemistry,-0.5874999999999968,24.512499999999996
+270,50927,Gamma Glutamyltransferase,Chemistry,-274.5,569.5
+271,50929,Gentamicin,Chemistry,-2.6874999999999996,7.4125
 272,50930,Globulin,Chemistry,1.3000000000000003,4.5
 273,50931,Glucose,Chemistry,14.0,230.0
-274,50935,Haptoglobin,Chemistry,-141.5,502.5
-275,50949,Immunoglobulin A,Chemistry,-296.75,681.25
-276,50950,Immunoglobulin G,Chemistry,-695.25,3014.75
-277,50951,Immunoglobulin M,Chemistry,-99.0,245.0
+274,50935,Haptoglobin,Chemistry,-135.0,497.0
+275,50949,Immunoglobulin A,Chemistry,-303.0,693.0
+276,50950,Immunoglobulin G,Chemistry,-674.0,2990.0
+277,50951,Immunoglobulin M,Chemistry,-98.75,247.25
 278,50952,Iron,Chemistry,-39.5,132.5
-279,50953,"Iron Binding Capacity, Total",Chemistry,24.625,503.625
-280,50954,Lactate Dehydrogenase (LD),Chemistry,-41.0,567.0
+279,50953,"Iron Binding Capacity, Total",Chemistry,24.0,504.0
+280,50954,Lactate Dehydrogenase (LD),Chemistry,-39.75,566.25
 281,50956,Lipase,Chemistry,-47.5,132.5
 282,50960,Magnesium,Chemistry,1.1999999999999997,2.8000000000000003
-283,50963,NTproBNP,Chemistry,-12657.5,24090.5
-284,50964,"Osmolality, Measured",Chemistry,247.5,347.5
-285,50965,Parathyroid Hormone,Chemistry,-244.5,567.5
-286,50967,Phenytoin,Chemistry,-4.549999999999999,24.65
-287,50970,Phosphate,Chemistry,0.600000000000001,6.199999999999999
+283,50963,NTproBNP,Chemistry,-12448.5,23715.5
+284,50964,"Osmolality, Measured",Chemistry,245.625,348.625
+285,50965,Parathyroid Hormone,Chemistry,-241.375,559.625
+286,50967,Phenytoin,Chemistry,-4.399999999999999,24.4
+287,50970,Phosphate,Chemistry,0.8500000000000001,6.049999999999999
 288,50971,Potassium,Chemistry,2.7499999999999996,5.550000000000001
-289,50974,Prostate Specific Antigen,Chemistry,-4.8500000000000005,9.950000000000001
-290,50976,"Protein, Total",Chemistry,4.550000000000001,8.95
+289,50974,Prostate Specific Antigen,Chemistry,-4.7749999999999995,9.825
+290,50976,"Protein, Total",Chemistry,4.4,9.200000000000001
 291,50983,Sodium,Chemistry,128.5,148.5
 292,50993,Thyroid Stimulating Hormone,Chemistry,-2.65,7.35
 293,50994,Thyroxine (T4),Chemistry,1.1000000000000005,12.299999999999999
 294,50995,"Thyroxine (T4), Free",Chemistry,0.40000000000000013,1.9999999999999998
-295,50998,Transferrin,Chemistry,19.625,386.625
-296,51000,Triglycerides,Chemistry,-63.5,332.5
-297,51001,Triiodothyronine (T3),Chemistry,-5.5,166.5
-298,51002,Troponin I,Chemistry,-11.612499999999997,21.487499999999997
+295,50998,Transferrin,Chemistry,19.0,387.0
+296,51000,Triglycerides,Chemistry,-62.0,330.0
+297,51001,Triiodothyronine (T3),Chemistry,-0.625,158.375
+298,51002,Troponin I,Chemistry,-12.099999999999998,22.299999999999997
 299,51003,Troponin T,Chemistry,-0.38000000000000006,0.74
 300,51006,Urea Nitrogen,Chemistry,-17.5,66.5
-301,51007,Uric Acid,Chemistry,-0.8999999999999995,13.5
-302,51009,Vancomycin,Chemistry,-2.3499999999999996,36.449999999999996
-303,51010,Vitamin B12,Chemistry,-297.5,1638.5
+301,51007,Uric Acid,Chemistry,-1.0124999999999984,13.687499999999996
+302,51009,Vancomycin,Chemistry,-2.2874999999999996,36.412499999999994
+303,51010,Vitamin B12,Chemistry,-303.5,1636.5
 304,51014,"Glucose, CSF",Chemistry,15.5,139.5
-305,51018,"Total Protein, CSF",Chemistry,-27.625,131.375
-306,51053,"Glucose, Pleural",Chemistry,25.375,202.375
-307,51054,"Lactate Dehydrogenase, Pleural",Chemistry,-273.125,733.875
-308,51059,"Total Protein, Pleural",Chemistry,-0.34999999999999964,6.449999999999999
-309,51069,"Albumin, Urine",Chemistry,-23.949999999999996,42.849999999999994
-310,51070,"Albumin/Creatinine, Urine",Chemistry,-302.9,540.3
+305,51018,"Total Protein, CSF",Chemistry,-29.5,134.5
+306,51053,"Glucose, Pleural",Chemistry,26.0,202.0
+307,51054,"Lactate Dehydrogenase, Pleural",Chemistry,-271.75,730.25
+308,51059,"Total Protein, Pleural",Chemistry,-0.1999999999999993,6.199999999999999
+309,51069,"Albumin, Urine",Chemistry,-24.174999999999997,43.224999999999994
+310,51070,"Albumin/Creatinine, Urine",Chemistry,-305.5125,545.7875
 311,51078,"Chloride, Urine",Chemistry,-67.5,176.5
-312,51082,"Creatinine, Urine",Chemistry,-60.5,223.5
+312,51082,"Creatinine, Urine",Chemistry,-59.0,221.0
 313,51087,Length of Urine Collection,Chemistry,24.0,24.0
-314,51093,"Osmolality, Urine",Chemistry,47.5,763.5
+314,51093,"Osmolality, Urine",Chemistry,47.875,762.875
 315,51094,pH,Chemistry,3.5,7.5
 316,51097,"Potassium, Urine",Chemistry,-21.5,94.5
-317,51099,Protein/Creatinine Ratio,Chemistry,-2.3499999999999996,4.449999999999999
+317,51099,Protein/Creatinine Ratio,Chemistry,-2.2,4.2
 318,51100,"Sodium, Urine",Chemistry,-54.0,162.0
 319,51102,"Total Protein, Urine",Chemistry,-132.0,268.0
-320,51104,"Urea Nitrogen, Urine",Chemistry,-246.75,1179.25
-321,51108,Urine Volume,Chemistry,-800.0,4250.0
-322,51116,Lymphocytes,Hematology,-35.875,81.125
-323,51117,Macrophage,Hematology,-44.5,103.5
+320,51104,"Urea Nitrogen, Urine",Chemistry,-248.875,1180.125
+321,51108,Urine Volume,Chemistry,-803.125,4271.875
+322,51116,Lymphocytes,Hematology,-35.5,80.5
+323,51117,Macrophage,Hematology,-47.0,105.0
 324,51120,Monocytes,Hematology,-49.5,82.5
-325,51125,Polys,Hematology,-46.375,90.625
-326,51127,"RBC, Ascites",Hematology,-3516.5,6287.5
-327,51128,"WBC, Ascites",Hematology,-678.25,1279.75
+325,51125,Polys,Hematology,-49.75,96.25
+326,51127,"RBC, Ascites",Hematology,-3557.5,6382.5
+327,51128,"WBC, Ascites",Hematology,-711.5,1334.5
 328,51143,Atypical Lymphocytes,Hematology,-1.5,2.5
 329,51144,Bands,Hematology,-4.5,7.5
 330,51146,Basophils,Hematology,-0.65,1.35
-331,51196,D-Dimer,Hematology,-2845.125,6607.875
-332,51200,Eosinophils,Hematology,-3.45,6.55
-333,51214,"Fibrinogen, Functional",Hematology,-166.0,762.0
-334,51218,Granulocyte Count,Hematology,-5230.0,12530.0
+331,51196,D-Dimer,Hematology,-2887.0,6681.0
+332,51200,Eosinophils,Hematology,-3.6000000000000005,6.800000000000001
+333,51214,"Fibrinogen, Functional",Hematology,-167.5,764.5
+334,51218,Granulocyte Count,Hematology,-5225.0,12495.0
 335,51221,Hematocrit,Hematology,17.550000000000004,45.949999999999996
 336,51222,Hemoglobin,Hematology,5.8999999999999995,15.5
 337,51237,INR(PT),Hematology,-0.09999999999999964,3.0999999999999996
 338,51244,Lymphocytes,Hematology,-13.999999999999996,46.8
-339,51248,MCH,Hematology,23.849999999999998,36.25
+339,51248,MCH,Hematology,24.0,36.0
 340,51249,MCHC,Hematology,29.4,37.4
 341,51250,MCV,Hematology,74.0,106.0
 342,51251,Metamyelocytes,Hematology,-1.5,2.5
@@ -346,42 +346,42 @@
 344,51255,Myelocytes,Hematology,0.0,0.0
 345,51256,Neutrophils,Hematology,35.25,113.25
 346,51257,Nucleated Red Cells,Hematology,-5.0,11.0
-347,51265,Platelet Count,Hematology,-59.5,504.5
+347,51265,Platelet Count,Hematology,-58.5,505.5
 348,51269,Promyelocytes,Hematology,-0.5,3.5
-349,51274,PT,Hematology,4.4,27.599999999999998
-350,51275,PTT,Hematology,-1.6499999999999986,76.35
-351,51277,RDW,Hematology,9.900000000000002,21.099999999999998
+349,51274,PT,Hematology,4.549999999999999,27.35
+350,51275,PTT,Hematology,-1.4999999999999964,76.1
+351,51277,RDW,Hematology,10.049999999999997,20.85
 352,51279,Red Blood Cells,Hematology,1.8799999999999994,5.32
-353,51283,"Reticulocyte Count, Automated",Hematology,-0.6999999999999997,4.8999999999999995
-354,51284,"Reticulocyte Count, Manual",Hematology,-3.912500000000001,11.587500000000002
+353,51283,"Reticulocyte Count, Automated",Hematology,-0.9499999999999995,5.049999999999999
+354,51284,"Reticulocyte Count, Manual",Hematology,-3.9499999999999997,11.649999999999999
 355,51288,Sedimentation Rate,Hematology,-59.5,144.5
 356,51301,White Blood Cells,Hematology,-1.799999999999999,19.0
-357,51351,Lymphs,Hematology,-61.0,171.0
-358,51355,Monocytes,Hematology,-32.5,59.5
-359,51360,Polys,Hematology,-37.5,62.5
-360,51362,"RBC, CSF",Hematology,-395.0,661.0
-361,51363,"WBC, CSF",Hematology,-8.0,16.0
+357,51351,Lymphs,Hematology,-62.25,171.75
+358,51355,Monocytes,Hematology,-31.375,57.625
+359,51360,Polys,Hematology,-39.0,65.0
+360,51362,"RBC, CSF",Hematology,-425.0,711.0
+361,51363,"WBC, CSF",Hematology,-9.125,17.875
 362,51427,Lymphocytes,Hematology,-43.0,77.0
-363,51428,Macrophage,Hematology,-36.0,76.0
+363,51428,Macrophage,Hematology,-37.5,76.5
 364,51431,Monos,Hematology,-19.5,32.5
-365,51436,Polys,Hematology,-92.125,184.875
-366,51438,"RBC, Other Fluid",Hematology,-7931.25,13218.75
+365,51436,Polys,Hematology,-91.5,184.5
+366,51438,"RBC, Other Fluid",Hematology,-9150.0,15250.0
 367,51439,"WBC, Other Fluid",Hematology,-3492.5,5831.5
-368,51446,Lymphocytes,Hematology,-60.0,132.0
+368,51446,Lymphocytes,Hematology,-61.5,134.5
 369,51447,Macrophages,Hematology,-25.0,55.0
 370,51448,Mesothelial Cells,Hematology,-7.0,17.0
 371,51450,Monos,Hematology,-19.5,32.5
-372,51455,Polys,Hematology,-69.0,131.0
-373,51457,"RBC, Pleural",Hematology,-37856.25,65413.75
-374,51458,"WBC, Pleural",Hematology,-1650.0,3310.0
+372,51455,Polys,Hematology,-67.875,129.125
+373,51457,"RBC, Pleural",Hematology,-37687.5,65212.5
+374,51458,"WBC, Pleural",Hematology,-1631.25,3318.75
 375,51476,Epithelial Cells,Hematology,-1.5,2.5
 376,51478,Glucose,Hematology,-1250.0,2350.0
-377,51479,Granular Casts,Hematology,-6.5,13.5
+377,51479,Granular Casts,Hematology,-6.125,14.875
 378,51482,Hyaline Casts,Hematology,-13.0,27.0
 379,51484,Ketone,Hematology,-37.5,102.5
 380,51491,pH,Hematology,2.75,8.75
 381,51492,Protein,Hematology,-75.0,205.0
-382,51493,RBC,Hematology,-12.0,20.0
+382,51493,RBC,Hematology,-13.5,22.5
 383,51498,Specific Gravity,Hematology,0.995,1.0350000000000001
 384,51501,Transitional Epithelial Cells,Hematology,-0.5,3.5
 385,51514,Urobilinogen,Hematology,-5.499999999999999,9.7
@@ -396,21 +396,21 @@
 394,220058,Arterial Blood Pressure Alarm - High,Alarms,110.0,190.0
 395,220059,Pulmonary Artery Pressure systolic,Hemodynamics,9.0,65.0
 396,220060,Pulmonary Artery Pressure diastolic,Hemodynamics,0.5,36.5
-397,220061,Pulmonary Artery Pressure mean,Hemodynamics,3.5,47.5
+397,220061,Pulmonary Artery Pressure mean,Hemodynamics,6.0,46.0
 398,220063,Pulmonary Artery Pressure Alarm - High,Alarms,22.5,42.5
 399,220066,Pulmonary Artery Pressure Alarm - Low,Alarms,-12.0,20.0
 400,220072,Central Venous Pressure Alarm - High,Alarms,14.0,30.0
 401,220073,Central Venous Pressure  Alarm - Low,Alarms,-3.0,5.0
 402,220074,Central Venous Pressure,Hemodynamics,-5.0,27.0
 403,220179,Non Invasive Blood Pressure systolic,Routine Vital Signs,58.0,178.0
-404,220180,Non Invasive Blood Pressure diastolic,Routine Vital Signs,22.0,102.0
+404,220180,Non Invasive Blood Pressure diastolic,Routine Vital Signs,23.5,99.5
 405,220181,Non Invasive Blood Pressure mean,Routine Vital Signs,35.0,115.0
-406,220210,Respiratory Rate,Respiratory,3.0,35.0
-407,220224,Arterial O2 pressure,Labs,-38.5,285.5
+406,220210,Respiratory Rate,Respiratory,5.5,33.5
+407,220224,Arterial O2 pressure,Labs,-38.0,282.0
 408,220227,Arterial O2 Saturation,Labs,90.5,102.5
 409,220228,Hemoglobin,Labs,5.549999999999999,14.750000000000002
 410,220235,Arterial CO2 Pressure,Labs,15.0,71.0
-411,220274,PH (Venous),Labs,7.119999999999999,7.6
+411,220274,PH (Venous),Labs,7.145,7.585000000000001
 412,220277,O2 saturation pulseoxymetry,Respiratory,89.0,105.0
 413,220292,Minute Volume Alarm - Low,Alarms,1.5,5.5
 414,220293,Minute Volume Alarm - High,Alarms,13.0,21.0
@@ -422,23 +422,23 @@
 420,220602,Chloride (serum),Labs,88.0,120.0
 421,220615,Creatinine,Labs,-0.8,3.2
 422,220621,Glucose (serum),Labs,15.5,243.5
-423,220632,LDH,Labs,-72.5,643.5
+423,220632,LDH,Labs,-71.0,641.0
 424,220635,Magnesium,Labs,1.1999999999999997,2.8000000000000003
-425,220644,ALT,Labs,-72.0,168.0
+425,220644,ALT,Labs,-73.5,170.5
 426,220645,Sodium (serum),Labs,127.0,151.0
 427,220734,PH (dipstick),Labs,2.75,8.75
 428,220739,GCS - Eye Opening,Neurological,1.5,5.5
-429,223679,TCO2 (calc) Venous,Labs,5.125,48.125
+429,223679,TCO2 (calc) Venous,Labs,6.625,47.625
 430,223751,Non-Invasive Blood Pressure Alarm - High,Alarms,160.0,160.0
 431,223752,Non-Invasive Blood Pressure Alarm - Low,Alarms,90.0,90.0
 432,223753,Riker-SAS Scale,Pain/Sedation,4.0,4.0
 433,223761,Temperature Fahrenheit,Routine Vital Signs,95.05,101.05
-434,223762,Temperature Celsius,Routine Vital Signs,34.55000000000001,38.94999999999999
+434,223762,Temperature Celsius,Routine Vital Signs,34.400000000000006,39.19999999999999
 435,223769,O2 Saturation Pulseoxymetry Alarm - High,Alarms,100.0,100.0
 436,223770,O2 Saturation Pulseoxymetry Alarm - Low,Alarms,87.0,95.0
 437,223773,PA Line cm Mark,Hemodynamics,40.5,60.5
 438,223791,Pain Level,Pain/Sedation,-7.5,12.5
-439,223830,PH (Arterial),Labs,7.155000000000001,7.594999999999999
+439,223830,PH (Arterial),Labs,7.180000000000001,7.579999999999999
 440,223834,O2 Flow,Respiratory,-2.5,9.5
 441,223835,Inspired O2 Fraction,Respiratory,25.0,65.0
 442,223848,Ventilator Type,Respiratory,1.0,1.0
@@ -448,7 +448,7 @@
 446,223874,Vti High,Respiratory,1.2499999999999998,1.6500000000000001
 447,223875,Fspn High,Respiratory,-27.5,72.5
 448,223876,Apnea Interval,Respiratory,20.0,20.0
-449,223900,GCS - Verbal Response,Neurological,2.5,6.5
+449,223900,GCS - Verbal Response,Neurological,0.0,8.0
 450,223901,GCS - Motor Response,Neurological,6.0,6.0
 451,223958,Temporary Venticular Sens Threshold mV,Cardiovascular (Pacer Data),-3.0,13.0
 452,223962,Temporary Pacemaker Wires Venticular,Cardiovascular (Pacer Data),2.0,2.0
@@ -466,25 +466,25 @@
 464,224409,Pain Level Response,Pain/Sedation,-3.0,5.0
 465,224417,Cuff Pressure,Respiratory,20.5,32.5
 466,224418,Cuff Volume (mL),Respiratory,-4.5,15.5
-467,224421,Spont Vt,Respiratory,12.5,784.5
-468,224422,Spont RR,Respiratory,4.0,36.0
+467,224421,Spont Vt,Respiratory,13.25,779.25
+468,224422,Spont RR,Respiratory,2.5,38.5
 469,224447,Family Meeting,Restraint/Support Systems,-1.5,2.5
 470,224562,Impaired Skin Length #1,Skin - Impairment,-3.75,10.25
 471,224563,Impaired Skin Depth #1,Skin - Impairment,-0.75,1.25
 472,224564,Impaired Skin Odor #1,Skin - Impairment,0.0,0.0
 473,224631,Pressure Ulcer Stage #1,Skin - Impairment,-3.0,5.0
-474,224639,Daily Weight,General,26.35,135.54999999999998
+474,224639,Daily Weight,General,26.67500000000001,136.075
 475,224641,Alarms On,Alarms,1.0,1.0
-476,224684,Tidal Volume (set),Respiratory,325.0,605.0
-477,224685,Tidal Volume (observed),Respiratory,85.5,753.5
+476,224684,Tidal Volume (set),Respiratory,350.0,590.0
+477,224685,Tidal Volume (observed),Respiratory,89.0,753.0
 478,224686,Tidal Volume (spontaneous),Respiratory,80.0,800.0
-479,224687,Minute Volume,Respiratory,2.450000000000001,13.249999999999998
+479,224687,Minute Volume,Respiratory,2.299999999999999,13.500000000000002
 480,224688,Respiratory Rate (Set),Respiratory,8.0,24.0
 481,224689,Respiratory Rate (spontaneous),Respiratory,-31.5,52.5
 482,224690,Respiratory Rate (Total),Respiratory,2.0,34.0
 483,224695,Peak Insp. Pressure,Respiratory,-5.5,38.5
 484,224696,Plateau Pressure,Respiratory,8.0,32.0
-485,224697,Mean Airway Pressure,Respiratory,-1.5,18.5
+485,224697,Mean Airway Pressure,Respiratory,1.0,17.0
 486,224700,Total PEEP Level,Respiratory,-2.5,17.5
 487,224701,PSV Level,Respiratory,-2.5,17.5
 488,224738,Inspiratory Time,Respiratory,0.5750000000000002,1.1749999999999998
@@ -498,7 +498,7 @@
 496,224924,Impaired Skin Odor #3,Skin - Impairment,0.0,0.0
 497,224925,Impaired Skin Odor #4,Skin - Impairment,0.0,0.0
 498,224951,Impaired Skin Width #2,Skin - Impairment,-2.0,6.0
-499,224952,Impaired Skin Width #3,Skin - Impairment,-3.25,6.75
+499,224952,Impaired Skin Width #3,Skin - Impairment,-2.0,6.0
 500,224965,Pressure Ulcer Stage #2,Skin - Impairment,-3.0,5.0
 501,224966,Pressure Ulcer Stage #3,Skin - Impairment,-3.0,5.0
 502,225067,Is the spokesperson the Health Care Proxy,Adm History/FHPA,-1.5,2.5
@@ -537,37 +537,37 @@
 535,225210,Arterial Line Zero/Calibrate,Access Lines - Invasive,1.0,1.0
 536,225280,Called Out,General,1.0,1.0
 537,225309,ART BP Systolic,Routine Vital Signs,62.5,162.5
-538,225310,ART BP Diastolic,Routine Vital Signs,21.0,101.0
+538,225310,ART BP Diastolic,Routine Vital Signs,22.5,98.5
 539,225312,ART BP mean,Routine Vital Signs,34.0,130.0
 540,225313,Bed Bath,Treatments,1.0,1.0
-541,225612,Alkaline Phosphate,Labs,-45.0,243.0
-542,225624,BUN,Labs,-20.5,71.5
+541,225612,Alkaline Phosphate,Labs,-46.5,245.5
+542,225624,BUN,Labs,-22.0,74.0
 543,225625,Calcium non-ionized,Labs,6.55,10.150000000000002
-544,225628,CK-MB fraction (%),Labs,-9.0,22.2
-545,225634,CK (CPK),Labs,-354.0,734.0
+544,225628,CK-MB fraction (%),Labs,-8.962499999999999,22.1375
+545,225634,CK (CPK),Labs,-356.5,735.5
 546,225637,Differential-Atyps,Labs,0.0,0.0
 547,225638,Differential-Bands,Labs,-7.5,12.5
-548,225639,Differential-Basos,Labs,-0.44999999999999996,0.75
+548,225639,Differential-Basos,Labs,-0.6000000000000001,1.0
 549,225640,Differential-Eos,Labs,-2.4499999999999997,4.35
-550,225641,Differential-Lymphs,Labs,-10.400000000000002,32.0
-551,225642,Differential-Monos,Labs,-2.1999999999999997,10.6
-552,225643,Differential-Neuts,Labs,51.68749999999997,111.38750000000002
-553,225651,Direct Bilirubin,Labs,-3.725000000000001,7.275000000000001
-554,225664,Glucose finger stick,Labs,-1.0,303.0
+550,225641,Differential-Lymphs,Labs,-10.287499999999998,31.812499999999996
+551,225642,Differential-Monos,Labs,-2.35,10.850000000000001
+552,225643,Differential-Neuts,Labs,51.5,111.5
+553,225651,Direct Bilirubin,Labs,-3.650000000000001,7.15
+554,225664,Glucose finger stick,Labs,0.5,300.5
 555,225667,Ionized Calcium,Labs,0.9050000000000002,1.3449999999999998
 556,225668,Lactic Acid,Labs,-1.4499999999999997,5.35
 557,225672,Lipase,Labs,-38.5,109.5
 558,225674,Mixed Venous O2% Sat,Labs,36.0,100.0
 559,225677,Phosphorous,Labs,0.350000000000001,6.349999999999999
-560,225684,Serum Osmolality,Labs,258.5,334.5
+560,225684,Serum Osmolality,Labs,256.0,336.0
 561,225690,Total Bilirubin,Labs,-1.5499999999999998,3.6499999999999995
-562,225693,Triglyceride,Labs,-72.0,320.0
+562,225693,Triglyceride,Labs,-72.875,322.125
 563,225698,TCO2 (calc) Arterial,Labs,10.0,42.0
 564,225722,Arterial Line Tip Cultured,Access Lines - Invasive,0.0,0.0
 565,225729,Multi Lumen Line Tip Cultured,Access Lines - Invasive,0.0,0.0
 566,225813,Baseline pain level,Adm History/FHPA,-7.5,12.5
-567,226062,Venous CO2 Pressure,Labs,4.5,88.5
-568,226063,Venous O2 Pressure,Labs,-14.5,125.5
+567,226062,Venous CO2 Pressure,Labs,7.0,87.0
+568,226063,Venous O2 Pressure,Labs,-13.75,124.25
 569,226107,Arterial Line placed in outside facility,Access Lines - Invasive,0.0,0.0
 570,226109,Cordis/Introducer placed in outside facility,Access Lines - Invasive,0.0,0.0
 571,226113,Multi Lumen placed in outside facility,Access Lines - Invasive,0.0,0.0
@@ -584,23 +584,23 @@
 582,226253,SpO2 Desat Limit,Alarms,85.0,85.0
 583,226381,Marital Status,ADT,-0.5,3.5
 584,226473,Blood Transfusion Consent,General,1.0,1.0
-585,226512,Admission Weight (Kg),General,27.5,127.5
-586,226531,Admission Weight (lbs.),General,59.89999999999999,281.5
+585,226512,Admission Weight (Kg),General,27.35000000000001,127.74999999999999
+586,226531,Admission Weight (lbs.),General,59.70000000000003,282.9
 587,226534,Sodium (whole blood),Labs,126.5,146.5
-588,226536,Chloride (whole blood),Labs,89.0,121.0
+588,226536,Chloride (whole blood),Labs,91.5,119.5
 589,226537,Glucose (whole blood),Labs,36.0,220.0
-590,226540,Hematocrit (whole blood - calc),Labs,12.0,44.0
+590,226540,Hematocrit (whole blood - calc),Labs,10.5,46.5
 591,226543,Religion,ADT,8.0,16.0
 592,226544,Language,ADT,1.0,1.0
 593,226707,Height,General,52.5,80.5
 594,226730,Height (cm),General,133.0,205.0
-595,226846,Feeding Weight,General,34.61250000000002,101.71249999999998
+595,226846,Feeding Weight,General,34.5,102.5
 596,226871,Expiratory Ratio,Respiratory,0.7500000000000004,5.949999999999999
 597,226873,Inspiratory Ratio,Respiratory,1.0,1.0
 598,226889,Legal Guardian,General,0.0,0.0
 599,227073,Anion gap,Labs,5.0,21.0
 600,227130,Trach Care,Respiratory,1.0,1.0
-601,227287,O2 Flow (additional cannula),Respiratory,0.0,8.0
+601,227287,O2 Flow (additional cannula),Respiratory,-1.5,10.5
 602,227292,Arterial Line Dressing Occlusive,Access Lines - Invasive,1.0,1.0
 603,227293,Multi Lumen Dressing Occlusive,Access Lines - Invasive,1.0,1.0
 604,227341,History of falling (within 3 mnths),Restraint/Support Systems,-37.5,62.5
@@ -617,24 +617,24 @@
 615,227367,18 Gauge Dressing Occlusive,Access Lines - Peripheral,1.0,1.0
 616,227368,20 Gauge Dressing Occlusive,Access Lines - Peripheral,1.0,1.0
 617,227369,22 Gauge Dressing Occlusive,Access Lines - Peripheral,1.0,1.0
-618,227429,Troponin-T,Labs,-0.35,0.61
+618,227429,Troponin-T,Labs,-0.33499999999999996,0.585
 619,227442,Potassium (serum),Labs,2.65,5.450000000000001
 620,227443,HCO3 (serum),Labs,13.0,37.0
 621,227445,CK-MB,Labs,-9.0,23.0
-622,227446,Brain Natiuretic Peptide (BNP),Labs,-13740.75,26657.25
-623,227454,Vancomycin (Random),Labs,-3.150000000000002,38.25
-624,227455,Vancomycin (Trough),Labs,-3.9374999999999982,36.9625
-625,227456,Albumin,Labs,1.4375000000000007,4.7375
-626,227457,Platelet Count,Labs,-58.5,457.5
-627,227463,Cortisol,Labs,-14.437499999999996,59.662499999999994
+622,227446,Brain Natiuretic Peptide (BNP),Labs,-14174.5,27397.5
+623,227454,Vancomycin (Random),Labs,-3.2499999999999982,38.55
+624,227455,Vancomycin (Trough),Labs,-3.549999999999999,36.849999999999994
+625,227456,Albumin,Labs,1.2500000000000002,4.85
+626,227457,Platelet Count,Labs,-60.0,460.0
+627,227463,Cortisol,Labs,-14.099999999999998,59.5
 628,227464,Potassium (whole blood),Labs,2.4499999999999993,6.050000000000001
-629,227465,Prothrombin time,Labs,5.800000000000001,25.8
-630,227466,PTT,Labs,1.1000000000000014,73.1
+629,227465,Prothrombin time,Labs,5.950000000000003,25.549999999999997
+630,227466,PTT,Labs,1.2500000000000036,72.85
 631,227467,INR,Labs,0.2000000000000003,2.5999999999999996
-632,227468,Fibrinogen,Labs,-142.875,702.125
+632,227468,Fibrinogen,Labs,-141.5,694.5
 633,227471,Specific Gravity (urine),Labs,0.995,1.0350000000000001
-634,227516,PO2 (Mixed Venous),Labs,5.875,80.875
-635,227537,ART Blood Pressure Alarm - High,Alarms,35.0,235.0
+634,227516,PO2 (Mixed Venous),Labs,8.0,80.0
+635,227537,ART Blood Pressure Alarm - High,Alarms,47.5,227.5
 636,227538,ART Blood Pressure Alarm - Low,Alarms,15.0,135.0
 637,227565,Ventilator Tank #1,Respiratory,0.0,4000.0
 638,227566,Ventilator Tank #2,Respiratory,0.0,4000.0
