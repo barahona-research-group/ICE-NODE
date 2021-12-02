@@ -23,14 +23,39 @@ class SubjectJAXInterface:
                  dag: CCSDAG):
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
-        self.dag = dag
+        self.dag: CCSDAG = dag
         self.static_features, self.static_idx = self.__static2vec()
         self.test_idx = dict(zip(test_id_set, range(len(test_id_set))))
-        self.diag_idx = dict(
-            zip(dag.diag_icd_codes, range(len(dag.diag_icd_codes))))
-        self.proc_idx = dict(
-            zip(dag.proc_icd_codes, range(len(dag.proc_icd_codes))))
+        self.diag_multi_ccs_idx = dict(
+            zip(dag.diag_multi_ccs_codes,
+                range(len(dag.diag_multi_ccs_codes))))
+        self.diag_single_ccs_idx = dict(
+            zip(dag.diag_single_ccs_codes,
+                range(len(dag.diag_single_ccs_codes))))
+
+        self.proc_multi_ccs_idx = dict(
+            zip(dag.proc_multi_ccs_codes,
+                range(len(dag.proc_multi_ccs_codes))))
+
+        self.diag_multi_ccs_ancestors_mat = self.__ccs_ancestors_mat(
+            self.diag_multi_ccs_idx)
+        self.proc_multi_ccs_ancestors_mat = self.__ccs_ancestors_mat(
+            self.proc_multi_ccs_idx)
+
         self.nth_points = self.__nth_points()
+        self.n_support = sorted(list(self.nth_points.keys()))
+
+    def __ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
+        ancestors_mat = []
+        for code, index in code2index.items():
+            ancestors_npvec = np.zeros(len(code2index), dtype=bool)
+            ancestors = [
+                a for a in self.dag.get_ccs_parents(code) if a in code2index
+            ]
+            for ancestor_j in map(code2index.get, ancestors):
+                ancestors_npvec[ancestor_j] = 1
+            ancestors_mat.append(jnp.array(ancestors_npvec))
+        return jnp.vstack(ancestors_mat)
 
     def __static2vec(self):
         genders = list(set(map(lambda s: s.gender, self.subjects.values())))
@@ -53,9 +78,6 @@ class SubjectJAXInterface:
 
     def __tests2vec(self,
                     tests: List[Test]) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        if len(tests) == 0:
-            return None
-
         n_cols = len(self.test_idx)
         vals = np.zeros(n_cols)
         mask = np.zeros(n_cols)
@@ -66,24 +88,35 @@ class SubjectJAXInterface:
 
         return jnp.array(vals), jnp.array(mask)
 
-    def __icd9_diag_to_vec(self, icd9_diag_codes):
-        if len(icd9_diag_codes) == 0:
+    def __diag_multi_ccs_to_vec(self, diag_multi_ccs_codes):
+        if len(diag_multi_ccs_codes) == 0:
             return None
 
-        n_cols = len(self.diag_idx)
+        n_cols = len(self.diag_multi_ccs_idx)
         mask = np.zeros(n_cols)
-        for c in icd9_diag_codes:
-            mask[self.diag_idx[c]] = 1
+        for c in diag_multi_ccs_codes:
+            mask[self.diag_multi_ccs_idx[c]] = 1
         return jnp.array(mask)
 
-    def __icd9_proc_to_vec(self, icd9_proc_codes):
-        if len(icd9_proc_codes) == 0:
+    def __diag_single_ccs_to_vec(self, diag_single_ccs_codes):
+        if len(diag_single_ccs_codes) == 0:
             return None
 
-        n_cols = len(self.proc_idx)
+        n_cols = len(self.diag_single_ccs_idx)
         mask = np.zeros(n_cols)
-        for c in icd9_proc_codes:
-            mask[self.proc_idx[c]] = 1
+        for c in diag_single_ccs_codes:
+            mask[self.diag_single_ccs_idx[c]] = 1
+
+        return jnp.array(mask)
+
+    def __proc_multi_ccs_to_vec(self, proc_multi_ccs_codes):
+        if len(proc_multi_ccs_codes) == 0:
+            return None
+
+        n_cols = len(self.proc_multi_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in proc_multi_ccs_codes:
+            mask[self.proc_multi_ccs_idx[c]] = 1
         return jnp.array(mask)
 
     def __nth_points(self):
@@ -96,15 +129,33 @@ class SubjectJAXInterface:
         return nth_points
 
     def __jaxify_subject_point(self, point):
+        diag_single_ccs_codes = set(
+            map(self.dag.diag_single_icd2ccs.get, point.icd9_diag_codes))
+
+        diag_multi_ccs_codes = set(
+            map(self.dag.diag_multi_icd2ccs.get, point.icd9_diag_codes))
+
+        proc_multi_ccs_codes = set(
+            map(self.dag.proc_multi_icd2ccs.get, point.icd9_proc_codes))
+
         return {
-            'age': point.age,
-            'days_ahead': point.days_ahead,
-            'icd9_diag_codes': self.__icd9_diag_to_vec(point.icd9_diag_codes),
-            'icd9_proc_codes': self.__icd9_proc_to_vec(point.icd9_proc_codes),
-            'tests': self.__tests2vec(point.tests)
+            'age':
+            point.age,
+            'days_ahead':
+            point.days_ahead,
+            'diag_multi_ccs_vec':
+            self.__diag_multi_ccs_to_vec(diag_multi_ccs_codes),
+            'diag_single_ccs_vec':
+            self.__diag_single_ccs_to_vec(diag_single_ccs_codes),
+            'proc_multi_ccs_vec':
+            self.__proc_multi_ccs_to_vec(proc_multi_ccs_codes),
+            'tests':
+            self.__tests2vec(point.tests)
         }
 
     def nth_points_batch(self, n: int, batch: List[int]):
+        if n not in self.nth_points:
+            return {}
         return {k: v for k, v in self.nth_points[n].items() if k in batch}
 
     def subject_static(self, subject_id):

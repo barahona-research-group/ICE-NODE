@@ -36,15 +36,19 @@ class CCSDAG:
         self.diag_icd_codes = list(self.diag_icd_label.keys())
         self.proc_icd_codes = list(self.proc_icd_label.keys())
 
-        (self.diag_single_icd2ccs_dict,
-         self.diag_single_ccs2icd_dict) = self.make_diag_icd2ccs_dict()
-        (self.proc_signle_icd2ccs_dict,
-         self.proc_single_ccs2icd_dict) = self.make_proc_icd2ccs_dict()
+        (self.diag_single_icd2ccs,
+         self.diag_single_ccs2icd) = self.make_diag_icd2ccs_dict()
+        (self.proc_signle_icd2ccs,
+         self.proc_single_ccs2icd) = self.make_proc_icd2ccs_dict()
 
         (self.diag_multi_ccs_pt2ch, self.diag_multi_icd2ccs,
          self.diag_multi_ccs2icd) = self.make_diag_multi_dictionaries()
         (self.proc_multi_ccs_pt2ch, self.proc_multi_icd2ccs,
          self.proc_multi_ccs2icd) = self.make_proc_multi_dictionaries()
+
+        self.diag_single_ccs_codes = list(self.diag_single_ccs2icd.keys())
+        self.diag_multi_ccs_codes = list(self.diag_multi_ccs2icd.keys())
+        self.proc_multi_ccs_codes = list(self.proc_multi_ccs2icd.keys())
 
     def make_diag_icd_dict(self):
         diag_ccs_label_list = self.diag_single_ccs_df[
@@ -181,6 +185,12 @@ class CCSDAG:
 
     def find_proc_icd_name(self, code):
         return self.proc_icd_label[code]
+
+    def get_diag_multi_ccs(self, icd9_diag_code):
+        return self.diag_multi_icd2ccs[icd9_diag_code]
+
+    def get_proc_multi_ccs(self, icd9_proc_code):
+        return self.proc_multi_icd2ccs[icd9_proc_code]
 
     # Get parents of CCS code
     def get_ccs_parents(self, ccs_code):

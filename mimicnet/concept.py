@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
 
+from .dag import CCSDAG
+
 concept_logger = logging.getLogger("concept")
+
 
 
 class Test:
@@ -41,6 +44,11 @@ class HospitalAdmission:
             lines.append(f'ICD9 Procedures: {" ".join(self.icd9_proc_codes)}')
         return '\n'.join(lines)
 
+    def get_ccs_diag_multi_codes(self, dag: CCSDAG) -> Set[str]:
+        return set(map(dag.get_diag_multi_ccs, self.icd9_diag_codes))
+
+    def get_ccs_proc_multi_codes(self, dag: CCSDAG) -> Set[str]:
+        return set(map(dag.get_proc_multi_ccs, self.icd9_proc_codes))
 
 class Subject:
     """
