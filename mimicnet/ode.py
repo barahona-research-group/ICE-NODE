@@ -624,8 +624,10 @@ def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         detection_rate_pre = codes_detections_df.pre_detected.mean()
         detection_rate_post = codes_detections_df.post_detected.mean()
-        rate['pre'][f'p{i}(n={len(codes)})'] = detection_rate_pre
-        rate['post'][f'p{i}(n={len(codes)})'] = detection_rate_post
+        C = len(codes)
+        N = len(codes_detections_df)
+        rate['pre'][f'P{i}(N={N} |C|={len(codes)})'] = detection_rate_pre
+        rate['post'][f'P{i}(N={N} |C|={len(codes)})'] = detection_rate_post
     return rate
 
 
