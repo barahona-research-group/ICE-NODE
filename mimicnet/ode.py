@@ -624,8 +624,8 @@ def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         detection_rate_pre = codes_detections_df.pre_detected.mean()
         detection_rate_post = codes_detections_df.post_detected.mean()
-        rate['pre'][f'p{i}'] = detection_rate_pre
-        rate['post'][f'p{i}'] = detection_rate_post
+        rate['pre'][f'p{i}(n={len(codes)})'] = detection_rate_pre
+        rate['post'][f'p{i}(n={len(codes)})'] = detection_rate_post
     return rate
 
 
@@ -1135,7 +1135,7 @@ class PatientGRUODEBayesInterface:
         odeint_weeks = 0.0
 
         for n in self.subject_interface.n_support[1:]:
-            iter_prefix = f'visit #{n}/{self.subject_interface.n_support[-1]}'
+            iter_prefix = f'point #{n}/{self.subject_interface.n_support[-1]}'
             iteration_text_callback(iter_prefix)
             points_n = nth_points_fn(n)
 
@@ -1370,7 +1370,7 @@ def train_ehr(
                     name: score.item()
                     for name, score in res['scores'].items()
                 }, 'points_count': res['points_count'],
-                'odeint_weeks_per_visit':
+                'odeint_weeks_per_point':
                 res['odeint_weeks'] / res['points_count'],
                 'nfe_per_point': nfe / res['points_count'],
                 'nfe_per_week': nfe / res['odeint_weeks'],
