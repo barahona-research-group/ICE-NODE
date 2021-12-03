@@ -457,7 +457,13 @@ class GRUBayes(hk.Module):
                  name: Optional[str] = None,
                  **init_kwargs):
         super().__init__(name=name)
-        self.__prep = hk.Linear(state_size)
+        self.__prep = hk.Sequential([
+            hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
+            lambda o: leaky_relu(o, negative_slope=2e-1),
+            hk.Linear(state_size, with_bias=True,
+                      name=f'{name}_prep2'), jnp.tanh
+        ])
+
         self.__gru_d = hk.GRU(state_size)
 
     def __call__(self, state: jnp.ndarray, error_numeric: jnp.ndarray,
@@ -466,7 +472,6 @@ class GRUBayes(hk.Module):
 
         error_numeric = error_numeric * numeric_mask
         gru_input = self.__prep(jnp.hstack((error_numeric, error_gram)))
-        gru_input = leaky_relu(gru_input, negative_slope=2e-1)
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
 
@@ -626,8 +631,8 @@ def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
         detection_rate_post = codes_detections_df.post_detected.mean()
         C = len(codes)
         N = len(codes_detections_df)
-        rate['pre'][f'P{i}(N={N} |C|={len(codes)})'] = detection_rate_pre
-        rate['post'][f'P{i}(N={N} |C|={len(codes)})'] = detection_rate_post
+        rate['pre'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_pre
+        rate['post'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_post
     return rate
 
 
@@ -1480,7 +1485,7 @@ def train_ehr(
 
         if step % eval_freq == 0:
             rng.shuffle(valid_ids)
-            valid_batch = valid_ids#[:val_batch_size]
+            valid_batch = valid_ids  #[:val_batch_size]
             params = get_params(opt_state)
             trn_res = loss_fn_detail(params, train_batch, update_batch_desc)
             val_res = loss_fn_detail(params, valid_batch, update_batch_desc)
@@ -1499,26 +1504,27 @@ def train_ehr(
                                  })
 
             detections_trn = code_detectability_by_percentiles(
-                codes_by_percentiles,
-                trn_res['diag_detectability_df'])
+                codes_by_percentiles, trn_res['diag_detectability_df'])
             detections_val = code_detectability_by_percentiles(
-                codes_by_percentiles,
-                val_res['diag_detectability_df'])
-            detections = pd.DataFrame(index=detections_trn['pre'].keys(),
-                                      data={
-                                          'Training(pre)':
-                                          detections_trn['pre'].values(),
-                                          'Training(post)':
-                                          detections_trn['post'].values(),
-                                          'Validation(pre)':
-                                          detections_val['pre'].values(),
-                                          'Validation(post)':
-                                          detections_val['post'].values(),
-                                      })
+                codes_by_percentiles, val_res['diag_detectability_df'])
+            detections_trn_df = pd.DataFrame(
+                index=detections_trn['pre'].keys(),
+                data={
+                    'Trn(pre)': detections_trn['pre'].values(),
+                    'Trn(post)': detections_trn['post'].values()
+                })
+
+            detections_val_df = pd.DataFrame(
+                index=detections_val['pre'].keys(),
+                data={
+                    'Val(pre)': detections_val['pre'].values(),
+                    'Val(post)': detections_val['post'].values()
+                })
 
             ode_logger.info('\n' + str(losses))
             ode_logger.info('\n' + str(stats))
-            ode_logger.info('\n' + str(detections))
+            ode_logger.info('\n' + str(detections_trn_df))
+            ode_logger.info('\n' + str(detections_val_df))
 
         if step % save_freq == 0 and step > 0:
             with open(f'{save_params_prefix}_step{step:03d}.pickle',
