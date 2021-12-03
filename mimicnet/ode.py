@@ -583,9 +583,9 @@ def code_detectability(top_k: int, true_diag: jnp.ndarray,
     detections = []
     for code_i in ground_truth:
         pre_detected, post_detected = 0, 0
-        if ground_truth in prejump_predictions:
+        if code_i in prejump_predictions:
             pre_detected = 1
-        if ground_truth in postjump_predictions:
+        if code_i in postjump_predictions:
             post_detected = 1
         detections.append((code_i, pre_detected, post_detected))
 
@@ -616,6 +616,17 @@ def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
                             ])
     else:
         return None
+
+
+def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
+    rate = {'pre': {}, 'post': {}}
+    for i, codes in enumerate(codes_by_percentiles):
+        codes_detections_df = detections_df[detections_df.code.isin(codes)]
+        detection_rate_pre = codes_detections_df.pre_detected.mean()
+        detection_rate_post = codes_detections_df.post_detected.mean()
+        rate['pre'][f'p{i}'] = detection_rate_pre
+        rate['post'][f'p{i}'] = detection_rate_post
+    return rate
 
 
 def wrap_module(module, *module_args, **module_kwargs):
@@ -1428,6 +1439,9 @@ def train_ehr(
     batch_size = min(batch_size, len(train_ids))
     val_batch_size = min(batch_size, len(valid_ids))
 
+    codes_by_percentiles = subject_interface.diag_single_ccs_by_percentiles(
+        20, train_ids)
+
     res_val = {}
     res_trn = {}
     if save_freq is None:
@@ -1464,7 +1478,7 @@ def train_ehr(
 
         if step % eval_freq == 0:
             rng.shuffle(valid_ids)
-            valid_batch = valid_ids[:val_batch_size]
+            valid_batch = valid_ids#[:val_batch_size]
             params = get_params(opt_state)
             trn_res = loss_fn_detail(params, train_batch, update_batch_desc)
             val_res = loss_fn_detail(params, valid_batch, update_batch_desc)
@@ -1482,8 +1496,27 @@ def train_ehr(
                                      'Valdation': val_res['stats'].values()
                                  })
 
+            detections_trn = code_detectability_by_percentiles(
+                codes_by_percentiles,
+                trn_res['diag_detectability_df'])
+            detections_val = code_detectability_by_percentiles(
+                codes_by_percentiles,
+                val_res['diag_detectability_df'])
+            detections = pd.DataFrame(index=detections_trn['pre'].keys(),
+                                      data={
+                                          'Training(pre)':
+                                          detections_trn['pre'].values(),
+                                          'Training(post)':
+                                          detections_trn['post'].values(),
+                                          'Validation(pre)':
+                                          detections_val['pre'].values(),
+                                          'Validation(post)':
+                                          detections_val['post'].values(),
+                                      })
+
             ode_logger.info('\n' + str(losses))
             ode_logger.info('\n' + str(stats))
+            ode_logger.info('\n' + str(detections))
 
         if step % save_freq == 0 and step > 0:
             with open(f'{save_params_prefix}_step{step:03d}.pickle',

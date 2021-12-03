@@ -160,3 +160,44 @@ class SubjectJAXInterface:
 
     def subject_static(self, subject_id):
         return self.static_features[subject_id]
+
+    def diag_single_ccs_frequency(self, subjects: Optional[List[int]] = None):
+        subjects = subjects or self.subjects.keys()
+        counter = defaultdict(int)
+        for subject_id in subjects:
+            for adm in self.subjects[subject_id].admissions:
+                ccs_codes = set(
+                    map(self.dag.diag_single_icd2ccs.get, adm.icd9_diag_codes))
+                for code in ccs_codes:
+                    counter[self.diag_single_ccs_idx[code]] += 1
+        return counter
+
+    def diag_single_ccs_by_percentiles(self,
+                                       section_percentage: float = 20,
+                                       subjects: Optional[List[int]] = None):
+        n_sections = int(100 / section_percentage)
+        sections = list(
+            zip(range(0, 100, section_percentage),
+                range(section_percentage, 101, section_percentage)))
+
+        frequency = self.diag_single_ccs_frequency(subjects)
+
+        frequency_df = pd.DataFrame({
+            'code': frequency.keys(),
+            'frequency': frequency.values()
+        })
+
+        frequency_df = frequency_df.sort_values('frequency')
+        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
+        frequency_df['cum_perc'] = 100 * frequency_df[
+            'cum_sum'] / frequency_df["frequency"].sum()
+
+        codes_by_percentiles = []
+        for l, u in sections:
+            codes = frequency_df[(frequency_df['cum_perc'] > l)
+                                 & (frequency_df['cum_perc'] <= u)].code
+            codes_by_percentiles.append(set(codes))
+
+        return codes_by_percentiles
+
+
