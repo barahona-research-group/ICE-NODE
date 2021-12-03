@@ -261,11 +261,11 @@ class MLPDynamics(hk.Module):
 
     def __call__(self, h, t, c):
         out = sigmoid(h)
-        out = jnp.hstack((c, out))
+        out = jnp.hstack((c, out, t))
         out = self.lin1(out)
 
         out = sigmoid(out)
-        out = jnp.hstack((c, out))
+        out = jnp.hstack((c, out, t))
         out = self.lin2(out)
 
         return out
@@ -1172,7 +1172,7 @@ class PatientGRUODEBayesInterface:
             odeint_weeks += sum(delta_weeks.values())
             ################## ODEINT #####################
             iteration_text_callback(iter_prefix + ' - odeint')
-            h1 = nn_odeint(h0, delta_weeks, points_n['ode_control'])
+            h1 = nn_odeint(h0, delta_days, points_n['ode_control'])
             iteration_text_callback(iter_prefix)
 
             ########## PRE-JUMP NUM LOSS ########################
