@@ -345,7 +345,6 @@ class NeuralODE(hk.Module):
         self.ode_dyn = ode_dyn_cls(state_size=state_size,
                                    name='ode_dyn',
                                    **init_kwargs)
-        self.tay_reg = None
 
     def __call__(self, h, t, c):
         if hk.running_init():
@@ -729,7 +728,7 @@ class PatientGRUODEBayesInterface:
             'tay_nfe':
             hk.without_apply_rng(
                 hk.transform(
-                    wrap_module(NeuralODENFE,
+                    wrap_module(NeuralODETayModeNFE,
                                 ode_dyn=ode_dyn,
                                 state_size=state_size,
                                 name='n_ode',
