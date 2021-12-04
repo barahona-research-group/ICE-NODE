@@ -988,7 +988,7 @@ class PatientGRUODEBayesInterface:
             for i in diag_true.keys()
         }
         if loss:
-            return sum(loss.values())
+            return sum(loss.values()) / len(loss)
         else:
             return 0.0
 
@@ -1008,7 +1008,7 @@ class PatientGRUODEBayesInterface:
             for i, error in normal_error.items()
         }
 
-        return sum(loss.values())
+        return sum(loss.values()) / len(loss)
 
     def __kl_loss(self, mean_true: Dict[int, jnp.ndarray],
                   mask: Dict[int,
@@ -1021,7 +1021,7 @@ class PatientGRUODEBayesInterface:
             for i, mean in mean_true.items()
         }
 
-        return sum(loss.values())
+        return sum(loss.values()) / len(loss)
 
     def __gram_error(self, gram_true, gram_predicted):
         error_gram = {
@@ -1345,7 +1345,7 @@ def train_ehr(
         ode_alpha = loss_mixing['ode_alpha']
         l1_alpha = loss_mixing['l1_reg'] / (res['points_count'])
         l2_alpha = loss_mixing['l2_reg'] / (2 * res['points_count'])
-        dyn_alpha = loss_mixing['dyn_reg'] / (res['points_count'])
+        dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
 
         num_loss = (
             1 - num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
@@ -1405,7 +1405,7 @@ def train_ehr(
         ode_alpha = loss_mixing['ode_alpha']
         l1_alpha = loss_mixing['l1_reg'] / (res['points_count'])
         l2_alpha = loss_mixing['l2_reg'] / (2 * res['points_count'])
-        dyn_alpha = loss_mixing['dyn_reg']
+        dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
 
         num_loss = (
             1 - num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
