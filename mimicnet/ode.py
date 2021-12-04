@@ -24,13 +24,17 @@ from .gram import DAGGRAM
 from .models import (MLPDynamics, GRUDynamics, TaylorAugmented, NeuralODE,
                      NeuralODENFE, GRUBayes, NumericObsModel, StateDecoder)
 from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
-                      l1_absolute, parameters_size, numeric_error,
-                      lognormal_loss, compute_KL_loss, confusion_matrix,
+                      l1_absolute, numeric_error, lognormal_loss,
+                      compute_KL_loss, confusion_matrix,
                       confusion_matrix_scores, code_detectability,
                       code_detectability_by_percentiles, code_detectability_df)
 
 ode_logger = logging.getLogger("ode")
 debug_flags = {'nan_debug': True, 'shape_debug': True}
+
+def parameters_size(pytree):
+    leaves, _ = tree_flatten(pytree)
+    return sum(jnp.size(x) for x in leaves)
 
 
 def tree_hasnan(t):
@@ -736,7 +740,7 @@ def train_ehr(
     jax.profiler.save_device_memory_profile("after_params_init.prof")
 
     ode_logger.info(f'#params: {parameters_size(params)}')
-    ode_logger.debug(f'shape(params): {tree_map(jnp.shape, params)}')
+    ode_logger.info(f'shape(params): {tree_map(jnp.shape, params)}')
     opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
 
     def loss_fn_detail(params: optimizers.Params, batch: List[int],
