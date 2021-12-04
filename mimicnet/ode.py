@@ -1,9 +1,7 @@
 import logging
-import math
 import pickle
 from collections import defaultdict
 from datetime import datetime
-from enum import Enum, auto, unique
 from functools import partial
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
                     Optional, Tuple, Union)
@@ -16,8 +14,6 @@ import jax.numpy as jnp
 from jax import lax
 from jax.profiler import annotate_function
 from jax.experimental import optimizers
-from jax.experimental.jet import jet
-from jax.experimental.ode import odeint
 from jax.nn import softplus, sigmoid, leaky_relu
 
 from tqdm import tqdm
@@ -25,7 +21,13 @@ from jax.tree_util import tree_flatten, tree_map
 
 from .jax_interface import SubjectJAXInterface
 from .gram import DAGGRAM
-from .odeint_nfe import odeint as odeint_nfe
+from .models import (MLPDynamics, GRUDynamics, TaylorAugmented, NeuralODE,
+                     NeuralODENFE, GRUBayes, NumericObsModel, StateDecoder)
+from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
+                      l1_absolute, parameters_size, numeric_error,
+                      lognormal_loss, compute_KL_loss, confusion_matrix,
+                      confusion_matrix_scores, code_detectability,
+                      code_detectability_by_percentiles, code_detectability_df)
 
 ode_logger = logging.getLogger("ode")
 debug_flags = {'nan_debug': True, 'shape_debug': True}
@@ -97,544 +99,6 @@ def pad_mat(m, nrows, pad_val=0):
         return m
 
 
-@jax.jit
-def jit_sigmoid(x):
-    return sigmoid(x)
-
-
-@partial(annotate_function, name="bce")
-@jax.jit
-def bce(y: jnp.ndarray, logits: jnp.ndarray):
-    return jnp.mean(y * softplus(-logits) + (1 - y) * softplus(logits))
-
-
-# The following loss function employs two concepts:
-# A) Effective number of sample, to mitigate class imbalance:
-# Paper: Class-Balanced Loss Based on Effective Number of Samples (Cui et al)
-# B) Focal loss, to underweight the easy to classify samples:
-# Paper: Focal Loss for Dense Object Detection (Lin et al)
-@partial(annotate_function, name="balanced_focal_bce")
-@jax.jit
-def balanced_focal_bce(y: jnp.ndarray,
-                       logits: jnp.ndarray,
-                       gamma=2,
-                       beta=0.999):
-    n1 = jnp.sum(y)
-    n0 = jnp.size(y) - n1
-    # Effective number of samples.
-    e1 = (1 - beta**n1) / (1 - beta) + 1e-1
-    e0 = (1 - beta**n0) / (1 - beta) + 1e-1
-
-    # Focal weighting
-    p = sigmoid(logits)
-    w1 = jnp.power(1 - p, gamma)
-    w0 = jnp.power(p, gamma)
-    # Note: softplus(-logits) = -log(sigmoid(logits)) = -log(p)
-    # Note: softplut(logits) = -log(1 - sigmoid(logits)) = -log(1-p)
-    return jnp.mean(y * (w1 / e1) * softplus(-logits) + (1 - y) *
-                    (w0 / e0) * softplus(logits))
-
-
-@partial(annotate_function, name="l2_loss")
-@jax.jit
-def l2_squared(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.vdot(x, x) for x in leaves)
-
-
-@partial(annotate_function, name="l1_loss")
-@jax.jit
-def l1_absolute(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.sum(jnp.fabs(x)) for x in leaves)
-
-
-def parameters_size(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.size(x) for x in leaves)
-
-
-# MIT License
-
-# Copyright (c) 2020 Jacob Kelly and Jesse Bettencourt
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-def sol_recursive(order: int, f: Callable[[jnp.ndarray, jnp.ndarray],
-                                          jnp.ndarray], z: jnp.ndarray,
-                  t: float):
-    """
-    Recursively compute higher order derivatives of dynamics of ODE.
-    """
-    if order < 2:
-        return f(z, t), jnp.zeros_like(z)
-
-    z_shape = z.shape
-    z_t = jnp.concatenate((jnp.ravel(z), jnp.array([t])))
-
-    def g(z_t):
-        """
-        Closure to expand z.
-        """
-        z, t = jnp.reshape(z_t[:-1], z_shape), z_t[-1]
-        dz = jnp.ravel(f(z, t))
-        dt = jnp.array([1.])
-        dz_t = jnp.concatenate((dz, dt))
-        return dz_t
-
-    (y0, [*yns]) = jet(g, (z_t, ), ((jnp.ones_like(z_t), ), ))
-    for _ in range(order - 1):
-        (y0, [*yns]) = jet(g, (z_t, ), ((y0, *yns), ))
-
-    return (jnp.reshape(y0[:-1], z_shape), jnp.reshape(yns[-2][:-1], z_shape))
-
-
-def augment_dynamics(reg, dynamics):
-    """
-    Closure to augment dynamics.
-    """
-    def reg_dynamics(y, t):
-        """
-        Dynamics of regularization.
-        """
-        y0, r = sol_recursive(reg, lambda _y, _t: dynamics(_y, _t), y, t)
-        return y0, jnp.mean(r**2)
-
-    def aug_dynamics(yr, t):
-        """
-        Dynamics augmented with regularization.
-        """
-        y, r = yr
-        dydt, drdt = reg_dynamics(y, t)
-        return dydt, drdt
-
-    return aug_dynamics
-
-
-# GRU-ODE: Neural Negative Feedback ODE with Bayesian jumps
-'''
-Note(Asem): Haiku modules don't define the input dimensions
-Input dimensions are defined during initialization step afterwards.
-'''
-
-# IDEA: research on mixed loss functions.
-# Instead of using hyperparamters for mixing loss functions,
-# Each training iteration optimizes one of the loss functions on a rolling
-# basis.
-
-
-class MLPDynamics(hk.Module):
-    """
-    Dynamics for ODE as an MLP.
-    """
-    def __init__(self,
-                 state_size: int,
-                 with_bias: bool,
-                 w_init: hk.initializers.Initializer,
-                 b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.lin1 = hk.Linear(state_size,
-                              with_bias=with_bias,
-                              w_init=w_init,
-                              b_init=b_init)
-        self.lin2 = hk.Linear(state_size,
-                              with_bias=with_bias,
-                              w_init=w_init,
-                              b_init=b_init)
-
-    def __call__(self, h, t, c):
-        out = sigmoid(h)
-        out = jnp.hstack((c, out, t))
-        out = self.lin1(out)
-
-        out = sigmoid(out)
-        out = jnp.hstack((c, out, t))
-        out = self.lin2(out)
-
-        return out
-
-
-class GRUDynamics(hk.Module):
-    """
-    Modified GRU unit to deal with latent state ``h(t)``.
-    """
-    def __init__(self,
-                 state_size: int,
-                 with_bias: bool,
-                 w_init: hk.initializers.Initializer,
-                 b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-
-        self.__hc_r = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='hc_r'), sigmoid
-        ])
-
-        self.__hc_z = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='hc_z'), sigmoid
-        ])
-
-        self.__rhc_g = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='rhc_g'), jnp.tanh
-        ])
-
-    def __call__(self, h: jnp.ndarray, t: float,
-                 c: jnp.ndarray) -> jnp.ndarray:
-        """
-        Returns a change due to one step of using GRU-ODE for all h.
-        Args:
-            h: hidden state (current) of the observable variables.
-            c: control variables.
-        Returns:
-            dh/dt
-        """
-        htc = jnp.hstack([h, c])
-        r = self.__hc_r(htc)
-        z = self.__hc_z(htc)
-        rhtc = jnp.hstack([r * h, c])
-        g = self.__rhc_g(rhtc)
-
-        return (1 - z) * (g - h)
-
-
-class NeuralODE(hk.Module):
-    def __init__(self,
-                 ode_dyn: str,
-                 state_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-
-        if ode_dyn == 'gru':
-            ode_dyn_cls = GRUDynamics
-        elif ode_dyn == 'mlp':
-            ode_dyn_cls = MLPDynamics
-        else:
-            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
-
-        self.ode_dyn = ode_dyn_cls(state_size=state_size,
-                                   name='ode_dyn',
-                                   **init_kwargs)
-
-    def __call__(self, h, t, c):
-        if hk.running_init():
-            h = self.ode_dyn(h, t, c)
-            return jnp.split(h, 2)[1].squeeze()
-
-        h = odeint(self.ode_dyn, h, jnp.array([0.0, t]), c)
-        h1 = jnp.split(h, 2)[1].squeeze()
-        return h1
-
-
-class NeuralODETayMode(NeuralODE):
-    def __init__(self,
-                 ode_dyn: str,
-                 state_size: int,
-                 tay_reg: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(ode_dyn, state_size, name, **init_kwargs)
-        self.tay_reg = tay_reg
-
-    def __call__(self, h, t, c):
-        if hk.running_init():
-            h = self.ode_dyn(h, t, c)
-            return jnp.split(h, 2)[1].squeeze(), jnp.zeros(1)
-
-        h, r = odeint(
-            augment_dynamics(self.tay_reg,
-                             lambda _h, _t: self.ode_dyn(_h, _t, c)),
-            (h, jnp.zeros(1)), jnp.array([0.0, t]))
-        h1 = jnp.split(h, 2)[1].squeeze()
-        r1 = jnp.split(r, 2)[1].squeeze()
-        return h1, r1
-
-
-class NeuralODETayModeNFE(NeuralODE):
-    def __init__(self,
-                 ode_dyn: str,
-                 state_size: int,
-                 tay_reg: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(ode_dyn, state_size, name, **init_kwargs)
-        self.tay_reg = tay_reg
-
-    def __call__(self, h, t, c):
-        if hk.running_init():
-            h = self.ode_dyn(h, t, c)
-            return jnp.split(h, 2)[1].squeeze(), jnp.zeros(1), 0
-
-        (h, r), nfe = odeint_nfe(
-            augment_dynamics(self.tay_reg,
-                             lambda _h, _t: self.ode_dyn(_h, _t, c)),
-            (h, jnp.zeros(1)), jnp.array([0.0, t]))
-
-        h1 = jnp.split(h, 2)[1].squeeze()
-        r1 = jnp.split(r, 2)[1].squeeze()
-        return h1, r1, nfe
-
-
-class NeuralODENFE(NeuralODE):
-    def __init__(self,
-                 ode_dyn: str,
-                 state_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(ode_dyn, state_size, name, **init_kwargs)
-
-    def __call__(self, h, t, c):
-        if hk.running_init():
-            h = self.ode_dyn(h, t, c)
-            return jnp.split(h, 2)[1].squeeze(), 0
-
-        h, nfe = odeint_nfe(lambda _h, _t: self.ode_dyn(_h, _t, c), h,
-                            jnp.array([0.0, t]))
-        h1 = jnp.split(h, 2)[1].squeeze()
-        return h1, nfe
-
-
-class NumericObsModel(hk.Module):
-    """
-    The mapping from hidden h to the distribution parameters of Y(t).
-    The dimension of the transformation is |h|->|obs_hidden|->|2D|.
-    """
-    def __init__(self,
-                 numeric_size: int,
-                 numeric_hidden_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-        self.__numeric_size = numeric_size
-        self.__numeric_hidden_size = numeric_hidden_size
-        self.__lin_mean = hk.Linear(numeric_size)
-        self.__lin_logvar = hk.Linear(numeric_size)
-
-    def __call__(self, h: jnp.ndarray) -> jnp.ndarray:
-        out = hk.Linear(self.__numeric_hidden_size)(h)
-        out = leaky_relu(out, negative_slope=2e-1)
-
-        out_logvar = jnp.tanh(self.__lin_logvar(out))
-        out_mean = jnp.tanh(self.__lin_mean(out))
-        return out_mean, out_logvar
-
-
-class GRUBayes(hk.Module):
-    """Implements discrete update based on the received observations."""
-    def __init__(self,
-                 state_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-        self.__prep = hk.Sequential([
-            hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
-            lambda o: leaky_relu(o, negative_slope=2e-1),
-            hk.Linear(state_size, with_bias=True,
-                      name=f'{name}_prep2'), jnp.tanh
-        ])
-
-        self.__gru_d = hk.GRU(state_size)
-
-    def __call__(self, state: jnp.ndarray, error_numeric: jnp.ndarray,
-                 numeric_mask: jnp.ndarray,
-                 error_gram: jnp.ndarray) -> jnp.ndarray:
-
-        error_numeric = error_numeric * numeric_mask
-        gru_input = self.__prep(jnp.hstack((error_numeric, error_gram)))
-        _, updated_state = self.__gru_d(gru_input, state)
-        return updated_state
-
-
-class StateDecoder(hk.Module):
-    def __init__(self,
-                 hidden_size: int,
-                 gram_size: int,
-                 output_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-        self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
-        self.__lin_num1 = hk.Linear(hidden_size // 2, name='lin_num_hidden1')
-        self.__lin_num2 = hk.Linear(hidden_size, name='lin_num_hidden2')
-
-        self.__lin_gram = hk.Linear(gram_size, name='lin_gram')
-        self.__lin_out = hk.Linear(output_size, name='lin_out')
-
-    def __call__(self, h: jnp.ndarray, mean: jnp.ndarray):
-        out_h = jnp.tanh(self.__lin_h(h))
-
-        out_n = leaky_relu(self.__lin_num1(mean), negative_slope=2e-1)
-        out_n = jnp.tanh(self.__lin_num2(out_n))
-
-        dec_in = jnp.hstack((out_h, out_n))
-        dec_gram = self.__lin_gram(dec_in)
-        logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
-        return dec_gram, logits
-
-
-@partial(annotate_function, name="numeric_error")
-@jax.jit
-def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
-                  logvar: jnp.ndarray) -> jnp.ndarray:
-    sigma = jnp.exp(0.5 * logvar)
-    return (mean_true - mean_predicted) / sigma
-
-
-@partial(annotate_function, name="lognormal_loss")
-@jax.jit
-def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
-                   logvar: jnp.ndarray) -> float:
-    log_lik_c = jnp.log(jnp.sqrt(2 * jnp.pi))
-    return 0.5 * ((jnp.power(error, 2) + logvar + 2 * log_lik_c) *
-                  mask).sum() / (mask.sum() + 1e-10)
-
-
-def gaussian_KL(mu_1: jnp.ndarray, mu_2: jnp.ndarray, sigma_1: jnp.ndarray,
-                sigma_2: float) -> jnp.ndarray:
-    return (jnp.log(sigma_2) - jnp.log(sigma_1) +
-            (jnp.power(sigma_1, 2) + jnp.power(
-                (mu_1 - mu_2), 2)) / (2 * sigma_2**2) - 0.5)
-
-
-@partial(annotate_function, name="kl_loss")
-@jax.jit
-def compute_KL_loss(mean_true: jnp.ndarray,
-                    mask: jnp.ndarray,
-                    mean_predicted: jnp.ndarray,
-                    logvar_predicted: jnp.ndarray,
-                    obs_noise_std: float = 1e-1) -> float:
-    std = jnp.exp(0.5 * logvar_predicted)
-    return (gaussian_KL(mu_1=mean_predicted,
-                        mu_2=mean_true,
-                        sigma_1=std,
-                        sigma_2=obs_noise_std) * mask).sum() / (jnp.sum(mask) +
-                                                                1e-10)
-
-
-@jax.jit
-def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
-    y_hat = (jnp.round(y_hat) == 1)
-    y_true = (y_true == 1)
-
-    tp = jnp.sum(y_true & y_hat)
-    tn = jnp.sum((~y_true) & (~y_hat))
-    fp = jnp.sum((~y_true) & y_hat)
-    fn = jnp.sum(y_true & (~y_hat))
-
-    return jnp.array([[tp, fn], [fp, tn]], dtype=int)
-
-
-def confusion_matrix_scores(cm: jnp.ndarray):
-    cm = cm / cm.sum()
-    tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
-    p = tp + fn
-    n = tn + fp
-    return {
-        'accuracy': (tp + tn) / (p + n),
-        'recall': tp / p,
-        'npv': tn / (tn + fn),
-        'specificity': tn / n,
-        'precision': tp / (tp + fp),
-        'f1-score': 2 * tp / (2 * tp + fp + fn),
-        'tp': tp,
-        'tn': tn,
-        'fp': fp,
-        'fn': fn
-    }
-
-
-def code_detectability(top_k: int, true_diag: jnp.ndarray,
-                       prejump_predicted_diag: jnp.ndarray,
-                       postjump_predicted_diag: jnp.ndarray):
-    ground_truth = jnp.argwhere(true_diag).squeeze()
-    if ground_truth.ndim > 0:
-        ground_truth = set(ground_truth)
-    else:
-        ground_truth = {ground_truth.item()}
-
-    prejump_predictions = set(jnp.argsort(prejump_predicted_diag)[-top_k:])
-    postjump_predictions = set(jnp.argsort(postjump_predicted_diag)[-top_k:])
-    detections = []
-    for code_i in ground_truth:
-        pre_detected, post_detected = 0, 0
-        if code_i in prejump_predictions:
-            pre_detected = 1
-        if code_i in postjump_predictions:
-            post_detected = 1
-        detections.append((code_i, pre_detected, post_detected))
-
-    return detections
-
-
-def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
-                          prejump_predicted_diag: Dict[int, jnp.ndarray],
-                          postjump_predicted_diag: Dict[int, jnp.ndarray],
-                          point_n: int):
-    detections = {
-        i: code_detectability(top_k, true_diag[i], prejump_predicted_diag[i],
-                              postjump_predicted_diag[i])
-        for i in true_diag.keys()
-    }
-    df_list = []
-
-    for subject_id, _detections in detections.items():
-        for code_i, pre_detected, post_detected in _detections:
-            df_list.append((subject_id, point_n, code_i, pre_detected,
-                            post_detected, top_k))
-
-    if df_list:
-        return pd.DataFrame(df_list,
-                            columns=[
-                                'subject_id', 'point_n', 'code',
-                                'pre_detected', 'post_detected', 'top_k'
-                            ])
-    else:
-        return None
-
-
-def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
-    rate = {'pre': {}, 'post': {}}
-    for i, codes in enumerate(codes_by_percentiles):
-        codes_detections_df = detections_df[detections_df.code.isin(codes)]
-        detection_rate_pre = codes_detections_df.pre_detected.mean()
-        detection_rate_post = codes_detections_df.post_detected.mean()
-        C = len(codes)
-        N = len(codes_detections_df)
-        rate['pre'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_pre
-        rate['post'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_post
-    return rate
-
-
 def wrap_module(module, *module_args, **module_kwargs):
     """
     Wrap the module in a function to be transformed.
@@ -647,15 +111,6 @@ def wrap_module(module, *module_args, **module_kwargs):
         return model(*args, **kwargs)
 
     return wrap
-
-
-Tf_num = Callable[[jnp.ndarray], Tuple[jnp.ndarray, jnp.ndarray]]
-Todeint = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
-Tgru_bayes = Callable[
-    [jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
-    jnp.ndarray]
-Tf_state_decode = Callable[[jnp.ndarray, jnp.ndarray], Tuple[jnp.ndarray,
-                                                             jnp.ndarray]]
 
 
 class PatientGRUODEBayesInterface:
@@ -698,38 +153,28 @@ class PatientGRUODEBayesInterface:
             "w_init": hk.initializers.RandomNormal(mean=0, stddev=0.01),
             "b_init": jnp.zeros
         }
+        if ode_dyn == 'gru':
+            ode_dyn_cls = GRUDynamics
+        elif ode_dyn == 'mlp':
+            ode_dyn_cls = MLPDynamics
+        else:
+            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
 
         n_ode = {
             'default':
             hk.without_apply_rng(
                 hk.transform(
                     wrap_module(NeuralODE,
-                                ode_dyn=ode_dyn,
+                                ode_dyn_cls=ode_dyn_cls,
                                 state_size=state_size,
                                 name='n_ode',
+                                tay_reg=tay_reg,
                                 **init_kwargs))),
             'nfe':
             hk.without_apply_rng(
                 hk.transform(
                     wrap_module(NeuralODENFE,
-                                ode_dyn=ode_dyn,
-                                state_size=state_size,
-                                name='n_ode',
-                                **init_kwargs))),
-            'tay':
-            hk.without_apply_rng(
-                hk.transform(
-                    wrap_module(NeuralODETayMode,
-                                ode_dyn=ode_dyn,
-                                state_size=state_size,
-                                name='n_ode',
-                                tay_reg=tay_reg,
-                                **init_kwargs))),
-            'tay_nfe':
-            hk.without_apply_rng(
-                hk.transform(
-                    wrap_module(NeuralODETayModeNFE,
-                                ode_dyn=ode_dyn,
+                                ode_dyn_cls=ode_dyn_cls,
                                 state_size=state_size,
                                 name='n_ode',
                                 tay_reg=tay_reg,
@@ -873,14 +318,8 @@ class PatientGRUODEBayesInterface:
         return mean, logvar
 
     def __odeint(self, params, h, t, c):
-        return {
-            i: self.n_ode['default'](params, h[i], t[i], c[i])
-            for i in h.keys()
-        }
-
-    def __odeint_tay(self, params, h, t, c):
         h_r = {
-            i: self.n_ode['tay'](params, h[i], t[i], c[i])
+            i: self.n_ode['default'](params, h[i], t[i], c[i])
             for i in h.keys()
         }
 
@@ -888,9 +327,9 @@ class PatientGRUODEBayesInterface:
         r1 = {i: r for i, (_, r) in h_r.items()}
         return h1, r1
 
-    def __odeint_tay_nfe(self, params, h, t, c):
+    def __odeint_nfe(self, params, h, t, c):
         h_r_nfe = {
-            i: self.n_ode['tay_nfe'](params, h[i], t[i], c[i])
+            i: self.n_ode['nfe'](params, h[i], t[i], c[i])
             for i in h.keys()
         }
         nfe = sum(n for h, r, n in h_r_nfe.values())
@@ -898,49 +337,25 @@ class PatientGRUODEBayesInterface:
         r1 = {i: r for i, (h, r, n) in h_r_nfe.items()}
         return h1, r1, nfe
 
-    def __odeint_nfe(self, params, h, t, c):
-        h_nfe = {
-            i: self.n_ode['nfe'](params, h[i], t[i], c[i])
-            for i in h.keys()
-        }
-        nfe = sum(n for _, n in h_nfe.values())
-        h1 = {i: h for i, (h, _) in h_nfe.items()}
-        return h1, nfe
-
     def __odeint_wrapper(self, store_nfe_fn: Callable[[int], None],
-                         store_reg_fn: Callable[[int], None], params: Any,
-                         count_nfe) -> Todeint:
-        def with_dynamic_regulation_nfe(h, t, c):
-            h1, r, nfe = self.__odeint_tay_nfe(params['ode_dyn'], h, t, c)
+                         store_reg_fn: Callable[[int],
+                                                None], params: Any, count_nfe):
+        def with_nfe(h, t, c):
+            h1, r, nfe = self.__odeint_nfe(params['ode_dyn'], h, t, c)
             store_reg_fn(sum(r.values()))
             store_nfe_fn(nfe)
             return h1
 
-        def without_dynamic_regulation_nfe(h, t, c):
-            h1, nfe = self.__odeint_nfe(params['ode_dyn'], h, t, c)
-            store_reg_fn(nfe)
-            return h1
-
-        def with_dynamic_regulation(h, t, c):
-            h1, r = self.__odeint_tay_nfe(params['ode_dyn'], h, t, c)
+        def without_nfe(h, t, c):
+            h1, r = self.__odeint(params['ode_dyn'], h, t, c)
             store_reg_fn(sum(r.values()))
             return h1
 
-        def without_dynamic_regulation(h, t, c):
-            h1 = self.__odeint(params['ode_dyn'], h, t, c)
-            return h1
-
-        if self.tay_reg is not None and self.tay_reg >= 2:
-            if count_nfe:
-                return with_dynamic_regulation_nfe
-            else:
-                return with_dynamic_regulation
-        elif count_nfe:
-            return without_dynamic_regulation_nfe
+        if count_nfe:
+            return with_nfe
         else:
-            return without_dynamic_regulation
+            return without_nfe
 
-    @partial(annotate_function, name="gru_bayes_batch")
     def __gru_bayes(self, params: Any, state: Dict[int, jnp.ndarray],
                     numeric_error: Dict[int, jnp.ndarray],
                     numeric_mask: Dict[int, jnp.ndarray],
@@ -955,7 +370,6 @@ class PatientGRUODEBayesInterface:
 
         return updated_state
 
-    @partial(annotate_function, name="decode_state_batch")
     def __state_decode(
         self,
         params: Any,
@@ -1057,17 +471,17 @@ class PatientGRUODEBayesInterface:
             iteration_text_callback)  # (n)
 
         ode_logger.debug(f'subjects: {subjects_batch}')
-        nn_f_num: Tf_num = partial(self.__f_num, params)
+        nn_f_num = partial(self.__f_num, params)
         dyn_reg = []
         nfe = []
-        nn_odeint: Todeint = self.__odeint_wrapper(nfe.append, dyn_reg.append,
-                                                   params, count_nfe)
+        nn_odeint = self.__odeint_wrapper(nfe.append, dyn_reg.append, params,
+                                          count_nfe)
         enc = self.diag_gram.encode
 
         # Input: (state, numeric_error, numeric_mask, diag_gram_error)
-        nn_gru_bayes: Tgru_bayes = partial(self.__gru_bayes, params)
+        nn_gru_bayes = partial(self.__gru_bayes, params)
         # (state, numeric)
-        nn_state_decode: Tf_state_decode = partial(self.__state_decode, params)
+        nn_state_decode = partial(self.__state_decode, params)
 
         def initial_state():
             # Possibly not all batch members populated in some dictionaries dictionary.
