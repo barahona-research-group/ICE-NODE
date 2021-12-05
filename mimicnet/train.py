@@ -177,7 +177,7 @@ class PatientGRUODEBayesInterface:
                             name='n_ode',
                             tay_reg=tay_reg,
                             **init_kwargs)))
-        self.n_ode = jax.jit(n_ode, static_argnames='count_nfe')
+        self.n_ode = jax.jit(n_ode, static_argnums=(4,))
 
         gru_bayes_init, gru_bayes = hk.without_apply_rng(
             hk.transform(
@@ -332,8 +332,8 @@ class PatientGRUODEBayesInterface:
             for i in h.keys()
         }
         nfe = sum(n for h, r, n in h_r_nfe.values())
+        r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
         h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
-        r1 = {i: r for i, (h, r, n) in h_r_nfe.items()}
         return h1, r1, nfe
 
     def __gru_bayes(self, params: Any, state: Dict[int, jnp.ndarray],
@@ -465,7 +465,6 @@ class PatientGRUODEBayesInterface:
         nn_state_decode = partial(self.__state_decode, params)
 
         def initial_state():
-
             points_0 = nth_points_fn(0)
 
             def _state_init(subject_id):
@@ -478,7 +477,7 @@ class PatientGRUODEBayesInterface:
                 state_input = jnp.hstack(map(d.get, self.state_init_passes))
                 return self.f_state_init(params['f_state_init'], state_input)
 
-            h0 = {i: _state_init(i) for i in points_0.keys()}
+            h0 = {i: _state_init(i) for i in points_0['days_ahead'].keys()}
 
             return h0
 
@@ -713,12 +712,12 @@ def train_ehr(
                         count_nfe=True,
                         iteration_text_callback=iteration_text_callback)
 
-        prejump_num_loss = res['prejump_num_loss'].item()
-        postjump_num_loss = res['postjump_num_loss'].item()
-        prejump_diag_loss = res['prejump_diag_loss'].item()
-        postjump_diag_loss = res['postjump_diag_loss'].item()
-        l1_loss = l1_absolute(params).item()
-        l2_loss = l2_squared(params).item()
+        prejump_num_loss = res['prejump_num_loss']
+        postjump_num_loss = res['postjump_num_loss']
+        prejump_diag_loss = res['prejump_diag_loss']
+        postjump_diag_loss = res['postjump_diag_loss']
+        l1_loss = l1_absolute(params)
+        l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
         num_alpha = loss_mixing['num_alpha']
         diag_alpha = loss_mixing['diag_alpha']
@@ -868,8 +867,9 @@ def train_ehr(
             valid_batch = valid_ids  #[:val_batch_size]
             params = get_params(opt_state)
             trn_res = loss_fn_detail(params, train_batch, update_batch_desc)
-            val_res = loss_fn_detail(params, valid_batch, update_batch_desc)
             res_trn[step] = trn_res
+
+            val_res = loss_fn_detail(params, valid_batch, update_batch_desc)
             res_val[step] = val_res
 
             losses = pd.DataFrame(index=trn_res['loss'].keys(),
@@ -910,6 +910,8 @@ def train_ehr(
             with open(f'{save_params_prefix}_step{step:03d}.pickle',
                       'wb') as f:
                 pickle.dump(get_params(opt_state), f)
+
+        break
 
     return {
         'res_val': res_val,
