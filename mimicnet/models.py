@@ -64,15 +64,12 @@ class MLPDynamics(hk.Module):
                               b_init=b_init)
 
     def __call__(self, h, t, c):
-        out = sigmoid(h)
-        out = jnp.hstack((c, out, t))
+        out = jnp.hstack((c, h, t))
         out = self.lin1(out)
-
-        out = sigmoid(out)
+        out = leaky_relu(out, negative_slope=2e-1)
         out = jnp.hstack((c, out, t))
         out = self.lin2(out)
-
-        return out
+        return jnp.tanh(out)
 
 
 class GRUDynamics(hk.Module):
@@ -139,6 +136,8 @@ class TaylorAugmented(hk.Module):
 
     def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
         """
+        https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
+        By Jacob Kelly
         Recursively compute higher order derivatives of dynamics of ODE.
         """
         if self.order < 2:
@@ -199,6 +198,11 @@ class NeuralODE(hk.Module):
 
 
 class NeuralODENFE(NeuralODE):
+    """
+    This is a neural ODE that returns the number of function calls
+    to the dynamics function. Used for performance analysis aims.
+    """
+
     def __init__(self,
                  ode_dyn_cls: Any,
                  state_size: int,

@@ -594,7 +594,7 @@ class PatientGRUODEBayesInterface:
             odeint_weeks += sum(delta_weeks.values())
             ################## ODEINT #####################
             iteration_text_callback(iter_prefix + ' - odeint')
-            h1 = nn_odeint(h0, delta_days, points_n['ode_control'])
+            h1 = nn_odeint(h0, delta_weeks, points_n['ode_control'])
             iteration_text_callback(iter_prefix)
 
             ########## PRE-JUMP NUM LOSS ########################
@@ -889,7 +889,7 @@ def train_ehr(
 
         try:
             opt_state = update(step, train_batch, opt_state, update_batch_desc)
-        except ValueError as e:
+        except (ValueError, FloatingPointError) as e:
             from traceback import format_exception
             tb_str = ''.join(format_exception(None, e, e.__traceback__))
             ode_logger.warning(f'ValueError exception raised: {tb_str}')
