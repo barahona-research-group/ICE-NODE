@@ -143,8 +143,8 @@ class TaylorAugmented(hk.Module):
         if self.order < 2:
             return self.f(h, t, c), jnp.zeros_like(h)
 
-
         h_shape = h.shape
+
         def g(h_t):
             """
             Closure to expand z.
@@ -187,36 +187,16 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, h, t, c):
-        if hk.running_init():
-            return self.ode_dyn((h, jnp.zeros(1)), t, c), jnp.zeros(1)
-
-        h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), jnp.array([0.0, t]), c)
-        h1 = jnp.split(h, 2)[1].squeeze()
-        r1 = jnp.split(r, 2)[1].squeeze()
-        return h1, r1
-
-
-class NeuralODENFE(NeuralODE):
-    """
-    This is a neural ODE that returns the number of function calls
-    to the dynamics function. Used for performance analysis aims.
-    """
-
-    def __init__(self,
-                 ode_dyn_cls: Any,
-                 state_size: int,
-                 tay_reg: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(ode_dyn_cls, state_size, tay_reg, name, **init_kwargs)
-
-    def __call__(self, h, t, c):
+    def __call__(self, h, t, c, count_nfe=False):
         if hk.running_init():
             return self.ode_dyn((h, jnp.zeros(1)), t, c), jnp.zeros(1), 0
-
-        (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)),
-                                 jnp.array([0.0, t]), c)
+        if count_nfe:
+            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)),
+                                     jnp.array([0.0, t]), c)
+        else:
+            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), jnp.array([0.0, t]),
+                          c)
+            nfe = 0
         h1 = jnp.split(h, 2)[1].squeeze()
         r1 = jnp.split(r, 2)[1].squeeze()
         return h1, r1, nfe
@@ -271,6 +251,24 @@ class GRUBayes(hk.Module):
         gru_input = self.__prep(jnp.hstack((error_numeric, error_gram)))
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
+
+
+class StateInitializer(hk.Module):
+    def __init__(self,
+                 hidden_size: int,
+                 state_size: int,
+                 name: Optional[str] = None):
+        super().__init__(name=name)
+        self.__f = hk.Sequential([
+            hk.Linear(2 * hidden_size, name='lin_hidden1'),
+            lambda l: leaky_relu(l, negative_slope=2e-1),
+            hk.Linear(hidden_size, name='lin_hidden2'),
+            lambda l: leaky_relu(l, negative_slope=2e-1),
+            hk.Linear(state_size, name='lin_state'), jnp.tanh
+        ])
+
+    def __call__(self, state_init: jnp.ndarray):
+        return self.__f(state_init)
 
 
 class StateDecoder(hk.Module):

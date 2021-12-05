@@ -22,7 +22,8 @@ from jax.tree_util import tree_flatten, tree_map
 from .jax_interface import SubjectJAXInterface
 from .gram import DAGGRAM
 from .models import (MLPDynamics, GRUDynamics, TaylorAugmented, NeuralODE,
-                     NeuralODENFE, GRUBayes, NumericObsModel, StateDecoder)
+                     GRUBayes, NumericObsModel, StateDecoder,
+                     StateInitializer)
 from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
                       l1_absolute, numeric_error, lognormal_loss,
                       compute_KL_loss, confusion_matrix,
@@ -31,6 +32,7 @@ from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
 
 ode_logger = logging.getLogger("ode")
 debug_flags = {'nan_debug': True, 'shape_debug': True}
+
 
 def parameters_size(pytree):
     leaves, _ = tree_flatten(pytree)
@@ -144,10 +146,13 @@ class PatientGRUODEBayesInterface:
         }
 
         self.ode_control_passes = ['age', 'static', 'proc_gram']
+        self.state_init_passes = ['age', 'static', 'diag_gram']
 
         self.dimensions.update({
             'ode_control':
-            sum(map(self.dimensions.get, ['age', 'static', 'proc_gram']))
+            sum(map(self.dimensions.get, self.ode_control_passes)),
+            'state_init':
+            sum(map(self.dimensions.get, self.state_init_passes))
         })
         """
         Constructs the GRU-ODE-Bayes model with the given dimensions.
@@ -164,29 +169,15 @@ class PatientGRUODEBayesInterface:
         else:
             raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
 
-        n_ode = {
-            'default':
-            hk.without_apply_rng(
-                hk.transform(
-                    wrap_module(NeuralODE,
-                                ode_dyn_cls=ode_dyn_cls,
-                                state_size=state_size,
-                                name='n_ode',
-                                tay_reg=tay_reg,
-                                **init_kwargs))),
-            'nfe':
-            hk.without_apply_rng(
-                hk.transform(
-                    wrap_module(NeuralODENFE,
-                                ode_dyn_cls=ode_dyn_cls,
-                                state_size=state_size,
-                                name='n_ode',
-                                tay_reg=tay_reg,
-                                **init_kwargs))),
-        }
-
-        n_ode_init = n_ode['default'][0]
-        self.n_ode = {l: jax.jit(f) for l, (_, f) in n_ode.items()}
+        n_ode_init, n_ode = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(NeuralODE,
+                            ode_dyn_cls=ode_dyn_cls,
+                            state_size=state_size,
+                            name='n_ode',
+                            tay_reg=tay_reg,
+                            **init_kwargs)))
+        self.n_ode = jax.jit(n_ode, static_argnames='count_nfe')
 
         gru_bayes_init, gru_bayes = hk.without_apply_rng(
             hk.transform(
@@ -215,12 +206,22 @@ class PatientGRUODEBayesInterface:
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
+        f_state_init_init, f_state_init = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(StateInitializer,
+                            hidden_size=self.dimensions['diag_gram'],
+                            state_size=state_size,
+                            name='f_init')))
+        self.f_state_init = jax.jit(f_state_init)
+
         self.initializers = {
             'ode_dyn': n_ode_init,
             'gru_bayes': gru_bayes_init,
             'f_num': f_num_init,
-            'f_dec': f_dec_init
+            'f_dec': f_dec_init,
+            'f_state_init': f_state_init_init
         }
+
 
     def init_params(self, rng_key):
         init_data = self.__initialization_data()
@@ -256,11 +257,13 @@ class PatientGRUODEBayesInterface:
         diag_gram = jnp.zeros(self.dimensions['diag_gram'])
         state = jnp.zeros(self.dimensions['state'])
         c = jnp.zeros(self.dimensions['ode_control'])
+        i = jnp.zeros(self.dimensions['state_init'])
         return {
             "ode_dyn": [state, 0.1, c],
             "gru_bayes": [state, numeric, numeric, diag_gram],
             "f_num": [state],
-            "f_dec": [state, numeric]
+            "f_dec": [state, numeric],
+            "f_state_init": [i]
         }
 
     def __extract_nth_points(
@@ -289,6 +292,7 @@ class PatientGRUODEBayesInterface:
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
         numeric = {i: v['tests'][0] for i, v in points.items()}
         mask = {i: v['tests'][1] for i, v in points.items()}
+        age = {i: v['age'] for i, v in points.items()}
 
         def _ode_control(subject_id):
             zero_proc_gram = jnp.zeros(self.dimensions['proc_gram'])
@@ -302,6 +306,7 @@ class PatientGRUODEBayesInterface:
         ode_control = {i: _ode_control(i) for i in points.keys()}
 
         return {
+            'age': age,
             'days_ahead': days_ahead,
             'diag_gram': diag_gram,
             'numeric': numeric,
@@ -321,44 +326,15 @@ class PatientGRUODEBayesInterface:
         logvar = {i: lv for i, (_, lv) in mean_logvar.items()}
         return mean, logvar
 
-    def __odeint(self, params, h, t, c):
-        h_r = {
-            i: self.n_ode['default'](params, h[i], t[i], c[i])
-            for i in h.keys()
-        }
-
-        h1 = {i: h for i, (h, _) in h_r.items()}
-        r1 = {i: r for i, (_, r) in h_r.items()}
-        return h1, r1
-
-    def __odeint_nfe(self, params, h, t, c):
+    def __odeint(self, params, h, t, c, count_nfe=False):
         h_r_nfe = {
-            i: self.n_ode['nfe'](params, h[i], t[i], c[i])
+            i: self.n_ode(params['ode_dyn'], h[i], t[i], c[i], count_nfe)
             for i in h.keys()
         }
         nfe = sum(n for h, r, n in h_r_nfe.values())
         h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
         r1 = {i: r for i, (h, r, n) in h_r_nfe.items()}
         return h1, r1, nfe
-
-    def __odeint_wrapper(self, store_nfe_fn: Callable[[int], None],
-                         store_reg_fn: Callable[[int],
-                                                None], params: Any, count_nfe):
-        def with_nfe(h, t, c):
-            h1, r, nfe = self.__odeint_nfe(params['ode_dyn'], h, t, c)
-            store_reg_fn(sum(r.values()))
-            store_nfe_fn(nfe)
-            return h1
-
-        def without_nfe(h, t, c):
-            h1, r = self.__odeint(params['ode_dyn'], h, t, c)
-            store_reg_fn(sum(r.values()))
-            return h1
-
-        if count_nfe:
-            return with_nfe
-        else:
-            return without_nfe
 
     def __gru_bayes(self, params: Any, state: Dict[int, jnp.ndarray],
                     numeric_error: Dict[int, jnp.ndarray],
@@ -476,10 +452,11 @@ class PatientGRUODEBayesInterface:
 
         ode_logger.debug(f'subjects: {subjects_batch}')
         nn_f_num = partial(self.__f_num, params)
-        dyn_reg = []
+
+        dyn_loss = []
         nfe = []
-        nn_odeint = self.__odeint_wrapper(nfe.append, dyn_reg.append, params,
-                                          count_nfe)
+        nn_odeint = lambda h, t, c: self.__odeint(params, h, t, c, count_nfe)
+
         enc = self.diag_gram.encode
 
         # Input: (state, numeric_error, numeric_mask, diag_gram_error)
@@ -488,42 +465,24 @@ class PatientGRUODEBayesInterface:
         nn_state_decode = partial(self.__state_decode, params)
 
         def initial_state():
-            # Possibly not all batch members populated in some dictionaries dictionary.
-            # Only subjects that have diagnosis code at the first time point
-            # will have corresponding items in:
-            # 1. diag_gram_true
-            # 2. diag_gram_predicted
-            # 3. error_gram
 
-            # (A) Retrieve the first time point for each subject.
             points_0 = nth_points_fn(0)
-            diag_gram_true = points_0['diag_gram']
-            mean_true = points_0['numeric']
-            mask = points_0['mask']
 
-            # (B) Initialize a zero-state before the first time point.
-            h0 = jnp.zeros(self.dimensions['state'])
-            h0 = {i: h0 for i in subjects_batch}
+            def _state_init(subject_id):
+                zero_diag_gram = jnp.zeros(self.dimensions['diag_gram'])
+                d = {
+                    'diag_gram': points_0['diag_gram'].get(subject_id, zero_diag_gram),
+                    'age': points_0['age'][subject_id],
+                    'static': self.subject_interface.subject_static(subject_id)
+                }
+                state_input = jnp.hstack(map(d.get, self.state_init_passes))
+                return self.f_state_init(params['f_state_init'], state_input)
 
-            # (C) Generate numerical predictions based in the zero-state
-            mean_predicted, logvar_predicted = nn_f_num(h0)
+            h0 = {i: _state_init(i) for i in points_0.keys()}
 
-            # (D) Use the predicted numerical predictions and the zero state
-            # to generate gram predictions.
-            diag_gram_predicted, _ = nn_state_decode(h0, mean_predicted)
+            return h0
 
-            # (E) Compute errors between the predicted numerics and the
-            # predicted GRAM values.
-            error_num = self.__numeric_error(mean_true, mean_predicted,
-                                             logvar_predicted)
-            error_diag_gram = self.__gram_error(diag_gram_true,
-                                                diag_gram_predicted)
-
-            # (F) Update the state given the errors above
-            state = nn_gru_bayes(h0, error_num, mask, error_diag_gram)
-            return state
-
-        subject_last_state: Dict[int, jnp.ndarray] = initial_state()
+        subject_last_state = initial_state()
         days_fwd = {i: 0 for i in subjects_batch}
 
         if return_path:
@@ -594,7 +553,11 @@ class PatientGRUODEBayesInterface:
             odeint_weeks += sum(delta_weeks.values())
             ################## ODEINT #####################
             iteration_text_callback(iter_prefix + ' - odeint')
-            h1 = nn_odeint(h0, delta_weeks, points_n['ode_control'])
+            h1, _dyn_loss, _nfe = nn_odeint(h0, delta_weeks,
+                                            points_n['ode_control'])
+            dyn_loss.append(_dyn_loss)
+            nfe.append(_nfe)
+
             iteration_text_callback(iter_prefix)
 
             ########## PRE-JUMP NUM LOSS ########################
@@ -663,7 +626,7 @@ class PatientGRUODEBayesInterface:
             'postjump_num_loss': postjump_num_loss,
             'prejump_diag_loss': prejump_diag_loss,
             'postjump_diag_loss': postjump_diag_loss,
-            'dyn_reg': jnp.sum(sum(dyn_reg)),
+            'dyn_loss': jnp.sum(sum(dyn_loss)),
             'scores': confusion_matrix_scores(confusion_mat),
             'odeint_weeks': odeint_weeks,
             'points_count': points_count,
@@ -756,7 +719,7 @@ def train_ehr(
         postjump_diag_loss = res['postjump_diag_loss'].item()
         l1_loss = l1_absolute(params).item()
         l2_loss = l2_squared(params).item()
-        dyn_loss = res['dyn_reg']
+        dyn_loss = res['dyn_loss']
         num_alpha = loss_mixing['num_alpha']
         diag_alpha = loss_mixing['diag_alpha']
         ode_alpha = loss_mixing['ode_alpha']
@@ -816,7 +779,7 @@ def train_ehr(
         postjump_diag_loss = res['postjump_diag_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
-        dyn_loss = res['dyn_reg']
+        dyn_loss = res['dyn_loss']
         num_alpha = loss_mixing['num_alpha']
         diag_alpha = loss_mixing['diag_alpha']
         ode_alpha = loss_mixing['ode_alpha']
