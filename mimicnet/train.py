@@ -911,8 +911,6 @@ def train_ehr(
                       'wb') as f:
                 pickle.dump(get_params(opt_state), f)
 
-        break
-
     return {
         'res_val': res_val,
         'res_trn': res_trn,
