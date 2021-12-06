@@ -6,9 +6,11 @@ dependencies:
   - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=1_gnu
   - absl-py=1.0.0=pyhd8ed1ab_0
+  - alembic=1.7.5=pyhd8ed1ab_0
   - argon2-cffi=20.1.0=py39h27cfd23_1
   - async_generator=1.10=pyhd3eb1b0_0
   - attrs=21.2.0=pyhd3eb1b0_0
+  - autopage=0.4.0=pyhd8ed1ab_0
   - backcall=0.2.0=pyhd3eb1b0_0
   - blas=1.0=mkl
   - bleach=4.0.0=pyhd3eb1b0_0
@@ -17,6 +19,10 @@ dependencies:
   - ca-certificates=2021.10.8=ha878542_0
   - certifi=2021.10.8=py39hf3d152e_1
   - cffi=1.14.6=py39h400218f_0
+  - cliff=3.10.0=pyhd8ed1ab_0
+  - cmaes=0.8.2=pyh44b312d_0
+  - cmd2=2.3.3=py39hf3d152e_0
+  - colorlog=6.6.0=py39hf3d152e_0
   - cycler=0.10.0=py39h06a4308_0
   - dataclasses=0.8=pyhc8e2a94_3
   - dbus=1.13.18=hb2f20db_0
@@ -31,11 +37,13 @@ dependencies:
   - freetype=2.11.0=h70c0345_0
   - giflib=5.2.1=h7b6447c_0
   - glib=2.69.1=h5202010_0
+  - greenlet=1.1.2=py39he80948d_1
   - gst-plugins-base=1.14.0=h8213a91_2
   - gstreamer=1.14.0=h28cd5cc_2
   - icu=58.2=he6710b0_3
   - importlib-metadata=4.8.1=py39h06a4308_0
   - importlib_metadata=4.8.1=hd3eb1b0_0
+  - importlib_resources=5.4.0=pyhd8ed1ab_0
   - intel-openmp=2021.4.0=h06a4308_3561
   - ipykernel=6.4.1=py39h06a4308_1
   - ipython=7.29.0=py39hb070fc8_0
@@ -68,6 +76,7 @@ dependencies:
   - libxcb=1.14=h7b6447c_0
   - libxml2=2.9.12=h03d6c58_0
   - lz4-c=1.9.3=h295c915_1
+  - mako=1.1.6=pyhd8ed1ab_0
   - markupsafe=2.0.1=py39h27cfd23_0
   - matplotlib=3.4.3=py39h06a4308_0
   - matplotlib-base=3.4.3=py39hbbc1b5f_0
@@ -90,26 +99,31 @@ dependencies:
   - olefile=0.46=pyhd3eb1b0_0
   - openssl=1.1.1l=h7f98852_0
   - opt_einsum=3.3.0=pyhd8ed1ab_1
+  - optuna=2.10.0=pyhd8ed1ab_0
   - packaging=21.3=pyhd3eb1b0_0
   - pandocfilters=1.4.3=py39h06a4308_1
   - parso=0.8.2=pyhd3eb1b0_0
+  - pbr=5.8.0=pyhd8ed1ab_0
   - pcre=8.45=h295c915_0
   - pexpect=4.8.0=pyhd3eb1b0_3
   - pickleshare=0.7.5=pyhd3eb1b0_1003
   - pillow=8.4.0=py39h5aabda8_0
   - pip=21.2.4=py39h06a4308_0
+  - prettytable=2.4.0=pyhd8ed1ab_0
   - prometheus_client=0.12.0=pyhd3eb1b0_0
   - prompt-toolkit=3.0.20=pyhd3eb1b0_0
   - ptyprocess=0.7.0=pyhd3eb1b0_2
   - pycparser=2.21=pyhd3eb1b0_0
   - pygments=2.10.0=pyhd3eb1b0_0
   - pyparsing=3.0.4=pyhd3eb1b0_0
+  - pyperclip=1.8.2=pyhd8ed1ab_2
   - pyqt=5.9.2=py39h2531618_6
   - pyrsistent=0.18.0=py39heee7806_0
   - python=3.9.7=h12debd9_1
   - python-dateutil=2.8.2=pyhd3eb1b0_0
   - python-flatbuffers=2.0=pyhd8ed1ab_0
   - python_abi=3.9=2_cp39
+  - pyyaml=6.0=py39h3811e60_3
   - pyzmq=22.2.1=py39h295c915_1
   - qt=5.9.7=h5867ecd_1
   - readline=8.1=h27cfd23_0
@@ -119,7 +133,9 @@ dependencies:
   - setuptools=58.0.4=py39h06a4308_0
   - sip=4.19.13=py39h2531618_0
   - six=1.16.0=pyhd3eb1b0_0
+  - sqlalchemy=1.4.27=py39h3811e60_0
   - sqlite=3.36.0=hc218d9a_0
+  - stevedore=3.5.0=py39hf3d152e_1
   - tabulate=0.8.9=pyhd8ed1ab_0
   - terminado=0.9.4=py39h06a4308_0
   - testpath=0.5.0=pyhd3eb1b0_0
@@ -133,12 +149,15 @@ dependencies:
   - webencodings=0.5.1=py39h06a4308_1
   - wheel=0.37.0=pyhd3eb1b0_1
   - xz=5.2.5=h7b6447c_0
+  - yaml=0.2.5=h516909a_0
   - zeromq=4.3.4=h2531618_0
   - zipp=3.6.0=pyhd3eb1b0_0
   - zlib=1.2.11=h7b6447c_3
   - zstd=1.4.9=haebb681_0
   - pip:
+    - msgpack==1.0.3
     - numpy==1.21.4
     - pandas==1.3.4
+    - pynvim==0.4.3
     - pytz==2021.3
 prefix: /home/asem/.conda/envs/mimic3-snonet
