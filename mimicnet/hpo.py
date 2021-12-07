@@ -83,7 +83,6 @@ if __name__ == '__main__':
     output_dir = args.output_dir
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-
     logging.info('[LOADING] Patients JAX Interface.')
     patient_interface = create_patient_interface(mimic_processed_dir)
     logging.info('[DONE] Patients JAX Interface')
@@ -364,12 +363,14 @@ if __name__ == '__main__':
 
                 df_save_prefix = os.path.join(trial_dir, f'step{step:03d}')
 
-                losses.to_csv(f'{df_save_prefix}_losses.csv', index=False)
-                stats.to_csv(f'{df_save_prefix}_stats.csv', index=False)
-                detections_trn_df.to_csv(
-                    f'{df_save_prefix}_detections_trn_df.csv', index=False)
-                detections_val_df.to_csv(
-                    f'{df_save_prefix}_detections_val_df.csv', index=False)
+                for name, df in {
+                        'losses': losses,
+                        'stats': stats,
+                        'detections_trn_df': detections_trn_df,
+                        'detections_val_df': detections_val_df
+                }.items():
+                    df.to_csv(f'{df_save_prefix}_{name}.csv', index=False)
+                    logging.info(df)
 
             if step % save_freq == 0 and step > 0:
                 save_path = os.path.join(trial_dir,
