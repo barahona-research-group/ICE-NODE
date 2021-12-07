@@ -323,7 +323,7 @@ if __name__ == '__main__':
                 _, trn_res = loss_fn(params, train_batch, update_batch_desc)
                 _, val_res = loss_fn(params, valid_ids, update_batch_desc)
 
-                score = val_res['stats']['scores']['f1-score']
+                score = val_res['stats']['f1-score']
                 trial.report(score, step)
 
                 if trial.should_prune():
