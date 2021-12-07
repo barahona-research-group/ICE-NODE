@@ -4,7 +4,6 @@ import argparse
 import os
 from pathlib import Path
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-i',
@@ -27,19 +26,26 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of parallel processes.')
 
-
-
     args = parser.parse_args()
-
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
-    N = args.N
+    N = args.num_processes
 
     procs = []
     for i in range(N):
-        proc = subprocess.Popen(f'{os.environ["HOME"]}/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo -o {output_dir} -i {mimic_processed_dir} -n {n} --cpu')
+        proc = subprocess.Popen([sys.executable,
+                                 '-m',
+                                 'mimicnet.hpo',
+                                 '-o',
+                                 output_dir,
+                                 '-i',
+                                 mimic_processed_dir,
+                                 '-n',
+                                 str(num_trials),
+                                 '--cpu'])
         procs.append(proc)
+
 
     for proc in procs:
         proc.wait()
