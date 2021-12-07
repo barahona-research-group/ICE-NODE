@@ -1,7 +1,6 @@
+#PBS -lselect=1:ncpus=48:mem=124gb
 
-#PBS -lselect=1:ncpus=10:mem=360gb
-
-#PBS -lwalltime=48:0:0
+#PBS -lwalltime=24:0:0
 
 # Load modules for any applications
 
@@ -13,7 +12,7 @@ cd $HOME/GP/MIMIC-SNONET
 
 # The number of cores assigned to the job is available
 # In the environment variable NCPUS or OMP_NUM_THREADS
-$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi -o ~/GP/ehr-data/mimic3-snonet-exp/dec07 -i ~/GP/ehr-data/mimic3-transforms -n 15 -N 30
+$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi -o ~/GP/ehr-data/mimic3-snonet-exp/dec07 -i ~/GP/ehr-data/mimic3-transforms -n 5 -N 10
 
 
 
