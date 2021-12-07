@@ -28,6 +28,8 @@ from .metrics import (bce, balanced_focal_bce, l1_absolute, l2_squared,
 jax.config.update('jax_platform_name', 'gpu')
 logging.set_verbosity(logging.INFO)
 
+logging.info(f'GPU Indices: {os.environ["CUDA_VISIBLE_DEVICES"]}')
+logging.info(f'JAX devices: {jax.devices()}')
 
 def create_patient_interface(processed_mimic_tables_dir: str):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
@@ -381,7 +383,8 @@ if __name__ == '__main__':
         return score
 
     storage = os.path.join(output_dir, 'study.db')
-    study = optuna.create_study(direction="maximize",
+    study = optuna.create_study(study_name='study',
+                                direction="maximize",
                                 storage=f'sqlite:///{storage}',
                                 load_if_exists=True,
                                 sampler=TPESampler(),
