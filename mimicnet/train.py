@@ -124,7 +124,8 @@ class PatientGRUODEBayesInterface:
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
                  tay_reg: Optional[int], state_size: int,
                  numeric_hidden_size: int, bias: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
+                 **init_kwargs):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
@@ -159,7 +160,7 @@ class PatientGRUODEBayesInterface:
         """
         init_kwargs = {
             "with_bias": bias,
-            "w_init": hk.initializers.RandomNormal(mean=0, stddev=0.01),
+            "w_init": hk.initializers.RandomNormal(mean=0, stddev=1e-3),
             "b_init": jnp.zeros
         }
         if ode_dyn == 'gru':
