@@ -28,6 +28,7 @@ from .metrics import (bce, balanced_focal_bce, l1_absolute, l2_squared,
 jax.config.update('jax_platform_name', 'gpu')
 logging.set_verbosity(logging.INFO)
 
+
 def create_patient_interface(processed_mimic_tables_dir: str):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
@@ -387,3 +388,39 @@ if __name__ == '__main__':
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
     study.optimize(objective, n_trials=num_trials)
+
+### IMPORTANT: https://github.com/optuna/optuna/issues/1647
+'''
+How each sampler in Optuna treat pruned trials and failed trials is different
+depending on each sampler. It is kind for users to document how
+pruned or failed trials are processed when suggesting.
+I think it is a good idea to give the ..note:: section
+for each sampler's docstrings.
+
+For each sampler, the behavior is as follows.
+## optuna.samplers.RandomSampler & optuna.samplers.GridSampler & optuna.integration.PyCmaSampler
+
+These samplers treat pruned trials and failed trials samely.
+They do not consider any pruned or failed trials. They simply ignore those trials.
+
+
+
+## optuna.samplers.TPESampler
+
+This sampler treats pruned trials and failed trials differently.
+This sampler simply ignores failed trials. On the other hand, this sampler
+considers pruned trials to suggest the next parameters in each iteration.
+Concretely, This sampler makes a ranking of completed and pruned trials
+based on the pairs of the completed or pruned step and the evaluation value
+when completed or pruned. Then, this sampler suggests the next parameters
+according to the priority of the trial based on the ranking.
+
+
+## optuna.samplers.CmaEsSampler & optuna.integration.SkoptSampler
+
+These samplers treat pruned trials and failed trials differently.
+This sampler simply ignores failed trials. On the other hand, this sampler
+considers pruned trials only when the consider_pruned_trials flag is True.
+When consider_pruned_trials = True, these samplers consider that pruned trials'
+evaluation values are the evaluation values when pruned.
+'''
