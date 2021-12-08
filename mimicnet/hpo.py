@@ -369,7 +369,7 @@ if __name__ == '__main__':
                         'detections_trn_df': detections_trn_df,
                         'detections_val_df': detections_val_df
                 }.items():
-                    df.to_csv(f'{df_save_prefix}_{name}.csv', index=False)
+                    df.to_csv(f'{df_save_prefix}_{name}.csv')
                     logging.info(df)
 
             if step % save_freq == 0 and step > 0:
