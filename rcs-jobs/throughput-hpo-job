@@ -21,10 +21,9 @@ $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-name $EXP_TAG \
 --store-url $EXP_STORE_URL \
---cpu \
 --num-trials 3 \
--N 2
-
+-N 2 \
+--cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID

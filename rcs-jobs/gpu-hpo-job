@@ -4,6 +4,9 @@
 
 #PBS -J 1-2
 
+# Load GPU modeuls
+module load cuda/10.2
+module load cudnn/7.0
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -19,12 +22,21 @@ cd $TMPDIR/MIMIC-SNONET
 # Run program
 $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
---mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
+--mimic-processed-dir $HOME/GP/ehr-data/mimic3-transforms \
 --study-name $EXP_TAG \
 --store-url $EXP_STORE_URL \
 --num-trials 1 \
 -N 1
 
+# Run program
+$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
+--output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
+--mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
+--study-name $EXP_TAG \
+--store-url $EXP_STORE_URL \
+--num-trials 3 \
+-N 8 \
+--cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID

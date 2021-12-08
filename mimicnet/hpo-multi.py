@@ -20,8 +20,6 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of HPO trials.')
 
-    parser.add_argument('--cpu', action='store_true')
-
     parser.add_argument('-s',
                         '--store-url',
                         required=True,
@@ -37,6 +35,7 @@ if __name__ == '__main__':
                         help='Number of parallel processes.')
 
 
+    parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
 
@@ -50,7 +49,7 @@ if __name__ == '__main__':
 
     procs = []
     for i in range(N):
-        proc = subprocess.Popen([sys.executable,
+        cmd = [sys.executable,
                                  '-m',
                                  'mimicnet.hpo',
                                  '--study-name',
@@ -62,8 +61,10 @@ if __name__ == '__main__':
                                  '--mimic-processed-dir',
                                  mimic_processed_dir,
                                  '--num-trials',
-                                 str(num_trials),
-                                 '--cpu' if cpu else ''])
+                                 str(num_trials)]
+        if cpu:
+            cmd.append('--cpu')
+        proc = subprocess.Popen()
         procs.append(proc)
 
 

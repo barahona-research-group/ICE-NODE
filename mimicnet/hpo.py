@@ -389,7 +389,6 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of HPO trials.')
 
-    parser.add_argument('--cpu', action='store_true')
 
     parser.add_argument('-s',
                         '--store-url',
@@ -399,6 +398,7 @@ if __name__ == '__main__':
     parser.add_argument('--study-name',
                         required=True)
 
+    parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
 

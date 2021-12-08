@@ -4,7 +4,6 @@
 
 #PBS -J 1-50
 
-
 # Setup environement using .bashrc
 source $HOME/.bashrc
 conda activate mimic3-snonet
@@ -22,10 +21,9 @@ $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-name $EXP_TAG \
 --store-url $EXP_STORE_URL \
---cpu \
 --num-trials 1 \
--N 8
-
+-N 8 \
+--cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID
