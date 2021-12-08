@@ -16,7 +16,7 @@ import optuna
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 
-from .train import train_ehr, PatientGRUODEBayesInterface
+from .train import PatientGRUODEBayesInterface
 from .concept import Subject
 from .dag import CCSDAG
 from .jax_interface import SubjectJAXInterface
@@ -25,7 +25,6 @@ from .gram import DAGGRAM
 from .metrics import (bce, balanced_focal_bce, l1_absolute, l2_squared,
                       code_detectability_by_percentiles)
 
-jax.config.update('jax_platform_name', 'gpu')
 logging.set_verbosity(logging.INFO)
 
 
@@ -56,33 +55,25 @@ def create_patient_interface(processed_mimic_tables_dir: str):
     return SubjectJAXInterface(patients, set(test_df.ITEMID), k_graph)
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i',
-                        '--mimic-processed-dir',
-                        required=True,
-                        help='Absolute path to MIMIC-III processed tables')
-    parser.add_argument('-o',
-                        '--output-dir',
-                        required=True,
-                        help='Aboslute path to log intermediate results')
-    parser.add_argument('-n',
-                        '--num-trials',
-                        type=int,
-                        required=True,
-                        help='Number of HPO trials.')
-    parser.add_argument('--cpu', action='store_true')
+def run_trials(study_name: str,
+               store_url: str,
+               num_trials: int,
+               mimic_processed_dir: str,
+               output_dir: str,
+               cpu: bool):
 
-    args = parser.parse_args()
-
-    if args.cpu:
+    study = optuna.create_study(study_name=study_name,
+                                direction="maximize",
+                                storage=store_url,
+                                load_if_exists=True,
+                                sampler=TPESampler(),
+                                pruner=HyperbandPruner())
+    if cpu:
         jax.config.update('jax_platform_name', 'cpu')
+    else:
+        jax.config.update('jax_platform_name', 'gpu')
 
-    num_trials = args.num_trials
-    mimic_processed_dir = args.mimic_processed_dir
-    output_dir = args.output_dir
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-
     logging.info('[LOADING] Patients JAX Interface.')
     patient_interface = create_patient_interface(mimic_processed_dir)
     logging.info('[DONE] Patients JAX Interface')
@@ -300,7 +291,6 @@ if __name__ == '__main__':
 
         batch_size = config['training']['batch_size']
         batch_size = min(batch_size, len(train_ids))
-        val_batch_size = min(batch_size, len(valid_ids))
 
         epochs = config['training']['epochs']
         iters = int(epochs * len(train_ids) / batch_size)
@@ -380,14 +370,47 @@ if __name__ == '__main__':
 
         return score
 
-    storage = os.path.join(output_dir, 'study.db')
-    study = optuna.create_study(study_name='study',
-                                direction="maximize",
-                                storage=f'sqlite:///{storage}',
-                                load_if_exists=True,
-                                sampler=TPESampler(),
-                                pruner=HyperbandPruner())
     study.optimize(objective, n_trials=num_trials)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i',
+                        '--mimic-processed-dir',
+                        required=True,
+                        help='Absolute path to MIMIC-III processed tables')
+    parser.add_argument('-o',
+                        '--output-dir',
+                        required=True,
+                        help='Aboslute path to log intermediate results')
+    parser.add_argument('-n',
+                        '--num-trials',
+                        type=int,
+                        required=True,
+                        help='Number of HPO trials.')
+
+    parser.add_argument('--cpu', action='store_true')
+
+    parser.add_argument('-s',
+                        '--store-url',
+                        required=True,
+                        help='Storage URL, e.g. for PostgresQL database')
+
+    parser.add_argument('--study-name',
+                        required=True)
+
+    args = parser.parse_args()
+
+
+    study_name = args.study_name
+    store_url = args.store_url
+    num_trials = args.num_trials
+    mimic_processed_dir = args.mimic_processed_dir
+    output_dir = args.output_dir
+    cpu= args.cpu
+
+    run_trials(study_name=study_name, store_url = store_url, num_trials = num_trials, mimic_processed_dir = mimic_processed_dir, output_dir = output_dir,cpu=cpu)
+
 
 ### IMPORTANT: https://github.com/optuna/optuna/issues/1647
 '''
