@@ -4,14 +4,25 @@
 
 #PBS -J 1-3
 
+# Setup environement using .bashrc
+source ~/.bashrc
+conda activate mimic3-snonet
+
+# Clone repository and checkout to the given tag name.
+git clone git@github.com:A-Alaa/MIMIC-SNONET.git --branch $EXP_TAG exp-dec-07 --single-branch && cd MIMIC-SNONET
+
 # Load modules for any applications
 
-# Change to the submission directory
-cd $HOME/GP/MIMIC-SNONET
 # Run program
-# The program won't automatically use more than 1 core
-# It has to be written with parallel capability
+$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
+--output-dir ~/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
+--mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
+--study-name $EXP_TAG \
+--store-url $EXP_STORE_URL \
+--cpu \
+--num-trials 3 \
+-N 8
 
-# The number of cores assigned to the job is available
-# In the environment variable NCPUS or OMP_NUM_THREADS
-$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi -o ~/GP/ehr-data/mimic3-snonet-exp/dec07b -i ~/GP/ehr-data/mimic3-transforms -n 1 -N 2
+
+mkdir $PBS_O_WORKDIR/$PBS_JOBID
+cp * $PBS_O_WORKDIR/$PBS_JOBID
