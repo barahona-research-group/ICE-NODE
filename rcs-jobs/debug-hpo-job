@@ -3,7 +3,7 @@
 #PBS -lwalltime=0:30:0
 
 #PBS -J 1-3
-echo $TMPDIR
+#
 # Setup environement using .bashrc
 source $HOME/.bashrc
 conda activate mimic3-snonet
