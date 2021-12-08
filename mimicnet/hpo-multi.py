@@ -26,11 +26,15 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of parallel processes.')
 
+    parser.add_argument('--cpu',
+                        action='store_true')
+
     args = parser.parse_args()
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
     N = args.num_processes
+    cpu = args.cpu
 
     procs = []
     for i in range(N):
@@ -43,7 +47,7 @@ if __name__ == '__main__':
                                  mimic_processed_dir,
                                  '-n',
                                  str(num_trials),
-                                 '--cpu'])
+                                 '--cpu' if cpu else ''])
         procs.append(proc)
 
 

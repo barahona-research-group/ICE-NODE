@@ -96,7 +96,7 @@ if __name__ == '__main__':
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
     eval_freq = 10
-    save_freq = 50
+    save_freq = 100
 
     def create_config(trial: optuna.Trial):
         return {
