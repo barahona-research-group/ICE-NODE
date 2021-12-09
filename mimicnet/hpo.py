@@ -11,6 +11,7 @@ from absl import logging
 from tqdm import tqdm
 
 import jax
+import jax.numpy as jnp
 from jax.experimental import optimizers
 import optuna
 from optuna.storages import RDBStorage
@@ -28,6 +29,10 @@ from .metrics import (bce, balanced_focal_bce, l1_absolute, l2_squared,
                       code_detectability_by_percentiles)
 
 logging.set_verbosity(logging.INFO)
+
+
+def tree_hasnan(t):
+    return any(map(lambda x: jnp.any(jnp.isnan(x)), jax.tree_leaves(t)))
 
 
 def create_patient_interface(processed_mimic_tables_dir: str):
@@ -58,7 +63,8 @@ def create_patient_interface(processed_mimic_tables_dir: str):
 
 
 def run_trials(study_name: str, store_url: str, num_trials: int,
-               mimic_processed_dir: str, output_dir: str, cpu: bool):
+               mimic_processed_dir: str, output_dir: str, cpu: bool,
+               job_id: str):
 
     storage = RDBStorage(url=store_url, engine_kwargs={'poolclass': NullPool})
     study = optuna.create_study(study_name=study_name,
@@ -91,7 +97,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
     save_freq = 100
 
     def create_config(trial: optuna.Trial):
-        return {
+        config = {
             'glove_config': {
                 'diag_idx':
                 patient_interface.diag_multi_ccs_idx,
@@ -140,11 +146,21 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             },
             'model': {
                 'ode_dyn':
-                'mlp',  # gru, mlp
+                trial.suggest_categorical(
+                    'ode_dyn', ['mlp', 'gru', 'res'
+                                ]),  # Add depth conditional to 'mlp' or 'res'
+                'ode_quad':
+                trial.suggest_categorical('ode_quad', [True, False]),
                 'state_size':
                 trial.suggest_int('state_size', 100, 500, 50),
+                'numeric_quad':
+                trial.suggest_categorical('numeric_quad', [True, False]),
                 'numeric_hidden_size':
-                trial.suggest_int('numeric_hidden_size', 100, 300, 50),
+                trial.suggest_int('numeric_hidden_size', 100, 350, 50),
+                'gru_bayes_quad':
+                trial.suggest_categorical('gru_bayes_quad', [True, False]),
+                'init_depth':
+                trial.suggest_int('int_depth', 1, 5),
                 'bias':
                 True
             },
@@ -177,7 +193,16 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             }
         }
 
+        if config['model']['ode_dyn'] == 'gru':
+            config['model']['ode_depth'] = 0
+        else:
+            config['model']['ode_depth'] = trial.suggest_int('ode_depth', 1, 5)
+
+        return config
+
     def objective(trial: optuna.Trial):
+        trial.set_user_attr('job_id', job_id)
+
         trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
@@ -285,9 +310,17 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                    opt_state: optimizers.OptimizerState,
                    iteration_text_callback: Any) -> optimizers.OptimizerState:
             params = get_params(opt_state)
+            if tree_hasnan(params):
+                logging.warning('NaN Params')
+                raise optuna.TrialPruned()
+
             grads, data = jax.grad(loss_fn,
                                    has_aux=True)(params, batch,
                                                  iteration_text_callback)
+            if tree_hasnan(grads):
+                logging.warning('NaN grads')
+                raise optuna.TrialPruned()
+
             return opt_update(step, grads, opt_state), data
 
         batch_size = config['training']['batch_size']
@@ -392,6 +425,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--study-name', required=True)
 
+    parser.add_argument('--job-id', required=False)
+
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -400,6 +435,7 @@ if __name__ == '__main__':
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
+    job_id = args.job_id or 'unknown'
     cpu = args.cpu
 
     run_trials(study_name=study_name,
@@ -407,6 +443,7 @@ if __name__ == '__main__':
                num_trials=num_trials,
                mimic_processed_dir=mimic_processed_dir,
                output_dir=output_dir,
+               job_id=job_id,
                cpu=cpu)
 
 ### IMPORTANT: https://github.com/optuna/optuna/issues/1647

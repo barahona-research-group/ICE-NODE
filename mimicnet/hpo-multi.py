@@ -33,6 +33,8 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of parallel processes.')
 
+    parser.add_argument('--job-id', required=False)
+
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -43,6 +45,7 @@ if __name__ == '__main__':
     output_dir = args.output_dir
     cpu = args.cpu
     N = args.num_processes
+    job_id = args.job_id or 'unknown'
 
     procs = []
     for i in range(N):
@@ -50,7 +53,7 @@ if __name__ == '__main__':
             sys.executable, '-m', 'mimicnet.hpo', '--study-name', study_name,
             '--store-url', store_url, '--output-dir', output_dir,
             '--mimic-processed-dir', mimic_processed_dir, '--num-trials',
-            str(num_trials)
+            str(num_trials), '--job-id', job_id
         ]
         if cpu:
             cmd.append('--cpu')
