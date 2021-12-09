@@ -170,7 +170,7 @@ class PatientGRUODEBayesInterface:
         }
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
-        if ode_dyn == 'res':
+        elif ode_dyn == 'res':
             ode_dyn_cls = ResDynamics
         elif ode_dyn == 'mlp':
             ode_dyn_cls = MLPDynamics
