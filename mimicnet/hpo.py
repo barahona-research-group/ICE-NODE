@@ -305,8 +305,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             train_batch = train_ids[:batch_size]
             val_pbar.update(1)
 
-            opt_state, data = update(step, train_batch, opt_state,
-                                     update_batch_desc)
+            opt_state, _ = update(step, train_batch, opt_state,
+                                  update_batch_desc)
 
             update_batch_desc('')
 
@@ -363,12 +363,6 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 }.items():
                     df.to_csv(f'{df_save_prefix}_{name}.csv')
                     logging.info(df)
-
-            if step % save_freq == 0 and step > 0:
-                save_path = os.path.join(trial_dir,
-                                         f'step{step:03d}_params.pickle')
-                with open(save_path, 'wb') as f:
-                    pickle.dump(get_params(opt_state), f)
 
         return score
 
