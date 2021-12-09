@@ -13,8 +13,10 @@ from tqdm import tqdm
 import jax
 from jax.experimental import optimizers
 import optuna
+from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
+from sqlalchemy.pool import NullPool
 
 from .train import PatientGRUODEBayesInterface
 from .concept import Subject
@@ -55,19 +57,17 @@ def create_patient_interface(processed_mimic_tables_dir: str):
     return SubjectJAXInterface(patients, set(test_df.ITEMID), k_graph)
 
 
-def run_trials(study_name: str,
-               store_url: str,
-               num_trials: int,
-               mimic_processed_dir: str,
-               output_dir: str,
-               cpu: bool):
+def run_trials(study_name: str, store_url: str, num_trials: int,
+               mimic_processed_dir: str, output_dir: str, cpu: bool):
 
+    storage = RDBStorage(url=store_url, engine_kwargs={'poolclass': NullPool})
     study = optuna.create_study(study_name=study_name,
                                 direction="maximize",
-                                storage=store_url,
+                                storage=storage,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
+
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
     else:
@@ -182,6 +182,7 @@ def run_trials(study_name: str,
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
         logging.info('[LOADING] Sampling & Initializing Models')
+
         config = create_config(trial)
 
         logging.info(f'Trial {trial.number} HPs: {trial.params}')
@@ -315,6 +316,7 @@ def run_trials(study_name: str,
                 _, val_res = loss_fn(params, valid_ids, update_batch_desc)
 
                 score = val_res['stats']['f1-score']
+
                 trial.report(score, step)
 
                 if trial.should_prune():
@@ -389,28 +391,29 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of HPO trials.')
 
-
     parser.add_argument('-s',
                         '--store-url',
                         required=True,
                         help='Storage URL, e.g. for PostgresQL database')
 
-    parser.add_argument('--study-name',
-                        required=True)
+    parser.add_argument('--study-name', required=True)
 
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
-
 
     study_name = args.study_name
     store_url = args.store_url
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
-    cpu= args.cpu
+    cpu = args.cpu
 
-    run_trials(study_name=study_name, store_url = store_url, num_trials = num_trials, mimic_processed_dir = mimic_processed_dir, output_dir = output_dir,cpu=cpu)
-
+    run_trials(study_name=study_name,
+               store_url=store_url,
+               num_trials=num_trials,
+               mimic_processed_dir=mimic_processed_dir,
+               output_dir=output_dir,
+               cpu=cpu)
 
 ### IMPORTANT: https://github.com/optuna/optuna/issues/1647
 '''
