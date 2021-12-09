@@ -168,7 +168,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 'batch_size':
                 trial.suggest_int('batch_size', 5, 25, 5),
                 'epochs':
-                100,
+                60,
                 'lr':
                 trial.suggest_float('lr', 1e-5, 1e-2, log=True),
                 'diag_loss':
