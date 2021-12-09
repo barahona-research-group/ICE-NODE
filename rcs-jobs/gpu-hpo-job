@@ -10,7 +10,7 @@ module load cudnn/7.0
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
-conda activate mimic3-snonet
+$HOME/anaconda3/condabin/conda activate mimic3-snonet
 
 # Clone repository and checkout to the given tag name.
 git clone git@github.com:A-Alaa/MIMIC-SNONET.git $TMPDIR/MIMIC-SNONET --branch $EXP_TAG --single-branch 
