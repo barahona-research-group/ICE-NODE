@@ -26,6 +26,7 @@ $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --study-name $EXP_TAG \
 --store-url $EXP_STORE_URL \
 --num-trials 1 \
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 -N 1
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

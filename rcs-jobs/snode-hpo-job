@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=24:0:0
 
-#PBS -J 1-50
+#PBS -J 1-100
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -23,6 +23,7 @@ $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --store-url $EXP_STORE_URL \
 --num-trials 1 \
 -N 5 \
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

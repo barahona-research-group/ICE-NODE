@@ -21,8 +21,8 @@ from jax.tree_util import tree_flatten, tree_map
 
 from .jax_interface import SubjectJAXInterface
 from .gram import DAGGRAM
-from .models import (MLPDynamics, GRUDynamics, TaylorAugmented, NeuralODE,
-                     GRUBayes, NumericObsModel, StateDecoder,
+from .models import (MLPDynamics, ResDynamics, GRUDynamics, TaylorAugmented,
+                     NeuralODE, GRUBayes, NumericObsModel, StateDecoder,
                      StateInitializer)
 from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
                       l1_absolute, numeric_error, lognormal_loss,
@@ -122,10 +122,13 @@ def wrap_module(module, *module_args, **module_kwargs):
 class PatientGRUODEBayesInterface:
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
+                 ode_depth: int, ode_quad: bool,
                  tay_reg: Optional[int], state_size: int,
-                 numeric_hidden_size: int, bias: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
-                 **init_kwargs):
+                 numeric_hidden_size: int, numeric_quad: bool,
+                 gru_bayes_quad: bool, init_depth: bool,
+                 bias: bool,
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
+                                     float], **init_kwargs):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
@@ -143,7 +146,9 @@ class PatientGRUODEBayesInterface:
             'diag_dag': len(subject_interface.diag_multi_ccs_idx),
             'diag_out': len(subject_interface.diag_single_ccs_idx),
             'state': state_size,
-            'numeric_hidden': numeric_hidden_size
+            'numeric_hidden': numeric_hidden_size,
+            'ode_depth': ode_depth,
+            'init_depth': init_depth
         }
 
         self.ode_control_passes = ['age', 'static', 'proc_gram']
@@ -165,6 +170,8 @@ class PatientGRUODEBayesInterface:
         }
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
+        elif ode_dyn == 'res':
+            ode_dyn_cls = ResDynamics
         elif ode_dyn == 'mlp':
             ode_dyn_cls = MLPDynamics
         else:
@@ -175,15 +182,18 @@ class PatientGRUODEBayesInterface:
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_size,
+                            depth=ode_depth,
+                            with_quad_augmentation=ode_quad,
                             name='n_ode',
                             tay_reg=tay_reg,
                             **init_kwargs)))
-        self.n_ode = jax.jit(n_ode, static_argnums=(4,))
+        self.n_ode = jax.jit(n_ode, static_argnums=(4, ))
 
         gru_bayes_init, gru_bayes = hk.without_apply_rng(
             hk.transform(
                 wrap_module(GRUBayes,
                             state_size=state_size,
+                            with_quad_augmentation=gru_bayes_quad,
                             name='gru_bayes',
                             **init_kwargs)))
         self.gru_bayes = jax.jit(gru_bayes)
@@ -193,6 +203,7 @@ class PatientGRUODEBayesInterface:
                 wrap_module(NumericObsModel,
                             numeric_size=self.dimensions['numeric'],
                             numeric_hidden_size=numeric_hidden_size,
+                            with_quad_augmentation=numeric_quad,
                             name='f_numeric',
                             **init_kwargs)))
 
@@ -212,6 +223,7 @@ class PatientGRUODEBayesInterface:
                 wrap_module(StateInitializer,
                             hidden_size=self.dimensions['diag_gram'],
                             state_size=state_size,
+                            depth=init_depth,
                             name='f_init')))
         self.f_state_init = jax.jit(f_state_init)
 
@@ -222,7 +234,6 @@ class PatientGRUODEBayesInterface:
             'f_dec': f_dec_init,
             'f_state_init': f_state_init_init
         }
-
 
     def init_params(self, rng_key):
         init_data = self.__initialization_data()
@@ -471,9 +482,12 @@ class PatientGRUODEBayesInterface:
             def _state_init(subject_id):
                 zero_diag_gram = jnp.zeros(self.dimensions['diag_gram'])
                 d = {
-                    'diag_gram': points_0['diag_gram'].get(subject_id, zero_diag_gram),
-                    'age': points_0['age'][subject_id],
-                    'static': self.subject_interface.subject_static(subject_id)
+                    'diag_gram':
+                    points_0['diag_gram'].get(subject_id, zero_diag_gram),
+                    'age':
+                    points_0['age'][subject_id],
+                    'static':
+                    self.subject_interface.subject_static(subject_id)
                 }
                 state_input = jnp.hstack(map(d.get, self.state_init_passes))
                 return self.f_state_init(params['f_state_init'], state_input)
@@ -649,10 +663,7 @@ def train_ehr(
         proc_gram: DAGGRAM,
         rng: Any,
         # Model configurations
-        ode_dyn: str,
-        state_size: int,
-        numeric_hidden_size: int,
-        bias: bool,
+        model_config: Dict[str, Any],
         # Training configurations
         train_validation_split: float,
         batch_size: int,
@@ -691,11 +702,8 @@ def train_ehr(
         subject_interface=subject_interface,
         diag_gram=diag_gram,
         proc_gram=proc_gram,
-        ode_dyn=ode_dyn,
+        **model_config,
         tay_reg=tay_reg,
-        state_size=state_size,
-        numeric_hidden_size=numeric_hidden_size,
-        bias=bias,
         diag_loss=diag_loss_function[diag_loss])
 
     jax.profiler.save_device_memory_profile("before_params_init.prof")
