@@ -147,8 +147,8 @@ def code_detectability(top_k: int, true_diag: jnp.ndarray,
     else:
         ground_truth = {ground_truth.item()}
 
-    prejump_predictions = set(jnp.argsort(prejump_predicted_diag)[-top_k:])
-    postjump_predictions = set(jnp.argsort(postjump_predicted_diag)[-top_k:])
+    prejump_predictions = set(onp.array(jnp.argsort(prejump_predicted_diag)[-top_k:]))
+    postjump_predictions = set(onp.array(jnp.argsort(postjump_predicted_diag)[-top_k:]))
     detections = []
     for code_i in ground_truth:
         pre_detected, post_detected = 0, 0
