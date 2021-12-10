@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=72:0:0
 
-#PBS -J 1-50
+#PBS -J 1-100
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
