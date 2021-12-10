@@ -3,6 +3,7 @@ from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
                     Optional, Tuple, Union)
 
 import pandas as pd
+import numpy as onp
 import jax
 import jax.numpy as jnp
 from jax.profiler import annotate_function
@@ -142,7 +143,7 @@ def code_detectability(top_k: int, true_diag: jnp.ndarray,
                        postjump_predicted_diag: jnp.ndarray):
     ground_truth = jnp.argwhere(true_diag).squeeze()
     if ground_truth.ndim > 0:
-        ground_truth = set(ground_truth)
+        ground_truth = set(onp.array(ground_truth))
     else:
         ground_truth = {ground_truth.item()}
 
