@@ -295,7 +295,7 @@ class NumericObsModel(hk.Module):
         out = hk.Linear(self.__numeric_hidden_size)(h)
         out = leaky_relu(out, negative_slope=2e-1)
 
-        out_logvar = self.__lin_logvar(out)
+        out_logvar = 10 * jnp.tanh(self.__lin_logvar(out))
         out_mean = 4 * jnp.tanh(self.__lin_mean(out))
         return out_mean, out_logvar
 

@@ -168,7 +168,7 @@ def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
     detections = {
         i: code_detectability(top_k, true_diag[i], prejump_predicted_diag[i],
                               postjump_predicted_diag[i])
-        for i in true_diag.keys()
+        for i in prejump_predicted_diag.keys()
     }
     df_list = []
 

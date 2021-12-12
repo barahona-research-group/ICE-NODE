@@ -381,14 +381,16 @@ class SubjectPoint:
                 # admission interval.
                 if i == 0:
                     icd9_diag_codes = adm.icd9_diag_codes
+                    icd9_proc_codes = set()
                 else:
                     icd9_diag_codes = set()
+                    icd9_proc_codes = adm.icd9_proc_codes
 
                 points[days_ahead] = cls(subject_id=subject.subject_id,
                                          days_ahead=days_ahead,
                                          age=age,
                                          icd9_diag_codes=icd9_diag_codes,
-                                         icd9_proc_codes=adm.icd9_proc_codes,
+                                         icd9_proc_codes=icd9_proc_codes,
                                          tests=[])
 
         for test in subject.tests:

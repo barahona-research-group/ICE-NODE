@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from functools import partial
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
-                    Optional, Tuple, Union)
+                    Optional, Tuple, Union, Set)
 
 import numpy as onp
 import pandas as pd
@@ -122,19 +122,17 @@ def wrap_module(module, *module_args, **module_kwargs):
 class PatientGRUODEBayesInterface:
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
-                 ode_depth: int, ode_quad: bool,
-                 tay_reg: Optional[int], state_size: int,
-                 numeric_hidden_size: int, numeric_quad: bool,
-                 gru_bayes_quad: bool, init_depth: bool,
-                 bias: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
-                                     float], **init_kwargs):
+                 ode_depth: int, tay_reg: Optional[int], state_size: int,
+                 numeric_hidden_size: int, init_depth: bool, bias: bool,
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
+                 max_odeint_days: int, **init_kwargs):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
         self.proc_gram = proc_gram
         self.tay_reg = tay_reg
         self.diag_loss = diag_loss
+        self.max_odeint_days = max_odeint_days
 
         self.dimensions = {
             'age': 1,
@@ -183,7 +181,7 @@ class PatientGRUODEBayesInterface:
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_size,
                             depth=ode_depth,
-                            with_quad_augmentation=ode_quad,
+                            with_quad_augmentation=False,
                             name='n_ode',
                             tay_reg=tay_reg,
                             **init_kwargs)))
@@ -193,7 +191,7 @@ class PatientGRUODEBayesInterface:
             hk.transform(
                 wrap_module(GRUBayes,
                             state_size=state_size,
-                            with_quad_augmentation=gru_bayes_quad,
+                            with_quad_augmentation=False,
                             name='gru_bayes',
                             **init_kwargs)))
         self.gru_bayes = jax.jit(gru_bayes)
@@ -203,7 +201,7 @@ class PatientGRUODEBayesInterface:
                 wrap_module(NumericObsModel,
                             numeric_size=self.dimensions['numeric'],
                             numeric_hidden_size=numeric_hidden_size,
-                            with_quad_augmentation=numeric_quad,
+                            with_quad_augmentation=False,
                             name='f_numeric',
                             **init_kwargs)))
 
@@ -338,11 +336,18 @@ class PatientGRUODEBayesInterface:
         logvar = {i: lv for i, (_, lv) in mean_logvar.items()}
         return mean, logvar
 
-    def __odeint(self, params, h, t, c, count_nfe=False):
+    def __odeint(self, params, h, t, c, count_nfe=False, selection=None):
+
+        if selection:
+            selection = selection.intersection(h.keys())
+        else:
+            selection = h.keys()
+
         h_r_nfe = {
             i: self.n_ode(params['ode_dyn'], h[i], t[i], c[i], count_nfe)
-            for i in h.keys()
+            for i in selection
         }
+
         nfe = sum(n for h, r, n in h_r_nfe.values())
         r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
         h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
@@ -363,18 +368,12 @@ class PatientGRUODEBayesInterface:
         return updated_state
 
     def __state_decode(
-        self,
-        params: Any,
-        state: Dict[int, jnp.ndarray],
-        numeric_mean: Dict[int, jnp.ndarray],
-        subject_batch: Optional[Iterable[int]] = None
+        self, params: Any, state: Dict[int, jnp.ndarray],
+        numeric_mean: Dict[int, jnp.ndarray], selection: Set[int]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-        if subject_batch is None:
-            subject_batch = state.keys()
-
         gram_out = {
             i: self.f_dec(params['f_dec'], state[i], numeric_mean[i])
-            for i in subject_batch
+            for i in selection
         }
         gram = {i: g for i, (g, _) in gram_out.items()}
         out = {i: o for i, (_, o) in gram_out.items()}
@@ -386,11 +385,18 @@ class PatientGRUODEBayesInterface:
         proc = self.proc_gram.compute_embedding_mat(params["proc_gram"])
         return diag, proc
 
-    def __diag_loss(self, diag_true: Dict[int, jnp.ndarray],
-                    diag_predicted: Dict[int, jnp.ndarray]):
+    def __diag_loss(self,
+                    diag_true: Dict[int, jnp.ndarray],
+                    diag_predicted: Dict[int, jnp.ndarray],
+                    selection: Optional[Set[int]] = None):
+        if selection:
+            selection = selection.intersection(diag_true.keys())
+        else:
+            selection = diag_true.keys()
+
         loss = {
             i: self.diag_loss(diag_true[i], diag_predicted[i])
-            for i in diag_true.keys()
+            for i in selection
         }
         if loss:
             return sum(loss.values()) / len(loss)
@@ -398,19 +404,26 @@ class PatientGRUODEBayesInterface:
             return 0.0
 
     def __numeric_error(self, mean_true, mean_predicted, logvar_predicted):
-
         error_num = {
-            i: numeric_error(mean, mean_predicted[i], logvar_predicted[i])
-            for i, mean in mean_true.items()
+            i: numeric_error(mean_true[i], mean_predicted[i],
+                             logvar_predicted[i])
+            for i in mean_true.keys()
         }
         return error_num
 
-    def __lognormal_loss(self, mask: Dict[int, jnp.ndarray],
+    def __lognormal_loss(self,
+                         mask: Dict[int, jnp.ndarray],
                          normal_error: Dict[int, jnp.ndarray],
-                         logvar: Dict[int, jnp.ndarray]):
+                         logvar: Dict[int, jnp.ndarray],
+                         selection: Optional[Set[int]] = None):
+        if selection:
+            selection = selection.intersection(normal_error.keys())
+        else:
+            selection = normal_error.keys()
+
         loss = {
-            i: lognormal_loss(mask[i], error, logvar[i])
-            for i, error in normal_error.items()
+            i: lognormal_loss(mask[i], normal_error[i], logvar[i])
+            for i in selection
         }
 
         return sum(loss.values()) / len(loss)
@@ -429,16 +442,22 @@ class PatientGRUODEBayesInterface:
         return sum(loss.values()) / len(loss)
 
     def __gram_error(self, gram_true, gram_predicted):
+
         error_gram = {
             i: gram_true[i] - jit_sigmoid(gram_predicted[i])
             for i in gram_true.keys()
         }
         return error_gram
 
-    def __confusion_matrix(self, diag_true, diag_predicted):
+    def __confusion_matrix(self, diag_true, diag_predicted, selection: None):
+        if selection:
+            selection = selection.intersection(diag_predicted.keys())
+        else:
+            selection = diag_predicted.keys()
+
         cm = {
             i: confusion_matrix(diag_true[i], jit_sigmoid(diag_predicted[i]))
-            for i in diag_true.keys()
+            for i in selection
         }
         if cm:
             return sum(cm.values())
@@ -467,7 +486,8 @@ class PatientGRUODEBayesInterface:
 
         dyn_loss = []
         nfe = []
-        nn_odeint = lambda h, t, c: self.__odeint(params, h, t, c, count_nfe)
+        nn_odeint = lambda h, t, c, s: self.__odeint(params, h, t, c,
+                                                     count_nfe, s)
 
         enc = self.diag_gram.encode
 
@@ -525,10 +545,14 @@ class PatientGRUODEBayesInterface:
         prejump_num_loss = []
         postjump_num_loss = []
         diag_detectability = []
-        num_weights = []
-        diag_weights = []
+        pre_num_weights = []
+        post_num_weights = []
+        post_diag_weights = []
+        pre_diag_weights = []
         diag_cm = []  # Confusion matrix
-        points_count = 0
+        all_points_count = 0
+        integrable_count = 0
+        predictable_count = 0
         odeint_weeks = 0.0
 
         for n in self.subject_interface.n_support[1:]:
@@ -539,24 +563,43 @@ class PatientGRUODEBayesInterface:
             if points_n is None:
                 continue
 
-            delta_days = {
-                i: days_ahead - days_fwd[i]
-                for i, days_ahead in points_n['days_ahead'].items()
-            }
-
-            days_fwd.update(points_n['days_ahead'])
-
             numeric = points_n['numeric']
             mask = points_n['mask']
             h0 = {i: subject_last_state[i] for i in numeric.keys()}
             diag_gram = points_n['diag_gram']
             diag_out = points_n['diag_out']
 
-            points_count += len(numeric)
-            # No. of tests
-            num_weights.append(sum(sum(mask.values())) + 1e-10)
-            # No. of diagnostic points
-            diag_weights.append(len(diag_gram))
+            delta_days = {
+                i: days_ahead - days_fwd[i]
+                for i, days_ahead in points_n['days_ahead'].items()
+            }
+
+            integrable_cases = {
+                i
+                for i, days in delta_days.items()
+                if days <= self.max_odeint_days
+            }
+
+            predictable_cases = integrable_cases.intersection(diag_out.keys())
+            days_fwd.update(points_n['days_ahead'])
+
+            predictable_count += len(predictable_cases)
+            integrable_count += len(integrable_cases)
+            all_points_count += len(numeric)
+
+            # Normalize the pre-adjust loss to the number
+            # of integrable points
+            pre_num_weights.append(
+                sum(v.sum()
+                    for i, v in mask.items() if i in integrable_cases) + 1e-10)
+
+            # Normaliza the post-adjust loss to the number of
+            # all points
+            post_num_weights.append(sum(sum(mask.values())) + 1e-10)
+
+            # No. of "Predictable" diagnostic points
+            pre_diag_weights.append(len(predictable_cases))
+            post_diag_weights.append(len(diag_out))
             '''
             Idea: scale days_forward to weeks_forward.
             This can:
@@ -564,11 +607,17 @@ class PatientGRUODEBayesInterface:
                 2. Force the ode_dyn model to learn weekly dynamics, which is a suitable time scale for cancer development.
             '''
             delta_weeks = {i: days / 7.0 for i, days in delta_days.items()}
-            odeint_weeks += sum(delta_weeks.values())
+            odeint_weeks += sum(v for i, v in delta_weeks.items()
+                                if i in integrable_cases)
             ################## ODEINT #####################
             iteration_text_callback(iter_prefix + ' - odeint')
             h1, _dyn_loss, _nfe = nn_odeint(h0, delta_weeks,
-                                            points_n['ode_control'])
+                                            points_n['ode_control'],
+                                            integrable_cases)
+
+            # Re-add the cases that were not integrated.
+            h1.update({i: h for i, h in h0.items() if i not in h1})
+
             dyn_loss.append(_dyn_loss)
             nfe.append(_nfe)
 
@@ -580,13 +629,20 @@ class PatientGRUODEBayesInterface:
             error = self.__numeric_error(numeric, pre_mean, pre_logvar)
 
             prejump_num_loss.append(
-                self.__lognormal_loss(mask, error, pre_logvar))
+                self.__lognormal_loss(mask, error, pre_logvar,
+                                      integrable_cases))
 
             ########## PRE-JUMP DAG LOSS #########################
             iteration_text_callback(iter_prefix + ' - pre_dag_loss')
             pre_diag_gram, pre_diag_out = nn_state_decode(
                 h1, pre_mean, diag_out.keys())
-            prejump_diag_loss.append(self.__diag_loss(diag_out, pre_diag_out))
+            confusion_mat = self.__confusion_matrix(diag_out, pre_diag_out,
+                                                    predictable_cases)
+            diag_cm.append(confusion_mat)
+
+            pre_diag_loss = self.__diag_loss(diag_out, pre_diag_out,
+                                             predictable_cases)
+            prejump_diag_loss.append(pre_diag_loss)
 
             pre_diag_gram_error = self.__gram_error(diag_gram, pre_diag_gram)
 
@@ -605,11 +661,11 @@ class PatientGRUODEBayesInterface:
 
             ############### POST-JUNP DAG LOSS ########################
             iteration_text_callback(iter_prefix + ' - dag_post_loss')
-            _, post_diag_out = nn_state_decode(h2, post_mean, diag_out.keys())
-            postjump_diag_loss.append(self.__diag_loss(diag_out,
-                                                       post_diag_out))
+            _, post_diag_out = nn_state_decode(h2, post_mean,
+                                               set(diag_out.keys()))
 
-            diag_cm.append(self.__confusion_matrix(diag_out, post_diag_out))
+            post_diag_loss = self.__diag_loss(diag_out, post_diag_out)
+            postjump_diag_loss.append(post_diag_loss)
 
             diag_detectability.append(
                 code_detectability_df(20, diag_out, pre_diag_out,
@@ -626,12 +682,14 @@ class PatientGRUODEBayesInterface:
                         jit_sigmoid(post_diag_out[subject_id]))
                     path['state'][subject_id].append(h2[subject_id])
 
-        prejump_num_loss = jnp.average(prejump_num_loss, weights=num_weights)
-        postjump_num_loss = jnp.average(postjump_num_loss, weights=num_weights)
+        prejump_num_loss = jnp.average(prejump_num_loss,
+                                       weights=pre_num_weights)
+        postjump_num_loss = jnp.average(postjump_num_loss,
+                                        weights=post_num_weights)
         prejump_diag_loss = jnp.average(prejump_diag_loss,
-                                        weights=diag_weights)
+                                        weights=pre_diag_weights)
         postjump_diag_loss = jnp.average(postjump_diag_loss,
-                                         weights=diag_weights)
+                                         weights=post_diag_weights)
 
         confusion_mat = sum(cm for cm in diag_cm if cm is not None)
 
@@ -643,7 +701,9 @@ class PatientGRUODEBayesInterface:
             'dyn_loss': jnp.sum(sum(dyn_loss)),
             'scores': confusion_matrix_scores(confusion_mat),
             'odeint_weeks': odeint_weeks,
-            'points_count': points_count,
+            'all_points_count': all_points_count,
+            'integrable_count': integrable_count,
+            'predictable_count': predictable_count,
             'nfe': sum(nfe),
             'diag_detectability_df': pd.concat(diag_detectability)
         }
@@ -721,18 +781,19 @@ def train_ehr(
                         count_nfe=True,
                         iteration_text_callback=iteration_text_callback)
 
-        prejump_num_loss = res['prejump_num_loss']
-        postjump_num_loss = res['postjump_num_loss']
-        prejump_diag_loss = res['prejump_diag_loss']
-        postjump_diag_loss = res['postjump_diag_loss']
+        prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
+        postjump_num_loss = res['postjump_num_loss'] / res['integrable_count']
+        prejump_diag_loss = res['prejump_diag_loss'] / res['predictable_count']
+        postjump_diag_loss = res['postjump_diag_loss'] / res[
+            'predictable_count']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
         num_alpha = loss_mixing['num_alpha']
         diag_alpha = loss_mixing['diag_alpha']
         ode_alpha = loss_mixing['ode_alpha']
-        l1_alpha = loss_mixing['l1_reg'] / (res['points_count'])
-        l2_alpha = loss_mixing['l2_reg'] / (2 * res['points_count'])
+        l1_alpha = loss_mixing['l1_reg']
+        l2_alpha = loss_mixing['l2_reg']
         dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
 
         num_loss = (
@@ -753,9 +814,7 @@ def train_ehr(
                 'diag_loss': diag_loss,
                 'ode_loss': ode_loss,
                 'l1_loss': l1_loss,
-                'l1_loss_per_point': l1_loss / res['points_count'],
                 'l2_loss': l2_loss,
-                'l2_loss_per_point': l2_loss / res['points_count'],
                 'dyn_loss': dyn_loss,
                 'dyn_loss_per_week': dyn_loss / res['odeint_weeks'],
                 'loss': loss
@@ -764,11 +823,13 @@ def train_ehr(
                 **{
                     name: score.item()
                     for name, score in res['scores'].items()
-                }, 'points_count': res['points_count'],
-                'odeint_weeks_per_point':
-                res['odeint_weeks'] / res['points_count'],
-                'nfe_per_point': nfe / res['points_count'],
-                'nfe_per_week': nfe / res['odeint_weeks'],
+                }, 'all_points_count': res['all_points_count'],
+                'integrable_points_count': res['integrable_count'],
+                'predictable_count': res['predictable_count'],
+                'odeint weeks/point':
+                res['odeint_weeks'] / res['integrable_count'],
+                'nfe/point': nfe / res['integrable_count'],
+                'nfe/week': nfe / res['odeint_weeks'],
                 'nfex1000': nfe / 1000
             },
             'diag_detectability_df': res['diag_detectability_df']
@@ -781,19 +842,21 @@ def train_ehr(
                         iteration_text_callback=iteration_text_callback,
                         count_nfe=False)
         iteration_text_callback('')
-        prejump_num_loss = res['prejump_num_loss']
-        postjump_num_loss = res['postjump_num_loss']
-        prejump_diag_loss = res['prejump_diag_loss']
-        postjump_diag_loss = res['postjump_diag_loss']
+
+        prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
+        postjump_num_loss = res['postjump_num_loss'] / res['integrable_count']
+        prejump_diag_loss = res['prejump_diag_loss'] / res['predictable_count']
+        postjump_diag_loss = res['postjump_diag_loss'] / res[
+            'predictable_count']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
-        dyn_loss = res['dyn_loss']
+        dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
         num_alpha = loss_mixing['num_alpha']
         diag_alpha = loss_mixing['diag_alpha']
         ode_alpha = loss_mixing['ode_alpha']
-        l1_alpha = loss_mixing['l1_reg'] / (res['points_count'])
-        l2_alpha = loss_mixing['l2_reg'] / (2 * res['points_count'])
-        dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
+        l1_alpha = loss_mixing['l1_reg']
+        l2_alpha = loss_mixing['l2_reg']
+        dyn_alpha = loss_mixing['dyn_reg']
 
         num_loss = (
             1 - num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss

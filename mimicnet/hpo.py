@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
+from jax.tree_util import tree_flatten, tree_map
+
 from jax.experimental import optimizers
 import optuna
 from optuna.storages import RDBStorage
@@ -34,6 +36,9 @@ logging.set_verbosity(logging.INFO)
 def tree_hasnan(t):
     return any(map(lambda x: jnp.any(jnp.isnan(x)), jax.tree_leaves(t)))
 
+def parameters_size(pytree):
+    leaves, _ = tree_flatten(pytree)
+    return sum(jnp.size(x) for x in leaves)
 
 def create_patient_interface(processed_mimic_tables_dir: str):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
@@ -149,20 +154,15 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 trial.suggest_categorical(
                     'ode_dyn', ['mlp', 'gru', 'res'
                                 ]),  # Add depth conditional to 'mlp' or 'res'
-                'ode_quad':
-                trial.suggest_categorical('ode_quad', [True, False]),
                 'state_size':
                 trial.suggest_int('state_size', 100, 500, 50),
-                'numeric_quad':
-                trial.suggest_categorical('numeric_quad', [True, False]),
                 'numeric_hidden_size':
                 trial.suggest_int('numeric_hidden_size', 100, 350, 50),
-                'gru_bayes_quad':
-                trial.suggest_categorical('gru_bayes_quad', [True, False]),
                 'init_depth':
-                trial.suggest_int('int_depth', 1, 5),
+                trial.suggest_int('init_depth', 1, 5),
                 'bias':
-                True
+                True,
+                'max_odeint_days': trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7, 7)
             },
             'training': {
                 'batch_size':
@@ -234,6 +234,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         prng_key = jax.random.PRNGKey(rng.randint(0, 100))
         params = ode_model.init_params(prng_key)
 
+        trial.set_user_attr('parameters_size', parameters_size(params))
         logging.info('[DONE] Sampling & Initializing Models')
 
         lr = config['training']['lr']
@@ -248,19 +249,22 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                             count_nfe=False,
                             iteration_text_callback=iteration_text_callback)
 
-            prejump_num_loss = res['prejump_num_loss']
-            postjump_num_loss = res['postjump_num_loss']
-            prejump_diag_loss = res['prejump_diag_loss']
-            postjump_diag_loss = res['postjump_diag_loss']
+            prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
+            postjump_num_loss = res['postjump_num_loss'] / res[
+                'integrable_count']
+            prejump_diag_loss = res['prejump_diag_loss'] / res[
+                'predictable_count']
+            postjump_diag_loss = res['postjump_diag_loss'] / res[
+                'predictable_count']
             l1_loss = l1_absolute(params)
             l2_loss = l2_squared(params)
-            dyn_loss = res['dyn_loss']
+            dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
             num_alpha = loss_mixing['num_alpha']
             diag_alpha = loss_mixing['diag_alpha']
             ode_alpha = loss_mixing['ode_alpha']
-            l1_alpha = loss_mixing['l1_reg'] / (res['points_count'])
-            l2_alpha = loss_mixing['l2_reg'] / (2 * res['points_count'])
-            dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
+            l1_alpha = loss_mixing['l1_reg']
+            l2_alpha = loss_mixing['l2_reg']
+            dyn_alpha = loss_mixing['dyn_reg']
 
             num_loss = (1 - num_alpha
                         ) * prejump_num_loss + num_alpha * postjump_num_loss
@@ -281,24 +285,26 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                     'diag_loss': diag_loss,
                     'ode_loss': ode_loss,
                     'l1_loss': l1_loss,
-                    'l1_loss_per_point': l1_loss / res['points_count'],
                     'l2_loss': l2_loss,
-                    'l2_loss_per_point': l2_loss / res['points_count'],
                     'dyn_loss': dyn_loss,
-                    'dyn_loss_per_week': dyn_loss / res['odeint_weeks'],
+                    'dyn_loss/week': dyn_loss / res['odeint_weeks'],
                     'loss': loss
                 },
                 'stats': {
                     **{
                         name: score.item()
                         for name, score in res['scores'].items()
-                    }, 'points_count':
-                    res['points_count'],
-                    'odeint_weeks_per_point':
-                    res['odeint_weeks'] / res['points_count'],
-                    'nfe_per_point':
-                    nfe / res['points_count'],
-                    'nfe_per_week':
+                    }, 'all_points_count':
+                    res['all_points_count'],
+                    'integrable_points_count':
+                    res['integrable_count'],
+                    'predictable_count',
+                    res['predictable_count'],
+                    'odeint weeks/point':
+                    res['odeint_weeks'] / res['integrable_count'],
+                    'nfe/point':
+                    nfe / res['integrable_count'],
+                    'nfe/week':
                     nfe / res['odeint_weeks'],
                     'nfex1000':
                     nfe / 1000
