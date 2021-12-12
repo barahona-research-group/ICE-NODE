@@ -46,7 +46,7 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
 --study-name $EXP_TAG \
 --store-url $STORAGE_URL \
---num-trials 10 \
+--num-trials 30 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1
 
