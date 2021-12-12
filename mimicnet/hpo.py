@@ -298,7 +298,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                     res['all_points_count'],
                     'integrable_points_count':
                     res['integrable_count'],
-                    'predictable_count',
+                    'predictable_count':
                     res['predictable_count'],
                     'odeint weeks/point':
                     res['odeint_weeks'] / res['integrable_count'],
