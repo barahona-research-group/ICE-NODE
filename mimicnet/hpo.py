@@ -168,7 +168,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 'batch_size':
                 trial.suggest_int('batch_size', 5, 25, 5),
                 'epochs':
-                60,
+                15,
                 'lr':
                 trial.suggest_float('lr', 1e-5, 1e-2, log=True),
                 'diag_loss':
@@ -178,9 +178,9 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 3,  # Order of regularized derivative of the dynamics function (None for disable).
                 'loss_mixing': {
                     'num_alpha':
-                    trial.suggest_float('num_alpha', 1e-3, 1, log=True),
+                    trial.suggest_float('num_alpha', 1e-4, 1, log=True),
                     'diag_alpha':
-                    trial.suggest_float('diag_alpha', 1e-3, 1, log=True),
+                    trial.suggest_float('diag_alpha', 1e-4, 1, log=True),
                     'ode_alpha':
                     trial.suggest_float('ode_alpha', 1e-5, 1, log=True),
                     'l1_reg':
@@ -249,13 +249,11 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                             count_nfe=False,
                             iteration_text_callback=iteration_text_callback)
 
-            prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
-            postjump_num_loss = res['postjump_num_loss'] / res[
-                'integrable_count']
-            prejump_diag_loss = res['prejump_diag_loss'] / res[
-                'predictable_count']
-            postjump_diag_loss = res['postjump_diag_loss'] / res[
-                'predictable_count']
+            prejump_num_loss = res['prejump_num_loss']
+            postjump_num_loss = res['postjump_num_loss']
+            prejump_diag_loss = res['prejump_diag_loss']
+            postjump_diag_loss = res['postjump_diag_loss']
+
             l1_loss = l1_absolute(params)
             l2_loss = l2_squared(params)
             dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])

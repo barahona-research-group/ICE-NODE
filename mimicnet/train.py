@@ -781,11 +781,10 @@ def train_ehr(
                         count_nfe=True,
                         iteration_text_callback=iteration_text_callback)
 
-        prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
-        postjump_num_loss = res['postjump_num_loss'] / res['integrable_count']
-        prejump_diag_loss = res['prejump_diag_loss'] / res['predictable_count']
-        postjump_diag_loss = res['postjump_diag_loss'] / res[
-            'predictable_count']
+        prejump_num_loss = res['prejump_num_loss']
+        postjump_num_loss = res['postjump_num_loss']
+        prejump_diag_loss = res['prejump_diag_loss']
+        postjump_diag_loss = res['postjump_diag_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
@@ -843,11 +842,10 @@ def train_ehr(
                         count_nfe=False)
         iteration_text_callback('')
 
-        prejump_num_loss = res['prejump_num_loss'] / res['integrable_count']
-        postjump_num_loss = res['postjump_num_loss'] / res['integrable_count']
-        prejump_diag_loss = res['prejump_diag_loss'] / res['predictable_count']
-        postjump_diag_loss = res['postjump_diag_loss'] / res[
-            'predictable_count']
+        prejump_num_loss = res['prejump_num_loss']
+        postjump_num_loss = res['postjump_num_loss']
+        prejump_diag_loss = res['prejump_diag_loss']
+        postjump_diag_loss = res['postjump_diag_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
