@@ -477,7 +477,7 @@ class PatientGRUODEBayesInterface:
             pre_diag_gram_error = self.__gram_error(diag_gram, pre_diag_gram)
             confusion_mat = self.__confusion_matrix(diag_out, pre_diag_out)
             prejump_diag_loss.append(pre_diag_loss)
-            if confusion_mat:
+            if confusion_mat is not None:
                 diag_cm.append(confusion_mat)
             ############## GRU BAYES ####################
             # Using GRUObservationCell to update h.
