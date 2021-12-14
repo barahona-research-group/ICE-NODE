@@ -67,6 +67,7 @@ def parameters_size(pytree):
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.size(x) for x in leaves)
 
+
 @partial(annotate_function, name="numeric_error")
 @jax.jit
 def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
@@ -147,8 +148,10 @@ def code_detectability(top_k: int, true_diag: jnp.ndarray,
     else:
         ground_truth = {ground_truth.item()}
 
-    prejump_predictions = set(onp.array(jnp.argsort(prejump_predicted_diag)[-top_k:]))
-    postjump_predictions = set(onp.array(jnp.argsort(postjump_predicted_diag)[-top_k:]))
+    prejump_predictions = set(
+        onp.array(jnp.argsort(prejump_predicted_diag)[-top_k:]))
+    postjump_predictions = set(
+        onp.array(jnp.argsort(postjump_predicted_diag)[-top_k:]))
     detections = []
     for code_i in ground_truth:
         pre_detected, post_detected = 0, 0
@@ -176,15 +179,11 @@ def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
         for code_i, pre_detected, post_detected in _detections:
             df_list.append((subject_id, point_n, code_i, pre_detected,
                             post_detected, top_k))
-
-    if df_list:
-        return pd.DataFrame(df_list,
-                            columns=[
-                                'subject_id', 'point_n', 'code',
-                                'pre_detected', 'post_detected', 'top_k'
-                            ])
-    else:
-        return None
+    return pd.DataFrame(df_list,
+                        columns=[
+                            'subject_id', 'point_n', 'code', 'pre_detected',
+                            'post_detected', 'top_k'
+                        ])
 
 
 def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
@@ -198,5 +197,3 @@ def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
         rate['pre'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_pre
         rate['post'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_post
     return rate
-
-
