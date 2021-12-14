@@ -477,7 +477,8 @@ class PatientGRUODEBayesInterface:
             pre_diag_gram_error = self.__gram_error(diag_gram, pre_diag_gram)
             confusion_mat = self.__confusion_matrix(diag_out, pre_diag_out)
             prejump_diag_loss.append(pre_diag_loss)
-            diag_cm.append(confusion_mat)
+            if confusion_mat:
+                diag_cm.append(confusion_mat)
             ############## GRU BAYES ####################
             # Using GRUObservationCell to update h.
             state_j_updated = nn_diag_update(state_j, pre_diag_gram_error)
@@ -505,7 +506,10 @@ class PatientGRUODEBayesInterface:
         postjump_diag_loss = jnp.average(postjump_diag_loss,
                                          weights=diag_weights)
 
-        confusion_mat = sum(cm for cm in diag_cm if cm is not None)
+        if diag_cm:
+            confusion_mat = sum(cm for cm in diag_cm if cm is not None)
+        else:
+            confusion_mat = jnp.zeros((2, 2))
 
         ret = {
             'prejump_diag_loss': prejump_diag_loss,

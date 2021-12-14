@@ -120,7 +120,7 @@ def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
 
 
 def confusion_matrix_scores(cm: jnp.ndarray):
-    cm = cm / cm.sum()
+    cm = cm / (cm.sum() + 1e-10)
     tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
     p = tp + fn
     n = tn + fp
