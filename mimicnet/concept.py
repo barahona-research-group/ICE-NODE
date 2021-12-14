@@ -105,7 +105,7 @@ class Subject:
     @classmethod
     def to_list(cls, static_df: pd.DataFrame, adm_df: pd.DataFrame,
                 diag_df: pd.DataFrame, proc_df: pd.DataFrame,
-                tests_df: pd.DataFrame) -> List[Subject]:
+                tests_df: Optional[pd.DataFrame] = None) -> List[Subject]:
         """
         Convert DataFrame representation of patients EHR to list of Patient
         representation List[Patient].
@@ -141,9 +141,10 @@ class Subject:
 
         assert all(
             map(ptypes.is_datetime64_any_dtype, [
-                static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME'],
-                tests_df['DATE']
+                static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME']
             ])), "Columns of dates should be casted to datetime64 type first."
+        if tests_df:
+            assert ptypes.is_datetime64_any_dtype(tests_df['DATE'])
 
         ehr = {}
 
@@ -186,15 +187,16 @@ class Subject:
                     ehr[subject_id]['admissions'].values()))
 
         # Lab tests
-        for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
-            tests = []
-            for tests_date, date_df in subject_tests_df.groupby('DATE'):
-                for test_row in date_df.itertuples():
-                    tests.append(
-                        Test(item_id=test_row.ITEMID,
-                             date=tests_date,
-                             value=test_row.VALUE))
-            ehr[subject_id]['tests'] = tests
+        if tests_df:
+            for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
+                tests = []
+                for tests_date, date_df in subject_tests_df.groupby('DATE'):
+                    for test_row in date_df.itertuples():
+                        tests.append(
+                            Test(item_id=test_row.ITEMID,
+                                date=tests_date,
+                                value=test_row.VALUE))
+                ehr[subject_id]['tests'] = tests
 
         return list(map(lambda args: Subject(**args), ehr.values()))
 
@@ -363,6 +365,9 @@ class SubjectPoint:
     def subject_to_points(cls, subject: Subject) -> Dict[int, SubjectPoint]:
         def _first_day_date(subject):
             first_admission_date = subject.admissions[0].admission_dates[0]
+            if len(subject.tests) == 0:
+                return first_admission_date
+
             first_test_date = subject.tests[0].date
             if Subject.days(first_test_date, first_admission_date) > 0:
                 return first_admission_date

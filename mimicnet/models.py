@@ -332,6 +332,35 @@ class GRUBayes(hk.Module):
         return updated_state
 
 
+class DiagnosesUpdate(hk.Module):
+    """Implements discrete update based on the received observations."""
+    def __init__(self,
+                 state_size: int,
+                 with_quad_augmentation: bool,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(name=name)
+        self.with_quad_augmentation = with_quad_augmentation
+        self.__prep = hk.Sequential([
+            hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
+            lambda o: leaky_relu(o, negative_slope=2e-1),
+            hk.Linear(state_size, with_bias=True,
+                      name=f'{name}_prep2'), jnp.tanh
+        ])
+
+        self.__gru_d = hk.GRU(state_size)
+
+    def __call__(self, state: jnp.ndarray, error_gram: jnp.ndarray) -> jnp.ndarray:
+
+        gru_input = self.__prep(error_gram)
+        if self.with_quad_augmentation:
+            state = QuadraticAugmentation(name='state_augment')(state)
+            gru_input = QuadraticAugmentation(name='input_augment')(gru_input)
+
+        _, updated_state = self.__gru_d(gru_input, state)
+        return updated_state
+
+
 class StateInitializer(hk.Module):
     def __init__(self,
                  hidden_size: int,
@@ -356,8 +385,6 @@ class StateInitializer(hk.Module):
             res = out
 
         return jnp.tanh(self.lin_out(out))
-
-
 
 class StateDecoder(hk.Module):
     def __init__(self,
@@ -384,3 +411,23 @@ class StateDecoder(hk.Module):
         dec_gram = self.__lin_gram(dec_in)
         logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
         return dec_gram, logits
+
+class StateDiagnosesDecoder(hk.Module):
+    def __init__(self,
+                 hidden_size: int,
+                 gram_size: int,
+                 output_size: int,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(name=name)
+        self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
+        self.__lin_gram = hk.Linear(gram_size, name='lin_gram')
+        self.__lin_out = hk.Linear(output_size, name='lin_out')
+
+    def __call__(self, h: jnp.ndarray):
+        out_h = jnp.tanh(self.__lin_h(h))
+        dec_gram = self.__lin_gram(out_h)
+        logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
+        return dec_gram, logits
+
+

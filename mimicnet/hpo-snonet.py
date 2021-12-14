@@ -21,7 +21,7 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from sqlalchemy.pool import NullPool
 
-from .train_diag import PatientGRUODEBayesInterface
+from .train import PatientGRUODEBayesInterface
 from .concept import Subject
 from .dag import CCSDAG
 from .jax_interface import SubjectJAXInterface
@@ -36,11 +36,9 @@ logging.set_verbosity(logging.INFO)
 def tree_hasnan(t):
     return any(map(lambda x: jnp.any(jnp.isnan(x)), jax.tree_leaves(t)))
 
-
 def parameters_size(pytree):
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.size(x) for x in leaves)
-
 
 def create_patient_interface(processed_mimic_tables_dir: str):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
@@ -49,7 +47,7 @@ def create_patient_interface(processed_mimic_tables_dir: str):
                           dtype={'ICD9_CODE': str})
     proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
                           dtype={'ICD9_CODE': str})
-    test_df = None
+    test_df = pd.read_csv(f'{processed_mimic_tables_dir}/test_df.csv.gz')
 
     # Cast columns of dates to datetime64
     static_df['DOB'] = pd.to_datetime(
@@ -58,13 +56,15 @@ def create_patient_interface(processed_mimic_tables_dir: str):
         adm_df.ADMITTIME, infer_datetime_format=True).dt.normalize()
     adm_df['DISCHTIME'] = pd.to_datetime(
         adm_df.DISCHTIME, infer_datetime_format=True).dt.normalize()
+    test_df['DATE'] = pd.to_datetime(
+        test_df.DATE, infer_datetime_format=True).dt.normalize()
 
     patients = Subject.to_list(static_df, adm_df, diag_df, proc_df, test_df)
 
     # CCS Knowledge Graph
     k_graph = CCSDAG()
 
-    return SubjectJAXInterface(patients, set(), k_graph)
+    return SubjectJAXInterface(patients, set(test_df.ITEMID), k_graph)
 
 
 def run_trials(study_name: str, store_url: str, num_trials: int,
@@ -156,16 +156,17 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                                 ]),  # Add depth conditional to 'mlp' or 'res'
                 'state_size':
                 trial.suggest_int('state_size', 100, 500, 50),
+                'numeric_hidden_size':
+                trial.suggest_int('numeric_hidden_size', 100, 350, 50),
                 'init_depth':
                 trial.suggest_int('init_depth', 1, 5),
                 'bias':
                 True,
-                'max_odeint_days':
-                trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7, 7)
+                'max_odeint_days': trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7, 7)
             },
             'training': {
                 'batch_size':
-                trial.suggest_int('batch_size', 5, 30, 5),
+                trial.suggest_int('batch_size', 5, 25, 5),
                 'epochs':
                 15,
                 'lr':
@@ -176,8 +177,12 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 'tay_reg':
                 3,  # Order of regularized derivative of the dynamics function (None for disable).
                 'loss_mixing': {
+                    'num_alpha':
+                    trial.suggest_float('num_alpha', 1e-4, 1, log=True),
                     'diag_alpha':
                     trial.suggest_float('diag_alpha', 1e-4, 1, log=True),
+                    'ode_alpha':
+                    trial.suggest_float('ode_alpha', 1e-5, 1, log=True),
                     'l1_reg':
                     trial.suggest_float('l1_reg', 1e-7, 1e-1, log=True),
                     'l2_reg':
@@ -237,32 +242,46 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
         opt_state = opt_init(params)
 
-        def loss_fn(params: optimizers.Params,
-                    batch: List[int]) -> Dict[str, float]:
-            res = ode_model(params, batch, count_nfe=False)
+        def loss_fn(params: optimizers.Params, batch: List[int],
+                    iteration_text_callback: Any) -> Dict[str, float]:
+            res = ode_model(params,
+                            batch,
+                            count_nfe=False,
+                            iteration_text_callback=iteration_text_callback)
 
+            prejump_num_loss = res['prejump_num_loss']
+            postjump_num_loss = res['postjump_num_loss']
             prejump_diag_loss = res['prejump_diag_loss']
             postjump_diag_loss = res['postjump_diag_loss']
 
             l1_loss = l1_absolute(params)
             l2_loss = l2_squared(params)
             dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
+            num_alpha = loss_mixing['num_alpha']
             diag_alpha = loss_mixing['diag_alpha']
+            ode_alpha = loss_mixing['ode_alpha']
             l1_alpha = loss_mixing['l1_reg']
             l2_alpha = loss_mixing['l2_reg']
             dyn_alpha = loss_mixing['dyn_reg']
 
+            num_loss = (1 - num_alpha
+                        ) * prejump_num_loss + num_alpha * postjump_num_loss
             diag_loss = (
                 1 - diag_alpha
             ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-            loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
+            ode_loss = (1 - ode_alpha) * diag_loss + ode_alpha * num_loss
+            loss = ode_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
                 dyn_alpha * dyn_loss)
             nfe = res['nfe']
             return loss, {
                 'loss': {
+                    'prejump_num_loss': prejump_num_loss,
+                    'postjump_num_loss': postjump_num_loss,
                     'prejump_diag_loss': prejump_diag_loss,
                     'postjump_diag_loss': postjump_diag_loss,
+                    'num_loss': num_loss,
                     'diag_loss': diag_loss,
+                    'ode_loss': ode_loss,
                     'l1_loss': l1_loss,
                     'l2_loss': l2_loss,
                     'dyn_loss': dyn_loss,
@@ -273,27 +292,38 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                     **{
                         name: score.item()
                         for name, score in res['scores'].items()
-                    }, 'all_points_count': res['all_points_count'],
-                    'predictable_count': res['predictable_count'],
-                    'nfe/week': nfe / res['odeint_weeks'],
-                    'nfex1000': nfe / 1000
+                    }, 'all_points_count':
+                    res['all_points_count'],
+                    'integrable_points_count':
+                    res['integrable_count'],
+                    'predictable_count':
+                    res['predictable_count'],
+                    'odeint weeks/point':
+                    res['odeint_weeks'] / res['integrable_count'],
+                    'nfe/point':
+                    nfe / res['integrable_count'],
+                    'nfe/week':
+                    nfe / res['odeint_weeks'],
+                    'nfex1000':
+                    nfe / 1000
                 },
                 'diag_detectability_df': res['diag_detectability_df']
             }
 
-        def update(
-                step: int, batch: Iterable[int],
-                opt_state: optimizers.OptimizerState
-        ) -> optimizers.OptimizerState:
+        def update(step: int, batch: Iterable[int],
+                   opt_state: optimizers.OptimizerState,
+                   iteration_text_callback: Any) -> optimizers.OptimizerState:
             params = get_params(opt_state)
             if tree_hasnan(params):
                 logging.warning('NaN Params')
-                trial.set_user_attr('nan_params', 1)
+                raise optuna.TrialPruned()
 
-            grads, data = jax.grad(loss_fn, has_aux=True)(params, batch)
+            grads, data = jax.grad(loss_fn,
+                                   has_aux=True)(params, batch,
+                                                 iteration_text_callback)
             if tree_hasnan(grads):
                 logging.warning('NaN grads')
-                trial.set_user_attr('nan_grads', 1)
+                raise optuna.TrialPruned()
 
             return opt_update(step, grads, opt_state), data
 
@@ -302,23 +332,25 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
         epochs = config['training']['epochs']
         iters = int(epochs * len(train_ids) / batch_size)
-        trial.set_user_attr('steps', iters)
         val_pbar = tqdm(total=iters)
+
+        def update_batch_desc(text):
+            val_pbar.set_description(text)
 
         for step in range(iters):
             rng.shuffle(train_ids)
             train_batch = train_ids[:batch_size]
             val_pbar.update(1)
 
-            opt_state, (loss, _) = update(step, train_batch, opt_state)
-            if jnp.isnan(loss):
-                trial.report(float('nan'), step)
-                return float('nan')
+            opt_state, _ = update(step, train_batch, opt_state,
+                                  update_batch_desc)
+
+            update_batch_desc('')
 
             if step % eval_freq == 0:
                 params = get_params(opt_state)
-                _, trn_res = loss_fn(params, train_batch)
-                _, val_res = loss_fn(params, valid_ids)
+                _, trn_res = loss_fn(params, train_batch, update_batch_desc)
+                _, val_res = loss_fn(params, valid_ids, update_batch_desc)
 
                 score = val_res['stats']['f1-score']
 

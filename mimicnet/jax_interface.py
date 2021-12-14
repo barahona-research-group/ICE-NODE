@@ -78,6 +78,9 @@ class SubjectJAXInterface:
 
     def __tests2vec(self,
                     tests: List[Test]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        if self.test_idx is None or len(self.test_idx) == 0 or len(tests) == 0:
+            return None
+
         n_cols = len(self.test_idx)
         vals = np.zeros(n_cols)
         mask = np.zeros(n_cols)
