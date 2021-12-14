@@ -78,6 +78,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
+    study.set_user_attr('metric', 'acc@20')
+
 
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
@@ -199,6 +201,9 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         trial.set_user_attr('job_id', job_id)
 
         trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+
+        trial.set_user_attr('dir', trial_dir)
+
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
         logging.info('[LOADING] Sampling & Initializing Models')
@@ -286,15 +291,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 opt_state: optimizers.OptimizerState
         ) -> optimizers.OptimizerState:
             params = get_params(opt_state)
-            if tree_hasnan(params):
-                logging.warning('NaN Params')
-                trial.set_user_attr('nan_params', 1)
-
             grads, data = jax.grad(loss_fn, has_aux=True)(params, batch)
-            if tree_hasnan(grads):
-                logging.warning('NaN grads')
-                trial.set_user_attr('nan_grads', 1)
-
             return opt_update(step, grads, opt_state), data
 
         batch_size = config['training']['batch_size']
@@ -311,22 +308,14 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             val_pbar.update(1)
 
             opt_state, res = update(step, train_batch, opt_state)
-            loss = res['loss']['loss']
-            if jnp.isnan(loss):
-                trial.report(float('nan'), step)
+            if jnp.isnan(res['loss']['loss']):
+                trial.set_user_attr('nan', 1)
                 return float('nan')
 
             if step % eval_freq == 0:
                 params = get_params(opt_state)
                 _, trn_res = loss_fn(params, train_batch)
                 _, val_res = loss_fn(params, valid_ids)
-
-                score = val_res['stats']['f1-score']
-
-                trial.report(score, step)
-
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
 
                 losses = pd.DataFrame(index=trn_res['loss'].keys(),
                                       data={
@@ -359,6 +348,12 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                         'Val(post)': detections_val['post'].values()
                     })
 
+                sum_acc_20 = sum(detections_val['pre'].values())
+                trial.report(sum_acc_20, step)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
+
                 df_save_prefix = os.path.join(trial_dir, f'step{step:03d}')
 
                 for name, df in {
@@ -367,10 +362,10 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                         'detections_trn_df': detections_trn_df,
                         'detections_val_df': detections_val_df
                 }.items():
-                    # df.to_csv(f'{df_save_prefix}_{name}.csv')
+                    df.to_csv(f'{df_save_prefix}_{name}.csv')
                     logging.info(df)
 
-        return score
+        return sum_acc_20
 
     study.optimize(objective, n_trials=num_trials)
 
