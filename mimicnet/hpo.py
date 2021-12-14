@@ -167,7 +167,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 'batch_size':
                 trial.suggest_int('batch_size', 5, 30, 5),
                 'epochs':
-                15,
+                10,
                 'lr':
                 trial.suggest_float('lr', 1e-5, 1e-2, log=True),
                 'diag_loss':
@@ -366,7 +366,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                         'detections_trn_df': detections_trn_df,
                         'detections_val_df': detections_val_df
                 }.items():
-                    df.to_csv(f'{df_save_prefix}_{name}.csv')
+                    # df.to_csv(f'{df_save_prefix}_{name}.csv')
                     logging.info(df)
 
         return score
