@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple, Union, Set
+from enum import Flag, auto
 
 import numpy as np
 import pandas as pd
@@ -18,12 +19,37 @@ from .dag import CCSDAG
 jax_interface_logger = logging.getLogger("jax_interface")
 
 
+class Ignore(Flag):
+    NONE = 0
+    TESTS = auto()
+    PROC = auto()
+    STATIC = auto()
+
+    @staticmethod
+    def tests(i: Ignore):
+        return (Ignore.TESTS & i) != 0
+
+    @staticmethod
+    def proc(i: Ignore):
+        return (Ignore.PROC & i) != 0
+
+    @staticmethod
+    def static(i: Ignore):
+        return (Ignore.STATIC & i) != 0
+
+
 class SubjectJAXInterface:
-    def __init__(self, subjects: List[Subject], test_id_set: Set[int],
-                 dag: CCSDAG):
+    def __init__(self,
+                 subjects: List[Subject],
+                 test_id_set: Set[int],
+                 dag: CCSDAG,
+                 ignore: Ignore = Ignore.NONE):
+
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
         self.dag: CCSDAG = dag
+        self.ignore = ignore
+
         self.static_features, self.static_idx = self.__static2vec()
         self.test_idx = dict(zip(test_id_set, range(len(test_id_set))))
         self.diag_multi_ccs_idx = dict(
@@ -78,7 +104,8 @@ class SubjectJAXInterface:
 
     def __tests2vec(self,
                     tests: List[Test]) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        if self.test_idx is None or len(self.test_idx) == 0 or len(tests) == 0:
+        if (Ignore.tests(self.ignore) or self.test_idx is None
+                or len(self.test_idx) == 0 or len(tests) == 0):
             return None
 
         n_cols = len(self.test_idx)
@@ -113,7 +140,7 @@ class SubjectJAXInterface:
         return jnp.array(mask)
 
     def __proc_multi_ccs_to_vec(self, proc_multi_ccs_codes):
-        if len(proc_multi_ccs_codes) == 0:
+        if Ignore.proc(self.ignore) or len(proc_multi_ccs_codes) == 0:
             return None
 
         n_cols = len(self.proc_multi_ccs_idx)
@@ -202,5 +229,3 @@ class SubjectJAXInterface:
             codes_by_percentiles.append(set(codes))
 
         return codes_by_percentiles
-
-

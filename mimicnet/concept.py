@@ -376,9 +376,11 @@ class SubjectPoint:
 
         first_day_date = _first_day_date(subject)
 
+        test_dates = set(t.date for t in subject.tests)
         points = {}
         for adm in subject.admissions:
-            for i, adm_date in enumerate(pd.date_range(*adm.admission_dates)):
+            adm_range = pd.date_range(*adm.admission_dates)
+            for i, adm_date in enumerate(adm_range):
                 days_ahead = Subject.days(adm_date, first_day_date)
                 age = subject.age(adm_date)
 
@@ -387,7 +389,7 @@ class SubjectPoint:
                 if i == 0:
                     icd9_diag_codes = adm.icd9_diag_codes
                     icd9_proc_codes = set()
-                else:
+                elif i == len(adm_range) - 1 or adm_date in test_dates:
                     icd9_diag_codes = set()
                     icd9_proc_codes = adm.icd9_proc_codes
 
