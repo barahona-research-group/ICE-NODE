@@ -38,20 +38,20 @@ class Ignore(Flag):
         return (Ignore.STATIC & i) != 0
 
 
-class SubjectJAXInterface:
+class AbstractSubjectJAXInterface:
     def __init__(self,
                  subjects: List[Subject],
                  test_id_set: Set[int],
                  dag: CCSDAG,
                  ignore: Ignore = Ignore.NONE):
 
+        self.ignore = ignore
+
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
         self.dag: CCSDAG = dag
-        self.ignore = ignore
-
-        self.static_features, self.static_idx = self.__static2vec()
         self.test_idx = dict(zip(test_id_set, range(len(test_id_set))))
+
         self.diag_multi_ccs_idx = dict(
             zip(dag.diag_multi_ccs_codes,
                 range(len(dag.diag_multi_ccs_codes))))
@@ -68,9 +68,6 @@ class SubjectJAXInterface:
         self.proc_multi_ccs_ancestors_mat = self.__ccs_ancestors_mat(
             self.proc_multi_ccs_idx)
 
-        self.nth_points = self.__nth_points()
-        self.n_support = sorted(list(self.nth_points.keys()))
-
     def __ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = []
         for code, index in code2index.items():
@@ -82,6 +79,116 @@ class SubjectJAXInterface:
                 ancestors_npvec[ancestor_j] = 1
             ancestors_mat.append(jnp.array(ancestors_npvec))
         return jnp.vstack(ancestors_mat)
+
+    def __diag_multi_ccs_to_vec(self, diag_multi_ccs_codes):
+        if len(diag_multi_ccs_codes) == 0:
+            return None
+
+        n_cols = len(self.diag_multi_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_multi_ccs_codes:
+            mask[self.diag_multi_ccs_idx[c]] = 1
+        return jnp.array(mask)
+
+    def __diag_single_ccs_to_vec(self, diag_single_ccs_codes):
+        if len(diag_single_ccs_codes) == 0:
+            return None
+
+        n_cols = len(self.diag_single_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_single_ccs_codes:
+            mask[self.diag_single_ccs_idx[c]] = 1
+
+        return jnp.array(mask)
+
+    def __proc_multi_ccs_to_vec(self, proc_multi_ccs_codes):
+        if Ignore.proc(self.ignore) or len(proc_multi_ccs_codes) == 0:
+            return None
+
+        n_cols = len(self.proc_multi_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in proc_multi_ccs_codes:
+            mask[self.proc_multi_ccs_idx[c]] = 1
+        return jnp.array(mask)
+
+    def diag_single_ccs_frequency(self, subjects: Optional[List[int]] = None):
+        subjects = subjects or self.subjects.keys()
+        counter = defaultdict(int)
+        for subject_id in subjects:
+            for adm in self.subjects[subject_id].admissions:
+                ccs_codes = set(
+                    map(self.dag.diag_single_icd2ccs.get, adm.icd9_diag_codes))
+                for code in ccs_codes:
+                    counter[self.diag_single_ccs_idx[code]] += 1
+        return counter
+
+    def diag_single_ccs_by_percentiles(self,
+                                       section_percentage: float = 20,
+                                       subjects: Optional[List[int]] = None):
+        n_sections = int(100 / section_percentage)
+        sections = list(
+            zip(range(0, 100, section_percentage),
+                range(section_percentage, 101, section_percentage)))
+
+        frequency = self.diag_single_ccs_frequency(subjects)
+
+        frequency_df = pd.DataFrame({
+            'code': frequency.keys(),
+            'frequency': frequency.values()
+        })
+
+        frequency_df = frequency_df.sort_values('frequency')
+        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
+        frequency_df['cum_perc'] = 100 * frequency_df[
+            'cum_sum'] / frequency_df["frequency"].sum()
+
+        codes_by_percentiles = []
+        for l, u in sections:
+            codes = frequency_df[(frequency_df['cum_perc'] > l)
+                                 & (frequency_df['cum_perc'] <= u)].code
+            codes_by_percentiles.append(set(codes))
+
+        return codes_by_percentiles
+
+
+class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
+    def __init__(self,
+                 subjects: List[Subject],
+                 test_id_set: Set[int],
+                 dag: CCSDAG,
+                 ignore: Ignore = Ignore.NONE):
+        super().__init__(subjects, test_id_set, dag, ignore)
+        self.diag_sequences = self.__diag_sequences()
+
+    def __diag_sequences(self):
+        _diag_sequences = {}
+        for subject_id, subject in self.subjects.items():
+            codes = [adm.icd9_diag_codes for adm in subject.admissions]
+
+            _diag_sequences[subject_id] = {
+                'diag_multi_ccs_vec':
+                list(map(self.__diag_multi_ccs_to_vec, codes)),
+                'diag_single_ccs_vec':
+                list(map(self.__diag_single_ccs_to_vec, codes))
+            }
+
+        return _diag_sequences
+
+    def diag_sequences_batch(self, subjects_batch):
+        return {i: self.diag_sequences[i] for i in subjects_batch}
+
+
+class SubjectJAXInterface(AbstractSubjectJAXInterface):
+    def __init__(self,
+                 subjects: List[Subject],
+                 test_id_set: Set[int],
+                 dag: CCSDAG,
+                 ignore: Ignore = Ignore.NONE):
+        super().__init__(subjects, test_id_set, dag, ignore)
+
+        self.static_features, self.static_idx = self.__static2vec()
+        self.nth_points = self.__nth_points()
+        self.n_support = sorted(list(self.nth_points.keys()))
 
     def __static2vec(self):
         genders = list(set(map(lambda s: s.gender, self.subjects.values())))
@@ -117,37 +224,6 @@ class SubjectJAXInterface:
             mask[idx] = 1
 
         return jnp.array(vals), jnp.array(mask)
-
-    def __diag_multi_ccs_to_vec(self, diag_multi_ccs_codes):
-        if len(diag_multi_ccs_codes) == 0:
-            return None
-
-        n_cols = len(self.diag_multi_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_multi_ccs_codes:
-            mask[self.diag_multi_ccs_idx[c]] = 1
-        return jnp.array(mask)
-
-    def __diag_single_ccs_to_vec(self, diag_single_ccs_codes):
-        if len(diag_single_ccs_codes) == 0:
-            return None
-
-        n_cols = len(self.diag_single_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_single_ccs_codes:
-            mask[self.diag_single_ccs_idx[c]] = 1
-
-        return jnp.array(mask)
-
-    def __proc_multi_ccs_to_vec(self, proc_multi_ccs_codes):
-        if Ignore.proc(self.ignore) or len(proc_multi_ccs_codes) == 0:
-            return None
-
-        n_cols = len(self.proc_multi_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in proc_multi_ccs_codes:
-            mask[self.proc_multi_ccs_idx[c]] = 1
-        return jnp.array(mask)
 
     def __nth_points(self):
         nth_points = defaultdict(dict)
@@ -190,42 +266,3 @@ class SubjectJAXInterface:
 
     def subject_static(self, subject_id):
         return self.static_features[subject_id]
-
-    def diag_single_ccs_frequency(self, subjects: Optional[List[int]] = None):
-        subjects = subjects or self.subjects.keys()
-        counter = defaultdict(int)
-        for subject_id in subjects:
-            for adm in self.subjects[subject_id].admissions:
-                ccs_codes = set(
-                    map(self.dag.diag_single_icd2ccs.get, adm.icd9_diag_codes))
-                for code in ccs_codes:
-                    counter[self.diag_single_ccs_idx[code]] += 1
-        return counter
-
-    def diag_single_ccs_by_percentiles(self,
-                                       section_percentage: float = 20,
-                                       subjects: Optional[List[int]] = None):
-        n_sections = int(100 / section_percentage)
-        sections = list(
-            zip(range(0, 100, section_percentage),
-                range(section_percentage, 101, section_percentage)))
-
-        frequency = self.diag_single_ccs_frequency(subjects)
-
-        frequency_df = pd.DataFrame({
-            'code': frequency.keys(),
-            'frequency': frequency.values()
-        })
-
-        frequency_df = frequency_df.sort_values('frequency')
-        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
-        frequency_df['cum_perc'] = 100 * frequency_df[
-            'cum_sum'] / frequency_df["frequency"].sum()
-
-        codes_by_percentiles = []
-        for l, u in sections:
-            codes = frequency_df[(frequency_df['cum_perc'] > l)
-                                 & (frequency_df['cum_perc'] <= u)].code
-            codes_by_percentiles.append(set(codes))
-
-        return codes_by_percentiles

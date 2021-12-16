@@ -162,4 +162,4 @@ class DAGGRAM:
     @partial(jax.jit, static_argnums=(0, ))
     def encode(self, embedding_mat: jnp.ndarray,
                dag_vec: jnp.ndarray) -> List[jnp.ndarray]:
-        return jnp.matmul(dag_vec, embedding_mat)
+        return jnp.tanh(jnp.matmul(dag_vec, embedding_mat))
