@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax.profiler import annotate_function
 from jax.nn import softplus, sigmoid, leaky_relu
 from jax.tree_util import tree_flatten, tree_map
+import sklearn
 
 
 @jax.jit
@@ -139,44 +140,36 @@ def confusion_matrix_scores(cm: jnp.ndarray):
     }
 
 
-def code_detectability(top_k: int, true_diag: jnp.ndarray,
-                       prejump_predicted_diag: jnp.ndarray,
-                       postjump_predicted_diag: jnp.ndarray):
-    ground_truth = jnp.argwhere(true_diag).squeeze()
-    if ground_truth.ndim > 0:
-        ground_truth = set(onp.array(ground_truth))
-    else:
-        ground_truth = {ground_truth.item()}
+def top_k_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
+                           prejump_predicted_diag: Dict[int, jnp.ndarray],
+                           postjump_predicted_diag: Dict[int, jnp.ndarray],
+                           point_n: int):
+    def top_k_detectability(subject_id: int):
+        i = subject_id
+        ground_truth = jnp.argwhere(true_diag[i]).squeeze()
+        if ground_truth.ndim > 0:
+            ground_truth = set(onp.array(ground_truth))
+        else:
+            ground_truth = {ground_truth.item()}
 
-    prejump_predictions = set(
-        onp.array(jnp.argsort(prejump_predicted_diag)[-top_k:]))
-    postjump_predictions = set(
-        onp.array(jnp.argsort(postjump_predicted_diag)[-top_k:]))
-    detections = []
-    for code_i in ground_truth:
-        pre_detected, post_detected = 0, 0
-        if code_i in prejump_predictions:
-            pre_detected = 1
-        if code_i in postjump_predictions:
-            post_detected = 1
-        detections.append((code_i, pre_detected, post_detected))
+        prejump_predictions = set(
+            onp.array(jnp.argsort(prejump_predicted_diag[i])[-top_k:]))
+        postjump_predictions = set(
+            onp.array(jnp.argsort(postjump_predicted_diag[i])[-top_k:]))
+        detections = []
+        for code_i in ground_truth:
+            pre_detected, post_detected = 0, 0
+            if code_i in prejump_predictions:
+                pre_detected = 1
+            if code_i in postjump_predictions:
+                post_detected = 1
+            detections.append((code_i, pre_detected, post_detected))
+        return detections
 
-    return detections
-
-
-def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
-                          prejump_predicted_diag: Dict[int, jnp.ndarray],
-                          postjump_predicted_diag: Dict[int, jnp.ndarray],
-                          point_n: int):
-    detections = {
-        i: code_detectability(top_k, true_diag[i], prejump_predicted_diag[i],
-                              postjump_predicted_diag[i])
-        for i in prejump_predicted_diag.keys()
-    }
     df_list = []
-
-    for subject_id, _detections in detections.items():
-        for code_i, pre_detected, post_detected in _detections:
+    for subject_id in prejump_predicted_diag.keys():
+        detections = top_k_detectability(subject_id)
+        for code_i, pre_detected, post_detected in detections:
             df_list.append((subject_id, point_n, code_i, pre_detected,
                             post_detected, top_k))
     return pd.DataFrame(df_list,
@@ -186,7 +179,56 @@ def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
                         ])
 
 
-def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
+def roc_df(true_diag: Dict[int, jnp.ndarray],
+           pre_predicted_diag: Dict[int, jnp.ndarray],
+           post_predicted_diag: Dict[int, jnp.ndarray], point_n: int):
+    subjects = list(pre_predicted_diag.keys())
+
+    if subjects:
+        pre_predicted = jnp.hstack(map(pre_predicted_diag.get, subjects))
+        post_predicted = jnp.hstack(map(post_predicted_diag.get, subjects))
+        ground_truth = jnp.hstack(map(true_diag.get, subjects))
+
+        shape = pre_predicted_diag[subjects[0]].shape
+        codes = jnp.hstack([jnp.arange(shape) for _ in subjects])
+        subjects = jnp.hstack(map(lambda i: jnp.zeros(shape) + i, subjects))
+
+        return pd.DataFrame({
+            'subject_id': subjects,
+            'point_n': point_n,
+            'code': codes,
+            'ground_truth': ground_truth,
+            'prejump_predicted': pre_predicted,
+            'postjump_predicted': post_predicted
+        })
+    else:
+        return pd.DataFrame({
+            'subject_id': [],
+            'point_n': [],
+            'code': [],
+            'ground_truth': [],
+            'prejump_predicted': [],
+            'postjump_predicted': []
+        })
+
+
+def auc_scores(auc_predictions_df):
+    pre_fpr, pre_tpr, _ = sklearn.metrics.roc_curve(
+        auc_predictions_df['ground_truth'],
+        auc_predictions_df['prejump_predicted'],
+        pos_label=1)
+    post_fpr, post_tpr, _ = sklearn.metrics.roc_curve(
+        auc_predictions_df['ground_truth'],
+        auc_predictions_df['postjump_predicted'],
+        pos_label=1)
+
+    return {
+        'pre': sklearn.metrics.roc_curve(pre_fpr, pre_tpr),
+        'post': sklearn.metrics.roc_curve(post_fpr, post_tpr)
+    }
+
+
+def top_k_detectability_scores(codes_by_percentiles, detections_df):
     rate = {'pre': {}, 'post': {}}
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]

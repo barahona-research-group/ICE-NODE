@@ -255,7 +255,7 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, h, t, c, count_nfe=False):
+    def __call__(self, count_nfe, h, t, c):
         if hk.running_init():
             return self.ode_dyn((h, jnp.zeros(1)), t, c), jnp.zeros(1), 0
         if count_nfe:
@@ -295,7 +295,8 @@ class NumericObsModel(hk.Module):
         out = hk.Linear(self.__numeric_hidden_size)(h)
         out = leaky_relu(out, negative_slope=2e-1)
 
-        out_logvar = leaky_relu(self.__lin_logvar(out), negative_slope=2e-1) - 5
+        out_logvar = leaky_relu(self.__lin_logvar(out),
+                                negative_slope=2e-1) - 5
         out_mean = 4 * jnp.tanh(self.__lin_mean(out))
         return out_mean, out_logvar
 
@@ -350,7 +351,8 @@ class DiagnosesUpdate(hk.Module):
 
         self.__gru_d = hk.GRU(state_size)
 
-    def __call__(self, state: jnp.ndarray, error_gram: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, state: jnp.ndarray,
+                 error_gram: jnp.ndarray) -> jnp.ndarray:
 
         gru_input = self.__prep(error_gram)
         if self.with_quad_augmentation:
@@ -370,8 +372,7 @@ class StateInitializer(hk.Module):
         super().__init__(name=name)
         self.hidden_size = hidden_size
         self.lin = [
-            hk.Linear(hidden_size,
-                      name=f'lin_{i}') for i in range(depth)
+            hk.Linear(hidden_size, name=f'lin_{i}') for i in range(depth)
         ]
         self.lin_out = hk.Linear(state_size, name='lin_out')
 
@@ -385,32 +386,6 @@ class StateInitializer(hk.Module):
             res = out
 
         return jnp.tanh(self.lin_out(out))
-
-class StateDecoder(hk.Module):
-    def __init__(self,
-                 hidden_size: int,
-                 gram_size: int,
-                 output_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
-        super().__init__(name=name)
-        self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
-        self.__lin_num1 = hk.Linear(hidden_size // 2, name='lin_num_hidden1')
-        self.__lin_num2 = hk.Linear(hidden_size, name='lin_num_hidden2')
-
-        self.__lin_gram = hk.Linear(gram_size, name='lin_gram')
-        self.__lin_out = hk.Linear(output_size, name='lin_out')
-
-    def __call__(self, h: jnp.ndarray, mean: jnp.ndarray):
-        out_h = jnp.tanh(self.__lin_h(h))
-
-        out_n = leaky_relu(self.__lin_num1(mean), negative_slope=2e-1)
-        out_n = jnp.tanh(self.__lin_num2(out_n))
-
-        dec_in = jnp.hstack((out_h, out_n))
-        dec_gram = self.__lin_gram(dec_in)
-        logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
-        return dec_gram, logits
 
 class StateDiagnosesDecoder(hk.Module):
     def __init__(self,
@@ -429,5 +404,3 @@ class StateDiagnosesDecoder(hk.Module):
         dec_gram = self.__lin_gram(out_h)
         logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
         return dec_gram, logits
-
-

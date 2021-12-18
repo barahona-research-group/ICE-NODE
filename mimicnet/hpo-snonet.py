@@ -21,50 +21,17 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from sqlalchemy.pool import NullPool
 
-from .train import PatientGRUODEBayesInterface
+from .train_snonet import (PatientGRUODEBayesInterface, tree_hasnan,
+                           parameters_size, loss_fn, loss_fn_detail)
 from .concept import Subject
 from .dag import CCSDAG
-from .jax_interface import SubjectJAXInterface
+from .jax_interface import SubjectJAXInterface, create_patient_interface
 from .glove import glove_representation
 from .gram import DAGGRAM
 from .metrics import (bce, balanced_focal_bce, l1_absolute, l2_squared,
-                      code_detectability_by_percentiles)
+                      top_k_detectability_scores, auc_scores)
 
 logging.set_verbosity(logging.INFO)
-
-
-def tree_hasnan(t):
-    return any(map(lambda x: jnp.any(jnp.isnan(x)), jax.tree_leaves(t)))
-
-def parameters_size(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.size(x) for x in leaves)
-
-def create_patient_interface(processed_mimic_tables_dir: str):
-    static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
-    adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
-    diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
-                          dtype={'ICD9_CODE': str})
-    proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
-                          dtype={'ICD9_CODE': str})
-    test_df = pd.read_csv(f'{processed_mimic_tables_dir}/test_df.csv.gz')
-
-    # Cast columns of dates to datetime64
-    static_df['DOB'] = pd.to_datetime(
-        static_df.DOB, infer_datetime_format=True).dt.normalize()
-    adm_df['ADMITTIME'] = pd.to_datetime(
-        adm_df.ADMITTIME, infer_datetime_format=True).dt.normalize()
-    adm_df['DISCHTIME'] = pd.to_datetime(
-        adm_df.DISCHTIME, infer_datetime_format=True).dt.normalize()
-    test_df['DATE'] = pd.to_datetime(
-        test_df.DATE, infer_datetime_format=True).dt.normalize()
-
-    patients = Subject.to_list(static_df, adm_df, diag_df, proc_df, test_df)
-
-    # CCS Knowledge Graph
-    k_graph = CCSDAG()
-
-    return SubjectJAXInterface(patients, set(test_df.ITEMID), k_graph)
 
 
 def run_trials(study_name: str, store_url: str, num_trials: int,
@@ -162,7 +129,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                 trial.suggest_int('init_depth', 1, 5),
                 'bias':
                 True,
-                'max_odeint_days': trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7, 7)
+                'max_odeint_days':
+                trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7, 7)
             },
             'training': {
                 'batch_size':
@@ -242,90 +210,13 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
         opt_state = opt_init(params)
 
-        def loss_fn(params: optimizers.Params, batch: List[int],
-                    iteration_text_callback: Any) -> Dict[str, float]:
-            res = ode_model(params,
-                            batch,
-                            count_nfe=False,
-                            iteration_text_callback=iteration_text_callback)
-
-            prejump_num_loss = res['prejump_num_loss']
-            postjump_num_loss = res['postjump_num_loss']
-            prejump_diag_loss = res['prejump_diag_loss']
-            postjump_diag_loss = res['postjump_diag_loss']
-
-            l1_loss = l1_absolute(params)
-            l2_loss = l2_squared(params)
-            dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
-            num_alpha = loss_mixing['num_alpha']
-            diag_alpha = loss_mixing['diag_alpha']
-            ode_alpha = loss_mixing['ode_alpha']
-            l1_alpha = loss_mixing['l1_reg']
-            l2_alpha = loss_mixing['l2_reg']
-            dyn_alpha = loss_mixing['dyn_reg']
-
-            num_loss = (1 - num_alpha
-                        ) * prejump_num_loss + num_alpha * postjump_num_loss
-            diag_loss = (
-                1 - diag_alpha
-            ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-            ode_loss = (1 - ode_alpha) * diag_loss + ode_alpha * num_loss
-            loss = ode_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-                dyn_alpha * dyn_loss)
-            nfe = res['nfe']
-            return loss, {
-                'loss': {
-                    'prejump_num_loss': prejump_num_loss,
-                    'postjump_num_loss': postjump_num_loss,
-                    'prejump_diag_loss': prejump_diag_loss,
-                    'postjump_diag_loss': postjump_diag_loss,
-                    'num_loss': num_loss,
-                    'diag_loss': diag_loss,
-                    'ode_loss': ode_loss,
-                    'l1_loss': l1_loss,
-                    'l2_loss': l2_loss,
-                    'dyn_loss': dyn_loss,
-                    'dyn_loss/week': dyn_loss / res['odeint_weeks'],
-                    'loss': loss
-                },
-                'stats': {
-                    **{
-                        name: score.item()
-                        for name, score in res['scores'].items()
-                    }, 'all_points_count':
-                    res['all_points_count'],
-                    'integrable_points_count':
-                    res['integrable_count'],
-                    'predictable_count':
-                    res['predictable_count'],
-                    'odeint weeks/point':
-                    res['odeint_weeks'] / res['integrable_count'],
-                    'nfe/point':
-                    nfe / res['integrable_count'],
-                    'nfe/week':
-                    nfe / res['odeint_weeks'],
-                    'nfex1000':
-                    nfe / 1000
-                },
-                'diag_detectability_df': res['diag_detectability_df']
-            }
-
-        def update(step: int, batch: Iterable[int],
-                   opt_state: optimizers.OptimizerState,
-                   iteration_text_callback: Any) -> optimizers.OptimizerState:
+        def update(
+                step: int, batch: Iterable[int],
+                opt_state: optimizers.OptimizerState
+        ) -> optimizers.OptimizerState:
             params = get_params(opt_state)
-            if tree_hasnan(params):
-                logging.warning('NaN Params')
-                raise optuna.TrialPruned()
-
-            grads, data = jax.grad(loss_fn,
-                                   has_aux=True)(params, batch,
-                                                 iteration_text_callback)
-            if tree_hasnan(grads):
-                logging.warning('NaN grads')
-                raise optuna.TrialPruned()
-
-            return opt_update(step, grads, opt_state), data
+            grads = jax.grad(loss_fn)(ode_model, loss_mixing, params, batch)
+            return opt_update(step, grads, opt_state)
 
         batch_size = config['training']['batch_size']
         batch_size = min(batch_size, len(train_ids))
@@ -334,74 +225,77 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         iters = int(epochs * len(train_ids) / batch_size)
         val_pbar = tqdm(total=iters)
 
-        def update_batch_desc(text):
-            val_pbar.set_description(text)
-
         for step in range(iters):
             rng.shuffle(train_ids)
             train_batch = train_ids[:batch_size]
             val_pbar.update(1)
 
-            opt_state, _ = update(step, train_batch, opt_state,
-                                  update_batch_desc)
+            opt_state = update(step, train_batch, opt_state)
+            if tree_hasnan(get_params(opt_state)):
+                trial.set_user_attr('nan', 1)
+                return float('nan')
 
-            update_batch_desc('')
+            if step % eval_freq != 0: continue
 
-            if step % eval_freq == 0:
-                params = get_params(opt_state)
-                _, trn_res = loss_fn(params, train_batch, update_batch_desc)
-                _, val_res = loss_fn(params, valid_ids, update_batch_desc)
+            params = get_params(opt_state)
+            trn_res = loss_fn_detail(ode_model, loss_mixing, params,
+                                     train_batch)
+            val_res = loss_fn_detail(ode_model, loss_mixing, params, valid_ids)
 
-                score = val_res['stats']['f1-score']
+            losses = pd.DataFrame(index=trn_res['loss'].keys(),
+                                  data={
+                                      'Training': trn_res['loss'].values(),
+                                      'Validation': val_res['loss'].values()
+                                  })
+            stats = pd.DataFrame(index=trn_res['stats'].keys(),
+                                 data={
+                                     'Training': trn_res['stats'].values(),
+                                     'Valdation': val_res['stats'].values()
+                                 })
 
-                trial.report(score, step)
+            detections_trn = top_k_detectability_scores(
+                codes_by_percentiles, trn_res['diag_detectability_df'])
+            detections_val = top_k_detectability_scores(
+                codes_by_percentiles, val_res['diag_detectability_df'])
+            detections_trn_df = pd.DataFrame(
+                index=detections_trn['pre'].keys(),
+                data={
+                    'Trn(pre)': detections_trn['pre'].values(),
+                    'Trn(post)': detections_trn['post'].values()
+                })
 
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
+            detections_val_df = pd.DataFrame(
+                index=detections_val['pre'].keys(),
+                data={
+                    'Val(pre)': detections_val['pre'].values(),
+                    'Val(post)': detections_val['post'].values()
+                })
 
-                losses = pd.DataFrame(index=trn_res['loss'].keys(),
-                                      data={
-                                          'Training': trn_res['loss'].values(),
-                                          'Validation':
-                                          val_res['loss'].values()
-                                      })
-                stats = pd.DataFrame(index=trn_res['stats'].keys(),
-                                     data={
-                                         'Training': trn_res['stats'].values(),
-                                         'Valdation':
-                                         val_res['stats'].values()
-                                     })
+            auc_trn = auc_scores(trn_res['diag_roc_df'])
+            auc_val = auc_scores(val_res['diag_roc_df'])
 
-                detections_trn = code_detectability_by_percentiles(
-                    codes_by_percentiles, trn_res['diag_detectability_df'])
-                detections_val = code_detectability_by_percentiles(
-                    codes_by_percentiles, val_res['diag_detectability_df'])
-                detections_trn_df = pd.DataFrame(
-                    index=detections_trn['pre'].keys(),
-                    data={
-                        'Trn(pre)': detections_trn['pre'].values(),
-                        'Trn(post)': detections_trn['post'].values()
-                    })
+            auc_df = pd.DataFrame(index=auc_trn.keys(),
+                                  data={
+                                      'Trn(AUC)': auc_trn.values(),
+                                      'Val(AUC)': auc_val.values()
+                                  })
 
-                detections_val_df = pd.DataFrame(
-                    index=detections_val['pre'].keys(),
-                    data={
-                        'Val(pre)': detections_val['pre'].values(),
-                        'Val(post)': detections_val['post'].values()
-                    })
+            df_save_prefix = os.path.join(trial_dir, f'step{step:03d}')
+            for name, df in {
+                    'losses': losses,
+                    'stats': stats,
+                    'detections_trn_df': detections_trn_df,
+                    'detections_val_df': detections_val_df,
+                    'auc_df': auc_df
+            }.items():
+                df.to_csv(f'{df_save_prefix}_{name}.csv')
+                logging.info(df)
 
-                df_save_prefix = os.path.join(trial_dir, f'step{step:03d}')
-
-                for name, df in {
-                        'losses': losses,
-                        'stats': stats,
-                        'detections_trn_df': detections_trn_df,
-                        'detections_val_df': detections_val_df
-                }.items():
-                    df.to_csv(f'{df_save_prefix}_{name}.csv')
-                    logging.info(df)
-
-        return score
+            auc = auc_val['pre']
+            trial.report(auc, step)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+        return auc
 
     study.optimize(objective, n_trials=num_trials)
 
