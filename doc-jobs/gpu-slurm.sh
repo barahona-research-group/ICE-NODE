@@ -41,7 +41,7 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 export STORAGE_URL="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 
 # Run program
-$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
+$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --output-dir $STORE/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
