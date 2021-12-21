@@ -162,7 +162,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             train_batch = train_ids[:batch_size]
             val_pbar.update(1)
 
-            opt_state, res = update(step, train_batch, opt_state)
+            opt_state = update(step, train_batch, opt_state)
             if tree_hasnan(get_params(opt_state)):
                 trial.set_user_attr('nan', 1)
                 return float('nan')
