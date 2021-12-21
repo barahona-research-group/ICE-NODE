@@ -13,7 +13,7 @@ WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/MIMIC-SNONET.git $WORKDIR/MIMIC-SNONET --branch $EXP_TAG --single-branch
+git clone git@github.com:A-Alaa/MIMIC-SNONET.git $WORKDIR/MIMIC-SNONET --branch $STUDY_TAG --single-branch
 
 cd $WORKDIR/MIMIC-SNONET
 
@@ -42,7 +42,7 @@ export STORAGE_URL="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am85
 
 # Run program
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
---output-dir $STORE/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
+--output-dir $STORE/GP/ehr-data/mimic3-snonet-exp/${STUDY_TAG}_${MODEL} \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
 --model $MODEL \
