@@ -42,13 +42,13 @@ class CCSDAG:
          self.proc_single_ccs2icd) = self.make_proc_icd2ccs_dict()
 
         (self.diag_multi_ccs_pt2ch, self.diag_multi_icd2ccs,
-         self.diag_multi_ccs2icd) = self.make_diag_multi_dictionaries()
+         self.diag_multi_ccs2icd,
+         self.diag_multi_ccs_codes) = self.make_diag_multi_dictionaries()
         (self.proc_multi_ccs_pt2ch, self.proc_multi_icd2ccs,
-         self.proc_multi_ccs2icd) = self.make_proc_multi_dictionaries()
+         self.proc_multi_ccs2icd,
+         self.proc_multi_ccs_codes) = self.make_proc_multi_dictionaries()
 
         self.diag_single_ccs_codes = list(self.diag_single_ccs2icd.keys())
-        self.diag_multi_ccs_codes = list(self.diag_multi_ccs2icd.keys())
-        self.proc_multi_ccs_codes = list(self.proc_multi_ccs2icd.keys())
 
     def make_diag_icd_dict(self):
         diag_ccs_label_list = self.diag_single_ccs_df[
@@ -112,32 +112,37 @@ class CCSDAG:
             lambda l: l.strip('\'').strip())
 
         df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4', 'ICD']]
-        diag_multi_ccs_pt2ch = defaultdict(list)
+        diag_multi_ccs_pt2ch = defaultdict(set)
         diag_multi_icd2ccs = {}
         diag_multi_ccs2icd = defaultdict(list)
 
         for row in df.itertuples():
             code = row.ICD
-            l1, l2, l3, l4 = row.L1, row.L2, row.L3, row.L4
             i1, i2, i3, i4 = row.I1, row.I2, row.I3, row.I4
 
             last_index = i1
 
             if i2:
-                diag_multi_ccs_pt2ch[i1].append(i2)
+                diag_multi_ccs_pt2ch[i1].add(i2)
                 last_index = i2
 
             if i3:
-                diag_multi_ccs_pt2ch[i2].append(i3)
+                diag_multi_ccs_pt2ch[i2].add(i3)
                 last_index = i3
             if i4:
-                diag_multi_ccs_pt2ch[i3].append(i4)
+                diag_multi_ccs_pt2ch[i3].add(i4)
                 last_index = i4
 
             diag_multi_icd2ccs[code] = last_index
             diag_multi_ccs2icd[last_index].append(code)
 
-        return diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd
+        diag_multi_ccs_codes = set(df.I1)
+        for ccs_code, ccs_ch in diag_multi_ccs_pt2ch.items():
+            diag_multi_ccs_codes.add(ccs_code)
+            diag_multi_ccs_codes.update(ccs_ch)
+
+        return (diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd,
+                diag_multi_ccs_codes)
 
     def make_proc_multi_dictionaries(self):
         df = self.proc_multi_ccs_df.copy()
@@ -155,30 +160,34 @@ class CCSDAG:
 
         df = df[['I1', 'I2', 'I3', 'L1', 'L2', 'L3', 'ICD']]
 
-
-        proc_multi_ccs_pt2ch = defaultdict(list)
+        proc_multi_ccs_pt2ch = defaultdict(set)
         proc_multi_icd2ccs = {}
         proc_multi_ccs2icd = defaultdict(list)
 
         for row in df.itertuples():
             code = row.ICD
-            l1, l2, l3 = row.L1, row.L2, row.L3
             i1, i2, i3 = row.I1, row.I2, row.I3
 
             last_index = i1
 
             if i2:
-                proc_multi_ccs_pt2ch[i1].append(i2)
+                proc_multi_ccs_pt2ch[i1].add(i2)
                 last_index = i2
 
             if i3:
-                proc_multi_ccs_pt2ch[i2].append(i3)
+                proc_multi_ccs_pt2ch[i2].add(i3)
                 last_index = i3
 
             proc_multi_icd2ccs[code] = last_index
             proc_multi_ccs2icd[last_index].append(code)
 
-        return proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd
+        proc_multi_ccs_codes = set(df.I1)
+        for ccs_code, ccs_ch in proc_multi_ccs_pt2ch.items():
+            proc_multi_ccs_codes.add(ccs_code)
+            proc_multi_ccs_codes.update(ccs_ch)
+
+        return (proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd,
+                proc_multi_ccs_codes)
 
     def find_diag_icd_name(self, code):
         return self.diag_icd_label[code]

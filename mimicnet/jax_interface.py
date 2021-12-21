@@ -26,11 +26,11 @@ class Ignore(Flag):
 
     @staticmethod
     def tests(i: Ignore):
-        return (Ignore.TESTS & i) != 0
+        return (Ignore.TESTS & i).value != 0
 
     @staticmethod
     def proc(i: Ignore):
-        return (Ignore.PROC & i) != 0
+        return (Ignore.PROC & i).value != 0
 
 
 class AbstractSubjectJAXInterface:
@@ -65,7 +65,7 @@ class AbstractSubjectJAXInterface:
 
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = []
-        for code, index in code2index.items():
+        for code in code2index.keys():
             ancestors_npvec = np.zeros(len(code2index), dtype=bool)
             ancestors = [
                 a for a in self.dag.get_ccs_parents(code) if a in code2index
@@ -302,11 +302,13 @@ def create_patient_interface(processed_mimic_tables_dir: str,
     proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
                           dtype={'ICD9_CODE': str})
     if Ignore.tests(ignore):
-        tests_df = None
+        test_df = None
+        test_items = set()
     else:
         test_df = pd.read_csv(f'{processed_mimic_tables_dir}/test_df.csv.gz')
         test_df['DATE'] = pd.to_datetime(
             test_df.DATE, infer_datetime_format=True).dt.normalize()
+        test_items = set(test_df.ITEMID)
 
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
     # Cast columns of dates to datetime64
@@ -322,4 +324,4 @@ def create_patient_interface(processed_mimic_tables_dir: str,
     # CCS Knowledge Graph
     k_graph = CCSDAG()
 
-    return SubjectJAXInterface(patients, set(test_df.ITEMID), k_graph, ignore)
+    return SubjectJAXInterface(patients, test_items, k_graph, ignore)

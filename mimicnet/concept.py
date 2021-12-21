@@ -143,7 +143,7 @@ class Subject:
             map(ptypes.is_datetime64_any_dtype, [
                 static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME']
             ])), "Columns of dates should be casted to datetime64 type first."
-        if tests_df:
+        if tests_df is not None:
             assert ptypes.is_datetime64_any_dtype(tests_df['DATE'])
 
         ehr = {}
@@ -187,7 +187,7 @@ class Subject:
                     ehr[subject_id]['admissions'].values()))
 
         # Lab tests
-        if tests_df:
+        if tests_df is not None:
             for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
                 tests = []
                 for tests_date, date_df in subject_tests_df.groupby('DATE'):

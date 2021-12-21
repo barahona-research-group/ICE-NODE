@@ -1,127 +1,91 @@
-import logging
+from absl import logging
 import pickle
-from collections import defaultdict
 from datetime import datetime
 from functools import partial
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
                     Optional, Tuple, Union, Set)
 
-import numpy as onp
 import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jax.profiler import annotate_function
 from jax.experimental import optimizers
-from jax.nn import softplus, sigmoid, leaky_relu
+from jax.tree_util import tree_map
 
 from tqdm import tqdm
-from jax.tree_util import tree_flatten, tree_map
 
-from .concept import Subject
-from .dag import CCSDAG
-from .jax_interface import SubjectJAXInterface, create_patient_interface
+from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import DAGGRAM
-from .models import (MLPDynamics, ResDynamics, GRUDynamics, TaylorAugmented,
-                     NeuralODE, GRUBayes, NumericObsModel,
-                     StateDiagnosesDecoder, StateInitializer)
+from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
+                     GRUBayes, NumericObsModel, StateDiagnosesDecoder,
+                     StateInitializer)
 from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
                       l1_absolute, numeric_error, lognormal_loss,
-                      compute_KL_loss, confusion_matrix,
-                      confusion_matrix_scores, top_k_detectability_df,
-                      top_k_detectability_scores, roc_df, auc_scores)
-
-ode_logger = logging.getLogger("ode")
-debug_flags = {'nan_debug': True, 'shape_debug': True}
+                      compute_KL_loss, evaluation_table, EvalFlag)
+from .utils import (parameters_size, tree_hasnan, tree_lognan, wrap_module,
+                    load_config)
 
 
-def parameters_size(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.size(x) for x in leaves)
+class BatchedApply:
+    @staticmethod
+    def _numeric_error(mean_true, mean_predicted, logvar_predicted):
+        error_num = {
+            i: numeric_error(mean_true[i], mean_predicted[i],
+                             logvar_predicted[i])
+            for i in mean_predicted.keys()
+        }
+        return error_num
+
+    @staticmethod
+    def _lognormal_loss(mask: Dict[int, jnp.ndarray],
+                        normal_error: Dict[int, jnp.ndarray],
+                        logvar: Dict[int, jnp.ndarray]):
+        loss = {
+            i: lognormal_loss(mask[i], normal_error[i], logvar[i])
+            for i in normal_error.keys()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
+
+    @staticmethod
+    def _kl_loss(mean_true: Dict[int, jnp.ndarray], mask: Dict[int,
+                                                               jnp.ndarray],
+                 mean_predicted: Dict[int, jnp.ndarray],
+                 logvar_predicted: Dict[int, jnp.ndarray]):
+        loss = {
+            i: compute_KL_loss(mean, mask[i], mean_predicted[i],
+                               logvar_predicted[i])
+            for i, mean in mean_predicted.items()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
+
+    @staticmethod
+    def _gram_error(gram_true, gram_predicted):
+        error_gram = {
+            i: gram_true[i] - jit_sigmoid(gram_predicted[i])
+            for i in gram_predicted.keys()
+        }
+        return error_gram
+
+    @staticmethod
+    def _diag_loss(loss_apply, diag_true: Dict[int, jnp.ndarray],
+                   diag_predicted: Dict[int, jnp.ndarray]):
+        loss = {
+            i: loss_apply(diag_true[i], diag_predicted[i])
+            for i in diag_predicted.keys()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
 
 
-def tree_hasnan(t):
-    return any(map(lambda x: jnp.any(jnp.isnan(x)), jax.tree_leaves(t)))
-
-
-def tree_lognan(t):
-    return jax.tree_map(lambda x: jnp.any(jnp.isnan(x)).item(), t)
-
-
-def array_hasnan(arr):
-    return jnp.any(jnp.isnan(arr) | jnp.isinf(arr))
-
-
-def arrays_lognan_lazy(arrs_dict_fn, params_fn):
-    if debug_flags['nan_debug']:
-        arrays_lognan(arrs_dict_fn(), params_fn())
-
-
-def arrays_lognan(arrs_dict, params=None):
-    if debug_flags['nan_debug']:
-        invalid_arrays = list(
-            filter(lambda a: array_hasnan(a[1]), arrs_dict.items()))
-        if len(invalid_arrays) > 0:
-            to_np = lambda m: onp.array(lax.stop_gradient(m))
-            arrs_dict = tree_map(to_np, arrs_dict)
-            norm = lambda m: jnp.sqrt(jnp.sum(m**2))
-            arrs_msg = ', '.join(
-                map(
-                    lambda t:
-                    f'{t[0]}: {onp.argwhere(onp.isnan(arrs_dict[t[0]])).tolist()}',
-                    invalid_arrays))
-            msg = f"{len(invalid_arrays)} Invalid arrays: {arrs_msg}"
-            ode_logger.warning('\n===Invalid Arrays Predicate===\n' + msg)
-            ode_logger.warning('\n===Arrays Norm===')
-            arrs_norm = tree_map(norm, arrs_dict)
-            ode_logger.warning('\n' + str(arrs_norm) + '\n')
-            timestamp = datetime.now().strftime("%d-%b-%Y_%H-%M-%S")
-            arrs_fname = f'arrays_lognan_{timestamp}.npy'
-            onp.save(arrs_fname, arrs_dict)
-            ode_logger.warning(f'saved arrays to: {arrs_fname}')
-
-            if params is not None:
-                params = tree_map(to_np, params)
-                params_fname = f'params_lognan_{timestamp}.npy'
-                onp.save(params_fname, params)
-                ode_logger.warning(f'saved params to :{params_fname}')
-                norms = tree_map(norm, params)
-                ode_logger.warning(f'\n===Parameters Norm===\n' + str(norms) +
-                                   '\n')
-            raise ValueError("NaN found")
-
-
-def pad_list(l, size, pad_val=0):
-    while len(l) < size:
-        l.append(jnp.zeros_like(l[-1]) + pad_val)
-    return l
-
-
-def pad_mat(m, nrows, pad_val=0):
-    if m.shape[0] < nrows:
-        pad = jnp.zeros(
-            (nrows - m.shape[0], m.shape[1]), dtype=m.dtype) + pad_val
-        return jnp.vstack((m, pad))
-    else:
-        return m
-
-
-def wrap_module(module, *module_args, **module_kwargs):
-    """
-    Wrap the module in a function to be transformed.
-    """
-    def wrap(*args, **kwargs):
-        """
-        Wrapping of module.
-        """
-        model = module(*module_args, **module_kwargs)
-        return model(*args, **kwargs)
-
-    return wrap
-
-
-class PatientGRUODEBayesInterface:
+class SNONET(BatchedApply):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
                  ode_depth: int, tay_reg: Optional[int], state_size: int,
@@ -133,8 +97,13 @@ class PatientGRUODEBayesInterface:
         self.diag_gram = diag_gram
         self.proc_gram = proc_gram
         self.tay_reg = tay_reg
-        self.diag_loss = diag_loss
         self.max_odeint_days = max_odeint_days
+
+        if diag_loss == 'balanced_focal':
+            self.diag_loss = lambda t, p: balanced_focal_bce(
+                t, p, gamma=2, beta=0.999)
+        elif diag_loss == 'bce':
+            self.diag_loss = bce
 
         self.dimensions = {
             'age': 1,
@@ -177,7 +146,7 @@ class PatientGRUODEBayesInterface:
         else:
             raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
 
-        n_ode_init, n_ode = hk.without_apply_rng(
+        f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
@@ -187,7 +156,7 @@ class PatientGRUODEBayesInterface:
                             name='n_ode',
                             tay_reg=tay_reg,
                             **init_kwargs)))
-        self.n_ode = jax.jit(n_ode, static_argnums=(1, ))
+        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
@@ -228,7 +197,7 @@ class PatientGRUODEBayesInterface:
         self.f_state_init = jax.jit(f_state_init)
 
         self.initializers = {
-            'ode_dyn': n_ode_init,
+            'f_n_ode': f_n_ode_init,
             'f_update': f_update_init,
             'f_num': f_num_init,
             'f_dec': f_dec_init,
@@ -236,7 +205,7 @@ class PatientGRUODEBayesInterface:
         }
 
     def init_params(self, rng_key):
-        init_data = self.__initialization_data()
+        init_data = self._initialization_data()
         return {
             "diag_gram": self.diag_gram.init_params(rng_key),
             "proc_gram": self.proc_gram.init_params(rng_key),
@@ -260,39 +229,38 @@ class PatientGRUODEBayesInterface:
         index2test = {i: t for t, i in self.subject_interface.test_idx.items()}
         return list(map(index2test.get, range(len(index2test))))
 
-    def __initialization_data(self):
+    def _initialization_data(self):
         """
         Creates data for initializing each of the
         modules based on the shapes of init_data.
         """
         numeric = jnp.zeros(self.dimensions['numeric'])
-        diag_gram = jnp.zeros(self.dimensions['diag_gram'])
+        diag_gram_ = jnp.zeros(self.dimensions['diag_gram'])
         state = jnp.zeros(self.dimensions['state'])
-        c = jnp.zeros(self.dimensions['ode_control'])
-        i = jnp.zeros(self.dimensions['state_init'])
+        ode_ctrl = jnp.zeros(self.dimensions['ode_control'])
+        state_in = jnp.zeros(self.dimensions['state_init'])
         return {
-            "ode_dyn": [state, 0.1, c],
-            "f_update": [state, numeric, numeric, diag_gram],
+            "f_n_ode": [True, state, 0.1, ode_ctrl],
+            "f_update": [state, numeric, numeric, diag_gram_],
             "f_num": [state],
-            "f_dec": [state, numeric],
-            "f_state_init": [i]
+            "f_dec": [state],
+            "f_state_init": [state_in]
         }
 
-    def __extract_nth_points(self, params, subjects_batch: List[int],
-                             n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
-
-        diag_emb_mat, proc_emb_mat = self.__generate_embedding_mats(params)
+    def _extract_nth_points(self, params, subjects_batch: List[int],
+                            diag_G: jnp.ndarray, proc_G: jnp.ndarray,
+                            n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
 
         points = self.subject_interface.nth_points_batch(n, subjects_batch)
         if len(points) == 0:
             return None
 
         diag_gram = {
-            i: self.diag_gram.encode(diag_emb_mat, v['diag_multi_ccs_vec'])
+            i: self.diag_gram.encode(diag_G, v['diag_multi_ccs_vec'])
             for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         proc_gram = {
-            i: self.proc_gram.encode(proc_emb_mat, v['proc_multi_ccs_vec'])
+            i: self.proc_gram.encode(proc_G, v['proc_multi_ccs_vec'])
             for i, v in points.items() if v['proc_multi_ccs_vec'] is not None
         }
         diag_out = {
@@ -331,7 +299,7 @@ class PatientGRUODEBayesInterface:
             'diag_out': diag_out
         }
 
-    def __f_num(
+    def _f_num(
         self, params: Any, state: Dict[str,
                                        jnp.ndarray], selection: Iterable[int]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
@@ -345,9 +313,9 @@ class PatientGRUODEBayesInterface:
         logvar = {i: lv for i, (_, lv) in mean_logvar.items()}
         return mean, logvar
 
-    def __odeint(self, count_nfe, params, h, t, c):
+    def _f_n_ode(self, params, count_nfe, h, t, c):
         h_r_nfe = {
-            i: self.n_ode(params['ode_dyn'], count_nfe, h[i], t[i], c[i])
+            i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
             for i in h.keys()
         }
 
@@ -356,10 +324,10 @@ class PatientGRUODEBayesInterface:
         h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
         return h1, r1, nfe
 
-    def __update(self, params: Any, state: Dict[int, jnp.ndarray],
-                 numeric_error: Dict[int, jnp.ndarray],
-                 numeric_mask: Dict[int, jnp.ndarray],
-                 diag_gram_error: jnp.ndarray) -> jnp.ndarray:
+    def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
+                  numeric_error: Dict[int, jnp.ndarray],
+                  numeric_mask: Dict[int, jnp.ndarray],
+                  diag_gram_error: jnp.ndarray) -> jnp.ndarray:
         zero_gram_error = jnp.zeros(self.dimensions['diag_gram'])
         zero_numeric = jnp.zeros(self.dimensions['numeric'])
 
@@ -373,7 +341,7 @@ class PatientGRUODEBayesInterface:
 
         return updated_state
 
-    def __state_decode(
+    def _f_dec(
         self, params: Any, state: Dict[int, jnp.ndarray], selection: Set[int]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
         gram_out = {
@@ -385,72 +353,13 @@ class PatientGRUODEBayesInterface:
 
         return gram, out
 
-    def __generate_embedding_mats(self, params):
+    def _generate_embedding_mats(self, params):
         diag = self.diag_gram.compute_embedding_mat(params["diag_gram"])
         proc = self.proc_gram.compute_embedding_mat(params["proc_gram"])
         return diag, proc
 
-    def __diag_loss(self, diag_true: Dict[int, jnp.ndarray],
-                    diag_predicted: Dict[int, jnp.ndarray]):
-        loss = {
-            i: self.diag_loss(diag_true[i], diag_predicted[i])
-            for i in diag_predicted.keys()
-        }
-        if loss:
-            return sum(loss.values()) / len(loss)
-        else:
-            return 0.0
-
-    def __numeric_error(self, mean_true, mean_predicted, logvar_predicted):
-        error_num = {
-            i: numeric_error(mean_true[i], mean_predicted[i],
-                             logvar_predicted[i])
-            for i in mean_predicted.keys()
-        }
-        return error_num
-
-    def __lognormal_loss(self, mask: Dict[int, jnp.ndarray],
-                         normal_error: Dict[int, jnp.ndarray],
-                         logvar: Dict[int, jnp.ndarray]):
-        loss = {
-            i: lognormal_loss(mask[i], normal_error[i], logvar[i])
-            for i in normal_error.keys()
-        }
-
-        return sum(loss.values()) / len(loss)
-
-    def __kl_loss(self, mean_true: Dict[int, jnp.ndarray],
-                  mask: Dict[int,
-                             jnp.ndarray], mean_predicted: Dict[int,
-                                                                jnp.ndarray],
-                  logvar_predicted: Dict[int, jnp.ndarray]):
-        loss = {
-            i: compute_KL_loss(mean, mask[i], mean_predicted[i],
-                               logvar_predicted[i])
-            for i, mean in mean_predicted.items()
-        }
-
-        return sum(loss.values()) / len(loss)
-
-    def __gram_error(self, gram_true, gram_predicted):
-        error_gram = {
-            i: gram_true[i] - jit_sigmoid(gram_predicted[i])
-            for i in gram_predicted.keys()
-        }
-        return error_gram
-
-    def __confusion_matrix(self, diag_true, diag_predicted):
-        cm = {
-            i: confusion_matrix(diag_true[i], jit_sigmoid(diag_predicted[i]))
-            for i in diag_predicted.keys()
-        }
-        if cm:
-            return sum(cm.values())
-        else:
-            return None
-
-    def __initial_state(self, params, diag_gram, age, subjects: Iterable[int],
-                        days_ahead: Dict[int, int]):
+    def _f_init(self, params, diag_gram, age, subjects: Iterable[int],
+                days_ahead: Dict[int, int]):
         def _state_init(subject_id):
             d = {
                 'diag_gram': diag_gram[subject_id],
@@ -469,11 +378,16 @@ class PatientGRUODEBayesInterface:
     def __call__(self, params: Any, subjects_batch: List[int],
                  count_nfe: bool):
 
-        nth_points = partial(self.__extract_nth_points, params, subjects_batch)
-        nn_f_num = partial(self.__f_num, params)
-        nn_odeint = partial(self.__odeint, params, count_nfe)
-        nn_update = partial(self.__update, params)  # state, e, m, diag_error
-        nn_state_decode = partial(self.__state_decode, params)
+        diag_G, proc_G = self._generate_embedding_mats(params)
+
+        nth_points = partial(self._extract_nth_points, params, subjects_batch,
+                             diag_G, proc_G)
+        nn_num = partial(self._f_num, params)
+        nn_ode = partial(self._f_n_ode, params, count_nfe)
+        nn_update = partial(self._f_update, params)  # state, e, m, diag_error
+        nn_decode = partial(self._f_dec, params)
+        nn_init = partial(self._f_init, params)
+        diag_loss = partial(self._diag_loss, self.diag_loss)
 
         subject_state = {}
         dyn_loss = []
@@ -487,9 +401,7 @@ class PatientGRUODEBayesInterface:
         num_weights = []
         diag_weights = []
 
-        diag_detectability = []
-        diag_roc = []
-        diag_cm = []  # Confusion matrix
+        diag_detectability = {i: dict() for i in subjects_batch}
         all_points_count = 0
         diag_count = 0
         num_count = 0
@@ -522,8 +434,7 @@ class PatientGRUODEBayesInterface:
             reset_subjects = set(days_ahead) - set(delta_weeks)
             map(lambda k: subject_state.pop(k, None), reset_subjects)
 
-            state_0 = self.__initial_state(params, diag_gram, age,
-                                           reset_subjects, days_ahead)
+            state_0 = nn_init(diag_gram, age, reset_subjects, days_ahead)
             subject_state.update(state_0)
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
@@ -539,25 +450,22 @@ class PatientGRUODEBayesInterface:
 
             odeint_weeks += sum(delta_weeks.values())
             ################## ODEINT #####################
-            state_j, _dyn_loss, _nfe = nn_odeint(state_i, delta_weeks,
-                                                 points_n['ode_control'])
+            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_weeks,
+                                              points_n['ode_control'])
             dyn_loss.append(_dyn_loss)
             nfe.append(_nfe)
             ########## PRE-JUMP NUM LOSS ########################
-            pre_mean, pre_logvar = nn_f_num(state_j, num_cases)
-            error = self.__numeric_error(numeric, pre_mean, pre_logvar)
+            pre_mean, pre_logvar = nn_num(state_j, num_cases)
+            error = self._numeric_error(numeric, pre_mean, pre_logvar)
 
             prejump_num_loss.append(
-                self.__lognormal_loss(mask, error, pre_logvar))
+                self._lognormal_loss(mask, error, pre_logvar))
 
             ########## PRE-JUMP DAG LOSS #########################
-            pre_diag_gram, pre_diag_out = nn_state_decode(state_j, diag_cases)
-            pre_diag_loss = self.__diag_loss(diag_out, pre_diag_out)
-            pre_diag_gram_error = self.__gram_error(diag_gram, pre_diag_gram)
-            confusion_mat = self.__confusion_matrix(diag_out, pre_diag_out)
+            pre_diag_gram, pre_diag_out = nn_decode(state_j, diag_cases)
+            pre_diag_loss = diag_loss(diag_out, pre_diag_out)
+            pre_diag_gram_error = self._gram_error(diag_gram, pre_diag_gram)
             prejump_diag_loss.append(pre_diag_loss)
-            if confusion_mat is not None:
-                diag_cm.append(confusion_mat)
 
             ############## GRU BAYES ####################
             # Using GRUObservationCell to update h.
@@ -571,20 +479,23 @@ class PatientGRUODEBayesInterface:
                     'value': new_state
                 }
             ################ POST-JUMP NUM LOSS ####################
-            post_mean, post_logvar = nn_f_num(state_j_updated, num_cases)
+            post_mean, post_logvar = nn_num(state_j_updated, num_cases)
             postjump_num_loss.append(
-                self.__kl_loss(numeric, mask, post_mean, post_logvar))
+                self._kl_loss(numeric, mask, post_mean, post_logvar))
 
             ############### POST-JUNP DAG LOSS ########################
-            _, post_diag_out = nn_state_decode(state_j_updated, diag_cases)
+            _, post_diag_out = nn_decode(state_j_updated, diag_cases)
 
-            post_diag_loss = self.__diag_loss(diag_out, post_diag_out)
+            post_diag_loss = diag_loss(diag_out, post_diag_out)
             postjump_diag_loss.append(post_diag_loss)
 
-            diag_detectability.append(
-                top_k_detectability_df(20, diag_out, pre_diag_out,
-                                       post_diag_out, n))
-            diag_roc.append(roc_df(diag_out, pre_diag_out, post_diag_out, n))
+            for subject_id in post_diag_out.keys():
+                diag_detectability[subject_id][n] = {
+                    'days_ahead': days_ahead[subject_id],
+                    'diag_true': diag_out[subject_id],
+                    'pre_logits': pre_diag_out[subject_id],
+                    'post_logits': post_diag_out[subject_id]
+                }
 
         prejump_num_loss = jnp.average(prejump_num_loss, weights=num_weights)
         postjump_num_loss = jnp.average(postjump_num_loss, weights=num_weights)
@@ -592,31 +503,23 @@ class PatientGRUODEBayesInterface:
                                         weights=diag_weights)
         postjump_diag_loss = jnp.average(postjump_diag_loss,
                                          weights=diag_weights)
-        if diag_cm:
-            confusion_mat = sum(cm for cm in diag_cm if cm is not None)
-        else:
-            confusion_mat = jnp.zeros((2, 2))
-
         return {
             'prejump_num_loss': prejump_num_loss,
             'postjump_num_loss': postjump_num_loss,
             'prejump_diag_loss': prejump_diag_loss,
             'postjump_diag_loss': postjump_diag_loss,
             'dyn_loss': jnp.sum(sum(dyn_loss)),
-            'scores': confusion_matrix_scores(confusion_mat),
             'odeint_weeks': odeint_weeks,
             'all_points_count': all_points_count,
             'diag_count': diag_count,
             'num_count': num_count,
             'nfe': sum(nfe),
-            'diag_detectability_df': pd.concat(diag_detectability),
-            'diag_roc_df': pd.concat(diag_roc)
+            'diag_detectability': diag_detectability,
         }
 
 
-def loss_fn_detail(ode_model: PatientGRUODEBayesInterface,
-                   loss_mixing: Dict[str, float], params: optimizers.Params,
-                   batch: List[int]) -> Dict[str, float]:
+def eval_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
+            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
     res = ode_model(params, batch, count_nfe=True)
 
     prejump_num_loss = res['prejump_num_loss']
@@ -657,25 +560,17 @@ def loss_fn_detail(ode_model: PatientGRUODEBayesInterface,
             'loss': loss
         },
         'stats': {
-            **{name: score.item()
-               for name, score in res['scores'].items()}, 'all_points_count':
-            res['all_points_count'],
-            'integrable_points_count': res['integrable_count'],
+            'all_points_count': res['all_points_count'],
             'diag_count': res['diag_count'],
             'num_count': res['num_count'],
-            'odeint weeks/point':
-            res['odeint_weeks'] / res['integrable_count'],
-            'nfe/point': nfe / res['integrable_count'],
             'nfe/week': nfe / res['odeint_weeks'],
             'nfex1000': nfe / 1000
         },
-        'diag_detectability_df': res['diag_detectability_df'],
-        'diag_roc_df': res['diag_roc_df']
+        'diag_detectability': res['diag_detectability']
     }
 
 
-def loss_fn(ode_model: PatientGRUODEBayesInterface, loss_mixing: Dict[str,
-                                                                      float],
+def loss_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
             params: optimizers.Params, batch: List[int]):
     res = ode_model(params, batch, count_nfe=False)
 
@@ -721,63 +616,31 @@ def train_ehr(
         tay_reg: Optional[int],
         loss_mixing: Dict[str, float],
         eval_freq: int,
-        save_freq: Optional[int],
-        save_params_prefix: Optional[str],
-        # Debugging
-        verbose_debug=False,
-        nan_debug=False,
-        shape_debug=False,
-        memory_profile=False,
-        **init_kwargs):
-
-    diag_loss_function = {
-        'balanced_focal':
-        lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999),
-        'bce':
-        bce
-    }
-
-    if verbose_debug:
-        ode_logger.setLevel(logging.DEBUG)
-    else:
-        ode_logger.setLevel(logging.INFO)
-    debug_flags['nan_debug'] = nan_debug
-    debug_flags['shape_debug'] = shape_debug
+        save_freq: int,
+        output_dir: str):
 
     prng_key = jax.random.PRNGKey(rng.randint(0, 100))
+    ode_model = SNONET(subject_interface=subject_interface,
+                       diag_gram=diag_gram,
+                       proc_gram=proc_gram,
+                       **model_config,
+                       tay_reg=tay_reg,
+                       diag_loss=diag_loss)
 
-    ode_model = PatientGRUODEBayesInterface(
-        subject_interface=subject_interface,
-        diag_gram=diag_gram,
-        proc_gram=proc_gram,
-        **model_config,
-        tay_reg=tay_reg,
-        diag_loss=diag_loss_function[diag_loss])
-
-    jax.profiler.save_device_memory_profile("before_params_init.prof")
     params = ode_model.init_params(prng_key)
-    jax.profiler.save_device_memory_profile("after_params_init.prof")
 
-    ode_logger.info(f'#params: {parameters_size(params)}')
-    ode_logger.info(f'shape(params): {tree_map(jnp.shape, params)}')
+    logging.info(f'#params: {parameters_size(params)}')
+    logging.info(f'shape(params): {tree_map(jnp.shape, params)}')
     opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+
+    loss = partial(loss_fn, ode_model, loss_mixing)
+    eval_ = partial(eval_fn, ode_model, loss_mixing)
 
     def update(
             step: int, batch: Iterable[int],
             opt_state: optimizers.OptimizerState) -> optimizers.OptimizerState:
         params = get_params(opt_state)
-        """Single SGD update step."""
-        if nan_debug:
-            if tree_hasnan(params):
-                ode_logger.warning(tree_lognan(params))
-                raise ValueError("Nan Params")
-
-        grads = jax.grad(loss_fn)(ode_model, loss_mixing, params, batch)
-        if nan_debug:
-            if tree_hasnan(grads):
-                ode_logger.warning(tree_lognan(grads))
-                raise ValueError("Nan Grads")
-
+        grads = jax.grad(loss)(params, batch)
         return opt_update(step, grads, opt_state)
 
     opt_state = opt_init(params)
@@ -795,12 +658,6 @@ def train_ehr(
 
     res_val = {}
     res_trn = {}
-    if save_freq is None:
-        save_freq = eval_freq
-
-    if save_params_prefix is None:
-        timestamp = datetime.now().strftime("%d-%b-%Y_%H-%M-%S")
-        save_params_prefix = f'GRU_ODE_Bayes_B{batch_size}_{timestamp}'
 
     iters = int(epochs * len(train_ids) / batch_size)
     val_pbar = tqdm(total=iters)
@@ -816,70 +673,28 @@ def train_ehr(
         except (ValueError, FloatingPointError) as e:
             from traceback import format_exception
             tb_str = ''.join(format_exception(None, e, e.__traceback__))
-            ode_logger.warning(f'ValueError exception raised: {tb_str}')
+            logging.warning(f'ValueError exception raised: {tb_str}')
             break
 
         if step % save_freq == 0 and step > 0:
-            with open(f'{save_params_prefix}_step{step:03d}.pickle',
-                      'wb') as f:
+            with open(f'{output_dir}/step{step:03d}.pickle', 'wb') as f:
                 pickle.dump(get_params(opt_state), f)
 
         if step % eval_freq != 0: continue
 
         rng.shuffle(valid_ids)
+
         valid_batch = valid_ids  #[:val_batch_size]
         params = get_params(opt_state)
-        trn_res = loss_fn_detail(ode_model, loss_mixing, params, train_batch)
+        trn_res = eval_(params, train_batch)
         res_trn[step] = trn_res
-
-        val_res = loss_fn_detail(ode_model, loss_mixing, params, valid_batch)
+        val_res = eval_(params, valid_batch)
         res_val[step] = val_res
 
-        losses = pd.DataFrame(index=trn_res['loss'].keys(),
-                              data={
-                                  'Training': trn_res['loss'].values(),
-                                  'Validation': val_res['loss'].values()
-                              })
-        stats = pd.DataFrame(index=trn_res['stats'].keys(),
-                             data={
-                                 'Training': trn_res['stats'].values(),
-                                 'Valdation': val_res['stats'].values()
-                             })
-
-        detections_trn = top_k_detectability_scores(
-            codes_by_percentiles, trn_res['diag_detectability_df'])
-        detections_val = top_k_detectability_scores(
-            codes_by_percentiles, val_res['diag_detectability_df'])
-        detections_trn_df = pd.DataFrame(index=detections_trn['pre'].keys(),
-                                         data={
-                                             'Trn(pre)':
-                                             detections_trn['pre'].values(),
-                                             'Trn(post)':
-                                             detections_trn['post'].values()
-                                         })
-
-        detections_val_df = pd.DataFrame(index=detections_val['pre'].keys(),
-                                         data={
-                                             'Val(pre)':
-                                             detections_val['pre'].values(),
-                                             'Val(post)':
-                                             detections_val['post'].values()
-                                         })
-
-        auc_trn = auc_scores(trn_res['diag_roc_df'])
-        auc_val = auc_scores(val_res['diag_roc_df'])
-
-        auc_df = pd.DataFrame(index=auc_trn.keys(),
-                              data={
-                                  'Trn(AUC)': auc_trn.values(),
-                                  'Val(AUC)': auc_val.values()
-                              })
-
-        ode_logger.info('\n' + str(losses))
-        ode_logger.info('\n' + str(stats))
-        ode_logger.info('\n' + str(detections_trn_df))
-        ode_logger.info('\n' + str(detections_val_df))
-        ode_logger.info('\n' + str(auc_df))
+        eval_table = evaluation_table(trn_res, val_res,
+                                      EvalFlag.POST | EvalFlag.CM,
+                                      codes_by_percentiles)
+        logging.info('\n' + str(eval_table))
 
     return {
         'res_val': res_val,
@@ -897,6 +712,8 @@ if __name__ == '__main__':
     import argparse
     from .glove import glove_representation
 
+    logging.set_verbosity(logging.INFO)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-i',
                         '--mimic-processed-dir',
@@ -906,12 +723,20 @@ if __name__ == '__main__':
                         '--output-dir',
                         required=True,
                         help='Aboslute path to log intermediate results')
+
+    parser.add_argument(
+        '-c',
+        '--config',
+        required=True,
+        help='Absolute path to JSON file of experiment configurations')
+
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
     cpu = args.cpu
+    config_file = args.config
 
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
@@ -923,65 +748,28 @@ if __name__ == '__main__':
     patient_interface = create_patient_interface(mimic_processed_dir)
     logging.info('[DONE] Patients JAX Interface')
 
-    config = {
-        'glove_config': {
-            'diag_idx': patient_interface.diag_multi_ccs_idx,
-            'proc_idx': patient_interface.proc_multi_ccs_idx,
-            'ccs_dag': patient_interface.dag,
-            'subjects': patient_interface.subjects.values(),
-            'diag_vector_size': 100,
-            'proc_vector_size': 50,
-            'iterations': 30,
-            'window_size_days': 2 * 365
-        },
-        'gram_config': {
-            'diag': {
-                'ccs_dag': patient_interface.dag,
-                'code2index': patient_interface.diag_multi_ccs_idx,
-                'attention_method': 'tanh',
-                'attention_dim': 100,
-                'ancestors_mat':
-                patient_interface.diag_multi_ccs_ancestors_mat,
-            },
-            'proc': {
-                'ccs_dag': patient_interface.dag,
-                'code2index': patient_interface.proc_multi_ccs_idx,
-                'attention_method': 'tanh',
-                'attention_dim': 50,
-                'ancestors_mat':
-                patient_interface.proc_multi_ccs_ancestors_mat,
-            }
-        },
-        'model': {
-            'ode_dyn': 'gru',
-            'state_size': 100,
-            'numeric_hidden_size': 100,
-            'init_depth': 1,
-            'bias': True,
-            'max_odeint_days': 8 * 7
-        },
-        'training': {
-            'batch_size': 5,
-            'epochs': 1,
-            'lr': 1e-5,
-            'diag_loss': 'balanced_focal',
-            'tay_reg':
-            3,  # Order of regularized derivative of the dynamics function (None for disable).
-            'loss_mixing': {
-                'num_alpha': 1e-4,
-                'diag_alpha': 1e-4,
-                'ode_alpha': 1e-5,
-                'l1_reg': 1e-7,
-                'l2_reg': 1e-6,
-                'dyn_reg': 1e-3
-            }
-        }
-    }
-    diag_glove, proc_glove = glove_representation(**config['glove_config'])
-    diag_gram = DAGGRAM(**config['gram_config']['diag'],
-                        basic_embeddings=diag_glove)
-    proc_gram = DAGGRAM(**config['gram_config']['proc'],
-                        basic_embeddings=proc_glove)
+    config = load_config(config_file)
+
+    diag_glove, proc_glove = glove_representation(
+        diag_idx=patient_interface.diag_multi_ccs_idx,
+        proc_idx=patient_interface.proc_multi_ccs_idx,
+        ccs_dag=patient_interface.dag,
+        subjects=patient_interface.subjects.values(),
+        **config['glove_config'])
+
+    diag_gram = DAGGRAM(
+        ccs_dag=patient_interface.dag,
+        code2index=patient_interface.diag_multi_ccs_idx,
+        basic_embeddings=diag_glove,
+        ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
+        **config['gram_config']['diag'])
+
+    proc_gram = DAGGRAM(
+        ccs_dag=patient_interface.dag,
+        code2index=patient_interface.proc_multi_ccs_idx,
+        basic_embeddings=proc_glove,
+        ancestors_mat=patient_interface.proc_multi_ccs_ancestors_mat,
+        **config['gram_config']['proc'])
 
     res = train_ehr(subject_interface=patient_interface,
                     diag_gram=diag_gram,
@@ -989,7 +777,7 @@ if __name__ == '__main__':
                     rng=random.Random(42),
                     model_config=config['model'],
                     **config['training'],
-                    verbose_debug=False,
-                    shape_debug=False,
-                    nan_debug=False,
-                    memory_profile=False)
+                    train_validation_split=0.8,
+                    output_dir=output_dir,
+                    eval_freq=10,
+                    save_freq=100)
