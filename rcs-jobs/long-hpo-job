@@ -2,8 +2,6 @@
 
 #PBS -lwalltime=300:0:0
 
-#PBS -J 1-5
-
 # Setup environement using .bashrc
 source $HOME/.bashrc
 $HOME/anaconda3/condabin/conda activate mimic3-snonet
