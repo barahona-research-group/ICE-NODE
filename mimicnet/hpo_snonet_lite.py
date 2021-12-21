@@ -18,7 +18,7 @@ from optuna.samplers import TPESampler
 from sqlalchemy.pool import NullPool
 
 from .train_snonet_lite import (loss_fn, eval_fn, SNONETLite)
-from .jax_interface import create_patient_interface
+from .jax_interface import create_patient_interface, Ignore
 from .gram import DAGGRAM
 from .metrics import evaluation_table, EvalFlag
 from .utils import (parameters_size, tree_hasnan, write_config)
@@ -115,7 +115,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     logging.info('[LOADING] Patients JAX Interface.')
-    patient_interface = create_patient_interface(mimic_processed_dir)
+    patient_interface = create_patient_interface(mimic_processed_dir,
+                                                 Ignore.TESTS)
     logging.info('[DONE] Patients JAX Interface')
 
     rng = random.Random(42)

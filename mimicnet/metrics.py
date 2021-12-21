@@ -184,7 +184,10 @@ def compute_confusion_matrix(detectability, label_prefix):
             ground_truth = inference['diag_true']
             logits = inference[label]
             cm.append(confusion_matrix(ground_truth, jit_sigmoid(logits)))
-    return sum(cm)
+    if cm:
+        return sum(cm)
+    else:
+        return None
 
 
 def top_k_detectability_df(top_k: int, res, prefixes):
@@ -243,8 +246,9 @@ def evaluation_table(trn_res, val_res, eval_flag, codes_by_percentiles):
     if EvalFlag.has(eval_flag, EvalFlag.CM):
         cm_trn = compute_confusion_matrix(detect_trn, 'pre')
         cm_val = compute_confusion_matrix(detect_val, 'pre')
-        evals.append(
-            (confusion_matrix_scores(cm_trn), confusion_matrix_scores(cm_val)))
+        if cm_trn is not None and cm_val is not None:
+            evals.append((confusion_matrix_scores(cm_trn),
+                          confusion_matrix_scores(cm_val)))
 
     auc_trn = auc_scores(detect_trn, 'pre')
     auc_val = auc_scores(detect_val, 'pre')
