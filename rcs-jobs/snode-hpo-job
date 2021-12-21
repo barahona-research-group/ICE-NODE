@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=24:0:0
 
-#PBS -J 1-100
+#PBS -J 1-10
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -16,10 +16,11 @@ cd $TMPDIR/MIMIC-SNONET
 # Load modules for any applications
 
 # Run program
-$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
---output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/${STUDY_TAG}_${MODEL} \
+$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
+--output-dir $HOME/GP/ehr-data/mimicnet-experiments/${STUDY_TAG}_${MODEL} \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
+--model $MODEL
 --store-url $EXP_STORE_URL \
 --num-trials 1 \
 -N 5 \
