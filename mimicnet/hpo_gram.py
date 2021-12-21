@@ -17,8 +17,7 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from sqlalchemy.pool import NullPool
 
-from .train_gram import (loss_fn, eval_fn, GRAM)
-from .jax_interface import create_patient_interface
+from .train_gram import (loss_fn, eval_fn, GRAM, create_patient_interface)
 from .gram import DAGGRAM
 from .metrics import evaluation_table, EvalFlag
 from .utils import (parameters_size, tree_hasnan, write_config)
