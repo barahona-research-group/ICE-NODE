@@ -9,20 +9,21 @@ source $HOME/.bashrc
 $HOME/anaconda3/condabin/conda activate mimic3-snonet
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/MIMIC-SNONET.git $TMPDIR/MIMIC-SNONET --branch $EXP_TAG --single-branch 
+git clone git@github.com:A-Alaa/MIMIC-SNONET.git $TMPDIR/MIMIC-SNONET --branch $STUDY_TAG --single-branch 
 
 cd $TMPDIR/MIMIC-SNONET
 
 # Load modules for any applications
 
 # Run program
-$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
---output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
+$HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
+--output-dir $HOME/GP/ehr-data/mimicnet-experiments/${STUDY_TAG}_${MODEL} \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
---study-name $EXP_TAG \
+--study-tag $STUDY_TAG \
+--model $MODEL \
 --store-url $EXP_STORE_URL \
---num-trials 3 \
--N 2 \
+--num-trials 1 \
+-N 5 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --cpu 
 
