@@ -105,7 +105,7 @@ class Subject:
     @classmethod
     def to_list(cls, static_df: pd.DataFrame, adm_df: pd.DataFrame,
                 diag_df: pd.DataFrame, proc_df: pd.DataFrame,
-                tests_df: pd.DataFrame) -> List[Subject]:
+                tests_df: Optional[pd.DataFrame] = None) -> List[Subject]:
         """
         Convert DataFrame representation of patients EHR to list of Patient
         representation List[Patient].
@@ -141,9 +141,10 @@ class Subject:
 
         assert all(
             map(ptypes.is_datetime64_any_dtype, [
-                static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME'],
-                tests_df['DATE']
+                static_df['DOB'], adm_df['ADMITTIME'], adm_df['DISCHTIME']
             ])), "Columns of dates should be casted to datetime64 type first."
+        if tests_df is not None:
+            assert ptypes.is_datetime64_any_dtype(tests_df['DATE'])
 
         ehr = {}
 
@@ -186,15 +187,16 @@ class Subject:
                     ehr[subject_id]['admissions'].values()))
 
         # Lab tests
-        for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
-            tests = []
-            for tests_date, date_df in subject_tests_df.groupby('DATE'):
-                for test_row in date_df.itertuples():
-                    tests.append(
-                        Test(item_id=test_row.ITEMID,
-                             date=tests_date,
-                             value=test_row.VALUE))
-            ehr[subject_id]['tests'] = tests
+        if tests_df is not None:
+            for subject_id, subject_tests_df in tests_df.groupby('SUBJECT_ID'):
+                tests = []
+                for tests_date, date_df in subject_tests_df.groupby('DATE'):
+                    for test_row in date_df.itertuples():
+                        tests.append(
+                            Test(item_id=test_row.ITEMID,
+                                date=tests_date,
+                                value=test_row.VALUE))
+                ehr[subject_id]['tests'] = tests
 
         return list(map(lambda args: Subject(**args), ehr.values()))
 
@@ -363,6 +365,9 @@ class SubjectPoint:
     def subject_to_points(cls, subject: Subject) -> Dict[int, SubjectPoint]:
         def _first_day_date(subject):
             first_admission_date = subject.admissions[0].admission_dates[0]
+            if len(subject.tests) == 0:
+                return first_admission_date
+
             first_test_date = subject.tests[0].date
             if Subject.days(first_test_date, first_admission_date) > 0:
                 return first_admission_date
@@ -371,9 +376,11 @@ class SubjectPoint:
 
         first_day_date = _first_day_date(subject)
 
+        test_dates = set(t.date for t in subject.tests)
         points = {}
         for adm in subject.admissions:
-            for i, adm_date in enumerate(pd.date_range(*adm.admission_dates)):
+            adm_range = pd.date_range(*adm.admission_dates)
+            for i, adm_date in enumerate(adm_range):
                 days_ahead = Subject.days(adm_date, first_day_date)
                 age = subject.age(adm_date)
 
@@ -381,14 +388,16 @@ class SubjectPoint:
                 # admission interval.
                 if i == 0:
                     icd9_diag_codes = adm.icd9_diag_codes
-                else:
+                    icd9_proc_codes = set()
+                elif i == len(adm_range) - 1 or adm_date in test_dates:
                     icd9_diag_codes = set()
+                    icd9_proc_codes = adm.icd9_proc_codes
 
                 points[days_ahead] = cls(subject_id=subject.subject_id,
                                          days_ahead=days_ahead,
                                          age=age,
                                          icd9_diag_codes=icd9_diag_codes,
-                                         icd9_proc_codes=adm.icd9_proc_codes,
+                                         icd9_proc_codes=icd9_proc_codes,
                                          tests=[])
 
         for test in subject.tests:

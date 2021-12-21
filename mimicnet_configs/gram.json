@@ -1,0 +1,26 @@
+{
+    "glove_config": {
+        "diag_vector_size": 100,
+        "proc_vector_size": 50,
+        "iterations": 30,
+        "window_size_days": 730
+    },
+    "gram_config": {
+        "diag": {
+            "attention_method": "tanh",
+            "attention_dim": 100
+        }
+    },
+    "model": {
+        "state_size": 100
+    },
+    "training": {
+        "batch_size": 5,
+        "epochs": 1,
+        "lr": 1e-3,
+        "loss_mixing": {
+            "l1_reg": 1e-7,
+            "l2_reg": 1e-6
+        }
+    }
+}

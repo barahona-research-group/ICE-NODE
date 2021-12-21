@@ -1,13 +1,16 @@
 from functools import partial
+from collections import defaultdict
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
-                    Optional, Tuple, Union)
+                    Optional, Tuple)
+from enum import Flag, auto
 
 import pandas as pd
+import numpy as onp
 import jax
 import jax.numpy as jnp
-from jax.profiler import annotate_function
-from jax.nn import softplus, sigmoid, leaky_relu
-from jax.tree_util import tree_flatten, tree_map
+from jax.nn import softplus, sigmoid
+from jax.tree_util import tree_flatten
+from sklearn import metrics
 
 
 @jax.jit
@@ -15,7 +18,6 @@ def jit_sigmoid(x):
     return sigmoid(x)
 
 
-@partial(annotate_function, name="bce")
 @jax.jit
 def bce(y: jnp.ndarray, logits: jnp.ndarray):
     return jnp.mean(y * softplus(-logits) + (1 - y) * softplus(logits))
@@ -26,7 +28,6 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray):
 # Paper: Class-Balanced Loss Based on Effective Number of Samples (Cui et al)
 # B) Focal loss, to underweight the easy to classify samples:
 # Paper: Focal Loss for Dense Object Detection (Lin et al)
-@partial(annotate_function, name="balanced_focal_bce")
 @jax.jit
 def balanced_focal_bce(y: jnp.ndarray,
                        logits: jnp.ndarray,
@@ -48,14 +49,12 @@ def balanced_focal_bce(y: jnp.ndarray,
                     (w0 / e0) * softplus(logits))
 
 
-@partial(annotate_function, name="l2_loss")
 @jax.jit
 def l2_squared(pytree):
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.vdot(x, x) for x in leaves)
 
 
-@partial(annotate_function, name="l1_loss")
 @jax.jit
 def l1_absolute(pytree):
     leaves, _ = tree_flatten(pytree)
@@ -66,7 +65,7 @@ def parameters_size(pytree):
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.size(x) for x in leaves)
 
-@partial(annotate_function, name="numeric_error")
+
 @jax.jit
 def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
                   logvar: jnp.ndarray) -> jnp.ndarray:
@@ -74,7 +73,6 @@ def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
     return (mean_true - mean_predicted) / sigma
 
 
-@partial(annotate_function, name="lognormal_loss")
 @jax.jit
 def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
                    logvar: jnp.ndarray) -> float:
@@ -90,7 +88,6 @@ def gaussian_KL(mu_1: jnp.ndarray, mu_2: jnp.ndarray, sigma_1: jnp.ndarray,
                 (mu_1 - mu_2), 2)) / (2 * sigma_2**2) - 0.5)
 
 
-@partial(annotate_function, name="kl_loss")
 @jax.jit
 def compute_KL_loss(mean_true: jnp.ndarray,
                     mask: jnp.ndarray,
@@ -119,7 +116,7 @@ def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
 
 
 def confusion_matrix_scores(cm: jnp.ndarray):
-    cm = cm / cm.sum()
+    cm = cm / (cm.sum() + 1e-10)
     tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
     p = tp + fn
     n = tn + fp
@@ -137,65 +134,144 @@ def confusion_matrix_scores(cm: jnp.ndarray):
     }
 
 
-def code_detectability(top_k: int, true_diag: jnp.ndarray,
-                       prejump_predicted_diag: jnp.ndarray,
-                       postjump_predicted_diag: jnp.ndarray):
-    ground_truth = jnp.argwhere(true_diag).squeeze()
-    if ground_truth.ndim > 0:
-        ground_truth = set(ground_truth)
-    else:
-        ground_truth = {ground_truth.item()}
+def unroll_predictions_df(detectability, label_prefix):
+    gtruth = []
+    preds = []
 
-    prejump_predictions = set(jnp.argsort(prejump_predicted_diag)[-top_k:])
-    postjump_predictions = set(jnp.argsort(postjump_predicted_diag)[-top_k:])
-    detections = []
-    for code_i in ground_truth:
-        pre_detected, post_detected = 0, 0
-        if code_i in prejump_predictions:
-            pre_detected = 1
-        if code_i in postjump_predictions:
-            post_detected = 1
-        detections.append((code_i, pre_detected, post_detected))
+    label = f'{label_prefix}_logits'
+    for points in detectability.values():
+        for inference in points.values():
+            gtruth.append(inference['diag_true'])
+            preds.append(inference[label])
 
-    return detections
+    return pd.DataFrame({
+        'ground_truth': jnp.hstack(gtruth),
+        label: jnp.hstack(preds)
+    })
 
 
-def code_detectability_df(top_k: int, true_diag: Dict[int, jnp.ndarray],
-                          prejump_predicted_diag: Dict[int, jnp.ndarray],
-                          postjump_predicted_diag: Dict[int, jnp.ndarray],
-                          point_n: int):
-    detections = {
-        i: code_detectability(top_k, true_diag[i], prejump_predicted_diag[i],
-                              postjump_predicted_diag[i])
-        for i in true_diag.keys()
-    }
-    df_list = []
-
-    for subject_id, _detections in detections.items():
-        for code_i, pre_detected, post_detected in _detections:
-            df_list.append((subject_id, point_n, code_i, pre_detected,
-                            post_detected, top_k))
-
-    if df_list:
-        return pd.DataFrame(df_list,
-                            columns=[
-                                'subject_id', 'point_n', 'code',
-                                'pre_detected', 'post_detected', 'top_k'
-                            ])
-    else:
-        return None
+def auc_scores(detectability, label_prefix):
+    predictions_df = unroll_predictions_df(detectability, label_prefix)
+    fpr, tpr, _ = metrics.roc_curve(predictions_df['ground_truth'],
+                                    predictions_df[f'{label_prefix}_logits'],
+                                    pos_label=1)
+    return metrics.auc(fpr, tpr)
 
 
-def code_detectability_by_percentiles(codes_by_percentiles, detections_df):
-    rate = {'pre': {}, 'post': {}}
+def top_k_detectability_scores(codes_by_percentiles, detections_df,
+                               label_prefix):
+    rate = {}
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
-        detection_rate_pre = codes_detections_df.pre_detected.mean()
-        detection_rate_post = codes_detections_df.post_detected.mean()
+        detection_rate = codes_detections_df[f'{label_prefix}_detected'].mean()
+        rate[f'{label_prefix}_ACC@P({i})'] = detection_rate
+
+    percentiles = {}
+    for i, codes in enumerate(codes_by_percentiles):
+        codes_detections_df = detections_df[detections_df.code.isin(codes)]
         C = len(codes)
         N = len(codes_detections_df)
-        rate['pre'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_pre
-        rate['post'][f'P{i}(N={N} C={len(codes)})'] = detection_rate_post
-    return rate
+        percentiles[f'P({i}): N ~ C'] = f'{N} ~ {C}'
+
+    return rate, percentiles
 
 
+def compute_confusion_matrix(detectability, label_prefix):
+    cm = []
+    label = f'{label_prefix}_logits'
+    for points in detectability.values():
+        for inference in points.values():
+            ground_truth = inference['diag_true']
+            logits = inference[label]
+            cm.append(confusion_matrix(ground_truth, jit_sigmoid(logits)))
+    return sum(cm)
+
+
+def top_k_detectability_df(top_k: int, res, prefixes):
+    cols = ['subject_id', 'point_n', 'code']
+    for prefix in prefixes:
+        cols.append(f'{prefix}_detected')
+
+    def top_k_detectability(point):
+        ground_truth = jnp.argwhere(point['diag_true']).squeeze()
+        if ground_truth.ndim > 0:
+            ground_truth = set(onp.array(ground_truth))
+        else:
+            ground_truth = {ground_truth.item()}
+
+        detections = defaultdict(list)
+
+        for prefix in prefixes:
+            predictions = set(
+                onp.array(onp.argsort(point[f'{prefix}_logits'])[-top_k:]))
+            for code_i in ground_truth:
+                detections[code_i].append(code_i in predictions)
+        return detections
+
+    df_list = []
+
+    for subject_id, points in res.items():
+        for point_n, point in points.items():
+            for code_i, detected in top_k_detectability(point).items():
+                df_list.append((subject_id, point_n, code_i, *detected))
+
+    return pd.DataFrame(df_list, columns=cols)
+
+
+class EvalFlag(Flag):
+    CM = auto()
+    POST = auto()
+
+    @staticmethod
+    def has(flag, attr):
+        return (flag & attr).value != 0
+
+
+def evaluation_table(trn_res, val_res, eval_flag, codes_by_percentiles):
+    if EvalFlag.has(eval_flag, EvalFlag.POST):
+        post = True
+        prefixes = ['pre', 'post']
+    else:
+        post = False
+        prefixes = ['pre']
+
+    evals = [(trn_res['loss'], val_res['loss'])]
+
+    detect_trn = trn_res['diag_detectability']
+    detect_val = trn_res['diag_detectability']
+
+    if EvalFlag.has(eval_flag, EvalFlag.CM):
+        cm_trn = compute_confusion_matrix(detect_trn, 'pre')
+        cm_val = compute_confusion_matrix(detect_val, 'pre')
+        evals.append(
+            (confusion_matrix_scores(cm_trn), confusion_matrix_scores(cm_val)))
+
+    auc_trn = auc_scores(detect_trn, 'pre')
+    auc_val = auc_scores(detect_val, 'pre')
+    evals.append(({'AUC': auc_trn}, {'AUC': auc_val}))
+
+    detections_df_trn = top_k_detectability_df(20, detect_trn, prefixes)
+    detections_df_val = top_k_detectability_df(20, detect_val, prefixes)
+
+    for prefix in prefixes:
+        scores_trn, perc_trn = top_k_detectability_scores(
+            codes_by_percentiles, detections_df_trn, prefix)
+        scores_val, perc_val = top_k_detectability_scores(
+            codes_by_percentiles, detections_df_trn, prefix)
+
+        evals.append((scores_trn, scores_val))
+    evals.append((perc_trn, perc_val))
+
+    index = []
+    trn_col = []
+    val_col = []
+    for trn, val in evals:
+        index.extend(trn.keys())
+        trn_col.extend(trn.values())
+        val_col.extend(map(val.get, trn.keys()))
+
+    return pd.DataFrame(index=index,
+                        data={
+                            'Training': trn_col,
+                            'Validation': val_col
+                        })
