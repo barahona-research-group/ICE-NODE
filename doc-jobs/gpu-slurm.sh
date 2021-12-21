@@ -44,7 +44,8 @@ export STORAGE_URL="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am85
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo-multi \
 --output-dir $STORE/GP/ehr-data/mimic3-snonet-exp/$EXP_TAG \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
---study-name $EXP_TAG \
+--study-tag $STUDY_TAG \
+--model $MODEL \
 --store-url $STORAGE_URL \
 --num-trials 30 \
 --job-id doc-${SLURM_JOB_ID} \
