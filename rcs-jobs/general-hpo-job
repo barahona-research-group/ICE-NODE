@@ -28,4 +28,4 @@ $HOME/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp * $PBS_O_WORKDIR/$PBS_JOBID
+cp ./* $PBS_O_WORKDIR/$PBS_JOBID -r
