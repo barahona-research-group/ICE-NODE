@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=24:0:0
 
-#PBS -J 1-2
+#PBS -J 1-50
 
 # Load GPU modeuls
 module load cuda/11.4.2
@@ -26,8 +26,8 @@ $HOME/anaconda3/envs/mimic-gpu/bin/python -m mimicnet.hpo_multi \
 --study-tag $STUDY_TAG \
 --model $MODEL \
 --store-url $EXP_STORE_URL \
---num-trials 3 \
--N 5 \
+--num-trials 5 \
+-N 1 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --cpu 
 
