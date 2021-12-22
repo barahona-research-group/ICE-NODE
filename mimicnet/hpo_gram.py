@@ -87,12 +87,14 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
     subjects_id = list(patient_interface.subjects.keys())
     rng.shuffle(subjects_id)
 
-    train_validation_split = 0.8
-    train_ids = subjects_id[:int(train_validation_split * len(subjects_id))]
-    valid_ids = subjects_id[int(train_validation_split * len(subjects_id)):]
+    # splits = train:val:test = 0.7:.15:.15
+    splits = int(.7 * len(subjects_id)), int(.85 * len(subjects_id))
+
+    train_ids = subjects_id[:splits[0]]
+    valid_ids = subjects_id[splits[0]:splits[1]]
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
-    eval_freq = 10
+    eval_freq = 5
 
     def objective(trial: optuna.Trial):
         trial.set_user_attr('job_id', job_id)
@@ -113,7 +115,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             diag_idx=patient_interface.diag_multi_ccs_idx,
             proc_idx=patient_interface.proc_multi_ccs_idx,
             ccs_dag=patient_interface.dag,
-            subjects=patient_interface.subjects.values(),
+            subjects=[patient_interface.subjects[i] for i in train_ids],
             **config['glove_config'])
 
         diag_gram = DAGGRAM(
@@ -179,6 +181,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
             auc = eval_df.loc['AUC', 'Validation']
             trial.report(auc, step)
+            trial.set_user_attr("progress", (step + 1) / iters)
             if trial.should_prune():
                 raise optuna.TrialPruned()
         return auc
