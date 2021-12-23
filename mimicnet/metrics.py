@@ -154,7 +154,8 @@ def auc_scores(detectability, label_prefix):
     predictions_df = unroll_predictions_df(detectability, label_prefix)
 
     if len(predictions_df) == 0:
-        return 0
+        # nan is returned indicator of undetermined AUC.
+        return float('nan')
 
     fpr, tpr, _ = metrics.roc_curve(predictions_df['ground_truth'],
                                     predictions_df[f'{label_prefix}_logits'],

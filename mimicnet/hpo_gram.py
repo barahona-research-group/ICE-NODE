@@ -9,6 +9,7 @@ from absl import logging
 from tqdm import tqdm
 
 import jax
+import jax.numpy as jnp
 from jax.experimental import optimizers
 
 import optuna
@@ -178,6 +179,10 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             logging.info(eval_df)
 
             auc = eval_df.loc['AUC', 'Validation']
+
+            if jnp.isnan(auc):
+                continue
+
             trial.report(auc, step)
             trial.set_user_attr("progress", (step + 1) / iters)
             if trial.should_prune():
