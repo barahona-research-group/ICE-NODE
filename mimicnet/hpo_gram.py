@@ -179,7 +179,6 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
             auc = eval_df.loc['AUC', 'Validation']
             trial.report(auc, step)
-            trial.set_user_attr(f'eval{step:03d}', eval_df.to_json())
             trial.set_user_attr("progress", (step + 1) / iters)
             if trial.should_prune():
                 raise optuna.TrialPruned()

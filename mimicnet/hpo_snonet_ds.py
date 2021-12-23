@@ -129,6 +129,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         trial.set_user_attr('job_id', job_id)
 
         trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+        trial.set_user_attr('trial_dir', trial_dir)
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
         logging.info('[LOADING] Sampling & Initializing Models')
@@ -207,7 +208,6 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
             auc = eval_df.loc['AUC', 'Validation']
             trial.report(auc, step)
-            trial.set_user_attr(f'eval{step:03d}', eval_df.to_json())
             trial.set_user_attr("progress", (step + 1) / iters)
             if trial.should_prune():
                 raise optuna.TrialPruned()
