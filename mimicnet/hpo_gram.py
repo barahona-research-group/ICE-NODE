@@ -94,7 +94,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
     valid_ids = subjects_id[splits[0]:splits[1]]
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
-    eval_freq = 5
+    eval_freq = 1
 
     def objective(trial: optuna.Trial):
         trial.set_user_attr('job_id', job_id)
@@ -157,12 +157,10 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         epochs = config['training']['epochs']
         iters = int(epochs * len(train_ids) / batch_size)
         trial.set_user_attr('steps', iters)
-        val_pbar = tqdm(total=iters)
 
-        for step in range(iters):
+        for step in tqdm(range(iters)):
             rng.shuffle(train_ids)
             train_batch = train_ids[:batch_size]
-            val_pbar.update(1)
 
             opt_state = update(step, train_batch, opt_state)
             if tree_hasnan(get_params(opt_state)):
@@ -181,6 +179,7 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
             auc = eval_df.loc['AUC', 'Validation']
             trial.report(auc, step)
+            trial.set_user_attr(f'eval{step:03d}', eval_df.to_json())
             trial.set_user_attr("progress", (step + 1) / iters)
             if trial.should_prune():
                 raise optuna.TrialPruned()
