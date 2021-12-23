@@ -28,8 +28,7 @@ $HOME/anaconda3/envs/mimic-gpu/bin/python -m mimicnet.hpo_multi \
 --store-url $EXP_STORE_URL \
 --num-trials 5 \
 -N 1 \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
---cpu 
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX" 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp ./* $PBS_O_WORKDIR/$PBS_JOBID -r
