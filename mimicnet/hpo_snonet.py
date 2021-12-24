@@ -82,10 +82,7 @@ def sample_config(trial: optuna.Trial):
             'loss_mixing': {
                 'num_alpha': 0.0,
                 'diag_alpha': 0.0,
-                'ode_alpha': trial.suggest_float('ode_alpha',
-                                                 1e-5,
-                                                 1,
-                                                 log=True),
+                'ode_alpha': 0.0,
                 'l1_reg': trial.suggest_float('l1_reg', 1e-7, 1e-1, log=True),
                 'l2_reg': trial.suggest_float('l2_reg', 1e-6, 1e-1, log=True),
                 'dyn_reg': trial.suggest_float('dyn_reg', 1e-3, 1e3, log=True)
