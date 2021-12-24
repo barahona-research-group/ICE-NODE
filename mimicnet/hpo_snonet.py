@@ -80,10 +80,7 @@ def sample_config(trial: optuna.Trial):
             'tay_reg':
             3,  # Order of regularized derivative of the dynamics function (None for disable).
             'loss_mixing': {
-                'num_alpha': trial.suggest_float('num_alpha',
-                                                 1e-4,
-                                                 1,
-                                                 log=True),
+                'num_alpha': 0.0,
                 'diag_alpha': trial.suggest_float('diag_alpha',
                                                   1e-4,
                                                   1,
