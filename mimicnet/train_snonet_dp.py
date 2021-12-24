@@ -394,7 +394,7 @@ def eval_fn(ode_model: SNONETDiagProc, loss_mixing: Dict[str, float],
     diag_alpha = loss_mixing['diag_alpha']
     l1_alpha = loss_mixing['l1_reg']
     l2_alpha = loss_mixing['l2_reg']
-    dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
+    dyn_alpha = loss_mixing['dyn_reg']
 
     diag_loss = (
         1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
@@ -430,7 +430,7 @@ def loss_fn(ode_model: SNONETDiagProc, loss_mixing: Dict[str, float],
     postjump_diag_loss = res['postjump_diag_loss']
     l1_loss = l1_absolute(params)
     l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
+    dyn_loss = res['dyn_loss']
     diag_alpha = loss_mixing['diag_alpha']
     l1_alpha = loss_mixing['l1_reg']
     l2_alpha = loss_mixing['l2_reg']
