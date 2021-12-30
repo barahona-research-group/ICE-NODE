@@ -40,7 +40,7 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 
 export OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
-export MLFLOW_STORE="sqlite:///vol/bitbucket/am8520/GP/ehr-data/mlflowdb.db"
+export MLFLOW_STORE="sqlite:////vol/bitbucket/am8520/GP/ehr-data/mlflowdb.db"
 
 # Run program
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
