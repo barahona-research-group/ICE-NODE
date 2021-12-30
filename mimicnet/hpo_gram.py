@@ -51,9 +51,10 @@ def sample_config(trial: optuna.Trial):
             'state_size': trial.suggest_int('state_size', 100, 500, 50),
         },
         'training': {
-            'batch_size': trial.suggest_int('batch_size', 5, 30, 5),
+            'batch_size': trial.suggest_int('batch_size', 2, 40, 5),
             'epochs': 10,
-            'optimizer': trial.suggest_categorical('optimizer', ['adam', 'sgd']),
+            'optimizer': trial.suggest_categorical('optimizer',
+                                                   ['adam', 'sgd']),
             'lr': trial.suggest_float('lr', 1e-6, 1e-2, log=True),
             'loss_mixing': {
                 'l1_reg': trial.suggest_float('l1_reg', 1e-7, 1e-1, log=True),

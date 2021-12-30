@@ -64,7 +64,7 @@ def sample_config(trial: optuna.Trial):
         },
         'training': {
             'batch_size':
-            trial.suggest_int('batch_size', 5, 25, 5),
+            trial.suggest_int('batch_size', 2, 40, 5),
             'epochs':
             2,
             'optimizer':
