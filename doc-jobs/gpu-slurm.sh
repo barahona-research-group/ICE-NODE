@@ -38,12 +38,9 @@ unset __conda_setup
 source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 
-export STORAGE_URL="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 
-# Environment variables
-export MLFLOW_SQLALCHEMYSTORE_POOL_SIZE=1
-export MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW=1
-export MLFLOW_SQLALCHEMYSTORE_NULL_POOL=1
+export OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
+export MLFLOW_STORE="sqlite:///vol/bitbucket/am8520/GP/ehr-data/mlflowdb.db"
 
 # Run program
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
