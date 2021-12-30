@@ -291,6 +291,10 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
         val_col.extend(map(val.get, trn.keys()))
         tst_col.extend(map(tst.get, trn.keys()))
 
+    trn_col = map(float, trn_col)
+    val_col = map(float, val_col)
+    tst_col = map(float, tst_col)
+
     metrics_dict = {}
     metrics_dict.update(
         {f'TRN_{metric}': value
