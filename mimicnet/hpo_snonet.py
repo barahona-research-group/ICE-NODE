@@ -18,8 +18,8 @@ logging.set_verbosity(logging.INFO)
 
 
 def sample_config(trial: optuna.Trial):
-    training_params = sample_training_params(trial) | {
-        'epochs':
+    training_params = {
+        **sample_training_params(trial), 'epochs':
         2,
         'diag_loss':
         trial.suggest_categorical('diag_loss', ['balanced_focal', 'bce']),

@@ -15,8 +15,8 @@ logging.set_verbosity(logging.INFO)
 
 
 def sample_config(trial: optuna.Trial):
-    training_params = sample_training_params(trial) | {
-        'epochs':
+    training_params = {
+        **sample_training_params(trial), 'epochs':
         2,
         'diag_loss':
         trial.suggest_categorical('diag_loss', ['balanced_focal', 'bce']),
@@ -74,6 +74,7 @@ def create_model(config, patient_interface, train_ids):
                       **config['model'],
                       tay_reg=config['training']['tay_reg'],
                       diag_loss=config['training']['diag_loss'])
+
 
 if __name__ == '__main__':
     kwargs = capture_args()
