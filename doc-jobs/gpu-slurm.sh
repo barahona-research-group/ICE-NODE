@@ -47,7 +47,7 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --study-tag $STUDY_TAG \
 --model $MODEL \
 --store-url $STORAGE_URL \
---num-trials 30 \
+--num-trials 200 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1
 
