@@ -61,10 +61,7 @@ if __name__ == '__main__':
 
     study_name = f'{study_tag}_{model}'
 
-    env = dict(os.environ,
-               MLFLOW_SQLALCHEMYSTORE_POOL_SIZE="1",
-               MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW="1",
-               MLFLOW_SQLALCHEMYSTORE_NULL_POOL="1")
+    env = dict(os.environ)
     cmd = [
         sys.executable, '-m', f'mimicnet.hpo_{model}', '--study-name',
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
