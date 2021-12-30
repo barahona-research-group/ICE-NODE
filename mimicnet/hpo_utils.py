@@ -229,7 +229,7 @@ def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
-    @mlflc.track_in_mlflow
+    @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
         return objective(sample_config=sample_config,
                          create_model=create_model,
