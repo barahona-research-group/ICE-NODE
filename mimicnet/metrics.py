@@ -246,7 +246,7 @@ def evaluation_table(trn_res, val_res, eval_flag, codes_by_percentiles):
     evals = [(trn_res['loss'], val_res['loss'])]
 
     detect_trn = trn_res['diag_detectability']
-    detect_val = trn_res['diag_detectability']
+    detect_val = val_res['diag_detectability']
 
     if EvalFlag.has(eval_flag, EvalFlag.CM):
         cm_trn = compute_confusion_matrix(detect_trn, 'pre')
@@ -266,7 +266,7 @@ def evaluation_table(trn_res, val_res, eval_flag, codes_by_percentiles):
         scores_trn, perc_trn = top_k_detectability_scores(
             codes_by_percentiles, detections_df_trn, prefix)
         scores_val, perc_val = top_k_detectability_scores(
-            codes_by_percentiles, detections_df_trn, prefix)
+            codes_by_percentiles, detections_df_val, prefix)
 
         evals.append((scores_trn, scores_val))
     evals.append((perc_trn, perc_val))
