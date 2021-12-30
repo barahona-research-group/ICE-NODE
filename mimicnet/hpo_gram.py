@@ -23,7 +23,7 @@ def sample_config(trial: optuna.Trial):
         'model': {
             'state_size': trial.suggest_int('s', 100, 500, 50),
         },
-        'training': sample_training_params(trial).update({'epochs': 10})
+        'training': sample_training_params(trial) | {'epochs': 10}
     }
 
 

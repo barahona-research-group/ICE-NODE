@@ -14,14 +14,14 @@ logging.set_verbosity(logging.INFO)
 
 
 def sample_config(trial: optuna.Trial):
-    training_params = sample_training_params(trial).update({
+    training_params = sample_training_params(trial) | {
         'epochs':
         2,
         'diag_loss':
         trial.suggest_categorical('diag_loss', ['balanced_focal', 'bce']),
         'tay_reg':
         3
-    })
+    }
     training_params['loss_mixing'].update({
         'diag_alpha':
         trial.suggest_float('diag_alpha', 1e-4, 1, log=True),
