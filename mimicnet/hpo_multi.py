@@ -25,10 +25,15 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of HPO trials.')
 
-    parser.add_argument('-s',
-                        '--store-url',
-                        required=True,
-                        help='Storage URL, e.g. for PostgresQL database')
+    parser.add_argument(
+        '--optuna-store',
+        required=True,
+        help='Storage URL for optuna records, e.g. for PostgresQL database')
+
+    parser.add_argument(
+        '--mlflow-store',
+        required=True,
+        help='Storage URL for mlflow records, e.g. for PostgresQL database')
 
     parser.add_argument('--study-tag', required=True)
 
@@ -45,7 +50,8 @@ if __name__ == '__main__':
 
     model = args.model
     study_tag = args.study_tag
-    store_url = args.store_url
+    optuna_store = args.optuna_store
+    mlflow_store = args.mlflow_store
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
@@ -55,14 +61,12 @@ if __name__ == '__main__':
 
     study_name = f'{study_tag}_{model}'
 
-    env = dict(os.environ,
-               MLFLOW_SQLALCHEMYSTORE_POOL_SIZE=1,
-               MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW=1,
-               MLFLOW_SQLALCHEMYSTORE_NULL_POOL=1)
+    env = dict(os.environ)
     cmd = [
         sys.executable, '-m', f'mimicnet.hpo_{model}', '--study-name',
-        study_name, '--store-url', store_url, '--output-dir', output_dir,
-        '--mimic-processed-dir', mimic_processed_dir, '--num-trials',
+        study_name, '--optuna-store', optuna_store, '--mlflow-store',
+        mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
+        mimic_processed_dir, '--num-trials',
         str(num_trials), '--job-id', job_id
     ]
     if cpu:

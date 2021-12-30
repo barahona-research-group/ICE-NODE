@@ -244,7 +244,7 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
         post = False
         prefixes = ['pre']
 
-    evals = [(trn_res['loss'], val_res['loss'], test_res['loss'])]
+    evals = [(trn_res['loss'], val_res['loss'], tst_res['loss'])]
 
     detect_trn = trn_res['diag_detectability']
     detect_val = val_res['diag_detectability']
