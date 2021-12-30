@@ -421,17 +421,17 @@ class SNONET(BatchedApply):
             age = points_n['age']
             diag_gram = points_n['diag_gram']
             diag_out = points_n['diag_out']
-            delta_weeks = {
-                i: (days_ahead[i] - subject_state[i]['days']) / 7.0
+            delta_days = {
+                i: (days_ahead[i] - subject_state[i]['days'])
                 for i in (set(subject_state) & set(days_ahead))
                 if days_ahead[i] -
                 subject_state[i]['days'] <= self.max_odeint_days
             }
 
-            state_i = {i: subject_state[i]['value'] for i in delta_weeks}
+            state_i = {i: subject_state[i]['value'] for i in delta_days}
 
             # Reset subjects state with long gaps
-            reset_subjects = set(days_ahead) - set(delta_weeks)
+            reset_subjects = set(days_ahead) - set(delta_days)
             map(lambda k: subject_state.pop(k, None), reset_subjects)
 
             state_0 = nn_init(diag_gram, age, reset_subjects, days_ahead)
@@ -439,18 +439,18 @@ class SNONET(BatchedApply):
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
             # 2. cases that have diagnosis at index n.
-            diag_cases = set(delta_weeks).intersection(diag_out.keys())
+            diag_cases = set(delta_days).intersection(diag_out.keys())
             diag_count += len(diag_cases)
             # No. of "Predictable" diagnostic points
             diag_weights.append(len(diag_cases))
 
-            num_cases = set(delta_weeks).intersection(numeric.keys())
+            num_cases = set(delta_days).intersection(numeric.keys())
             num_count = len(num_cases)
             num_weights.append(sum(mask[i].sum() for i in num_cases) + 1e-10)
 
-            odeint_weeks += sum(delta_weeks.values())
+            odeint_weeks += sum(delta_days.values()) / 7.0
             ################## ODEINT #####################
-            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_weeks,
+            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_days,
                                               points_n['ode_control'])
             dyn_loss.append(_dyn_loss)
             nfe.append(_nfe)
