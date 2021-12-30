@@ -17,6 +17,9 @@ from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 from sqlalchemy.pool import NullPool
+from optuna.integration import MLflowCallback
+
+import mlflow
 
 from .train_snonet import (loss_fn, eval_fn, SNONET)
 from .jax_interface import create_patient_interface
@@ -70,11 +73,13 @@ def sample_config(trial: optuna.Trial):
         },
         'training': {
             'batch_size':
-            trial.suggest_int('batch_size', 5, 25, 5),
+            trial.suggest_int('batch_size', 2, 40, 5),
             'epochs':
             2,
+            'optimizer':
+            trial.suggest_categorical('optimizer', ['adam', 'sgd']),
             'lr':
-            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            trial.suggest_float('lr', 1e-6, 1e-2, log=True),
             'diag_loss':
             trial.suggest_categorical('diag_loss', ['balanced_focal', 'bce']),
             'tay_reg':
@@ -118,6 +123,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
+    mlflc = MLflowCallback(tracking_uri=f'file://{output_dir}/mlflowdb.sqlite',
+                           metric_name="VAL(AUC)")
 
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
@@ -138,10 +145,13 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
 
     train_ids = subjects_id[:splits[0]]
     valid_ids = subjects_id[splits[0]:splits[1]]
+    test_ids = subjects_id[splits[1]:]
+
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
     eval_freq = 1
 
+    @mlflc.track_in_mlflow()
     def objective(trial: optuna.Trial):
         trial.set_user_attr('job_id', job_id)
 
@@ -153,6 +163,8 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         logging.info('[LOADING] Sampling & Initializing Models')
 
         config = sample_config(trial)
+        mlflow.log_params(config)
+
         write_config(config, os.path.join(trial_dir, 'config.json'))
 
         logging.info(f'Trial {trial.number} HPs: {trial.params}')
@@ -189,9 +201,14 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
         trial.set_user_attr('parameters_size', parameters_size(params))
         logging.info('[DONE] Sampling & Initializing Models')
 
-        lr = config['training']['lr']
         loss_mixing = config['training']['loss_mixing']
-        opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+        lr = config['training']['lr']
+        if config['training']['optimizer'] == 'adam':
+            optimizer = optimizers.adam
+        else:
+            optimizer = optimizers.sgd
+
+        opt_init, opt_update, get_params = optimizer(step_size=lr)
         opt_state = opt_init(params)
 
         loss = partial(loss_fn, ode_model, loss_mixing)
@@ -226,13 +243,16 @@ def run_trials(study_name: str, store_url: str, num_trials: int,
             params = get_params(opt_state)
             trn_res = eval_(params, train_batch)
             val_res = eval_(params, valid_ids)
-            eval_df = evaluation_table(trn_res, val_res,
-                                       EvalFlag.POST | EvalFlag.CM,
-                                       codes_by_percentiles)
+            tst_res = eval_(params, test_ids)
+
+            eval_df, eval_dict = evaluation_table(trn_res, val_res, tst_res,
+                                                  EvalFlag.POST | EvalFlag.CM,
+                                                  codes_by_percentiles)
+            mlflow.log_metrics(eval_dict, step=step)
             eval_df.to_csv(os.path.join(trial_dir, f'step{step:03d}_eval.csv'))
             logging.info(eval_df)
 
-            auc = eval_df.loc['AUC', 'Validation']
+            auc = eval_df.loc['AUC', 'VAL']
 
             # nan is returned when no predictions actually made.
             if jnp.isnan(auc):

@@ -55,18 +55,20 @@ if __name__ == '__main__':
 
     study_name = f'{study_tag}_{model}'
 
-    procs = []
-    for i in range(N):
-        cmd = [
-            sys.executable, '-m', f'mimicnet.hpo_{model}', '--study-name',
-            study_name, '--store-url', store_url, '--output-dir', output_dir,
-            '--mimic-processed-dir', mimic_processed_dir, '--num-trials',
-            str(num_trials), '--job-id', job_id
-        ]
-        if cpu:
-            cmd.append('--cpu')
-        proc = subprocess.Popen(cmd)
-        procs.append(proc)
+    env = dict(os.environ,
+               MLFLOW_SQLALCHEMYSTORE_POOL_SIZE=1,
+               MLFLOW_SQLALCHEMYSTORE_MAX_OVERFLOW=1,
+               MLFLOW_SQLALCHEMYSTORE_NULL_POOL=1)
+    cmd = [
+        sys.executable, '-m', f'mimicnet.hpo_{model}', '--study-name',
+        study_name, '--store-url', store_url, '--output-dir', output_dir,
+        '--mimic-processed-dir', mimic_processed_dir, '--num-trials',
+        str(num_trials), '--job-id', job_id
+    ]
+    if cpu:
+        cmd.append('--cpu')
+
+    procs = [subprocess.Popen(cmd, env=env) for _ in range(N)]
 
     for proc in procs:
         proc.wait()
