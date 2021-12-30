@@ -112,19 +112,20 @@ def sample_config(trial: optuna.Trial):
     return config
 
 
-def run_trials(study_name: str, store_url: str, num_trials: int,
-               mimic_processed_dir: str, output_dir: str, cpu: bool,
-               job_id: str):
+def run_trials(study_name: str, optuna_store: str, mlflow_store: str,
+               num_trials: int, mimic_processed_dir: str, output_dir: str,
+               cpu: bool, job_id: str):
 
-    storage = RDBStorage(url=store_url, engine_kwargs={'poolclass': NullPool})
+    storage = RDBStorage(url=optuna_store,
+                         engine_kwargs={'poolclass': NullPool})
     study = optuna.create_study(study_name=study_name,
                                 direction="maximize",
                                 storage=storage,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
-    mlflc = MLflowCallback(tracking_uri=f'file://{output_dir}/mlflowdb.sqlite',
-                           metric_name="VAL(AUC)")
+
+    mlflc = MLflowCallback(tracking_uri=mlflow_store, metric_name="VAL(AUC)")
 
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
@@ -283,10 +284,15 @@ if __name__ == '__main__':
                         required=True,
                         help='Number of HPO trials.')
 
-    parser.add_argument('-s',
-                        '--store-url',
-                        required=True,
-                        help='Storage URL, e.g. for PostgresQL database')
+    parser.add_argument(
+        '--optuna-store',
+        required=True,
+        help='Storage URL for optuna records, e.g. for PostgresQL database')
+
+    parser.add_argument(
+        '--mlflow-store',
+        required=True,
+        help='Storage URL for mlflow records, e.g. for PostgresQL database')
 
     parser.add_argument('--study-name', required=True)
 
@@ -296,7 +302,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     study_name = args.study_name
-    store_url = args.store_url
+    optuna_store = args.optuna_store
+    mlflow_store = args.mlflow_store
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
@@ -304,7 +311,8 @@ if __name__ == '__main__':
     cpu = args.cpu
 
     run_trials(study_name=study_name,
-               store_url=store_url,
+               optuna_store=optuna_store,
+               mlflow_store=mlflow_store,
                num_trials=num_trials,
                mimic_processed_dir=mimic_processed_dir,
                output_dir=output_dir,

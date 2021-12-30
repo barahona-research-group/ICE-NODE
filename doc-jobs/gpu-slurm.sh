@@ -51,7 +51,8 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
 --model $MODEL \
---store-url $STORAGE_URL \
+--optuna-store $OPTUNA_STORE \
+--mlflow-store $MLFLOW_STORE \
 --num-trials 30 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1

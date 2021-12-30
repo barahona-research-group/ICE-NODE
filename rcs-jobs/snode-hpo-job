@@ -21,7 +21,8 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
 --model $MODEL \
---store-url $EXP_STORE_URL \
+--optuna-store $OPTUNA_STORE \
+--mlflow-store $MLFLOW_STORE \
 --num-trials 1 \
 -N 5 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
