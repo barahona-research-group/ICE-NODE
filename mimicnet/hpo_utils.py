@@ -30,13 +30,13 @@ def sample_gram_params(prefix: str, trial: optuna.Trial):
         'attention_method':
         trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
         'attention_dim':
-        trial.suggest_int(f'{prefix}_att_d', 100, 250, 50),
+        trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
     }
 
 
 def sample_glove_params(trial: optuna.Trial):
     return {
-        'diag_vector_size': trial.suggest_int('dx', 100, 250, 50),
+        'diag_vector_size': trial.suggest_int('dx', 50, 250, 50),
         'proc_vector_size': 50,
         'iterations': 30,
         'window_size_days': 2 * 365
