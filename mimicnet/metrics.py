@@ -155,7 +155,8 @@ def unroll_predictions_df(detectability, label_prefix):
 def auc_scores(detectability, label_prefix):
     predictions_df = unroll_predictions_df(detectability, label_prefix)
     label = f'{label_prefix}_logits'
-    if len(predictions_df) == 0 or onp.isnan(predictions_df[label].to_numpy()):
+    if len(predictions_df) == 0 or onp.isnan(
+            predictions_df[label].to_numpy()).any():
         logging.warning('no detections or nan probs')
         # nan is returned indicator of undetermined AUC.
         return float('nan')
