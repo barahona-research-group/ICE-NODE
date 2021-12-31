@@ -166,7 +166,7 @@ def objective(sample_config, create_model, patient_interface, train_ids,
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
             mlflow.set_tag('nan', 1)
-
+            trial.report(0.0, step)
             return float('nan')
 
         if step % eval_freq != 0: continue
