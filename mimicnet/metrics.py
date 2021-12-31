@@ -4,6 +4,8 @@ from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
                     Optional, Tuple)
 from enum import Flag, auto
 
+from absl import logging
+
 import pandas as pd
 import numpy as onp
 import jax
@@ -152,13 +154,14 @@ def unroll_predictions_df(detectability, label_prefix):
 
 def auc_scores(detectability, label_prefix):
     predictions_df = unroll_predictions_df(detectability, label_prefix)
-
-    if len(predictions_df) == 0:
+    label = f'{label_prefix}_logits'
+    if len(predictions_df) == 0 or onp.isnan(predictions_df[label].to_numpy()):
+        logging.warning('no detections or nan probs')
         # nan is returned indicator of undetermined AUC.
         return float('nan')
 
     fpr, tpr, _ = metrics.roc_curve(predictions_df['ground_truth'],
-                                    predictions_df[f'{label_prefix}_logits'],
+                                    predictions_df[label],
                                     pos_label=1)
     return metrics.auc(fpr, tpr)
 
