@@ -303,8 +303,6 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
         {f'TST_{metric}': value
          for metric, value in zip(index, tst_col)})
 
-    print(metrics_dict)
-
     return pd.DataFrame(index=index,
                         data={
                             'TRN': trn_col,
