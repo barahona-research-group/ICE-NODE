@@ -21,7 +21,7 @@ def sample_config(trial: optuna.Trial):
             'diag': sample_gram_params('dx', trial)
         },
         'model': {
-            'state_size': trial.suggest_int('s', 100, 500, 50),
+            'state_size': trial.suggest_int('s', 100, 350, 50),
         },
         'training': {
             **sample_training_params(trial), 'epochs': 10

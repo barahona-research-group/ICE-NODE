@@ -19,13 +19,13 @@ def sample_config(trial: optuna.Trial):
         **sample_training_params(trial), 'epochs':
         2,
         'diag_loss':
-        trial.suggest_categorical('diag_loss', ['balanced_focal', 'bce']),
+        trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce']),
         'tay_reg':
         3
     }
     training_params['loss_mixing'].update({
         'diag_alpha':
-        trial.suggest_float('diag_alpha', 1e-4, 1, log=True),
+        trial.suggest_float('dx_alpha', 1e-4, 1, log=True),
         'dyn_reg':
         trial.suggest_float('dyn_reg', 1e-3, 1e3, log=True)
     })
@@ -33,16 +33,16 @@ def sample_config(trial: optuna.Trial):
         'ode_dyn': trial.suggest_categorical(
             'ode_dyn',
             ['mlp', 'gru', 'res']),  # Add depth conditional to 'mlp' or 'res'
-        'state_size': trial.suggest_int('state_size', 100, 500, 50),
-        'init_depth': trial.suggest_int('init_depth', 1, 5),
+        'state_size': trial.suggest_int('s', 100, 350, 50),
+        'init_depth': trial.suggest_int('init_d', 1, 5),
         'bias': True,
-        'max_odeint_days': trial.suggest_int('max_odeint_days', 8 * 7, 16 * 7,
+        'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7,
                                              7)
     }
     if model_params['ode_dyn'] == 'gru':
         model_params['ode_depth'] = 0
     else:
-        model_params['ode_depth'] = trial.suggest_int('ode_depth', 1, 5)
+        model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 5)
 
     return {
         'glove': sample_glove_params(trial),
