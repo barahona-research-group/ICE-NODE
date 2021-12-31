@@ -142,19 +142,12 @@ def unroll_predictions_df(detectability, label_prefix):
     for points in detectability.values():
         for inference in points.values():
             gtruth.append(inference['diag_true'])
-            preds.append(inference[label])
+            preds.append(jit_sigmoid(inference[label]))
 
-    df = pd.DataFrame({
+    return pd.DataFrame({
         'ground_truth': jnp.hstack(gtruth) if gtruth else [],
         label: jnp.hstack(preds) if preds else []
     })
-
-    # if logits, convert to probabilities.
-    if len(df) > 0 and df[label].max() > 1.0:
-        df[label] = jit_sigmoid(df[label].to_numpy(dtype=float))
-
-    return df
-
 
 
 def auc_scores(detectability, label_prefix):
