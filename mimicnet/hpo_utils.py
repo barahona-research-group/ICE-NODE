@@ -105,16 +105,18 @@ def objective(sample_config, create_model, patient_interface, train_ids,
               eval_flags, job_id, output_dir, codes_by_percentiles,
               trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
+    mlflow.set_tag('job_id', job_id)
+
     trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+    Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
     trial.set_user_attr('dir', trial_dir)
-
-    Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
     logging.info('[LOADING] Sampling & Initializing Models')
     config = sample_config(trial)
 
     mlflow.log_params(trial.params)
+
     write_config(config, os.path.join(trial_dir, 'config.json'))
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
@@ -126,6 +128,7 @@ def objective(sample_config, create_model, patient_interface, train_ids,
     logging.info('[DONE] Sampling & Initializing Models')
 
     trial.set_user_attr('parameters_size', parameters_size(params))
+    mlflow.set_tag('parameters_size', parameters_size(params))
 
     loss_mixing = config['training']['loss_mixing']
     lr = config['training']['lr']
@@ -153,6 +156,7 @@ def objective(sample_config, create_model, patient_interface, train_ids,
     epochs = config['training']['epochs']
     iters = int(epochs * len(train_ids) / batch_size)
     trial.set_user_attr('steps', iters)
+    mlflow.set_tag('steps', iters)
 
     for step in tqdm(range(iters)):
         rng.shuffle(train_ids)
@@ -161,6 +165,8 @@ def objective(sample_config, create_model, patient_interface, train_ids,
         opt_state = update(step, train_batch, opt_state)
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
+            mlflow.set_tag('nan', 1)
+
             return float('nan')
 
         if step % eval_freq != 0: continue
@@ -184,6 +190,8 @@ def objective(sample_config, create_model, patient_interface, train_ids,
 
         trial.report(auc, step)
         trial.set_user_attr("progress", (step + 1) / iters)
+        mlflow.set_tag("progress", (step + 1) / iters)
+
         if trial.should_prune():
             raise optuna.TrialPruned()
     return auc
