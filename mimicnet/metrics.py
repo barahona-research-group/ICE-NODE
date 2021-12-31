@@ -288,9 +288,9 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
         val_col.extend(map(val.get, trn.keys()))
         tst_col.extend(map(tst.get, trn.keys()))
 
-    trn_col = map(float, trn_col)
-    val_col = map(float, val_col)
-    tst_col = map(float, tst_col)
+    trn_col = list(map(float, trn_col))
+    val_col = list(map(float, val_col))
+    tst_col = list(map(float, tst_col))
 
     metrics_dict = {}
     metrics_dict.update(
@@ -302,6 +302,8 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
     metrics_dict.update(
         {f'TST_{metric}': value
          for metric, value in zip(index, tst_col)})
+
+    print(metrics_dict)
 
     return pd.DataFrame(index=index,
                         data={
