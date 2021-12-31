@@ -25,6 +25,16 @@ from .metrics import evaluation_table
 from .utils import (parameters_size, tree_hasnan, write_config)
 
 
+def mlflow_callback_noexcept(callback):
+    def apply(study, trial):
+        try:
+            return callback(study, trial)
+        except Exception as e:
+            logging.warning(f'MLFlow Exception supressed: {e}')
+
+    return apply
+
+
 def sample_gram_params(prefix: str, trial: optuna.Trial):
     return {
         'attention_method':
@@ -166,7 +176,6 @@ def objective(sample_config, create_model, patient_interface, train_ids,
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
             mlflow.set_tag('nan', 1)
-            trial.report(0.0, step)
             return float('nan')
 
         if step % eval_freq != 0: continue
@@ -255,4 +264,6 @@ def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
                          codes_by_percentiles=codes_by_percentiles,
                          trial=trial)
 
-    study.optimize(objective_f, n_trials=num_trials, callbacks=[mlflc])
+    study.optimize(objective_f,
+                   n_trials=num_trials,
+                   callbacks=[mlflow_callback_noexcept(mlflc)])
