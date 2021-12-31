@@ -169,14 +169,14 @@ def top_k_detectability_scores(codes_by_percentiles, detections_df,
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         detection_rate = codes_detections_df[f'{label_prefix}_detected'].mean()
-        rate[f'{label_prefix}_ACC@P({i})'] = detection_rate
+        rate[f'{label_prefix}_ACC-P{i}'] = detection_rate
 
     percentiles = {}
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         C = len(codes)
         N = len(codes_detections_df)
-        percentiles[f'P({i}): N ~ C'] = f'{N} ~ {C}'
+        percentiles[f'P{i}: N ~ C'] = f'{N} ~ {C}'
 
     return rate, percentiles
 
@@ -238,10 +238,8 @@ class EvalFlag(Flag):
 def evaluation_table(trn_res, val_res, tst_res, eval_flag,
                      codes_by_percentiles):
     if EvalFlag.has(eval_flag, EvalFlag.POST):
-        post = True
         prefixes = ['pre', 'post']
     else:
-        post = False
         prefixes = ['pre']
 
     evals = [(trn_res['loss'], val_res['loss'], tst_res['loss'])]
@@ -271,15 +269,14 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
     detections_df_tst = top_k_detectability_df(20, detect_tst, prefixes)
 
     for prefix in prefixes:
-        scores_trn, perc_trn = top_k_detectability_scores(
-            codes_by_percentiles, detections_df_trn, prefix)
-        scores_val, perc_val = top_k_detectability_scores(
-            codes_by_percentiles, detections_df_val, prefix)
-        scores_tst, perc_tst = top_k_detectability_scores(
-            codes_by_percentiles, detections_df_tst, prefix)
+        scores_trn, _ = top_k_detectability_scores(codes_by_percentiles,
+                                                   detections_df_trn, prefix)
+        scores_val, _ = top_k_detectability_scores(codes_by_percentiles,
+                                                   detections_df_val, prefix)
+        scores_tst, _ = top_k_detectability_scores(codes_by_percentiles,
+                                                   detections_df_tst, prefix)
 
         evals.append((scores_trn, scores_val, scores_tst))
-    evals.append((perc_trn, perc_val, perc_tst))
 
     index = []
     trn_col = []
@@ -290,6 +287,10 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
         trn_col.extend(trn.values())
         val_col.extend(map(val.get, trn.keys()))
         tst_col.extend(map(tst.get, trn.keys()))
+
+    trn_col = list(map(float, trn_col))
+    val_col = list(map(float, val_col))
+    tst_col = list(map(float, tst_col))
 
     metrics_dict = {}
     metrics_dict.update(
