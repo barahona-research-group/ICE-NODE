@@ -169,14 +169,14 @@ def top_k_detectability_scores(codes_by_percentiles, detections_df,
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         detection_rate = codes_detections_df[f'{label_prefix}_detected'].mean()
-        rate[f'{label_prefix}_ACC-P({i})'] = detection_rate
+        rate[f'{label_prefix}_ACC-P{i}'] = detection_rate
 
     percentiles = {}
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
         C = len(codes)
         N = len(codes_detections_df)
-        percentiles[f'P({i}): N ~ C'] = f'{N} ~ {C}'
+        percentiles[f'P{i}: N ~ C'] = f'{N} ~ {C}'
 
     return rate, percentiles
 

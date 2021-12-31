@@ -203,7 +203,7 @@ def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
 
-    mlflc = MLflowCallback(tracking_uri=mlflow_store, metric_name="VAL(AUC)")
+    mlflc = MLflowCallback(tracking_uri=mlflow_store, metric_name="VAL-AUC")
 
     study.set_user_attr('metric', 'auc')
 
