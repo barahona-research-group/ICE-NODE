@@ -145,8 +145,11 @@ def auc_scores(detectability, label_prefix):
     preds = []
     for points in detectability.values():
         for inference in points.values():
-            gtruth.append(inference['diag_true'])
-            preds.append(jit_sigmoid(inference[f'{label_prefix}_logits']))
+            # In some cases the ground truth is all negative, avoid them.
+            # Note: in Python {0.0, 1.0} == {0, 1} => True
+            if set(onp.unique(inference['diag_true'])) == {0, 1}:
+                gtruth.append(inference['diag_true'])
+                preds.append(jit_sigmoid(inference[f'{label_prefix}_logits']))
 
     if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
         logging.warning('no detections or nan probs')
