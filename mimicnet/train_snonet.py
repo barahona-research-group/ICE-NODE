@@ -529,12 +529,12 @@ def eval_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
     l1_loss = l1_absolute(params)
     l2_loss = l2_squared(params)
     dyn_loss = res['dyn_loss']
-    num_alpha = loss_mixing['num_alpha']
-    diag_alpha = loss_mixing['diag_alpha']
-    ode_alpha = loss_mixing['ode_alpha']
-    l1_alpha = loss_mixing['l1_reg']
-    l2_alpha = loss_mixing['l2_reg']
-    dyn_alpha = loss_mixing['dyn_reg'] / (res['odeint_weeks'])
+    num_alpha = loss_mixing['L_num']
+    diag_alpha = loss_mixing['L_diag']
+    ode_alpha = loss_mixing['L_ode']
+    l1_alpha = loss_mixing['L_l1']
+    l2_alpha = loss_mixing['L_l2']
+    dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
 
     num_loss = (1 -
                 num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
@@ -581,12 +581,12 @@ def loss_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
     l1_loss = l1_absolute(params)
     l2_loss = l2_squared(params)
     dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
-    num_alpha = loss_mixing['num_alpha']
-    diag_alpha = loss_mixing['diag_alpha']
-    ode_alpha = loss_mixing['ode_alpha']
-    l1_alpha = loss_mixing['l1_reg']
-    l2_alpha = loss_mixing['l2_reg']
-    dyn_alpha = loss_mixing['dyn_reg']
+    num_alpha = loss_mixing['L_num']
+    diag_alpha = loss_mixing['L_diag']
+    ode_alpha = loss_mixing['L_ode']
+    l1_alpha = loss_mixing['L_l1']
+    l2_alpha = loss_mixing['L_l2']
+    dyn_alpha = loss_mixing['L_dyn']
 
     num_loss = (1 -
                 num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
@@ -599,185 +599,3 @@ def loss_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
 
     return loss
 
-
-def train_ehr(
-        subject_interface: SubjectJAXInterface,
-        diag_gram: DAGGRAM,
-        proc_gram: DAGGRAM,
-        rng: Any,
-        # Model configurations
-        model_config: Dict[str, Any],
-        # Training configurations
-        train_validation_split: float,
-        batch_size: int,
-        epochs: int,
-        lr: float,
-        diag_loss: str,
-        tay_reg: Optional[int],
-        loss_mixing: Dict[str, float],
-        eval_freq: int,
-        save_freq: int,
-        output_dir: str):
-
-    prng_key = jax.random.PRNGKey(rng.randint(0, 100))
-    ode_model = SNONET(subject_interface=subject_interface,
-                       diag_gram=diag_gram,
-                       proc_gram=proc_gram,
-                       **model_config,
-                       tay_reg=tay_reg,
-                       diag_loss=diag_loss)
-
-    params = ode_model.init_params(prng_key)
-
-    logging.info(f'#params: {parameters_size(params)}')
-    logging.info(f'shape(params): {tree_map(jnp.shape, params)}')
-    opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
-
-    loss = partial(loss_fn, ode_model, loss_mixing)
-    eval_ = partial(eval_fn, ode_model, loss_mixing)
-
-    def update(
-            step: int, batch: Iterable[int],
-            opt_state: optimizers.OptimizerState) -> optimizers.OptimizerState:
-        params = get_params(opt_state)
-        grads = jax.grad(loss)(params, batch)
-        return opt_update(step, grads, opt_state)
-
-    opt_state = opt_init(params)
-
-    subjects_id = list(subject_interface.subjects.keys())
-    rng.shuffle(subjects_id)
-
-    train_ids = subjects_id[:int(train_validation_split * len(subjects_id))]
-    valid_ids = subjects_id[int(train_validation_split * len(subjects_id)):]
-    batch_size = min(batch_size, len(train_ids))
-    val_batch_size = min(batch_size, len(valid_ids))
-
-    codes_by_percentiles = subject_interface.diag_single_ccs_by_percentiles(
-        20, train_ids)
-
-    res_val = {}
-    res_trn = {}
-
-    iters = int(epochs * len(train_ids) / batch_size)
-    val_pbar = tqdm(total=iters)
-
-    for step in range(iters):
-        rng.shuffle(train_ids)
-        train_batch = train_ids[:batch_size]
-
-        val_pbar.update(1)
-
-        try:
-            opt_state = update(step, train_batch, opt_state)
-        except (ValueError, FloatingPointError) as e:
-            from traceback import format_exception
-            tb_str = ''.join(format_exception(None, e, e.__traceback__))
-            logging.warning(f'ValueError exception raised: {tb_str}')
-            break
-
-        if step % save_freq == 0 and step > 0:
-            with open(f'{output_dir}/step{step:03d}.pickle', 'wb') as f:
-                pickle.dump(get_params(opt_state), f)
-
-        if step % eval_freq != 0: continue
-
-        rng.shuffle(valid_ids)
-
-        valid_batch = valid_ids  #[:val_batch_size]
-        params = get_params(opt_state)
-        trn_res = eval_(params, train_batch)
-        res_trn[step] = trn_res
-        val_res = eval_(params, valid_batch)
-        res_val[step] = val_res
-
-        eval_table = evaluation_table(trn_res, val_res,
-                                      EvalFlag.POST | EvalFlag.CM,
-                                      codes_by_percentiles)
-        logging.info('\n' + str(eval_table))
-
-    return {
-        'res_val': res_val,
-        'res_trn': res_trn,
-        'model_params': get_params(opt_state),
-        'ode_model': ode_model,
-        'trn_ids': train_ids,
-        'val_ids': valid_ids
-    }
-
-
-if __name__ == '__main__':
-    from pathlib import Path
-    import random
-    import argparse
-    from .glove import glove_representation
-
-    logging.set_verbosity(logging.INFO)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i',
-                        '--mimic-processed-dir',
-                        required=True,
-                        help='Absolute path to MIMIC-III processed tables')
-    parser.add_argument('-o',
-                        '--output-dir',
-                        required=True,
-                        help='Aboslute path to log intermediate results')
-
-    parser.add_argument(
-        '-c',
-        '--config',
-        required=True,
-        help='Absolute path to JSON file of experiment configurations')
-
-    parser.add_argument('--cpu', action='store_true')
-    args = parser.parse_args()
-
-    mimic_processed_dir = args.mimic_processed_dir
-    output_dir = args.output_dir
-    cpu = args.cpu
-    config_file = args.config
-
-    if cpu:
-        jax.config.update('jax_platform_name', 'cpu')
-    else:
-        jax.config.update('jax_platform_name', 'gpu')
-
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    logging.info('[LOADING] Patients JAX Interface.')
-    patient_interface = create_patient_interface(mimic_processed_dir)
-    logging.info('[DONE] Patients JAX Interface')
-
-    config = load_config(config_file)
-
-    diag_glove, proc_glove = glove_representation(
-        diag_idx=patient_interface.diag_multi_ccs_idx,
-        proc_idx=patient_interface.proc_multi_ccs_idx,
-        ccs_dag=patient_interface.dag,
-        subjects=patient_interface.subjects.values(),
-        **config['glove_config'])
-
-    diag_gram = DAGGRAM(
-        ccs_dag=patient_interface.dag,
-        code2index=patient_interface.diag_multi_ccs_idx,
-        basic_embeddings=diag_glove,
-        ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
-        **config['gram_config']['diag'])
-
-    proc_gram = DAGGRAM(
-        ccs_dag=patient_interface.dag,
-        code2index=patient_interface.proc_multi_ccs_idx,
-        basic_embeddings=proc_glove,
-        ancestors_mat=patient_interface.proc_multi_ccs_ancestors_mat,
-        **config['gram_config']['proc'])
-
-    res = train_ehr(subject_interface=patient_interface,
-                    diag_gram=diag_gram,
-                    proc_gram=proc_gram,
-                    rng=random.Random(42),
-                    model_config=config['model'],
-                    **config['training'],
-                    train_validation_split=0.8,
-                    output_dir=output_dir,
-                    eval_freq=10,
-                    save_freq=100)

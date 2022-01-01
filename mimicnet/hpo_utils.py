@@ -4,7 +4,7 @@ import random
 from pathlib import Path
 from typing import Iterable, Dict, Any
 from functools import partial
-
+from enum import Enum, Flag, auto
 from absl import logging
 from tqdm import tqdm
 
@@ -23,6 +23,18 @@ import mlflow
 
 from .metrics import evaluation_table
 from .utils import (parameters_size, tree_hasnan, write_config)
+
+
+class LossMixingFlag(Flag):
+    NONE = 0
+    DIAG = auto()
+    NUM = auto()
+    ODE = auto()
+    DYN = auto()
+
+    @staticmethod
+    def has(flag, attr):
+        return (flag & attr).value != 0
 
 
 def mlflow_callback_noexcept(callback):
@@ -53,15 +65,109 @@ def sample_glove_params(trial: optuna.Trial):
     }
 
 
-def sample_training_params(trial: optuna.Trial):
+def sample_training_params(trial: optuna.Trial,
+                           epochs,
+                           l_mixing_flags=LossMixingFlag.NONE):
+    l_mixing = {
+        'L_l1': trial.suggest_float('l1', 1e-7, 1e-1, log=True),
+        'L_l2': trial.suggest_float('l2', 1e-6, 1e-1, log=True),
+    }
+
+    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.DIAG):
+        l_mixing['L_diag'] = trial.suggest_float('L_dx', 1e-4, 1, log=True)
+
+    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.NUM):
+        l_mixing['L_num'] = trial.suggest_float('L_num', 1e-4, 1, log=True)
+
+    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.ODE):
+        l_mixing['L_ode'] = trial.suggest_float('L_ode', 1e-5, 1, log=True)
+
+    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.DYN):
+        l_mixing['L_dyn'] = trial.suggest_float('L_dyn', 1e-3, 1e3, log=True)
+
     return {
+        'epochs': epochs,
         'batch_size': trial.suggest_int('B', 2, 22, 5),
         'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
         'lr': trial.suggest_float('lr', 1e-6, 1e-2, log=True),
-        'loss_mixing': {
-            'l1_reg': trial.suggest_float('l1', 1e-7, 1e-1, log=True),
-            'l2_reg': trial.suggest_float('l2', 1e-6, 1e-1, log=True),
-        }
+        'loss_mixing': l_mixing
+    }
+
+
+def sample_gram_model_params(trial: optuna.Trial):
+    return {'state_size': trial.suggest_int('s', 100, 350, 50)}
+
+
+def sample_ode_model_params(trial: optuna.Trial):
+    model_params = {
+        'ode_dyn': trial.suggest_categorical(
+            'ode_dyn',
+            ['mlp', 'gru', 'res']),  # Add depth conditional to 'mlp' or 'res'
+        'state_size': trial.suggest_int('s', 100, 350, 50),
+        'init_depth': trial.suggest_int('init_d', 1, 5),
+        'bias': True,
+        'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
+    }
+    if model_params['ode_dyn'] == 'gru':
+        model_params['ode_depth'] = 0
+    else:
+        model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 5)
+
+    return model_params
+
+
+def sample_model_config_numeric_ode(trial: optuna.Trial):
+    loss_mixing_flags = (LossMixingFlag.DIAG | LossMixingFlag.DYN
+                         | LossMixingFlag.NUM | LossMixingFlag.ODE)
+
+    training_params = {
+        **sample_training_params(trial, 2, loss_mixing_flags), 'diag_loss':
+        trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce']),
+        'tay_reg':
+        3
+    }
+    model_params = {
+        **sample_ode_model_params(trial), 'numeric_hidden_size':
+        trial.suggest_int('num_h_size', 100, 350, 50)
+    }
+    return {
+        'glove': sample_glove_params(trial),
+        'gram': {
+            'diag': sample_gram_params('dx', trial),
+            'proc': sample_gram_params('pr', trial)
+        },
+        'model': model_params,
+        'training': training_params
+    }
+
+
+def sample_model_config_ode(trial: optuna.Trial):
+    loss_mixing_flags = LossMixingFlag.DIAG | LossMixingFlag.DYN
+    training_params = {
+        **sample_training_params(trial, 2, loss_mixing_flags), 'diag_loss':
+        trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce']),
+        'tay_reg':
+        3
+    }
+
+    return {
+        'glove': sample_glove_params(trial),
+        'gram': {
+            'diag': sample_gram_params('dx', trial)
+        },
+        'model': sample_ode_model_params(trial),
+        'training': training_params
+    }
+
+
+def sample_model_config_gram(trial: optuna.Trial):
+    return {
+        'glove': sample_glove_params(trial),
+        'gram': {
+            'diag': sample_gram_params('dx', trial)
+        },
+        'model': sample_gram_model_params(trial),
+        'training': sample_training_params(trial, 10)
     }
 
 

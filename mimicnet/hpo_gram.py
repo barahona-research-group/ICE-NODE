@@ -8,25 +8,9 @@ from .train_gram import (loss_fn, eval_fn, GRAM, create_patient_interface)
 from .gram import DAGGRAM
 from .metrics import EvalFlag
 from .glove import glove_representation
-from .hpo_utils import (capture_args, run_trials, sample_glove_params,
-                        sample_gram_params, sample_training_params)
+from .hpo_utils import (capture_args, run_trials, sample_model_config_gram)
 
 logging.set_verbosity(logging.INFO)
-
-
-def sample_config(trial: optuna.Trial):
-    return {
-        'glove': sample_glove_params(trial),
-        'gram': {
-            'diag': sample_gram_params('dx', trial)
-        },
-        'model': {
-            'state_size': trial.suggest_int('s', 100, 350, 50),
-        },
-        'training': {
-            **sample_training_params(trial), 'epochs': 10
-        }
-    }
 
 
 def create_model(config, patient_interface, train_ids):
@@ -60,7 +44,7 @@ if __name__ == '__main__':
         'patient_interface': patient_interface,
         'loss_fn': loss_fn,
         'eval_fn': eval_fn,
-        'sample_config': sample_config,
+        'sample_config': sample_model_config_gram,
         'create_model': create_model
     })
 
