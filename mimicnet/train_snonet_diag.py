@@ -18,6 +18,7 @@ from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
 from .abstract_model import AbstractModel
 from .glove import glove_representation
 
+
 class SNONETDiag(AbstractModel):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
@@ -423,7 +424,7 @@ class SNONETDiag(AbstractModel):
         }
 
         config['diag_loss'] = trial.suggest_categorical(
-            'dx_loss', ['balanced_focal', 'bce']),
+            'dx_loss', ['balanced_focal', 'bce'])
         config['tay_reg'] = 3
 
         return config
