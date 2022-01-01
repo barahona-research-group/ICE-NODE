@@ -127,7 +127,8 @@ class GRUDynamics(hk.Module):
                  with_bias: bool,
                  w_init: hk.initializers.Initializer,
                  b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None):
+                 name: Optional[str] = None,
+                 **ignored_kwargs):
         super().__init__(name=name)
         self.__hc_r = hk.Sequential([
             hk.Linear(state_size,
