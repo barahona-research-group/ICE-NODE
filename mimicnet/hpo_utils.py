@@ -121,6 +121,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
     model = model_cls.create_model(config, patient_interface, train_ids)
+    breakpoint()
 
     prng_key = jax.random.PRNGKey(rng.randint(0, 100))
     params = model.init_params(prng_key)

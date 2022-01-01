@@ -18,15 +18,12 @@ from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
 from .abstract_model import AbstractModel
 from .glove import glove_representation
 
-
 class SNONETDiag(AbstractModel):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
                  ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
-                 init_depth: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
-                                     float], max_odeint_days: int):
+                 init_depth: bool, diag_loss: str, max_odeint_days: int):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
@@ -38,6 +35,8 @@ class SNONETDiag(AbstractModel):
                 t, p, gamma=2, beta=0.999)
         elif diag_loss == 'bce':
             self.diag_loss = bce
+        else:
+            raise ValueError(f'Unrecognized diag_loss: {diag_loss}')
 
         self.dimensions = {
             'diag_gram': diag_gram.basic_embeddings_dim,

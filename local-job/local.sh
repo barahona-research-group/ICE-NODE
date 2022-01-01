@@ -13,7 +13,7 @@ OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
 # Run program
-python -m mimicnet.hpo_multi \
+python -m mimicnet.train_$MODEL \
 --output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/${STUDY_TAG}_${MODEL} \
 --mimic-processed-dir $HOME/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
@@ -22,6 +22,5 @@ python -m mimicnet.hpo_multi \
 --mlflow-store $MLFLOW_STORE \
 --num-trials 1 \
 --job-id 0 \
---cpu \
--N 1
+--cpu 
 
