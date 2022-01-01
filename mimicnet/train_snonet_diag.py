@@ -217,11 +217,10 @@ class SNONETDiag(AbstractModel):
         }
         return error_gram
 
-    @staticmethod
-    def _diag_loss(loss_apply, diag_true: Dict[int, jnp.ndarray],
+    def _diag_loss(self, diag_true: Dict[int, jnp.ndarray],
                    diag_predicted: Dict[int, jnp.ndarray]):
         loss = {
-            i: loss_apply(diag_true[i], diag_predicted[i])
+            i: self.diag_loss(diag_true[i], diag_predicted[i])
             for i in diag_predicted.keys()
         }
         if loss:
@@ -238,8 +237,7 @@ class SNONETDiag(AbstractModel):
         nn_update = partial(self._f_update, params)
         nn_decode = partial(self._f_dec, params)
         nn_init = partial(self._f_init, params)
-        diag_loss = partial(self._diag_loss, self.diag_loss)
-
+        diag_loss = self._diag_loss
         subject_state = dict()
         dyn_loss = []
         nfe = []

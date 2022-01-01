@@ -19,18 +19,17 @@ from .train_snonet_lite import SNONETLite
 class SNONET(SNONETLite):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
-                 ode_depth: int,
-                 ode_with_bias: bool, ode_init_var: float,
+                 ode_depth: int, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
                  numeric_hidden_size: int, init_depth: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
-                 max_odeint_days: int):
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
+                                     float], max_odeint_days: int):
         super().__init__(subject_interface=subject_interface,
                          diag_gram=diag_gram,
                          proc_gram=proc_gram,
                          ode_dyn=ode_dyn,
                          ode_depth=ode_depth,
-ode_with_bias=ode_with_bias,
+                         ode_with_bias=ode_with_bias,
                          ode_init_var=ode_init_var,
                          ode_timescale=ode_timescale,
                          tay_reg=tay_reg,
@@ -44,9 +43,7 @@ ode_with_bias=ode_with_bias,
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(GRUBayes,
-                            state_size=state_size,
-                            name='f_update')))
+                wrap_module(GRUBayes, state_size=state_size, name='f_update')))
         self.f_update = jax.jit(f_update)
 
         f_num_init, f_num = hk.without_apply_rng(
@@ -211,7 +208,7 @@ ode_with_bias=ode_with_bias,
         nn_update = partial(self._f_update, params)  # state, e, m, diag_error
         nn_decode = partial(self._f_dec, params)
         nn_init = partial(self._f_init, params)
-        diag_loss = partial(self._diag_loss, self.diag_loss)
+        diag_loss = self._diag_loss
 
         subject_state = {}
         dyn_loss = []
@@ -412,4 +409,4 @@ ode_with_bias=ode_with_bias,
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    run_trials(model_cls=SNONET,**capture_args())
+    run_trials(model_cls=SNONET, **capture_args())
