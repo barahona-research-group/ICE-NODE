@@ -136,35 +136,27 @@ def confusion_matrix_scores(cm: jnp.ndarray):
     }
 
 
-def unroll_predictions_df(detectability, label_prefix):
+def auc_scores(detectability, label_prefix):
+    def compute_auc(v_truth, v_preds):
+        fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
+        return metrics.auc(fpr, tpr)
+
     gtruth = []
     preds = []
-
-    label = f'{label_prefix}_logits'
     for points in detectability.values():
         for inference in points.values():
             gtruth.append(inference['diag_true'])
-            preds.append(jit_sigmoid(inference[label]))
+            preds.append(jit_sigmoid(inference[f'{label_prefix}_logits']))
 
-    return pd.DataFrame({
-        'ground_truth': jnp.hstack(gtruth) if gtruth else [],
-        label: jnp.hstack(preds) if preds else []
-    })
-
-
-def auc_scores(detectability, label_prefix):
-    predictions_df = unroll_predictions_df(detectability, label_prefix)
-    label = f'{label_prefix}_logits'
-    if len(predictions_df) == 0 or onp.isnan(
-            predictions_df[label].to_numpy()).any():
+    if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
         logging.warning('no detections or nan probs')
         # nan is returned indicator of undetermined AUC.
         return float('nan')
 
-    fpr, tpr, _ = metrics.roc_curve(predictions_df['ground_truth'],
-                                    predictions_df[label],
-                                    pos_label=1)
-    return metrics.auc(fpr, tpr)
+    macro_auc = compute_auc(onp.hstack(gtruth), onp.hstack(preds))
+    micro_auc = sum(compute_auc(t, p) for t, p in zip(gtruth, preds))
+
+    return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
 
 
 def top_k_detectability_scores(codes_by_percentiles, detections_df,
@@ -266,7 +258,7 @@ def evaluation_table(trn_res, val_res, tst_res, eval_flag,
     auc_val = auc_scores(detect_val, 'pre')
     auc_tst = auc_scores(detect_tst, 'pre')
 
-    evals.append(({'AUC': auc_trn}, {'AUC': auc_val}, {'AUC': auc_tst}))
+    evals.append((auc_trn, auc_val, auc_tst))
 
     detections_df_trn = top_k_detectability_df(20, detect_trn, prefixes)
     detections_df_val = top_k_detectability_df(20, detect_val, prefixes)

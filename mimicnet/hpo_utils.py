@@ -55,7 +55,7 @@ def sample_glove_params(trial: optuna.Trial):
 
 def sample_training_params(trial: optuna.Trial):
     return {
-        'batch_size': trial.suggest_int('B', 2, 42, 5),
+        'batch_size': trial.suggest_int('B', 2, 22, 5),
         'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
         'lr': trial.suggest_float('lr', 1e-6, 1e-2, log=True),
         'loss_mixing': {
@@ -187,19 +187,26 @@ def objective(sample_config, create_model, patient_interface, train_ids,
 
         eval_df, eval_dict = evaluation_table(trn_res, val_res, tst_res,
                                               eval_flags, codes_by_percentiles)
-        mlflow.log_metrics(eval_dict, step=step)
+
+        try:
+            mlflow.log_metrics(eval_dict, step=step)
+        except Exception as e:
+            logging.warning(f'Exception when logging metrics to mlflow: {e}')
+
         eval_df.to_csv(os.path.join(trial_dir, f'step{step:03d}_eval.csv'))
         logging.info(eval_df)
 
-        auc = eval_df.loc['AUC', 'VAL']
+        auc = eval_df.loc['MICRO-AUC', 'VAL']
 
         # nan is returned when no predictions actually made.
         if jnp.isnan(auc):
             continue
 
         trial.report(auc, step)
-        trial.set_user_attr("progress", (step + 1) / iters)
-        mlflow.set_tag("progress", (step + 1) / iters)
+
+        if step % 50 == 0 or step > (iters - 10):
+            trial.set_user_attr("progress", (step + 1) / iters)
+            mlflow.set_tag("progress", (step + 1) / iters)
 
         if trial.should_prune():
             raise optuna.TrialPruned()
@@ -219,8 +226,8 @@ def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
-
-    mlflc = MLflowCallback(tracking_uri=mlflow_store, metric_name="VAL-AUC")
+    mlflow_uri = f'{mlflow_store}_bystudy/{study_name}'
+    mlflc = MLflowCallback(tracking_uri=mlflow_uri, metric_name="VAL-AUC")
 
     study.set_user_attr('metric', 'auc')
 
