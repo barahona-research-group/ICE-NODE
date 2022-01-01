@@ -1,60 +1,37 @@
-from absl import logging
-import pickle
-from datetime import datetime
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 
-import pandas as pd
-import haiku as hk
-import jax
 import jax.numpy as jnp
-from jax.experimental import optimizers
-from jax.tree_util import tree_map
+import optuna
 
-from tqdm import tqdm
-
-from .metrics import (bce, balanced_focal_bce, l2_squared, l1_absolute,
-                      evaluation_table, EvalFlag)
-from .utils import (parameters_size, wrap_module, load_config)
-
-from .jax_interface import (SubjectJAXInterface, create_patient_interface,
-                            Ignore)
+from .jax_interface import SubjectJAXInterface
 from .gram import DAGGRAM
-from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
-from .train_snonet import BatchedApply
+from .train_snonet_diag import SNONETDiag
+from .glove import glove_representation
 
 
-class SNONETDiagProc(BatchedApply):
+class SNONETDiagProc(SNONETDiag):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
                  ode_depth: int, tay_reg: Optional[int], state_size: int,
                  init_depth: bool, bias: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
                  max_odeint_days: int, **init_kwargs):
+        super().__init__(subject_interface=subject_interface,
+                         diag_gram=diag_gram,
+                         ode_dyn=ode_dyn,
+                         ode_depth=ode_depth,
+                         tay_reg=tay_reg,
+                         state_size=state_size,
+                         init_depth=init_depth,
+                         bias=bias,
+                         diag_loss=diag_loss,
+                         max_odeint_days=max_odeint_days)
 
-        self.subject_interface = subject_interface
-        self.diag_gram = diag_gram
         self.proc_gram = proc_gram
-        self.tay_reg = tay_reg
-        self.max_odeint_days = max_odeint_days
 
-        if diag_loss == 'balanced_focal':
-            self.diag_loss = lambda t, p: balanced_focal_bce(
-                t, p, gamma=2, beta=0.999)
-        elif diag_loss == 'bce':
-            self.diag_loss = bce
-
-        self.dimensions = {
-            'proc_gram': proc_gram.basic_embeddings_dim,
-            'diag_gram': diag_gram.basic_embeddings_dim,
-            'proc_dag': len(subject_interface.proc_multi_ccs_idx),
-            'diag_dag': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_single_ccs_idx),
-            'state': state_size,
-            'ode_depth': ode_depth,
-            'init_depth': init_depth
-        }
+        self.dimensions['proc_gram'] = proc_gram.basic_embeddings_dim
+        self.dimensions['proc_dag'] = len(subject_interface.proc_multi_ccs_idx)
 
         self.ode_control_passes = ['proc_gram']
         self.state_init_passes = ['diag_gram']
@@ -65,68 +42,6 @@ class SNONETDiagProc(BatchedApply):
             'state_init':
             sum(map(self.dimensions.get, self.state_init_passes))
         })
-        """
-        Constructs the GRU-ODE-Bayes model with the given dimensions.
-        """
-        init_kwargs = {
-            "with_bias": bias,
-            "w_init": hk.initializers.RandomNormal(mean=0, stddev=1e-3),
-            "b_init": jnp.zeros
-        }
-        if ode_dyn == 'gru':
-            ode_dyn_cls = GRUDynamics
-        elif ode_dyn == 'res':
-            ode_dyn_cls = ResDynamics
-        elif ode_dyn == 'mlp':
-            ode_dyn_cls = MLPDynamics
-        else:
-            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
-
-        f_n_ode_init, f_n_ode = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(NeuralODE,
-                            ode_dyn_cls=ode_dyn_cls,
-                            state_size=state_size,
-                            depth=ode_depth,
-                            with_quad_augmentation=False,
-                            name='f_n_ode',
-                            tay_reg=tay_reg,
-                            **init_kwargs)))
-        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
-
-        f_update_init, f_update = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(DiagnosesUpdate,
-                            state_size=state_size,
-                            with_quad_augmentation=False,
-                            name='f_update',
-                            **init_kwargs)))
-        self.f_update = jax.jit(f_update)
-
-        f_dec_init, f_dec = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(StateDiagnosesDecoder,
-                            hidden_size=self.dimensions['diag_gram'],
-                            gram_size=self.dimensions['diag_gram'],
-                            output_size=self.dimensions['diag_out'],
-                            name='f_dec')))
-        self.f_dec = jax.jit(f_dec)
-
-        f_init_init, f_init = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(StateInitializer,
-                            hidden_size=self.dimensions['diag_gram'],
-                            state_size=state_size,
-                            depth=init_depth,
-                            name='f_init')))
-        self.f_init = jax.jit(f_init)
-
-        self.initializers = {
-            'f_n_ode': f_n_ode_init,
-            'f_update': f_update_init,
-            'f_dec': f_dec_init,
-            'f_init': f_init_init
-        }
 
     def init_params(self, rng_key):
         init_data = self._initialization_data()
@@ -138,16 +53,6 @@ class SNONETDiagProc(BatchedApply):
                 for label, init in self.initializers.items()
             }
         }
-
-    def state_size(self):
-        return self.dimensions['state']
-
-    def diag_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.diag_single_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
 
     def _initialization_data(self):
         """
@@ -200,6 +105,7 @@ class SNONETDiagProc(BatchedApply):
         ode_control = {i: _ode_control(i) for i in points.keys()}
 
         return {
+            'age': age,
             'days_ahead': days_ahead,
             'diag_gram': diag_gram,
             'ode_control': ode_control,
@@ -369,7 +275,7 @@ class SNONETDiagProc(BatchedApply):
                                         weights=diag_weights)
         postjump_diag_loss = jnp.average(postjump_diag_loss,
                                          weights=diag_weights)
-        ret = {
+        return {
             'prejump_diag_loss': prejump_diag_loss,
             'postjump_diag_loss': postjump_diag_loss,
             'dyn_loss': jnp.sum(sum(dyn_loss)),
@@ -380,66 +286,44 @@ class SNONETDiagProc(BatchedApply):
             'diag_detectability': diag_detectability
         }
 
-        return ret
+    @classmethod
+    def create_model(cls, config, patient_interface, train_ids):
+        diag_glove, proc_glove = glove_representation(
+            diag_idx=patient_interface.diag_multi_ccs_idx,
+            proc_idx=patient_interface.proc_multi_ccs_idx,
+            ccs_dag=patient_interface.dag,
+            subjects=[patient_interface.subjects[i] for i in train_ids],
+            **config['glove'])
 
+        diag_gram = DAGGRAM(
+            ccs_dag=patient_interface.dag,
+            code2index=patient_interface.diag_multi_ccs_idx,
+            basic_embeddings=diag_glove,
+            ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
+            **config['gram']['diag'])
 
-def eval_fn(ode_model: SNONETDiagProc, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
-    res = ode_model(params, batch, count_nfe=True)
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss']
-    diag_alpha = loss_mixing['L_diag']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
+        proc_gram = DAGGRAM(
+            ccs_dag=patient_interface.dag,
+            code2index=patient_interface.proc_multi_ccs_idx,
+            basic_embeddings=proc_glove,
+            ancestors_mat=patient_interface.proc_multi_ccs_ancestors_mat,
+            **config['gram']['proc'])
 
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-        dyn_alpha * dyn_loss)
-    nfe = res['nfe']
-    return {
-        'loss': {
-            'prejump_diag_loss': prejump_diag_loss,
-            'postjump_diag_loss': postjump_diag_loss,
-            'diag_loss': diag_loss,
-            'loss': loss,
-            'l1_loss': l1_loss,
-            'l2_loss': l2_loss,
-            'dyn_loss': dyn_loss,
-            'dyn_loss/week': dyn_loss / res['odeint_weeks']
-        },
-        'stats': {
-            'all_points_count': res['all_points_count'],
-            'predictable_count': res['predictable_count'],
-            'nfe/week': nfe / res['odeint_weeks'],
-            'nfex1000': nfe / 1000
-        },
-        'diag_detectability': res['diag_detectability']
-    }
+        return cls(subject_interface=patient_interface,
+                   diag_gram=diag_gram,
+                   proc_gram=proc_gram,
+                   **config['model'],
+                   tay_reg=config['training']['tay_reg'],
+                   diag_loss=config['training']['diag_loss'])
 
+    @staticmethod
+    def sample_gram_config(trial: optuna.Trial):
+        return {
+            'diag': DAGGRAM.sample_model_config('dx', trial),
+            'proc': DAGGRAM.sample_model_config('pr', trial)
+        }
 
-def loss_fn(ode_model: SNONETDiagProc, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> float:
-    res = ode_model(params, batch, count_nfe=False)
-
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
-    diag_alpha = loss_mixing['L_diag']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn']
-
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-        dyn_alpha * dyn_loss)
-
-    return loss
-
+if __name__ == '__main__':
+    from .hpo_utils import capture_args, run_trials
+    kwargs = {'model_class': SNONETDiagProc, **capture_args()}
+    run_trials(**kwargs)

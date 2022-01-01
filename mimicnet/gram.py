@@ -6,15 +6,17 @@
 #################################################################
 from __future__ import annotations
 
-from collections import defaultdict
 from functools import partial
 from typing import (Any, Dict, Iterable, Optional, Tuple)
 
-import haiku as hk
+import numpy as onp
 import jax
 from jax import lax
-import numpy as onp
 import jax.numpy as jnp
+
+import haiku as hk
+import optuna
+
 from .utils import wrap_module
 
 
@@ -116,3 +118,12 @@ class DAGGRAM:
     @partial(jax.jit, static_argnums=(0, ))
     def encode(self, G: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.tanh(jnp.matmul(x, G))
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        return {
+            'attention_method':
+            trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
+            'attention_dim':
+            trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
+        }

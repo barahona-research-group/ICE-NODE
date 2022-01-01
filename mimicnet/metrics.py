@@ -191,7 +191,7 @@ def compute_confusion_matrix(detectability, label_prefix):
     if cm:
         return sum(cm)
     else:
-        return None
+        return onp.zeros((2, 2)) + onp.nan
 
 
 def top_k_detectability_df(top_k: int, res, prefixes):
@@ -234,77 +234,34 @@ class EvalFlag(Flag):
         return (flag & attr).value != 0
 
 
-def evaluation_table(trn_res, val_res, tst_res, eval_flag,
-                     codes_by_percentiles):
-    if EvalFlag.has(eval_flag, EvalFlag.POST):
-        prefixes = ['pre', 'post']
-    else:
-        prefixes = ['pre']
+def evaluation_table(raw_results, codes_by_percentiles):
+    evals = {colname: {} for colname in raw_results}
+    flat_evals = {}
+    for colname, res in raw_results.items():
+        for rowname, val in res['loss'].values():
+            evals[colname][rowname] = val
 
-    evals = [(trn_res['loss'], val_res['loss'], tst_res['loss'])]
+        det = res['diag_detectability']
+        cm = compute_confusion_matrix(det, 'pre')
+        cm_scores = confusion_matrix_scores(cm)
+        for rowname, val in cm_scores.items():
+            evals[colname][rowname] = val
 
-    detect_trn = trn_res['diag_detectability']
-    detect_val = val_res['diag_detectability']
-    detect_tst = tst_res['diag_detectability']
+        for rowname, val in auc_scores(det, 'pre').items():
+            evals[colname][rowname] = val
 
-    if EvalFlag.has(eval_flag, EvalFlag.CM):
-        cm_trn = compute_confusion_matrix(detect_trn, 'pre')
-        cm_val = compute_confusion_matrix(detect_val, 'pre')
-        cm_tst = compute_confusion_matrix(detect_tst, 'pre')
+        det20 = top_k_detectability_df(20, det, ['pre'])
+        det20_scores = top_k_detectability_scores(codes_by_percentiles, det20,
+                                                  'pre')[0]
+        for rowname, val in det20_scores.items():
+            evals[colname][rowname] = val
 
-        if cm_trn is not None and cm_val is not None:
-            evals.append((confusion_matrix_scores(cm_trn),
-                          confusion_matrix_scores(cm_val),
-                          confusion_matrix_scores(cm_tst)))
-
-    auc_trn = auc_scores(detect_trn, 'pre')
-    auc_val = auc_scores(detect_val, 'pre')
-    auc_tst = auc_scores(detect_tst, 'pre')
-
-    evals.append((auc_trn, auc_val, auc_tst))
-
-    detections_df_trn = top_k_detectability_df(20, detect_trn, prefixes)
-    detections_df_val = top_k_detectability_df(20, detect_val, prefixes)
-    detections_df_tst = top_k_detectability_df(20, detect_tst, prefixes)
-
-    for prefix in prefixes:
-        scores_trn, _ = top_k_detectability_scores(codes_by_percentiles,
-                                                   detections_df_trn, prefix)
-        scores_val, _ = top_k_detectability_scores(codes_by_percentiles,
-                                                   detections_df_val, prefix)
-        scores_tst, _ = top_k_detectability_scores(codes_by_percentiles,
-                                                   detections_df_tst, prefix)
-
-        evals.append((scores_trn, scores_val, scores_tst))
-
-    index = []
-    trn_col = []
-    val_col = []
-    tst_col = []
-    for trn, val, tst in evals:
-        index.extend(trn.keys())
-        trn_col.extend(trn.values())
-        val_col.extend(map(val.get, trn.keys()))
-        tst_col.extend(map(tst.get, trn.keys()))
-
-    trn_col = list(map(float, trn_col))
-    val_col = list(map(float, val_col))
-    tst_col = list(map(float, tst_col))
-
-    metrics_dict = {}
-    metrics_dict.update(
-        {f'TRN_{metric}': value
-         for metric, value in zip(index, trn_col)})
-    metrics_dict.update(
-        {f'VAL_{metric}': value
-         for metric, value in zip(index, val_col)})
-    metrics_dict.update(
-        {f'TST_{metric}': value
-         for metric, value in zip(index, tst_col)})
-
-    return pd.DataFrame(index=index,
-                        data={
-                            'TRN': trn_col,
-                            'VAL': val_col,
-                            'TST': tst_col
-                        }), metrics_dict
+        evals[colname] = {
+            rowname: float(val)
+            for rowname, val in evals[colname].items()
+        }
+        flat_evals.update({
+            f'{colname}_{rowname}': val
+            for rowname, val in evals[colname].items()
+        })
+    return pd.DataFrame(evals), flat_evals

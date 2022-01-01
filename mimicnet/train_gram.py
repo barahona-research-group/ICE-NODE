@@ -1,24 +1,20 @@
-import pickle
-from datetime import datetime
 from functools import partial
-from typing import (Any, Dict, Iterable, List, Optional)
+from typing import Any, Dict, List
 
-from absl import logging
 import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax.experimental import optimizers
-from jax.tree_util import tree_map
-
-from tqdm import tqdm
+import optuna
 
 from .jax_interface import SubjectDiagSequenceJAXInterface
 from .gram import DAGGRAM
-from .metrics import (l2_squared, l1_absolute, evaluation_table, EvalFlag)
+from .metrics import l2_squared, l1_absolute
 from .concept import Subject
 from .dag import CCSDAG
-from .utils import (load_config, wrap_module, parameters_size)
+from .utils import wrap_module
+from .abstract_model import AbstractModel
+from .glove import glove_representation
 
 
 @jax.jit
@@ -27,7 +23,7 @@ def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
                     (1 - y) * jnp.log(1 - jax.nn.softmax(diag_logits)))
 
 
-class GRAM:
+class GRAM(AbstractModel):
     def __init__(self, subject_interface: SubjectDiagSequenceJAXInterface,
                  diag_gram: DAGGRAM, state_size: int):
 
@@ -75,7 +71,7 @@ class GRAM:
         }
         return list(map(index2code.get, range(len(index2code))))
 
-    def __call__(self, params: Any, subjects_batch: List[int]):
+    def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
 
         G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
         gram = partial(self.diag_gram.encode, G)
@@ -111,61 +107,76 @@ class GRAM:
             'diag_detectability': diag_detectability
         }
 
+    def detailed_loss(self, loss_mixing, params, res):
 
-def loss_fn(model: GRAM, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
-    res = model(params, batch)
+        diag_loss_ = res['loss']
+        l1_loss = l1_absolute(params)
+        l2_loss = l2_squared(params)
+        l1_alpha = loss_mixing['L_l1']
+        l2_alpha = loss_mixing['L_l2']
 
-    diag_loss_ = res['loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
+        loss = diag_loss_ + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
 
-    loss = diag_loss_ + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
-    return loss
-
-
-def eval_fn(model: GRAM, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
-    res = model(params, batch)
-
-    diag_loss_ = res['loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-
-    loss = diag_loss_ + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
-    return {
-        'loss': {
+        return {
             'diag_loss': diag_loss_,
             'loss': loss,
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
-        },
-        'diag_detectability': res['diag_detectability']
-    }
+        }
+
+    def eval_stats(self, res):
+        return {}
+
+    @staticmethod
+    def create_patient_interface(processed_mimic_tables_dir: str):
+        static_df = pd.read_csv(
+            f'{processed_mimic_tables_dir}/static_df.csv.gz')
+        adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
+        diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
+                              dtype={'ICD9_CODE': str})
+        proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
+                              dtype={'ICD9_CODE': str})
+        # Cast columns of dates to datetime64
+        static_df['DOB'] = pd.to_datetime(
+            static_df.DOB, infer_datetime_format=True).dt.normalize()
+        adm_df['ADMITTIME'] = pd.to_datetime(
+            adm_df.ADMITTIME, infer_datetime_format=True).dt.normalize()
+        adm_df['DISCHTIME'] = pd.to_datetime(
+            adm_df.DISCHTIME, infer_datetime_format=True).dt.normalize()
+
+        patients = Subject.to_list(static_df, adm_df, diag_df, proc_df, None)
+
+        # CCS Knowledge Graph
+        k_graph = CCSDAG()
+
+        return SubjectDiagSequenceJAXInterface(patients, set(), k_graph)
+
+    @classmethod
+    def create_model(cls, config, patient_interface, train_ids):
+        diag_glove, proc_glove = glove_representation(
+            diag_idx=patient_interface.diag_multi_ccs_idx,
+            proc_idx=patient_interface.proc_multi_ccs_idx,
+            ccs_dag=patient_interface.dag,
+            subjects=[patient_interface.subjects[i] for i in train_ids],
+            **config['glove'])
+
+        diag_gram = DAGGRAM(
+            ccs_dag=patient_interface.dag,
+            code2index=patient_interface.diag_multi_ccs_idx,
+            basic_embeddings=diag_glove,
+            ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
+            **config['gram']['diag'])
+
+        return cls(subject_interface=patient_interface,
+                   diag_gram=diag_gram,
+                   **config['model'])
+
+    @staticmethod
+    def sample_training_config(trial: optuna.Trial):
+        return AbstractModel._sample_training_config(trial, epochs=10)
 
 
-def create_patient_interface(processed_mimic_tables_dir: str):
-    static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
-    adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
-    diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
-                          dtype={'ICD9_CODE': str})
-    proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
-                          dtype={'ICD9_CODE': str})
-    # Cast columns of dates to datetime64
-    static_df['DOB'] = pd.to_datetime(
-        static_df.DOB, infer_datetime_format=True).dt.normalize()
-    adm_df['ADMITTIME'] = pd.to_datetime(
-        adm_df.ADMITTIME, infer_datetime_format=True).dt.normalize()
-    adm_df['DISCHTIME'] = pd.to_datetime(
-        adm_df.DISCHTIME, infer_datetime_format=True).dt.normalize()
-
-    patients = Subject.to_list(static_df, adm_df, diag_df, proc_df, None)
-
-    # CCS Knowledge Graph
-    k_graph = CCSDAG()
-
-    return SubjectDiagSequenceJAXInterface(patients, set(), k_graph)
+if __name__ == '__main__':
+    from .hpo_utils import capture_args, run_trials
+    kwargs = {'model_class': GRAM, **capture_args()}
+    run_trials(**kwargs)

@@ -19,20 +19,6 @@ from .dag import CCSDAG
 jax_interface_logger = logging.getLogger("jax_interface")
 
 
-class Ignore(Flag):
-    NONE = 0
-    TESTS = auto()
-    PROC = auto()
-
-    @staticmethod
-    def tests(i: Ignore):
-        return (Ignore.TESTS & i).value != 0
-
-    @staticmethod
-    def proc(i: Ignore):
-        return (Ignore.PROC & i).value != 0
-
-
 class AbstractSubjectJAXInterface:
     def __init__(self,
                  subjects: List[Subject],
@@ -295,13 +281,13 @@ class SubjectJAXInterface(AbstractSubjectJAXInterface):
 
 
 def create_patient_interface(processed_mimic_tables_dir: str,
-                             ignore: Ignore = Ignore.NONE):
+                             ignore_tests=False):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
     static_df['DOB'] = pd.to_datetime(
         static_df.DOB, infer_datetime_format=True).dt.normalize()
     proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
                           dtype={'ICD9_CODE': str})
-    if Ignore.tests(ignore):
+    if ignore_tests:
         test_df = None
         test_items = set()
     else:

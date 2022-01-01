@@ -4,7 +4,6 @@ import random
 from pathlib import Path
 from typing import Iterable, Dict, Any
 from functools import partial
-from enum import Enum, Flag, auto
 from absl import logging
 from tqdm import tqdm
 
@@ -16,25 +15,13 @@ import optuna
 from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
-from sqlalchemy.pool import NullPool
 from optuna.integration import MLflowCallback
-
+from sqlalchemy.pool import NullPool
 import mlflow
 
 from .metrics import evaluation_table
 from .utils import (parameters_size, tree_hasnan, write_config)
-
-
-class LossMixingFlag(Flag):
-    NONE = 0
-    DIAG = auto()
-    NUM = auto()
-    ODE = auto()
-    DYN = auto()
-
-    @staticmethod
-    def has(flag, attr):
-        return (flag & attr).value != 0
+from .abstract_model import AbstractModel
 
 
 def mlflow_callback_noexcept(callback):
@@ -47,16 +34,7 @@ def mlflow_callback_noexcept(callback):
     return apply
 
 
-def sample_gram_params(prefix: str, trial: optuna.Trial):
-    return {
-        'attention_method':
-        trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
-        'attention_dim':
-        trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
-    }
-
-
-def sample_glove_params(trial: optuna.Trial):
+def sample_glove_config(trial: optuna.Trial):
     return {
         'diag_vector_size': trial.suggest_int('dx', 50, 250, 50),
         'proc_vector_size': 50,
@@ -65,109 +43,12 @@ def sample_glove_params(trial: optuna.Trial):
     }
 
 
-def sample_training_params(trial: optuna.Trial,
-                           epochs,
-                           l_mixing_flags=LossMixingFlag.NONE):
-    l_mixing = {
-        'L_l1': trial.suggest_float('l1', 1e-7, 1e-1, log=True),
-        'L_l2': trial.suggest_float('l2', 1e-6, 1e-1, log=True),
-    }
-
-    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.DIAG):
-        l_mixing['L_diag'] = trial.suggest_float('L_dx', 1e-4, 1, log=True)
-
-    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.NUM):
-        l_mixing['L_num'] = trial.suggest_float('L_num', 1e-4, 1, log=True)
-
-    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.ODE):
-        l_mixing['L_ode'] = trial.suggest_float('L_ode', 1e-5, 1, log=True)
-
-    if LossMixingFlag.has(l_mixing_flags, LossMixingFlag.DYN):
-        l_mixing['L_dyn'] = trial.suggest_float('L_dyn', 1e-3, 1e3, log=True)
-
+def sample_experiment_config(model_cls: AbstractModel, trial: optuna.Trial):
     return {
-        'epochs': epochs,
-        'batch_size': trial.suggest_int('B', 2, 22, 5),
-        'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
-        'lr': trial.suggest_float('lr', 1e-6, 1e-2, log=True),
-        'loss_mixing': l_mixing
-    }
-
-
-def sample_gram_model_params(trial: optuna.Trial):
-    return {'state_size': trial.suggest_int('s', 100, 350, 50)}
-
-
-def sample_ode_model_params(trial: optuna.Trial):
-    model_params = {
-        'ode_dyn': trial.suggest_categorical(
-            'ode_dyn',
-            ['mlp', 'gru', 'res']),  # Add depth conditional to 'mlp' or 'res'
-        'state_size': trial.suggest_int('s', 100, 350, 50),
-        'init_depth': trial.suggest_int('init_d', 1, 5),
-        'bias': True,
-        'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
-    }
-    if model_params['ode_dyn'] == 'gru':
-        model_params['ode_depth'] = 0
-    else:
-        model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 5)
-
-    return model_params
-
-
-def sample_model_config_numeric_ode(trial: optuna.Trial):
-    loss_mixing_flags = (LossMixingFlag.DIAG | LossMixingFlag.DYN
-                         | LossMixingFlag.NUM | LossMixingFlag.ODE)
-
-    training_params = {
-        **sample_training_params(trial, 2, loss_mixing_flags), 'diag_loss':
-        trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce']),
-        'tay_reg':
-        3
-    }
-    model_params = {
-        **sample_ode_model_params(trial), 'numeric_hidden_size':
-        trial.suggest_int('num_h_size', 100, 350, 50)
-    }
-    return {
-        'glove': sample_glove_params(trial),
-        'gram': {
-            'diag': sample_gram_params('dx', trial),
-            'proc': sample_gram_params('pr', trial)
-        },
-        'model': model_params,
-        'training': training_params
-    }
-
-
-def sample_model_config_ode(trial: optuna.Trial):
-    loss_mixing_flags = LossMixingFlag.DIAG | LossMixingFlag.DYN
-    training_params = {
-        **sample_training_params(trial, 2, loss_mixing_flags), 'diag_loss':
-        trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce']),
-        'tay_reg':
-        3
-    }
-
-    return {
-        'glove': sample_glove_params(trial),
-        'gram': {
-            'diag': sample_gram_params('dx', trial)
-        },
-        'model': sample_ode_model_params(trial),
-        'training': training_params
-    }
-
-
-def sample_model_config_gram(trial: optuna.Trial):
-    return {
-        'glove': sample_glove_params(trial),
-        'gram': {
-            'diag': sample_gram_params('dx', trial)
-        },
-        'model': sample_gram_model_params(trial),
-        'training': sample_training_params(trial, 10)
+        'glove': sample_glove_config(trial),
+        'gram': model_cls.sample_gram_config(trial),
+        'model': model_cls.sample_model_config(trial),
+        'training': model_cls.sample_training_config(trial)
     }
 
 
@@ -216,10 +97,9 @@ def capture_args():
     }
 
 
-def objective(sample_config, create_model, patient_interface, train_ids,
-              test_ids, valid_ids, rng, eval_freq, loss_fn, eval_fn,
-              eval_flags, job_id, output_dir, codes_by_percentiles,
-              trial: optuna.Trial):
+def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
+              valid_ids, rng, eval_freq, job_id, output_dir,
+              codes_by_percentiles, trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
     mlflow.set_tag('job_id', job_id)
 
@@ -229,7 +109,7 @@ def objective(sample_config, create_model, patient_interface, train_ids,
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling & Initializing Models')
-    config = sample_config(trial)
+    config = sample_experiment_config(model_cls, trial)
 
     mlflow.log_params(trial.params)
 
@@ -237,7 +117,7 @@ def objective(sample_config, create_model, patient_interface, train_ids,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model = create_model(config, patient_interface, train_ids)
+    model = model_cls.create_model(config, patient_interface, train_ids)
 
     prng_key = jax.random.PRNGKey(rng.randint(0, 100))
     params = model.init_params(prng_key)
@@ -256,14 +136,14 @@ def objective(sample_config, create_model, patient_interface, train_ids,
     opt_init, opt_update, get_params = optimizer(step_size=lr)
     opt_state = opt_init(params)
 
-    loss = partial(loss_fn, model, loss_mixing)
-    eval_ = partial(eval_fn, model, loss_mixing)
+    loss_ = partial(model.loss, loss_mixing)
+    eval_ = partial(model.eval, loss_mixing)
 
     def update(
             step: int, batch: Iterable[int],
             opt_state: optimizers.OptimizerState) -> optimizers.OptimizerState:
         params = get_params(opt_state)
-        grads = jax.grad(loss)(params, batch)
+        grads = jax.grad(loss_)(params, batch)
         return opt_update(step, grads, opt_state)
 
     batch_size = config['training']['batch_size']
@@ -287,15 +167,15 @@ def objective(sample_config, create_model, patient_interface, train_ids,
         if step % eval_freq != 0: continue
 
         params = get_params(opt_state)
-        trn_res = eval_(params, train_batch)
-        val_res = eval_(params, valid_ids)
-        tst_res = eval_(params, test_ids)
-
-        eval_df, eval_dict = evaluation_table(trn_res, val_res, tst_res,
-                                              eval_flags, codes_by_percentiles)
+        raw_res = {
+            'TRN': eval_(params, train_batch),
+            'VAL': eval_(params, valid_ids),
+            'TST': eval_(params, test_ids)
+        }
+        eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
 
         try:
-            mlflow.log_metrics(eval_dict, step=step)
+            mlflow.log_metrics(eval_flat, step=step)
         except Exception as e:
             logging.warning(f'Exception when logging metrics to mlflow: {e}')
 
@@ -319,10 +199,13 @@ def objective(sample_config, create_model, patient_interface, train_ids,
     return auc
 
 
-def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
-               create_model, study_name: str, optuna_store: str,
+def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                mlflow_store: str, num_trials: int, mimic_processed_dir: str,
                output_dir: str, cpu: bool, job_id: str):
+
+    logging.info('[LOADING] patient interface')
+    patient_interface = model_cls.create_patient_interface(mimic_processed_dir)
+    logging.info('[DONE] patient interface')
 
     storage = RDBStorage(url=optuna_store,
                          engine_kwargs={'poolclass': NullPool})
@@ -361,17 +244,13 @@ def run_trials(patient_interface, eval_flags, loss_fn, eval_fn, sample_config,
 
     @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
-        return objective(sample_config=sample_config,
-                         create_model=create_model,
+        return objective(model_cls=model_cls,
                          patient_interface=patient_interface,
                          train_ids=train_ids,
                          test_ids=train_ids,
                          valid_ids=valid_ids,
                          rng=rng,
                          eval_freq=eval_freq,
-                         loss_fn=loss_fn,
-                         eval_fn=eval_fn,
-                         eval_flags=eval_flags,
                          job_id=job_id,
                          output_dir=output_dir,
                          codes_by_percentiles=codes_by_percentiles,

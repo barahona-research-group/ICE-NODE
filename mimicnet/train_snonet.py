@@ -1,171 +1,42 @@
-from absl import logging
-import pickle
-from datetime import datetime
 from functools import partial
-from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
-                    Optional, Tuple, Union, Set)
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple)
 
-import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax.experimental import optimizers
-from jax.tree_util import tree_map
 
-from tqdm import tqdm
+import optuna
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import DAGGRAM
-from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     GRUBayes, NumericObsModel, StateDiagnosesDecoder,
-                     StateInitializer)
-from .metrics import (jit_sigmoid, bce, balanced_focal_bce, l2_squared,
-                      l1_absolute, numeric_error, lognormal_loss,
-                      compute_KL_loss, evaluation_table, EvalFlag)
-from .utils import (parameters_size, tree_hasnan, tree_lognan, wrap_module,
-                    load_config)
+from .models import NumericObsModel
+from .metrics import (l2_squared, l1_absolute, numeric_error, lognormal_loss,
+                      compute_KL_loss)
+from .utils import wrap_module
+from .train_snonet_lite import SNONETLite
 
 
-class BatchedApply:
-    @staticmethod
-    def _numeric_error(mean_true, mean_predicted, logvar_predicted):
-        error_num = {
-            i: numeric_error(mean_true[i], mean_predicted[i],
-                             logvar_predicted[i])
-            for i in mean_predicted.keys()
-        }
-        return error_num
-
-    @staticmethod
-    def _lognormal_loss(mask: Dict[int, jnp.ndarray],
-                        normal_error: Dict[int, jnp.ndarray],
-                        logvar: Dict[int, jnp.ndarray]):
-        loss = {
-            i: lognormal_loss(mask[i], normal_error[i], logvar[i])
-            for i in normal_error.keys()
-        }
-        if loss:
-            return sum(loss.values()) / len(loss)
-        else:
-            return 0.0
-
-    @staticmethod
-    def _kl_loss(mean_true: Dict[int, jnp.ndarray], mask: Dict[int,
-                                                               jnp.ndarray],
-                 mean_predicted: Dict[int, jnp.ndarray],
-                 logvar_predicted: Dict[int, jnp.ndarray]):
-        loss = {
-            i: compute_KL_loss(mean, mask[i], mean_predicted[i],
-                               logvar_predicted[i])
-            for i, mean in mean_predicted.items()
-        }
-        if loss:
-            return sum(loss.values()) / len(loss)
-        else:
-            return 0.0
-
-    @staticmethod
-    def _gram_error(gram_true, gram_predicted):
-        error_gram = {
-            i: gram_true[i] - jit_sigmoid(gram_predicted[i])
-            for i in gram_predicted.keys()
-        }
-        return error_gram
-
-    @staticmethod
-    def _diag_loss(loss_apply, diag_true: Dict[int, jnp.ndarray],
-                   diag_predicted: Dict[int, jnp.ndarray]):
-        loss = {
-            i: loss_apply(diag_true[i], diag_predicted[i])
-            for i in diag_predicted.keys()
-        }
-        if loss:
-            return sum(loss.values()) / len(loss)
-        else:
-            return 0.0
-
-
-class SNONET(BatchedApply):
+class SNONET(SNONETLite):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
                  ode_depth: int, tay_reg: Optional[int], state_size: int,
                  numeric_hidden_size: int, init_depth: bool, bias: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
                  max_odeint_days: int, **init_kwargs):
+        super().__init__(subject_interface=subject_interface,
+                         diag_gram=diag_gram,
+                         proc_gram=proc_gram,
+                         ode_dyn=ode_dyn,
+                         ode_depth=ode_depth,
+                         tay_reg=tay_reg,
+                         state_size=state_size,
+                         init_depth=init_depth,
+                         bias=bias,
+                         diag_loss=diag_loss,
+                         max_odeint_days=max_odeint_days)
 
-        self.subject_interface = subject_interface
-        self.diag_gram = diag_gram
-        self.proc_gram = proc_gram
-        self.tay_reg = tay_reg
-        self.max_odeint_days = max_odeint_days
-
-        if diag_loss == 'balanced_focal':
-            self.diag_loss = lambda t, p: balanced_focal_bce(
-                t, p, gamma=2, beta=0.999)
-        elif diag_loss == 'bce':
-            self.diag_loss = bce
-
-        self.dimensions = {
-            'age': 1,
-            'static': len(subject_interface.static_idx),
-            'numeric': len(subject_interface.test_idx),
-            'proc_gram': proc_gram.basic_embeddings_dim,
-            'diag_gram': diag_gram.basic_embeddings_dim,
-            'proc_dag': len(subject_interface.proc_multi_ccs_idx),
-            'diag_dag': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_single_ccs_idx),
-            'state': state_size,
-            'numeric_hidden': numeric_hidden_size,
-            'ode_depth': ode_depth,
-            'init_depth': init_depth
-        }
-
-        self.ode_control_passes = ['age', 'static', 'proc_gram']
-        self.state_init_passes = ['age', 'static', 'diag_gram']
-
-        self.dimensions.update({
-            'ode_control':
-            sum(map(self.dimensions.get, self.ode_control_passes)),
-            'state_init':
-            sum(map(self.dimensions.get, self.state_init_passes))
-        })
-        """
-        Constructs the GRU-ODE-Bayes model with the given dimensions.
-        """
-        init_kwargs = {
-            "with_bias": bias,
-            "w_init": hk.initializers.RandomNormal(mean=0, stddev=1e-3),
-            "b_init": jnp.zeros
-        }
-        if ode_dyn == 'gru':
-            ode_dyn_cls = GRUDynamics
-        elif ode_dyn == 'res':
-            ode_dyn_cls = ResDynamics
-        elif ode_dyn == 'mlp':
-            ode_dyn_cls = MLPDynamics
-        else:
-            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
-
-        f_n_ode_init, f_n_ode = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(NeuralODE,
-                            ode_dyn_cls=ode_dyn_cls,
-                            state_size=state_size,
-                            depth=ode_depth,
-                            with_quad_augmentation=False,
-                            name='n_ode',
-                            tay_reg=tay_reg,
-                            **init_kwargs)))
-        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
-
-        f_update_init, f_update = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(GRUBayes,
-                            state_size=state_size,
-                            with_quad_augmentation=False,
-                            name='gru_bayes',
-                            **init_kwargs)))
-        self.f_update = jax.jit(f_update)
+        self.dimensions['numeric'] = len(subject_interface.test_idx)
+        self.dimensions['numeric_hidden'] = numeric_hidden_size
 
         f_num_init, f_num = hk.without_apply_rng(
             hk.transform(
@@ -178,52 +49,7 @@ class SNONET(BatchedApply):
 
         self.f_num = jax.jit(f_num)
 
-        f_dec_init, f_dec = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(StateDiagnosesDecoder,
-                            hidden_size=self.dimensions['diag_gram'],
-                            gram_size=self.dimensions['diag_gram'],
-                            output_size=self.dimensions['diag_out'],
-                            name='f_dec')))
-        self.f_dec = jax.jit(f_dec)
-
-        f_state_init_init, f_state_init = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(StateInitializer,
-                            hidden_size=self.dimensions['diag_gram'],
-                            state_size=state_size,
-                            depth=init_depth,
-                            name='f_init')))
-        self.f_state_init = jax.jit(f_state_init)
-
-        self.initializers = {
-            'f_n_ode': f_n_ode_init,
-            'f_update': f_update_init,
-            'f_num': f_num_init,
-            'f_dec': f_dec_init,
-            'f_state_init': f_state_init_init
-        }
-
-    def init_params(self, rng_key):
-        init_data = self._initialization_data()
-        return {
-            "diag_gram": self.diag_gram.init_params(rng_key),
-            "proc_gram": self.proc_gram.init_params(rng_key),
-            **{
-                label: init(rng_key, *init_data[label])
-                for label, init in self.initializers.items()
-            }
-        }
-
-    def state_size(self):
-        return self.dimensions['state']
-
-    def diag_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.diag_single_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
+        self.initializers['f_num'] = f_num_init
 
     def numeric_index(self) -> List[str]:
         index2test = {i: t for t, i in self.subject_interface.test_idx.items()}
@@ -313,17 +139,6 @@ class SNONET(BatchedApply):
         logvar = {i: lv for i, (_, lv) in mean_logvar.items()}
         return mean, logvar
 
-    def _f_n_ode(self, params, count_nfe, h, t, c):
-        h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
-            for i in h.keys()
-        }
-
-        nfe = sum(n for h, r, n in h_r_nfe.values())
-        r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
-        h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
-        return h1, r1, nfe
-
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
                   numeric_error: Dict[int, jnp.ndarray],
                   numeric_mask: Dict[int, jnp.ndarray],
@@ -341,39 +156,42 @@ class SNONET(BatchedApply):
 
         return updated_state
 
-    def _f_dec(
-        self, params: Any, state: Dict[int, jnp.ndarray], selection: Set[int]
-    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-        gram_out = {
-            i: self.f_dec(params['f_dec'], state[i])
-            for i in selection
+    @staticmethod
+    def _numeric_error(mean_true, mean_predicted, logvar_predicted):
+        error_num = {
+            i: numeric_error(mean_true[i], mean_predicted[i],
+                             logvar_predicted[i])
+            for i in mean_predicted.keys()
         }
-        gram = {i: g for i, (g, _) in gram_out.items()}
-        out = {i: o for i, (_, o) in gram_out.items()}
+        return error_num
 
-        return gram, out
+    @staticmethod
+    def _lognormal_loss(mask: Dict[int, jnp.ndarray],
+                        normal_error: Dict[int, jnp.ndarray],
+                        logvar: Dict[int, jnp.ndarray]):
+        loss = {
+            i: lognormal_loss(mask[i], normal_error[i], logvar[i])
+            for i in normal_error.keys()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
 
-    def _generate_embedding_mats(self, params):
-        diag = self.diag_gram.compute_embedding_mat(params["diag_gram"])
-        proc = self.proc_gram.compute_embedding_mat(params["proc_gram"])
-        return diag, proc
-
-    def _f_init(self, params, diag_gram, age, subjects: Iterable[int],
-                days_ahead: Dict[int, int]):
-        def _state_init(subject_id):
-            d = {
-                'diag_gram': diag_gram[subject_id],
-                'age': age[subject_id],
-                'static': self.subject_interface.subject_static(subject_id)
-            }
-            state_input = jnp.hstack(map(d.get, self.state_init_passes))
-            return {
-                'value': self.f_state_init(params['f_state_init'],
-                                           state_input),
-                'days': days_ahead[subject_id]
-            }
-
-        return {i: _state_init(i) for i in (set(diag_gram) & set(subjects))}
+    @staticmethod
+    def _kl_loss(mean_true: Dict[int, jnp.ndarray], mask: Dict[int,
+                                                               jnp.ndarray],
+                 mean_predicted: Dict[int, jnp.ndarray],
+                 logvar_predicted: Dict[int, jnp.ndarray]):
+        loss = {
+            i: compute_KL_loss(mean, mask[i], mean_predicted[i],
+                               logvar_predicted[i])
+            for i, mean in mean_predicted.items()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
 
     def __call__(self, params: Any, subjects_batch: List[int],
                  count_nfe: bool):
@@ -517,35 +335,29 @@ class SNONET(BatchedApply):
             'diag_detectability': diag_detectability,
         }
 
+    def detailed_loss(self, loss_mixing, params, res):
+        prejump_num_loss = res['prejump_num_loss']
+        postjump_num_loss = res['postjump_num_loss']
+        prejump_diag_loss = res['prejump_diag_loss']
+        postjump_diag_loss = res['postjump_diag_loss']
+        l1_loss = l1_absolute(params)
+        l2_loss = l2_squared(params)
+        dyn_loss = res['dyn_loss']
+        num_alpha = loss_mixing['L_num']
+        diag_alpha = loss_mixing['L_diag']
+        ode_alpha = loss_mixing['L_ode']
+        l1_alpha = loss_mixing['L_l1']
+        l2_alpha = loss_mixing['L_l2']
+        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
 
-def eval_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
-    res = ode_model(params, batch, count_nfe=True)
-
-    prejump_num_loss = res['prejump_num_loss']
-    postjump_num_loss = res['postjump_num_loss']
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss']
-    num_alpha = loss_mixing['L_num']
-    diag_alpha = loss_mixing['L_diag']
-    ode_alpha = loss_mixing['L_ode']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
-
-    num_loss = (1 -
-                num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    ode_loss = (1 - ode_alpha) * diag_loss + ode_alpha * num_loss
-    loss = ode_loss + (l1_alpha * l1_loss) + (l2_alpha *
-                                              l2_loss) + (dyn_alpha * dyn_loss)
-    nfe = res['nfe']
-    return {
-        'loss': {
+        num_loss = (
+            1 - num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
+        diag_loss = (1 - diag_alpha
+                     ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
+        ode_loss = (1 - ode_alpha) * diag_loss + ode_alpha * num_loss
+        loss = ode_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
+            dyn_alpha * dyn_loss)
+        return {
             'prejump_num_loss': prejump_num_loss,
             'postjump_num_loss': postjump_num_loss,
             'prejump_diag_loss': prejump_diag_loss,
@@ -558,44 +370,41 @@ def eval_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
             'dyn_loss': dyn_loss,
             'dyn_loss_per_week': dyn_loss / res['odeint_weeks'],
             'loss': loss
-        },
-        'stats': {
+        }
+
+    def eval_stats(self, res):
+        nfe = res['nfe']
+        return {
             'all_points_count': res['all_points_count'],
             'diag_count': res['diag_count'],
             'num_count': res['num_count'],
             'nfe/week': nfe / res['odeint_weeks'],
             'nfex1000': nfe / 1000
-        },
-        'diag_detectability': res['diag_detectability']
-    }
+        }
 
+    @staticmethod
+    def create_patient_interface(mimic_dir: str):
+        return create_patient_interface(mimic_dir)
 
-def loss_fn(ode_model: SNONET, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]):
-    res = ode_model(params, batch, count_nfe=False)
+    @staticmethod
+    def sample_training_config(trial: optuna.Trial, epochs):
+        config = SNONET._sample_ode_training_config(trial, epochs)
+        config['loss_mixing'] = {
+            **config['loss_mixing'], 'L_num':
+            trial.suggest_float('L_num', 1e-4, 1, log=True),
+            'L_ode':
+            trial.suggest_float('L_ode', 1e-5, 1, log=True)
+        }
+        return config
 
-    prejump_num_loss = res['prejump_num_loss']
-    postjump_num_loss = res['postjump_num_loss']
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
-    num_alpha = loss_mixing['L_num']
-    diag_alpha = loss_mixing['L_diag']
-    ode_alpha = loss_mixing['L_ode']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn']
+    @staticmethod
+    def sample_model_config(trial: optuna.Trial):
+        config = SNONETLite._sample_ode_model_config(trial)
+        config['numeric_hidden_size'] = trial.suggest_int(
+            'num_h_size', 100, 350, 50)
+        return config
 
-    num_loss = (1 -
-                num_alpha) * prejump_num_loss + num_alpha * postjump_num_loss
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    ode_loss = (1 - ode_alpha) * diag_loss + ode_alpha * num_loss
-
-    loss = ode_loss + (l1_alpha * l1_loss) + (l2_alpha *
-                                              l2_loss) + (dyn_alpha * dyn_loss)
-
-    return loss
-
+if __name__ == '__main__':
+    from .hpo_utils import capture_args, run_trials
+    kwargs = {'model_class': SNONET, **capture_args()}
+    run_trials(**kwargs)

@@ -1,31 +1,25 @@
 from absl import logging
-import pickle
-from datetime import datetime
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 
-import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax.experimental import optimizers
-from jax.tree_util import tree_map
 
-from tqdm import tqdm
+import optuna
 
-from .metrics import (bce, balanced_focal_bce, l2_squared, l1_absolute,
-                      evaluation_table, EvalFlag)
-from .utils import (parameters_size, wrap_module, load_config)
+from .metrics import (bce, balanced_focal_bce, l2_squared, l1_absolute)
+from .utils import wrap_module
 
-from .jax_interface import (SubjectJAXInterface, create_patient_interface,
-                            Ignore)
+from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import DAGGRAM
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
-from .train_snonet import BatchedApply
+from .abstract_model import AbstractModel
+from .glove import glove_representation
 
 
-class SNONETDiag(BatchedApply):
+class SNONETDiag(AbstractModel):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
                  tay_reg: Optional[int], state_size: int, init_depth: bool,
@@ -217,6 +211,26 @@ class SNONETDiag(BatchedApply):
 
         return {i: _state_init(i) for i in (set(diag_gram) & set(subjects))}
 
+    @staticmethod
+    def _gram_error(gram_true, gram_predicted):
+        error_gram = {
+            i: gram_true[i] - gram_predicted[i]
+            for i in gram_predicted.keys()
+        }
+        return error_gram
+
+    @staticmethod
+    def _diag_loss(loss_apply, diag_true: Dict[int, jnp.ndarray],
+                   diag_predicted: Dict[int, jnp.ndarray]):
+        loss = {
+            i: loss_apply(diag_true[i], diag_predicted[i])
+            for i in diag_predicted.keys()
+        }
+        if loss:
+            return sum(loss.values()) / len(loss)
+        else:
+            return 0.0
+
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
@@ -345,27 +359,23 @@ class SNONETDiag(BatchedApply):
 
         return ret
 
+    def detailed_loss(self, loss_mixing, params, res):
+        prejump_diag_loss = res['prejump_diag_loss']
+        postjump_diag_loss = res['postjump_diag_loss']
+        l1_loss = l1_absolute(params)
+        l2_loss = l2_squared(params)
+        dyn_loss = res['dyn_loss']
+        diag_alpha = loss_mixing['L_diag']
+        l1_alpha = loss_mixing['L_l1']
+        l2_alpha = loss_mixing['L_l2']
+        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
 
-def eval_fn(ode_model: SNONETDiag, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> Dict[str, float]:
-    res = ode_model(params, batch, count_nfe=True)
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss']
-    diag_alpha = loss_mixing['L_diag']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
+        diag_loss = (1 - diag_alpha
+                     ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
+        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
+            dyn_alpha * dyn_loss)
 
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-        dyn_alpha * dyn_loss)
-    nfe = res['nfe']
-    return {
-        'loss': {
+        return {
             'prejump_diag_loss': prejump_diag_loss,
             'postjump_diag_loss': postjump_diag_loss,
             'diag_loss': diag_loss,
@@ -374,34 +384,87 @@ def eval_fn(ode_model: SNONETDiag, loss_mixing: Dict[str, float],
             'l2_loss': l2_loss,
             'dyn_loss': dyn_loss,
             'dyn_loss/week': dyn_loss / res['odeint_weeks']
-        },
-        'stats': {
+        }
+
+    def eval_stats(self, res):
+        nfe = res['nfe']
+        return {
             'all_points_count': res['all_points_count'],
             'predictable_count': res['predictable_count'],
             'nfe/week': nfe / res['odeint_weeks'],
             'nfex1000': nfe / 1000
-        },
-        'diag_detectability': res['diag_detectability']
-    }
+        }
+
+    @staticmethod
+    def create_patient_interface(mimic_dir):
+        return create_patient_interface(mimic_dir, ignore_tests=True)
+
+    @classmethod
+    def create_model(cls, config, patient_interface, train_ids):
+        diag_glove, _ = glove_representation(
+            diag_idx=patient_interface.diag_multi_ccs_idx,
+            proc_idx=patient_interface.proc_multi_ccs_idx,
+            ccs_dag=patient_interface.dag,
+            subjects=[patient_interface.subjects[i] for i in train_ids],
+            **config['glove'])
+
+        diag_gram = DAGGRAM(
+            ccs_dag=patient_interface.dag,
+            code2index=patient_interface.diag_multi_ccs_idx,
+            basic_embeddings=diag_glove,
+            ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
+            **config['gram']['diag'])
+
+        return cls(subject_interface=patient_interface,
+                   diag_gram=diag_gram,
+                   **config['model'],
+                   tay_reg=config['training']['tay_reg'],
+                   diag_loss=config['training']['diag_loss'])
+
+    @staticmethod
+    def _sample_ode_training_config(trial: optuna.Trial, epochs):
+        config = AbstractModel._sample_training_config(trial, epochs)
+        config['loss_mixing'] = {
+            'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),
+            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
+            **config['loss_mixing']
+        }
+
+        config['diag_loss'] = trial.suggest_categorical(
+            'dx_loss', ['balanced_focal', 'bce']),
+        config['tay_reg'] = 3
+
+        return config
+
+    @staticmethod
+    def sample_training_config(trial: optuna.Trial):
+        return SNONETDiag._sample_ode_training_config(trial, epochs=2)
+
+    @staticmethod
+    def _sample_ode_model_config(trial: optuna.Trial):
+        model_params = {
+            'ode_dyn': trial.suggest_categorical(
+                'ode_dyn', ['mlp', 'gru', 'res'
+                            ]),  # Add depth conditional to 'mlp' or 'res'
+            'state_size': trial.suggest_int('s', 100, 350, 50),
+            'init_depth': trial.suggest_int('init_d', 1, 5),
+            'bias': True,
+            'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
+        }
+        if model_params['ode_dyn'] == 'gru':
+            model_params['ode_depth'] = 0
+        else:
+            model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 5)
+
+        return model_params
+
+    @staticmethod
+    def sample_model_config(trial: optuna.Trial):
+        return SNONETDiag._sample_ode_model_config(trial)
 
 
-def loss_fn(ode_model: SNONETDiag, loss_mixing: Dict[str, float],
-            params: optimizers.Params, batch: List[int]) -> float:
-    res = ode_model(params, batch, count_nfe=False)
 
-    prejump_diag_loss = res['prejump_diag_loss']
-    postjump_diag_loss = res['postjump_diag_loss']
-    l1_loss = l1_absolute(params)
-    l2_loss = l2_squared(params)
-    dyn_loss = res['dyn_loss'] / (res['odeint_weeks'])
-    diag_alpha = loss_mixing['L_diag']
-    l1_alpha = loss_mixing['L_l1']
-    l2_alpha = loss_mixing['L_l2']
-    dyn_alpha = loss_mixing['L_dyn']
-
-    diag_loss = (
-        1 - diag_alpha) * prejump_diag_loss + diag_alpha * postjump_diag_loss
-    loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-        dyn_alpha * dyn_loss)
-
-    return loss
+if __name__ == '__main__':
+    from .hpo_utils import capture_args, run_trials
+    kwargs = {'model_class': SNONETDiag, **capture_args()}
+    run_trials(**kwargs)
