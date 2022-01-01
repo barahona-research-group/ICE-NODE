@@ -40,7 +40,7 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 
 export OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
-export MLFLOW_STORE="sqlite:////vol/bitbucket/am8520/GP/ehr-data/mlflowdb.db"
+export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
 # Run program
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
@@ -50,7 +50,7 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials 30 \
+--num-trials 200 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1
 
