@@ -111,7 +111,10 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
     logging.info('[LOADING] Sampling & Initializing Models')
     config = sample_experiment_config(model_cls, trial)
 
-    mlflow.log_params(trial.params)
+    try:
+        mlflow.log_params(trial.params)
+    except Exception as e:
+        logging.warning(f'Supressed error when logging config sample: {e}')
 
     write_config(config, os.path.join(trial_dir, 'config.json'))
 
@@ -203,6 +206,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                mlflow_store: str, num_trials: int, mimic_processed_dir: str,
                output_dir: str, cpu: bool, job_id: str):
 
+    logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
     patient_interface = model_cls.create_patient_interface(mimic_processed_dir)
     logging.info('[DONE] patient interface')

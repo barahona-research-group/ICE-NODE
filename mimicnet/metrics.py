@@ -238,7 +238,7 @@ def evaluation_table(raw_results, codes_by_percentiles):
     evals = {colname: {} for colname in raw_results}
     flat_evals = {}
     for colname, res in raw_results.items():
-        for rowname, val in res['loss'].values():
+        for rowname, val in res['loss'].items():
             evals[colname][rowname] = val
 
         det = res['diag_detectability']
