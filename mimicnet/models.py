@@ -223,6 +223,7 @@ class NeuralODE(hk.Module):
     def __init__(self,
                  ode_dyn_cls: Any,
                  state_size: int,
+                 depth: int,
                  tay_reg: int,
                  with_bias: True,
                  timescale: float,
@@ -235,6 +236,7 @@ class NeuralODE(hk.Module):
         self.ode_dyn = TaylorAugmented(order=tay_reg,
                                        dynamics_cls=ode_dyn_cls,
                                        state_size=state_size,
+                                       depth=depth,
                                        name='ode_dyn',
                                        **init_kwargs)
 
