@@ -11,8 +11,7 @@ from .train_snonet_dp import SNONETDiagProc
 class SNONETLite(SNONETDiagProc):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
-                 ode_depth: int,
-                 ode_with_bias: bool, ode_init_var: float,
+                 ode_depth: int, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
                  init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
@@ -82,5 +81,4 @@ class SNONETLite(SNONETDiagProc):
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    kwargs = {'model_class': SNONETLite, **capture_args()}
-    run_trials(**kwargs)
+    run_trials(model_cls=SNONETLite, **capture_args())

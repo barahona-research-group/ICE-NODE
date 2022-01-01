@@ -137,5 +137,4 @@ class SNONETDiagStat(SNONETDiag):
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    kwargs = {'model_class': SNONETDiagStat, **capture_args()}
-    run_trials(**kwargs)
+    run_trials(model_cls=SNONETDiagStat, **capture_args())

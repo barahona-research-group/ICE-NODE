@@ -412,5 +412,4 @@ ode_with_bias=ode_with_bias,
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    kwargs = {'model_class': SNONET, **capture_args()}
-    run_trials(**kwargs)
+    run_trials(model_cls=SNONET,**capture_args())

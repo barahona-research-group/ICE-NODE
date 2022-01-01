@@ -13,9 +13,8 @@ from .glove import glove_representation
 class SNONETDiagProc(SNONETDiag):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
-                 ode_depth: int, ode_depth: int,
-                 ode_with_bias: bool, ode_init_var: float,
-                 ode_timescale: float, state_size: int,
+                 ode_depth: int, ode_with_bias: bool, ode_init_var: float,
+                 ode_timescale: float, tay_reg: int, state_size: int,
                  init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
                  max_odeint_days: int, **init_kwargs):
@@ -23,7 +22,7 @@ class SNONETDiagProc(SNONETDiag):
                          diag_gram=diag_gram,
                          ode_dyn=ode_dyn,
                          ode_depth=ode_depth,
-ode_with_bias=ode_with_bias,
+                         ode_with_bias=ode_with_bias,
                          ode_init_var=ode_init_var,
                          ode_timescale=ode_timescale,
                          tay_reg=tay_reg,
@@ -157,5 +156,4 @@ ode_with_bias=ode_with_bias,
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    kwargs = {'model_class': SNONETDiagProc, **capture_args()}
-    run_trials(**kwargs)
+    run_trials(model_cls=SNONETDiagProc, **capture_args())
