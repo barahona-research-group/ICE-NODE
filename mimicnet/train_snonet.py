@@ -45,6 +45,7 @@ class SNONET(SNONETLite):
             hk.transform(
                 wrap_module(GRUBayes, state_size=state_size, name='f_update')))
         self.f_update = jax.jit(f_update)
+        self.initializers['f_update'] = f_update_init
 
         f_num_init, f_num = hk.without_apply_rng(
             hk.transform(
@@ -54,7 +55,6 @@ class SNONET(SNONETLite):
                             name='f_numeric')))
 
         self.f_num = jax.jit(f_num)
-
         self.initializers['f_num'] = f_num_init
 
     def numeric_index(self) -> List[str]:
