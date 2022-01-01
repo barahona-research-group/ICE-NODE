@@ -389,8 +389,8 @@ class SNONET(SNONETLite):
         return create_patient_interface(mimic_dir)
 
     @staticmethod
-    def sample_training_config(trial: optuna.Trial, epochs):
-        config = SNONET._sample_ode_training_config(trial, epochs)
+    def sample_training_config(trial: optuna.Trial):
+        config = SNONET._sample_ode_training_config(trial, epochs=2)
         config['loss_mixing'] = {
             **config['loss_mixing'], 'L_num':
             trial.suggest_float('L_num', 1e-4, 1, log=True),
