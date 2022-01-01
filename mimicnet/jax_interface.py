@@ -20,13 +20,8 @@ jax_interface_logger = logging.getLogger("jax_interface")
 
 
 class AbstractSubjectJAXInterface:
-    def __init__(self,
-                 subjects: List[Subject],
-                 test_id_set: Set[int],
-                 dag: CCSDAG,
-                 ignore: Ignore = Ignore.NONE):
-
-        self.ignore = ignore
+    def __init__(self, subjects: List[Subject], test_id_set: Set[int],
+                 dag: CCSDAG):
 
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
@@ -83,7 +78,7 @@ class AbstractSubjectJAXInterface:
         return jnp.array(mask)
 
     def proc_multi_ccs_to_vec(self, proc_multi_ccs_codes):
-        if Ignore.proc(self.ignore) or len(proc_multi_ccs_codes) == 0:
+        if len(proc_multi_ccs_codes) == 0:
             return None
 
         n_cols = len(self.proc_multi_ccs_idx)
@@ -133,12 +128,9 @@ class AbstractSubjectJAXInterface:
 
 
 class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
-    def __init__(self,
-                 subjects: List[Subject],
-                 test_id_set: Set[int],
-                 dag: CCSDAG,
-                 ignore: Ignore = Ignore.NONE):
-        super().__init__(subjects, test_id_set, dag, ignore)
+    def __init__(self, subjects: List[Subject], test_id_set: Set[int],
+                 dag: CCSDAG):
+        super().__init__(subjects, test_id_set, dag)
         self.diag_sequences = self.make_diag_sequences()
 
     def diag_multi_ccs_to_vec(self, diag_multi_ccs_codes):
@@ -184,12 +176,9 @@ class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
 
 
 class SubjectJAXInterface(AbstractSubjectJAXInterface):
-    def __init__(self,
-                 subjects: List[Subject],
-                 test_id_set: Set[int],
-                 dag: CCSDAG,
-                 ignore: Ignore = Ignore.NONE):
-        super().__init__(subjects, test_id_set, dag, ignore)
+    def __init__(self, subjects: List[Subject], test_id_set: Set[int],
+                 dag: CCSDAG):
+        super().__init__(subjects, test_id_set, dag)
 
         self.static_features, self.static_idx = self.make_static2vec()
         self.nth_points = self.make_nth_points()
@@ -215,8 +204,7 @@ class SubjectJAXInterface(AbstractSubjectJAXInterface):
         return static_features, static_idx
 
     def tests2vec(self, tests: List[Test]) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        if (Ignore.tests(self.ignore) or self.test_idx is None
-                or len(self.test_idx) == 0 or len(tests) == 0):
+        if len(self.test_idx) == 0 or len(tests) == 0:
             return None
 
         n_cols = len(self.test_idx)
@@ -310,4 +298,4 @@ def create_patient_interface(processed_mimic_tables_dir: str,
     # CCS Knowledge Graph
     k_graph = CCSDAG()
 
-    return SubjectJAXInterface(patients, test_items, k_graph, ignore)
+    return SubjectJAXInterface(patients, test_items, k_graph)
