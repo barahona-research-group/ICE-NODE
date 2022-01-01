@@ -38,17 +38,16 @@ Note(Asem): Haiku modules don't define the input dimensions
 Input dimensions are defined during initialization step afterwards.
 '''
 
+# class QuadraticAugmentation(hk.Module):
+#     """
+#     Dynamics for ODE as a parametric function of the terms x1^2, x1x2, x1x3,...
+#     """
+#     def __init__(self, name: Optional[str] = None):
+#         super().__init__(name=name)
 
-class QuadraticAugmentation(hk.Module):
-    """
-    Dynamics for ODE as a parametric function of the terms x1^2, x1x2, x1x3,...
-    """
-    def __init__(self, name: Optional[str] = None):
-        super().__init__(name=name)
-
-    def __call__(self, x):
-        out = hk.Linear(jnp.size(x), with_bias=True)(x)
-        return out * x
+#     def __call__(self, x):
+#         out = hk.Linear(jnp.size(x), with_bias=True)(x)
+#         return out * x
 
 
 # IDEA: research on mixed loss functions.
@@ -63,13 +62,10 @@ class MLPDynamics(hk.Module):
                  state_size: int,
                  depth: int,
                  with_bias: bool,
-                 with_quad_augmentation: bool,
                  w_init: hk.initializers.Initializer,
                  b_init: hk.initializers.Initializer,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        self.with_quad_augmentation = with_quad_augmentation
-
         self.lin = [
             hk.Linear(state_size,
                       with_bias=with_bias,
@@ -79,11 +75,7 @@ class MLPDynamics(hk.Module):
         ]
 
     def __call__(self, h, t, c):
-        if self.with_quad_augmentation:
-            h_a = QuadraticAugmentation(name='quad_augment')(h)
-            out = jnp.hstack((c, h, h_a, t))
-        else:
-            out = jnp.hstack((c, h, t))
+        out = jnp.hstack((c, h, t))
 
         for lin in self.lin[:-1]:
             out = lin(out)
@@ -101,12 +93,10 @@ class ResDynamics(hk.Module):
                  state_size: int,
                  depth: int,
                  with_bias: bool,
-                 with_quad_augmentation: bool,
                  w_init: hk.initializers.Initializer,
                  b_init: hk.initializers.Initializer,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        self.with_quad_augmentation = with_quad_augmentation
         self.lin = [
             hk.Linear(state_size,
                       with_bias=with_bias,
@@ -116,11 +106,7 @@ class ResDynamics(hk.Module):
         ]
 
     def __call__(self, h, t, c):
-        if self.with_quad_augmentation:
-            h_a = QuadraticAugmentation(name='quad_augment')(h)
-            out = jnp.hstack((c, h, h_a, t))
-        else:
-            out = jnp.hstack((c, h, t))
+        out = jnp.hstack((c, h, t))
 
         res = jnp.zeros_like(h)
         for lin in self.lin[:-1]:
@@ -139,15 +125,10 @@ class GRUDynamics(hk.Module):
     def __init__(self,
                  state_size: int,
                  with_bias: bool,
-                 with_quad_augmentation: bool,
                  w_init: hk.initializers.Initializer,
                  b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+                 name: Optional[str] = None):
         super().__init__(name=name)
-
-        self.with_quad_augmentation = with_quad_augmentation
-
         self.__hc_r = hk.Sequential([
             hk.Linear(state_size,
                       with_bias=with_bias,
@@ -182,11 +163,7 @@ class GRUDynamics(hk.Module):
         Returns:
             dh/dt
         """
-        if self.with_quad_augmentation:
-            h_a = QuadraticAugmentation(name='quad_augment')(h)
-            htc = jnp.hstack((h, h_a, c))
-        else:
-            htc = jnp.hstack((h, c))
+        htc = jnp.hstack((h, c))
 
         r = self.__hc_r(htc)
         z = self.__hc_z(htc)
@@ -246,9 +223,14 @@ class NeuralODE(hk.Module):
                  ode_dyn_cls: Any,
                  state_size: int,
                  tay_reg: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+                 with_bias: True,
+                 timescale: float,
+                 init_var: float,
+                 name: Optional[str] = None):
         super().__init__(name=name)
+        self.timescale = timescale
+        init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
+        init_kwargs = {'with_bias': with_bias, 'b_init': init, 'w_init': init}
         self.ode_dyn = TaylorAugmented(order=tay_reg,
                                        dynamics_cls=ode_dyn_cls,
                                        state_size=state_size,
@@ -256,6 +238,7 @@ class NeuralODE(hk.Module):
                                        **init_kwargs)
 
     def __call__(self, count_nfe, h, t, c):
+        t = t / self.timescale
         if hk.running_init():
             return self.ode_dyn((h, jnp.zeros(1)), t, c), jnp.zeros(1), 0
         if count_nfe:
@@ -278,20 +261,14 @@ class NumericObsModel(hk.Module):
     def __init__(self,
                  numeric_size: int,
                  numeric_hidden_size: int,
-                 with_quad_augmentation: bool,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+                 name: Optional[str] = None):
         super().__init__(name=name)
-        self.with_quad_augmentation = with_quad_augmentation
         self.__numeric_size = numeric_size
         self.__numeric_hidden_size = numeric_hidden_size
         self.__lin_mean = hk.Linear(numeric_size)
         self.__lin_logvar = hk.Linear(numeric_size)
 
     def __call__(self, h: jnp.ndarray) -> jnp.ndarray:
-        if self.with_quad_augmentation:
-            h = jnp.hstack((h, QuadraticAugmentation('augment')(h)))
-
         out = hk.Linear(self.__numeric_hidden_size)(h)
         out = leaky_relu(out, negative_slope=2e-1)
 
@@ -303,13 +280,8 @@ class NumericObsModel(hk.Module):
 
 class GRUBayes(hk.Module):
     """Implements discrete update based on the received observations."""
-    def __init__(self,
-                 state_size: int,
-                 with_quad_augmentation: bool,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+    def __init__(self, state_size: int, name: Optional[str] = None):
         super().__init__(name=name)
-        self.with_quad_augmentation = with_quad_augmentation
         self.__prep = hk.Sequential([
             hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
             lambda o: leaky_relu(o, negative_slope=2e-1),
@@ -325,23 +297,14 @@ class GRUBayes(hk.Module):
 
         error_numeric = error_numeric * numeric_mask
         gru_input = self.__prep(jnp.hstack((error_numeric, error_gram)))
-        if self.with_quad_augmentation:
-            state = QuadraticAugmentation(name='state_augment')(state)
-            gru_input = QuadraticAugmentation(name='input_augment')(gru_input)
-
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
 
 
 class DiagnosesUpdate(hk.Module):
     """Implements discrete update based on the received observations."""
-    def __init__(self,
-                 state_size: int,
-                 with_quad_augmentation: bool,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+    def __init__(self, state_size: int, name: Optional[str] = None):
         super().__init__(name=name)
-        self.with_quad_augmentation = with_quad_augmentation
         self.__prep = hk.Sequential([
             hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
             lambda o: leaky_relu(o, negative_slope=2e-1),
@@ -355,10 +318,6 @@ class DiagnosesUpdate(hk.Module):
                  error_gram: jnp.ndarray) -> jnp.ndarray:
 
         gru_input = self.__prep(error_gram)
-        if self.with_quad_augmentation:
-            state = QuadraticAugmentation(name='state_augment')(state)
-            gru_input = QuadraticAugmentation(name='input_augment')(gru_input)
-
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
 
@@ -387,13 +346,13 @@ class StateInitializer(hk.Module):
 
         return jnp.tanh(self.lin_out(out))
 
+
 class StateDiagnosesDecoder(hk.Module):
     def __init__(self,
                  hidden_size: int,
                  gram_size: int,
                  output_size: int,
-                 name: Optional[str] = None,
-                 **init_kwargs):
+                 name: Optional[str] = None):
         super().__init__(name=name)
         self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
         self.__lin_gram = hk.Linear(gram_size, name='lin_gram')

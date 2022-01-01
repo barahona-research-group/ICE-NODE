@@ -22,10 +22,11 @@ from .glove import glove_representation
 class SNONETDiag(AbstractModel):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
-                 tay_reg: Optional[int], state_size: int, init_depth: bool,
-                 bias: bool, diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
-                                                 float], max_odeint_days: int,
-                 **init_kwargs):
+                 ode_with_bias: bool, ode_init_var: float,
+                 ode_timescale: float, tay_reg: Optional[int], state_size: int,
+                 init_depth: bool,
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
+                                     float], max_odeint_days: int):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
@@ -46,14 +47,6 @@ class SNONETDiag(AbstractModel):
             'ode_depth': ode_depth,
             'init_depth': init_depth
         }
-        """
-        Constructs the GRU-ODE-Bayes model with the given dimensions.
-        """
-        init_kwargs = {
-            "with_bias": bias,
-            "w_init": hk.initializers.RandomNormal(mean=0, stddev=1e-3),
-            "b_init": jnp.zeros
-        }
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
         elif ode_dyn == 'res':
@@ -69,19 +62,18 @@ class SNONETDiag(AbstractModel):
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_size,
                             depth=ode_depth,
-                            with_quad_augmentation=False,
+                            timescale=ode_timescale,
+                            with_bias=ode_with_bias,
+                            init_var=ode_init_var,
                             name='f_n_ode',
-                            tay_reg=tay_reg,
-                            **init_kwargs)))
+                            tay_reg=tay_reg)))
         self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
                 wrap_module(DiagnosesUpdate,
                             state_size=state_size,
-                            with_quad_augmentation=False,
-                            name='f_update',
-                            **init_kwargs)))
+                            name='f_update')))
         self.f_update = jax.jit(f_update)
 
         f_dec_init, f_dec = hk.without_apply_rng(
@@ -145,8 +137,8 @@ class SNONETDiag(AbstractModel):
         }
 
     def _extract_nth_points(self, params: Any, subjects_batch: List[int],
-                            diag_G: jnp.ndarray,
                             n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
+        diag_G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
 
         points = self.subject_interface.nth_points_batch(n, subjects_batch)
         if len(points) == 0:
@@ -163,15 +155,19 @@ class SNONETDiag(AbstractModel):
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
 
         return {
+            'ode_control': None,
             'days_ahead': days_ahead,
             'diag_gram': diag_gram,
             'diag_out': diag_out
         }
 
-    def _f_n_ode(self, params, count_nfe, h, t):
-        null = jnp.array([])
+    def _f_n_ode(self, params, count_nfe, h, t, c):
+        if c is None:
+            null = jnp.array([])
+            c = {i: null for i in h}
+
         h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], null)
+            i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
             for i in h.keys()
         }
 
@@ -201,8 +197,10 @@ class SNONETDiag(AbstractModel):
 
         return gram, out
 
-    def _f_init(self, params, diag_gram, subjects: Iterable[int],
+    def _f_init(self, params, points_n, subjects: Iterable[int],
                 days_ahead: Dict[int, int]):
+        diag_gram = points_n['diag_gram']
+
         def _state_init(subject_id):
             return {
                 'value': self.f_init(params['f_init'], diag_gram[subject_id]),
@@ -234,12 +232,8 @@ class SNONETDiag(AbstractModel):
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
-                 return_path: bool = False,
                  count_nfe: bool = False):
-
-        diag_G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
-        nth_points = partial(self._extract_nth_points, params, subjects_batch,
-                             diag_G)
+        nth_points = partial(self._extract_nth_points, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
         nn_decode = partial(self._f_dec, params)
@@ -269,14 +263,15 @@ class SNONETDiag(AbstractModel):
             days_ahead = points_n['days_ahead']
             diag_gram = points_n['diag_gram']
             diag_out = points_n['diag_out']
-            delta_weeks = {
-                i: (days_ahead[i] - subject_state[i]['days']) / 7.0
+            ode_c = points_n['ode_control']
+            delta_days = {
+                i: (days_ahead[i] - subject_state[i]['days'])
                 for i in (set(subject_state) & set(days_ahead))
                 if days_ahead[i] -
                 subject_state[i]['days'] <= self.max_odeint_days
             }
 
-            state_i = {i: subject_state[i]['value'] for i in delta_weeks}
+            state_i = {i: subject_state[i]['value'] for i in delta_days}
 
             # From points returned at index n:
             # - Consider for odeint:
@@ -288,15 +283,15 @@ class SNONETDiag(AbstractModel):
             #   that has not been previously initialized or has been reset.
 
             # Reset subjects state with long gaps
-            reset_subjects = set(days_ahead) - set(delta_weeks)
+            reset_subjects = set(days_ahead) - set(delta_days)
             map(lambda k: subject_state.pop(k, None), reset_subjects)
 
-            state_0 = nn_init(diag_gram, reset_subjects, days_ahead)
+            state_0 = nn_init(points_n, reset_subjects, days_ahead)
             subject_state.update(state_0)
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
             # 2. cases that have diagnosis at index n.
-            predictable_cases = set(delta_weeks).intersection(diag_out.keys())
+            predictable_cases = set(delta_days).intersection(diag_out.keys())
             predictable_count += len(predictable_cases)
 
             # No. of "Predictable" diagnostic points
@@ -307,9 +302,9 @@ class SNONETDiag(AbstractModel):
                 1. Improve the numerical stability and accuracy of numerical integration.
                 2. Force the ode_dyn model to learn weekly dynamics, which is a suitable time scale for cancer development.
             '''
-            odeint_weeks += sum(delta_weeks.values())
+            odeint_weeks += sum(delta_days.values()) / 7
             ################## ODEINT #####################
-            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_weeks)
+            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_days, ode_c)
             dyn_loss.append(_dyn_loss)
             nfe.append(_nfe)
             ########## PRE-JUMP DAG LOSS #########################
@@ -446,9 +441,11 @@ class SNONETDiag(AbstractModel):
             'ode_dyn': trial.suggest_categorical(
                 'ode_dyn', ['mlp', 'gru', 'res'
                             ]),  # Add depth conditional to 'mlp' or 'res'
+            'ode_with_bias': trial.suggest_categorical('ode_b', [True, False]),
+            'ode_init_var': trial.suggest_float('ode_iv', 1e-6, 1, log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e3, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 5),
-            'bias': True,
             'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':
@@ -461,7 +458,6 @@ class SNONETDiag(AbstractModel):
     @staticmethod
     def sample_model_config(trial: optuna.Trial):
         return SNONETDiag._sample_ode_model_config(trial)
-
 
 
 if __name__ == '__main__':

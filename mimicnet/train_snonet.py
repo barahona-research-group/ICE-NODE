@@ -9,7 +9,7 @@ import optuna
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import DAGGRAM
-from .models import NumericObsModel
+from .models import NumericObsModel, GRUBayes
 from .metrics import (l2_squared, l1_absolute, numeric_error, lognormal_loss,
                       compute_KL_loss)
 from .utils import wrap_module
@@ -19,33 +19,42 @@ from .train_snonet_lite import SNONETLite
 class SNONET(SNONETLite):
     def __init__(self, subject_interface: SubjectJAXInterface,
                  diag_gram: DAGGRAM, proc_gram: DAGGRAM, ode_dyn: str,
-                 ode_depth: int, tay_reg: Optional[int], state_size: int,
-                 numeric_hidden_size: int, init_depth: bool, bias: bool,
+                 ode_depth: int,
+                 ode_with_bias: bool, ode_init_var: float,
+                 ode_timescale: float, tay_reg: Optional[int], state_size: int,
+                 numeric_hidden_size: int, init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
-                 max_odeint_days: int, **init_kwargs):
+                 max_odeint_days: int):
         super().__init__(subject_interface=subject_interface,
                          diag_gram=diag_gram,
                          proc_gram=proc_gram,
                          ode_dyn=ode_dyn,
                          ode_depth=ode_depth,
+ode_with_bias=ode_with_bias,
+                         ode_init_var=ode_init_var,
+                         ode_timescale=ode_timescale,
                          tay_reg=tay_reg,
                          state_size=state_size,
                          init_depth=init_depth,
-                         bias=bias,
                          diag_loss=diag_loss,
                          max_odeint_days=max_odeint_days)
 
         self.dimensions['numeric'] = len(subject_interface.test_idx)
         self.dimensions['numeric_hidden'] = numeric_hidden_size
 
+        f_update_init, f_update = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(GRUBayes,
+                            state_size=state_size,
+                            name='f_update')))
+        self.f_update = jax.jit(f_update)
+
         f_num_init, f_num = hk.without_apply_rng(
             hk.transform(
                 wrap_module(NumericObsModel,
                             numeric_size=self.dimensions['numeric'],
                             numeric_hidden_size=numeric_hidden_size,
-                            with_quad_augmentation=False,
-                            name='f_numeric',
-                            **init_kwargs)))
+                            name='f_numeric')))
 
         self.f_num = jax.jit(f_num)
 
@@ -74,8 +83,9 @@ class SNONET(SNONETLite):
         }
 
     def _extract_nth_points(self, params, subjects_batch: List[int],
-                            diag_G: jnp.ndarray, proc_G: jnp.ndarray,
                             n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
+        diag_G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
+        proc_G = self.proc_gram.compute_embedding_mat(params["proc_gram"])
 
         points = self.subject_interface.nth_points_batch(n, subjects_batch)
         if len(points) == 0:
@@ -195,11 +205,7 @@ class SNONET(SNONETLite):
 
     def __call__(self, params: Any, subjects_batch: List[int],
                  count_nfe: bool):
-
-        diag_G, proc_G = self._generate_embedding_mats(params)
-
-        nth_points = partial(self._extract_nth_points, params, subjects_batch,
-                             diag_G, proc_G)
+        nth_points = partial(self._extract_nth_points, params, subjects_batch)
         nn_num = partial(self._f_num, params)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)  # state, e, m, diag_error
@@ -233,12 +239,11 @@ class SNONET(SNONETLite):
 
             all_points_count += len(points_n)
 
-            numeric = points_n['numeric']
-            mask = points_n['mask']
             days_ahead = points_n['days_ahead']
-            age = points_n['age']
             diag_gram = points_n['diag_gram']
             diag_out = points_n['diag_out']
+            numeric = points_n['numeric']
+            mask = points_n['mask']
             delta_days = {
                 i: (days_ahead[i] - subject_state[i]['days'])
                 for i in (set(subject_state) & set(days_ahead))
@@ -252,7 +257,7 @@ class SNONET(SNONETLite):
             reset_subjects = set(days_ahead) - set(delta_days)
             map(lambda k: subject_state.pop(k, None), reset_subjects)
 
-            state_0 = nn_init(diag_gram, age, reset_subjects, days_ahead)
+            state_0 = nn_init(points_n, reset_subjects, days_ahead)
             subject_state.update(state_0)
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
@@ -263,7 +268,7 @@ class SNONET(SNONETLite):
             diag_weights.append(len(diag_cases))
 
             num_cases = set(delta_days).intersection(numeric.keys())
-            num_count = len(num_cases)
+            num_count += len(num_cases)
             num_weights.append(sum(mask[i].sum() for i in num_cases) + 1e-10)
 
             odeint_weeks += sum(delta_days.values()) / 7.0
@@ -403,6 +408,7 @@ class SNONET(SNONETLite):
         config['numeric_hidden_size'] = trial.suggest_int(
             'num_h_size', 100, 350, 50)
         return config
+
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
