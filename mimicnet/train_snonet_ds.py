@@ -13,9 +13,7 @@ class SNONETDiagStat(SNONETDiag):
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
                  ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
-                 init_depth: bool, bias: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float],
-                 max_odeint_days: int, **init_kwargs):
+                 init_depth: bool, diag_loss: str, max_odeint_days: int):
         super().__init__(subject_interface=subject_interface,
                          diag_gram=diag_gram,
                          ode_dyn=ode_dyn,
