@@ -53,7 +53,6 @@ class SNONET(SNONETLite):
                             numeric_size=self.dimensions['numeric'],
                             numeric_hidden_size=numeric_hidden_size,
                             name='f_numeric')))
-
         self.f_num = jax.jit(f_num)
         self.initializers['f_num'] = f_num_init
 

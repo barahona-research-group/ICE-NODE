@@ -62,7 +62,7 @@ class SNONETLite(SNONETDiagProc):
     def _f_init(self, params, points_n, subjects: Iterable[int],
                 days_ahead: Dict[int, int]):
         diag_gram = points_n['diag_gram']
-        age = points_n['diag_gram']
+        age = points_n['age']
 
         def _state_init(subject_id):
             d = {
