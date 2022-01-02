@@ -154,7 +154,7 @@ def auc_scores(detectability, label_prefix):
     if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
         logging.warning('no detections or nan probs')
         # nan is returned indicator of undetermined AUC.
-        return float('nan')
+        return {'MACRO-AUC': float('nan'), 'MICRO-AUC': float('nan')}
 
     macro_auc = compute_auc(onp.hstack(gtruth), onp.hstack(preds))
     micro_auc = sum(compute_auc(t, p) for t, p in zip(gtruth, preds))
