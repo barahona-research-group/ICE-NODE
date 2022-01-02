@@ -67,8 +67,8 @@ class SNONETDiagStat(SNONETDiag):
         }
 
     def _extract_nth_points(self, params: Any, subjects_batch: List[int],
-                            diag_G: jnp.ndarray,
                             n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
+        diag_G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
 
         points = self.subject_interface.nth_points_batch(n, subjects_batch)
         if len(points) == 0:
@@ -101,17 +101,6 @@ class SNONETDiagStat(SNONETDiag):
             'ode_control': ode_control,
             'diag_out': diag_out
         }
-
-    def _f_n_ode(self, params, count_nfe, h, t, c):
-        h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
-            for i in h.keys()
-        }
-
-        nfe = sum(n for h, r, n in h_r_nfe.values())
-        r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
-        h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
-        return h1, r1, nfe
 
     def _f_init(self, params, points_n, subjects: Iterable[int],
                 days_ahead: Dict[int, int]):
