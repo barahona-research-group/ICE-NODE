@@ -251,7 +251,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
-    eval_freq = 10
+    eval_freq = 30
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
