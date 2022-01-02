@@ -76,7 +76,7 @@ class SNONET(SNONETLite):
             "f_update": [state, numeric, numeric, diag_gram_],
             "f_num": [state],
             "f_dec": [state],
-            "f_state_init": [state_in]
+            "f_init": [state_in]
         }
 
     def _extract_nth_points(self, params, subjects_batch: List[int],
