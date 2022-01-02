@@ -167,16 +167,25 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
             mlflow.set_tag('nan', 1)
             return float('nan')
 
-        if step % eval_freq != 0: continue
+        if step % eval_freq != 0:
+            continue
 
         params = get_params(opt_state)
-        raw_res = {
-            'TRN': eval_(params, train_batch),
-            'VAL': eval_(params, valid_ids),
-            'TST': eval_(params, test_ids)
-        }
-        eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
 
+        # Every 2 * eval_freq, evaluate also on the test split.
+        if step % (2 * eval_freq) == 0:
+            raw_res = {
+                'TRN': eval_(params, train_batch),
+                'VAL': eval_(params, valid_ids),
+                'TST': eval_(params, test_ids)
+            }
+        else:
+            raw_res = {
+                'TRN': eval_(params, train_batch),
+                'VAL': eval_(params, valid_ids)
+            }
+
+        eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
         try:
             mlflow.log_metrics(eval_flat, step=step)
         except Exception as e:
@@ -193,7 +202,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
         trial.report(auc, step)
 
-        if step % 50 == 0 or step > (iters - 10):
+        if step % (2 * eval_freq) == 0 or step > (iters - 10):
             trial.set_user_attr("progress", (step + 1) / iters)
             mlflow.set_tag("progress", (step + 1) / iters)
 
@@ -242,7 +251,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
-    eval_freq = 5
+    eval_freq = 10
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
