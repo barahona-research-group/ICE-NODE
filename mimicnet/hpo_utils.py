@@ -167,7 +167,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
             mlflow.set_tag('nan', 1)
             return float('nan')
 
-        if step % eval_freq != 0:
+        if (step % eval_freq != 0) and (step != iters - 1):
             continue
 
         params = get_params(opt_state)
@@ -251,7 +251,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
-    eval_freq = 30
+    eval_freq = 20
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
