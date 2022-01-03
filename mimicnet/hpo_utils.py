@@ -167,8 +167,11 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
             mlflow.set_tag('nan', 1)
             return float('nan')
 
-        if (step % eval_freq != 0) and (step != iters - 1):
+        if not (step % eval_freq == 0  or step == iters - 1):
             continue
+
+        trial.set_user_attr("progress", (step + 1) / iters)
+        mlflow.set_tag("progress", (step + 1) / iters)
 
         params = get_params(opt_state)
 
@@ -201,10 +204,6 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
             continue
 
         trial.report(auc, step)
-
-        if step % (2 * eval_freq) == 0 or step > (iters - 10):
-            trial.set_user_attr("progress", (step + 1) / iters)
-            mlflow.set_tag("progress", (step + 1) / iters)
 
         if trial.should_prune():
             raise optuna.TrialPruned()
