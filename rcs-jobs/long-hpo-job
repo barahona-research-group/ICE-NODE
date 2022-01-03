@@ -22,7 +22,7 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials 1 \
--N 5 \
+-N 4 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --cpu 
 
