@@ -232,7 +232,7 @@ class NeuralODE(hk.Module):
         super().__init__(name=name)
         self.timescale = timescale
         init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
-        init_kwargs = {'with_bias': with_bias, 'b_init': init, 'w_init': init}
+        init_kwargs = {'with_bias': with_bias, 'b_init': None, 'w_init': init}
         self.ode_dyn = TaylorAugmented(order=tay_reg,
                                        dynamics_cls=ode_dyn_cls,
                                        state_size=state_size,
