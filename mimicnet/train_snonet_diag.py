@@ -440,16 +440,16 @@ class SNONETDiag(AbstractModel):
                 'ode_dyn', ['mlp', 'gru', 'res'
                             ]),  # Add depth conditional to 'mlp' or 'res'
             'ode_with_bias': trial.suggest_categorical('ode_b', [True, False]),
-            'ode_init_var': trial.suggest_float('ode_iv', 1e-6, 1, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e3, log=True),
+            'ode_init_var': trial.suggest_float('ode_iv', 1e-5, 1, log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e4, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
-            'init_depth': trial.suggest_int('init_d', 1, 5),
+            'init_depth': trial.suggest_int('init_d', 1, 4),
             'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0
         else:
-            model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 5)
+            model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 4)
 
         return model_params
 
