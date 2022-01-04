@@ -172,7 +172,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
     for step in tqdm(range(iters)):
 
-        if datetime.now() > trial_stop_time:
+        if datetime.now() + timedelta(minutes=30) > trial_stop_time:
             trial.set_user_attr('timeout', 1)
             mlflow.set_tag('timeout', 1)
             break
