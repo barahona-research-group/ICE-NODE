@@ -78,8 +78,9 @@ if __name__ == '__main__':
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
         mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
         mimic_processed_dir, '--num-trials',
-        str(num_trials), '--trials-time-limit', trials_time_limit,
-        '--training-time-limit', training_time_limit, '--job-id', job_id
+        str(num_trials), '--trials-time-limit',
+        str(trials_time_limit), '--training-time-limit',
+        str(training_time_limit), '--job-id', job_id
     ]
     if cpu:
         cmd.append('--cpu')
