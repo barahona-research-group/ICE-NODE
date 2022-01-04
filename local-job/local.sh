@@ -3,6 +3,8 @@ cp ../mimicnet . -r
 OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
+which python
+
 # Run program
 python -m mimicnet.train_$MODEL \
 --output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/debug_${MODEL} \
@@ -12,7 +14,7 @@ python -m mimicnet.train_$MODEL \
 --mlflow-store $MLFLOW_STORE \
 --num-trials 1 \
 --trials-time-limit 24 \
---training-time-limit 12\
+--training-time-limit 12 \
 --job-id 0 \
 --cpu 
 
