@@ -172,7 +172,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
     for step in tqdm(range(iters)):
 
-        if datetime.now() + timedelta(minutes=30) > trial_stop_time:
+        if datetime.now() > trial_stop_time:
             trial.set_user_attr('timeout', 1)
             mlflow.set_tag('timeout', 1)
             break
@@ -279,7 +279,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
-        if trial_stop_time > termination_time:
+        if trial_stop_time + timedelta(minutes=20) > termination_time:
             raise Exception('Time-limit exceeded, abort.')
 
         return objective(model_cls=model_cls,
