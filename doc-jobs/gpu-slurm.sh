@@ -51,6 +51,8 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials 200 \
+--trials-time-limit 48 \
+--training-time-limit 12 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1
 

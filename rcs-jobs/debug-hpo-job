@@ -24,6 +24,8 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --num-trials 1 \
 -N 5 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
+--trials-time-limit 2 \
+--training-time-limit 1 \
 --cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

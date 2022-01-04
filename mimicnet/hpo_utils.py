@@ -2,8 +2,9 @@ import os
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, Dict, Any
+from typing import Iterable, Dict, Any, Optional
 from functools import partial
+from datetime import datetime, timedelta
 from absl import logging
 from tqdm import tqdm
 
@@ -67,6 +68,15 @@ def capture_args():
                         type=int,
                         required=True,
                         help='Number of HPO trials.')
+    parser.add_argument('--trials-time-limit',
+                        type=int,
+                        required=True,
+                        help='Number of maximum hours for all trials')
+    parser.add_argument(
+        '--training-time-limit',
+        type=int,
+        required=True,
+        help='Number of maximum hours for training in single trial')
 
     parser.add_argument(
         '--optuna-store',
@@ -93,13 +103,16 @@ def capture_args():
         'mimic_processed_dir': args.mimic_processed_dir,
         'output_dir': args.output_dir,
         'job_id': args.job_id or 'unknown',
-        'cpu': args.cpu
+        'cpu': args.cpu,
+        'trials_time_limit': args.trials_time_limit,
+        'training_time_limit': args.training_time_limit
     }
 
 
 def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
               valid_ids, rng, eval_freq, job_id, output_dir,
-              codes_by_percentiles, trial: optuna.Trial):
+              codes_by_percentiles, trial_stop_time: datetime,
+              trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
     mlflow.set_tag('job_id', job_id)
 
@@ -158,6 +171,12 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
     mlflow.set_tag('steps', iters)
 
     for step in tqdm(range(iters)):
+
+        if datetime.now() > trial_stop_time:
+            trial.set_user_attr('timeout', 1)
+            mlflow.set_tag('timeout', 1)
+            break
+
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
@@ -167,7 +186,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
             mlflow.set_tag('nan', 1)
             return float('nan')
 
-        if not (step % eval_freq == 0  or step == iters - 1):
+        if not (step % eval_freq == 0 or step == iters - 1):
             continue
 
         trial.set_user_attr("progress", (step + 1) / iters)
@@ -212,8 +231,10 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
 def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                mlflow_store: str, num_trials: int, mimic_processed_dir: str,
-               output_dir: str, cpu: bool, job_id: str):
+               output_dir: str, cpu: bool, job_id: str, trials_time_limit: int,
+               training_time_limit: int):
 
+    termination_time = datetime.now() + timedelta(hours=trials_time_limit)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
     patient_interface = model_cls.create_patient_interface(mimic_processed_dir)
@@ -254,8 +275,13 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
+
     @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
+        trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
+        if trial_stop_time > termination_time:
+            raise Exception('Time-limit exceeded, abort.')
+
         return objective(model_cls=model_cls,
                          patient_interface=patient_interface,
                          train_ids=train_ids,
@@ -266,6 +292,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                          job_id=job_id,
                          output_dir=output_dir,
                          codes_by_percentiles=codes_by_percentiles,
+                         trial_stop_time=trial_stop_time,
                          trial=trial)
 
     study.optimize(objective_f,

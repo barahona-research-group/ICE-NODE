@@ -24,6 +24,8 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials 3 \
+--trials-time-limit 72 \
+--training-time-limit 36 \
 -N 10 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --cpu 

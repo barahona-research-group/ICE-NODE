@@ -36,6 +36,15 @@ if __name__ == '__main__':
         help='Storage URL for mlflow records, e.g. for PostgresQL database')
 
     parser.add_argument('--study-tag', required=True)
+    parser.add_argument('--trials-time-limit',
+                        type=int,
+                        required=True,
+                        help='Number of maximum hours for all trials')
+    parser.add_argument(
+        '--training-time-limit',
+        type=int,
+        required=True,
+        help='Number of maximum hours for training in single trial')
 
     parser.add_argument('-N',
                         '--num-processes',
@@ -56,6 +65,8 @@ if __name__ == '__main__':
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
     cpu = args.cpu
+    trials_time_limit = args.trials_time_limit
+    training_time_limit = args.training_time_limit
     N = args.num_processes
     job_id = args.job_id or 'unknown'
 
@@ -67,7 +78,8 @@ if __name__ == '__main__':
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
         mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
         mimic_processed_dir, '--num-trials',
-        str(num_trials), '--job-id', job_id
+        str(num_trials), '--trials-time-limit', trials_time_limit,
+        '--training-time-limit', training_time_limit, '--job-id', job_id
     ]
     if cpu:
         cmd.append('--cpu')
