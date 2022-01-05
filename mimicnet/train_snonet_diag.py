@@ -417,15 +417,18 @@ class SNONETDiag(AbstractModel):
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
-        config['loss_mixing'] = {
-            'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),
-            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
-            **config['loss_mixing']
-        }
-
+        config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
         config['diag_loss'] = trial.suggest_categorical(
             'dx_loss', ['balanced_focal', 'bce'])
-        config['tay_reg'] = 3
+
+        config['loss_mixing'] = {
+            'L_diag':
+            trial.suggest_float('L_dx', 1e-4, 1, log=True),
+            'L_dyn':
+            trial.suggest_float('L_dyn', 1e-3, 1e3, log=True)
+            if config['tay_reg'] > 0 else 0.0,
+            **config['loss_mixing']
+        }
 
         return config
 
