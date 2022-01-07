@@ -302,4 +302,4 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     study.optimize(objective_f,
                    n_trials=num_trials,
                    callbacks=[mlflow_callback_noexcept(mlflc)],
-                   catch=[RuntimeError])
+                   catch=(RuntimeError,))
