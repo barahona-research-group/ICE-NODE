@@ -25,6 +25,9 @@ from .utils import (parameters_size, tree_hasnan, write_config)
 from .abstract_model import AbstractModel
 
 
+class ResourceTimeout(Exception):
+    pass
+
 def mlflow_callback_noexcept(callback):
     def apply(study, trial):
         try:
@@ -280,7 +283,8 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     def objective_f(trial: optuna.Trial):
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
         if trial_stop_time + timedelta(minutes=20) > termination_time:
-            raise Exception('Time-limit exceeded, abort.')
+            trial.set_user_attr('timeout', 1)
+            raise ResourceTimeout('Time-limit exceeded, abort.')
 
         return objective(model_cls=model_cls,
                          patient_interface=patient_interface,
@@ -297,4 +301,5 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
 
     study.optimize(objective_f,
                    n_trials=num_trials,
-                   callbacks=[mlflow_callback_noexcept(mlflc)])
+                   callbacks=[mlflow_callback_noexcept(mlflc)],
+                   catch=[RuntimeError])
