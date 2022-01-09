@@ -447,7 +447,7 @@ class SNONETDiag(AbstractModel):
             'ode_timescale': trial.suggest_float('ode_ts', 1, 1e4, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
-            'max_odeint_days': trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
+            'max_odeint_days': 10 * 360 #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0
