@@ -8,7 +8,8 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (bce, balanced_focal_bce, l2_squared, l1_absolute)
+from .metrics import (bce, softmax_loss, balanced_focal_bce, l2_squared,
+                      l1_absolute)
 from .utils import wrap_module
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
@@ -34,6 +35,8 @@ class SNONETDiag(AbstractModel):
         if diag_loss == 'balanced_focal':
             self.diag_loss = lambda t, p: balanced_focal_bce(
                 t, p, gamma=2, beta=0.999)
+        elif diag_loss == 'softmax':
+            self.diag_loss = softmax_loss
         elif diag_loss == 'bce':
             self.diag_loss = bce
         else:
@@ -419,7 +422,7 @@ class SNONETDiag(AbstractModel):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
         config['diag_loss'] = trial.suggest_categorical(
-            'dx_loss', ['balanced_focal', 'bce'])
+            'dx_loss', ['balanced_focal', 'bce', 'softmax'])
 
         config['loss_mixing'] = {
             'L_diag':
@@ -447,7 +450,8 @@ class SNONETDiag(AbstractModel):
             'ode_timescale': trial.suggest_float('ode_ts', 1, 1e4, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
-            'max_odeint_days': 10 * 360 #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
+            'max_odeint_days':
+            10 * 360  #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0

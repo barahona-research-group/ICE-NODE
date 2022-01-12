@@ -25,6 +25,12 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray):
     return jnp.mean(y * softplus(-logits) + (1 - y) * softplus(logits))
 
 
+@jax.jit
+def softmax_loss(y: jnp.ndarray, logits: jnp.ndarray):
+    return -jnp.sum(y * jax.nn.log_softmax(logits) +
+                    (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
+
+
 # The following loss function employs two concepts:
 # A) Effective number of sample, to mitigate class imbalance:
 # Paper: Class-Balanced Loss Based on Effective Number of Samples (Cui et al)
