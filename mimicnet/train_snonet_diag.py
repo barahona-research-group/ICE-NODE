@@ -421,8 +421,7 @@ class SNONETDiag(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
-        config['diag_loss'] = trial.suggest_categorical(
-            'dx_loss', ['balanced_focal', 'bce', 'softmax'])
+        config['diag_loss'] = 'softmax' # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax'])
 
         config['loss_mixing'] = {
             'L_diag':
