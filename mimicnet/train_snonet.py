@@ -96,8 +96,8 @@ class SNONET(SNONETLite):
             for i, v in points.items() if v['proc_multi_ccs_vec'] is not None
         }
         diag_out = {
-            i: v['diag_single_ccs_vec']
-            for i, v in points.items() if v['diag_single_ccs_vec'] is not None
+            i: v['diag_multi_ccs_vec']
+            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
         numeric = {
@@ -379,7 +379,7 @@ class SNONET(SNONETLite):
             'all_points_count': res['all_points_count'],
             'diag_count': res['diag_count'],
             'num_count': res['num_count'],
-            'nfe/week': nfe / res['odeint_weeks'],
+            'nfe_per_week': nfe / res['odeint_weeks'],
             'nfex1000': nfe / 1000
         }
 

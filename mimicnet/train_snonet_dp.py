@@ -33,7 +33,7 @@ class SNONETDiagProc(SNONETDiag):
         self.proc_gram = proc_gram
 
         self.dimensions['proc_gram'] = proc_gram.basic_embeddings_dim
-        self.dimensions['proc_dag'] = len(subject_interface.proc_multi_ccs_idx)
+        self.dimensions['proc_in'] = len(subject_interface.proc_multi_ccs_idx)
 
         self.ode_control_passes = ['proc_gram']
         self.state_init_passes = ['diag_gram']
@@ -90,8 +90,8 @@ class SNONETDiagProc(SNONETDiag):
             for i, v in points.items() if v['proc_multi_ccs_vec'] is not None
         }
         diag_out = {
-            i: v['diag_single_ccs_vec']
-            for i, v in points.items() if v['diag_single_ccs_vec'] is not None
+            i: v['diag_multi_ccs_vec']
+            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
         age = {i: v['age'] for i, v in points.items()}

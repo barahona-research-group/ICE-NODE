@@ -36,8 +36,8 @@ class SNONETDiag(AbstractModel):
         self.diag_loss = diag_loss
         self.dimensions = {
             'diag_gram': diag_gram.basic_embeddings_dim,
-            'diag_dag': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_single_ccs_idx),
+            'diag_in': len(subject_interface.diag_multi_ccs_idx),
+            'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size,
             'ode_depth': ode_depth,
             'init_depth': init_depth
@@ -144,8 +144,8 @@ class SNONETDiag(AbstractModel):
             for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         diag_out = {
-            i: v['diag_single_ccs_vec']
-            for i, v in points.items() if v['diag_single_ccs_vec'] is not None
+            i: v['diag_multi_ccs_vec']
+            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
 
@@ -371,7 +371,7 @@ class SNONETDiag(AbstractModel):
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
             'dyn_loss': dyn_loss,
-            'dyn_loss/week': dyn_loss / res['odeint_weeks']
+            'dyn_loss_per_week': dyn_loss / res['odeint_weeks']
         }
 
     def eval_stats(self, res):
@@ -379,7 +379,7 @@ class SNONETDiag(AbstractModel):
         return {
             'all_points_count': res['all_points_count'],
             'predictable_count': res['predictable_count'],
-            'nfe/week': nfe / res['odeint_weeks'],
+            'nfe_per_week': nfe / res['odeint_weeks'],
             'nfex1000': nfe / 1000
         }
 
@@ -396,7 +396,8 @@ class SNONETDiag(AbstractModel):
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_single_ccs_frequency_vec(train_ids)
+            codes_dist = patient_interface.diag_multi_ccs_frequency_vec(
+                train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:
@@ -432,8 +433,9 @@ class SNONETDiag(AbstractModel):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
         # UNDO
-        config[
-            'diag_loss'] = 'balanced_bce'  # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
+        config['diag_loss'] = trial.suggest_categorical(
+            'dx_loss', ['balanced_bce', 'softmax'])
+        # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
             'L_diag':

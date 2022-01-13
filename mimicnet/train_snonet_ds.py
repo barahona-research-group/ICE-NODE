@@ -79,8 +79,8 @@ class SNONETDiagStat(SNONETDiag):
             for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         diag_out = {
-            i: v['diag_single_ccs_vec']
-            for i, v in points.items() if v['diag_single_ccs_vec'] is not None
+            i: v['diag_multi_ccs_vec']
+            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
         age = {i: v['age'] for i, v in points.items()}

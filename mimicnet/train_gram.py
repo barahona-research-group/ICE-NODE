@@ -32,8 +32,8 @@ class GRAM(AbstractModel):
 
         self.dimensions = {
             'diag_gram': diag_gram.basic_embeddings_dim,
-            'diag_dag': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_single_ccs_idx),
+            'diag_in': len(subject_interface.diag_multi_ccs_idx),
+            'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size
         }
 
@@ -84,7 +84,7 @@ class GRAM(AbstractModel):
             # Exclude last one for irrelevance
             hierarchical_diag = _diag_seqs['diag_multi_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
-            flat_diag = _diag_seqs['diag_single_ccs_vec'][1:]
+            flat_diag = _diag_seqs['diag_multi_ccs_vec'][1:]
             gram_seqs = map(gram, hierarchical_diag)
 
             diag_detectability[subject_id] = {}

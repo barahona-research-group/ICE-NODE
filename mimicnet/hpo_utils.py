@@ -118,6 +118,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
               trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
     mlflow.set_tag('job_id', job_id)
+    mlflow.set_tag('trial_number', trial.number)
 
     trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
     Path(trial_dir).mkdir(parents=True, exist_ok=True)
