@@ -396,7 +396,7 @@ class SNONETDiag(AbstractModel):
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_single_ccs_frequency(train_ids)
+            codes_dist = patient_interface.diag_single_ccs_frequency_vec(train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:
