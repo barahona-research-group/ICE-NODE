@@ -26,6 +26,12 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray):
 
 
 @jax.jit
+def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, weights: jnp.ndarray):
+    return jnp.mean(weights * (y * softplus(-logits) +
+                               (1 - y) * softplus(logits)))
+
+
+@jax.jit
 def softmax_loss(y: jnp.ndarray, logits: jnp.ndarray):
     return -jnp.sum(y * jax.nn.log_softmax(logits) +
                     (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))

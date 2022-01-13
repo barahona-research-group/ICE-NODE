@@ -98,6 +98,16 @@ class AbstractSubjectJAXInterface:
                     counter[self.diag_single_ccs_idx[code]] += 1
         return counter
 
+    def diag_single_ccs_frequency_vec(self,
+                                      subjects: Optional[List[int]] = None):
+        counts = self.diag_single_ccs_frequency(subjects)
+        n_cols = len(self.diag_single_ccs_idx)
+
+        counts_vec = np.zeros(n_cols)
+        for i, c in counts.items():
+            counts_vec[i] = c
+        return jnp.array(counts_vec)
+
     def diag_single_ccs_by_percentiles(self,
                                        section_percentage: float = 20,
                                        subjects: Optional[List[int]] = None):

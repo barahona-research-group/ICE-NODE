@@ -8,8 +8,8 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (bce, softmax_loss, balanced_focal_bce, l2_squared,
-                      l1_absolute)
+from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
+                      l2_squared, l1_absolute)
 from .utils import wrap_module
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
@@ -25,23 +25,15 @@ class SNONETDiag(AbstractModel):
                  diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
                  ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
-                 init_depth: bool, diag_loss: str, max_odeint_days: int):
+                 init_depth: bool,
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
+                                     float], max_odeint_days: int):
 
         self.subject_interface = subject_interface
         self.diag_gram = diag_gram
         self.tay_reg = tay_reg
         self.max_odeint_days = max_odeint_days
-
-        if diag_loss == 'balanced_focal':
-            self.diag_loss = lambda t, p: balanced_focal_bce(
-                t, p, gamma=2, beta=0.999)
-        elif diag_loss == 'softmax':
-            self.diag_loss = softmax_loss
-        elif diag_loss == 'bce':
-            self.diag_loss = bce
-        else:
-            raise ValueError(f'Unrecognized diag_loss: {diag_loss}')
-
+        self.diag_loss = diag_loss
         self.dimensions = {
             'diag_gram': diag_gram.basic_embeddings_dim,
             'diag_dag': len(subject_interface.diag_multi_ccs_idx),
@@ -396,6 +388,21 @@ class SNONETDiag(AbstractModel):
         return create_patient_interface(mimic_dir, ignore_tests=True)
 
     @classmethod
+    def select_loss(cls, loss_label: str, patient_interface, train_ids):
+        if loss_label == 'balanced_focal':
+            return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
+        elif loss_label == 'softmax':
+            return softmax_loss
+        elif loss_label == 'bce':
+            return bce
+        elif loss_label == 'balanced_bce':
+            codes_dist = patient_interface.diag_single_ccs_frequency(train_ids)
+            weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
+            return lambda t, logits: weighted_bce(t, logits, weights)
+        else:
+            raise ValueError(f'Unrecognized diag_loss: {loss_label}')
+
+    @classmethod
     def create_model(cls, config, patient_interface, train_ids):
         diag_glove, _ = glove_representation(
             diag_idx=patient_interface.diag_multi_ccs_idx,
@@ -411,17 +418,22 @@ class SNONETDiag(AbstractModel):
             ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
             **config['gram']['diag'])
 
+        diag_loss = cls.select_loss(config['training']['diag_loss'],
+                                    patient_interface, train_ids)
+
         return cls(subject_interface=patient_interface,
                    diag_gram=diag_gram,
                    **config['model'],
                    tay_reg=config['training']['tay_reg'],
-                   diag_loss=config['training']['diag_loss'])
+                   diag_loss=diag_loss)
 
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
-        config['diag_loss'] = 'softmax' # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax'])
+        # UNDO
+        config[
+            'diag_loss'] = 'balanced_bce'  # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
             'L_diag':
@@ -450,6 +462,7 @@ class SNONETDiag(AbstractModel):
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
             'max_odeint_days':
+            # UNDO
             10 * 360  #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':

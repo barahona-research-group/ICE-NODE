@@ -41,6 +41,7 @@ class AbstractModel:
         res = self(params, batch, count_nfe=False)
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
+
     @classmethod
     def create_model(cls, config, patient_interface, train_ids):
         raise Exception('Should be overriden')

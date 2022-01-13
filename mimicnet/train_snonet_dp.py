@@ -138,12 +138,14 @@ class SNONETDiagProc(SNONETDiag):
             ancestors_mat=patient_interface.proc_multi_ccs_ancestors_mat,
             **config['gram']['proc'])
 
+        diag_loss = cls.select_loss(config['training']['diag_loss'],
+                                    patient_interface, train_ids)
         return cls(subject_interface=patient_interface,
                    diag_gram=diag_gram,
                    proc_gram=proc_gram,
                    **config['model'],
                    tay_reg=config['training']['tay_reg'],
-                   diag_loss=config['training']['diag_loss'])
+                   diag_loss=diag_loss)
 
     @staticmethod
     def sample_gram_config(trial: optuna.Trial):
