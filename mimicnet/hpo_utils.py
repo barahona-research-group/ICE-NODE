@@ -2,9 +2,11 @@ import os
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, Dict, Any, Optional
+from typing import Iterable, Dict, Any, Optional, Tuple
 from functools import partial
 from datetime import datetime, timedelta
+import pickle
+import copy
 from absl import logging
 from tqdm import tqdm
 
@@ -13,6 +15,7 @@ import jax.numpy as jnp
 from jax.experimental import optimizers
 
 import optuna
+from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
@@ -27,6 +30,7 @@ from .abstract_model import AbstractModel
 
 class ResourceTimeout(Exception):
     pass
+
 
 def mlflow_callback_noexcept(callback):
     def apply(study, trial):
@@ -47,12 +51,21 @@ def sample_glove_config(trial: optuna.Trial):
     }
 
 
-def sample_experiment_config(model_cls: AbstractModel, trial: optuna.Trial):
+def sample_experiment_config(
+        model_cls: AbstractModel,
+        trial: optuna.Trial,
+        reuse_config: Optional[Tuple[Iterable[str], FrozenTrial]] = None):
+    if reuse_config:
+        components, frozen_trial = reuse_config
+        select = lambda c: frozen_trial if c in components else trial
+    else:
+        select = lambda c: trial
+
     return {
-        'glove': sample_glove_config(trial),
-        'gram': model_cls.sample_gram_config(trial),
-        'model': model_cls.sample_model_config(trial),
-        'training': model_cls.sample_training_config(trial)
+        'glove': sample_glove_config(select('glove')),
+        'gram': model_cls.sample_gram_config(select('gram')),
+        'model': model_cls.sample_model_config(select('model')),
+        'training': model_cls.sample_training_config(select('training'))
     }
 
 
@@ -114,13 +127,18 @@ def capture_args():
 
 def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
               valid_ids, rng, eval_freq, job_id, output_dir,
-              codes_by_percentiles, trial_stop_time: datetime,
+              codes_by_percentiles, trial_stop_time: datetime, frozen: bool,
               trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
     mlflow.set_tag('job_id', job_id)
     mlflow.set_tag('trial_number', trial.number)
 
-    trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+    if frozen:
+        trial_dir = os.path.join(output_dir,
+                                 f'frozen_trial_{trial.number:03d}')
+    else:
+        trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+
     Path(trial_dir).mkdir(parents=True, exist_ok=True)
 
     trial.set_user_attr('dir', trial_dir)
@@ -198,8 +216,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
         params = get_params(opt_state)
 
-        # Every 2 * eval_freq, evaluate also on the test split.
-        if step % (2 * eval_freq) == 0:
+        if frozen or step == iters - 1:
             raw_res = {
                 'TRN': eval_(params, train_batch),
                 'VAL': eval_(params, valid_ids),
@@ -217,7 +234,14 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
         except Exception as e:
             logging.warning(f'Exception when logging metrics to mlflow: {e}')
 
-        eval_df.to_csv(os.path.join(trial_dir, f'step{step:03d}_eval.csv'))
+        eval_df.to_csv(os.path.join(trial_dir, f'step{step:04d}_eval.csv'))
+
+        # Only dump parameters for frozen trials.
+        if frozen:
+            fname = os.path.join(trial_dir, f'step{step:04d}_params.pickle')
+            with open(fname, 'wb') as file_rsc:
+                pickle.dump(get_params(opt_state), file_rsc)
+
         logging.info(eval_df)
 
         auc = eval_df.loc['MICRO-AUC', 'VAL']
@@ -279,7 +303,6 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
-
     @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
@@ -298,9 +321,19 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                          output_dir=output_dir,
                          codes_by_percentiles=codes_by_percentiles,
                          trial_stop_time=trial_stop_time,
-                         trial=trial)
+                         trial=trial,
+                         frozen=num_trials <= 0)
 
-    study.optimize(objective_f,
-                   n_trials=num_trials,
-                   callbacks=[mlflow_callback_noexcept(mlflc)],
-                   catch=(RuntimeError,))
+    if num_trials > 0:
+        study.optimize(objective_f,
+                       n_trials=num_trials,
+                       callbacks=[mlflow_callback_noexcept(mlflc)],
+                       catch=(RuntimeError, ))
+    else:
+        number = -num_trials
+        trials = study.trials
+        for trial in trials:
+            if trial.number == number:
+                trial = copy.deepcopy(trial)
+                objective_f(trial)
+        raise RuntimeError(f'Trial number {number} not found')

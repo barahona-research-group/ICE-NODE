@@ -41,7 +41,6 @@ class AbstractModel:
         res = self(params, batch, count_nfe=False)
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
-
     @classmethod
     def create_model(cls, config, patient_interface, train_ids):
         raise Exception('Should be overriden')
@@ -63,9 +62,7 @@ class AbstractModel:
 
     @staticmethod
     def sample_gram_config(trial: optuna.Trial):
-        return {
-            'diag': DAGGRAM.sample_model_config('dx', trial)
-        }
+        return {'diag': DAGGRAM.sample_model_config('dx', trial)}
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):

@@ -65,6 +65,7 @@ class DAGGRAM:
                  code2index: Dict[str, int],
                  ancestors_mat: jnp.ndarray,
                  basic_embeddings: Dict[str, jnp.ndarray],
+                 frozen_params: Optional[Any] = None,
                  name: Optional[str] = None,
                  **init_kwargs):
         if attention_method == 'tanh':
@@ -90,6 +91,7 @@ class DAGGRAM:
                             attention_dim=attention_dim,
                             name=f"{name}_DAG_Attention")))
         self.fwd_att = jax.jit(fwd_att)
+        self.frozen_params = frozen_params
 
     @staticmethod
     def _augment_ancestors_mat(ancestors_mat: jnp.ndarray):
@@ -100,17 +102,26 @@ class DAGGRAM:
         return [jnp.nonzero(ancestors_v) for ancestors_v in A]
 
     def init_params(self, rng_key):
+        if self.frozen_params:
+            return None
+
         e = self.initial_E[0, :]
         return self.initial_E, self.init_att(rng_key, e, e)
 
     @partial(jax.jit, static_argnums=(0, ))
     def _self_attention(self, params: Any, E: jnp.ndarray, e_i: jnp.ndarray,
                         ancestors_mask: Tuple[jnp.ndarray]):
+        if self.frozen_params:
+            params = self.frozen_params
+
         E = E[ancestors_mask]
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
     def compute_embedding_mat(self, params):
+        if self.frozen_params:
+            params = self.frozen_params
+
         E, att_params = params
         G = map(partial(self._self_attention, att_params, E), E, self.A)
         return jnp.vstack(list(G))
