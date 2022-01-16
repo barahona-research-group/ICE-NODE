@@ -12,7 +12,7 @@ python -m mimicnet.train_$MODEL \
 --study-name debug_${MODEL} \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials 1 \
+--num-trials $NUM_TRIALS \
 --trials-time-limit 24 \
 --training-time-limit 12 \
 --job-id 0 \

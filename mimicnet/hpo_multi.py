@@ -67,7 +67,12 @@ if __name__ == '__main__':
     cpu = args.cpu
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
-    N = args.num_processes
+
+    if num_trials > 0:
+        N = args.num_processes
+    else:
+        N = 1
+
     job_id = args.job_id or 'unknown'
 
     study_name = f'{study_tag}_{model}'

@@ -55,7 +55,9 @@ class AbstractModel:
         return {
             'epochs': epochs,
             'batch_size': trial.suggest_int('B', 2, 22, 5),
-            'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
+            # UNDO/TODO
+            'optimizer': 'adam',
+            # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
             'lr': trial.suggest_float('lr', 1e-6, 1e-2, log=True),
             'loss_mixing': l_mixing
         }
