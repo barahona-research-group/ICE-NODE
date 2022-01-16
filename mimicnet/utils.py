@@ -1,9 +1,10 @@
 import json
-
+import pickle
 import pandas as pd
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_leaves
-
+from jax.experimental.optimizers import (pack_optimizer_state,
+                                         unpack_optimizer_state)
 from .metrics import (top_k_detectability_scores, auc_scores,
                       confusion_matrix_scores)
 
@@ -40,6 +41,16 @@ def wrap_module(module, *module_args, **module_kwargs):
     return wrap
 
 
+def write_params(params, params_file):
+    with open(params_file, 'wb') as file_rsc:
+        pickle.dump(params, file_rsc)
+
+
+def load_params(params_file):
+    with open(params_file, 'rb') as file_rsc:
+        return pickle.load(file_rsc)
+
+
 def load_config(config_file):
     with open(config_file) as json_file:
         return json.load(json_file)
@@ -47,6 +58,4 @@ def load_config(config_file):
 
 def write_config(data, config_file):
     with open(config_file, 'w') as outfile:
-        json.dump(data, outfile)
-
-
+        json.dump(data, outfile, indent=4, sort_keys=True)

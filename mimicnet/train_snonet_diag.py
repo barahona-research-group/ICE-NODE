@@ -10,7 +10,7 @@ import optuna
 
 from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
                       l2_squared, l1_absolute)
-from .utils import wrap_module
+from .utils import wrap_module, load_config, load_params
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import DAGGRAM
@@ -35,7 +35,7 @@ class SNONETDiag(AbstractModel):
         self.max_odeint_days = max_odeint_days
         self.diag_loss = diag_loss
         self.dimensions = {
-            'diag_gram': diag_gram.basic_embeddings_dim,
+            'diag_gram': diag_gram.embeddings_dim,
             'diag_in': len(subject_interface.diag_multi_ccs_idx),
             'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size,
@@ -404,19 +404,18 @@ class SNONETDiag(AbstractModel):
             raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
-        diag_glove, _ = glove_representation(
-            diag_idx=patient_interface.diag_multi_ccs_idx,
-            proc_idx=patient_interface.proc_multi_ccs_idx,
-            ccs_dag=patient_interface.dag,
-            subjects=[patient_interface.subjects[i] for i in train_ids],
-            **config['glove'])
+    def create_model(cls, config, patient_interface, train_ids,
+                     pretrained_components):
+        pretrained_components = load_config(pretrained_components)
+        gram_component = pretrained_components['gram']['diag']['params_file']
+        gram_pretrained_params = load_params(gram_component)
 
         diag_gram = DAGGRAM(
             ccs_dag=patient_interface.dag,
             code2index=patient_interface.diag_multi_ccs_idx,
-            basic_embeddings=diag_glove,
+            basic_embeddings=None,
             ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
+            frozen_params=gram_pretrained_params,
             **config['gram']['diag'])
 
         diag_loss = cls.select_loss(config['training']['diag_loss'],
@@ -477,6 +476,23 @@ class SNONETDiag(AbstractModel):
     @staticmethod
     def sample_model_config(trial: optuna.Trial):
         return SNONETDiag._sample_ode_model_config(trial)
+
+    @classmethod
+    def sample_experiment_config(cls, trial: optuna.Trial,
+                                 pretrained_components: str):
+        pretrained_components = load_config(pretrained_components)
+        # Configurations used for pretraining GRAM.
+        # The configuration will be used to initialize GloVe and GRAM models.
+        gram_component = pretrained_components['gram']['diag']['config_file']
+        gram_component = load_config(gram_component)
+
+        return {
+            'pretrained_components': pretrained_components,
+            'glove': None,
+            'gram': gram_component['gram'],
+            'model': cls.sample_model_config(trial),
+            'training': cls.sample_training_config(trial)
+        }
 
 
 if __name__ == '__main__':

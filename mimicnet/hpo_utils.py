@@ -24,7 +24,7 @@ from sqlalchemy.pool import NullPool
 import mlflow
 
 from .metrics import evaluation_table
-from .utils import (parameters_size, tree_hasnan, write_config)
+from .utils import (parameters_size, tree_hasnan, write_config, write_params)
 from .abstract_model import AbstractModel
 
 
@@ -40,33 +40,6 @@ def mlflow_callback_noexcept(callback):
             logging.warning(f'MLFlow Exception supressed: {e}')
 
     return apply
-
-
-def sample_glove_config(trial: optuna.Trial):
-    return {
-        'diag_vector_size': trial.suggest_int('dx', 50, 250, 50),
-        'proc_vector_size': 50,
-        'iterations': 30,
-        'window_size_days': 2 * 365
-    }
-
-
-def sample_experiment_config(
-        model_cls: AbstractModel,
-        trial: optuna.Trial,
-        reuse_config: Optional[Tuple[Iterable[str], FrozenTrial]] = None):
-    if reuse_config:
-        components, frozen_trial = reuse_config
-        select = lambda c: frozen_trial if c in components else trial
-    else:
-        select = lambda c: trial
-
-    return {
-        'glove': sample_glove_config(select('glove')),
-        'gram': model_cls.sample_gram_config(select('gram')),
-        'model': model_cls.sample_model_config(select('model')),
-        'training': model_cls.sample_training_config(select('training'))
-    }
 
 
 def capture_args():
@@ -108,6 +81,8 @@ def capture_args():
 
     parser.add_argument('--job-id', required=False)
 
+    parser.add_argument('--pretrained-components', required=False)
+
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -121,14 +96,15 @@ def capture_args():
         'job_id': args.job_id or 'unknown',
         'cpu': args.cpu,
         'trials_time_limit': args.trials_time_limit,
-        'training_time_limit': args.training_time_limit
+        'training_time_limit': args.training_time_limit,
+        'pretrained_components': args.pretrained_components
     }
 
 
-def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
-              valid_ids, rng, eval_freq, job_id, output_dir,
-              codes_by_percentiles, trial_stop_time: datetime, frozen: bool,
-              trial: optuna.Trial):
+def objective(model_cls: AbstractModel, pretrained_components,
+              patient_interface, train_ids, test_ids, valid_ids, rng,
+              eval_freq, job_id, output_dir, codes_by_percentiles,
+              trial_stop_time: datetime, frozen: bool, trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
     mlflow.set_tag('job_id', job_id)
     mlflow.set_tag('trial_number', trial.number)
@@ -144,7 +120,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling & Initializing Models')
-    config = sample_experiment_config(model_cls, trial)
+    config = model_cls.sample_experiment_config(trial, pretrained_components)
 
     try:
         mlflow.log_params(trial.params)
@@ -155,7 +131,8 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model = model_cls.create_model(config, patient_interface, train_ids)
+    model = model_cls.create_model(config, patient_interface, train_ids,
+                                   pretrained_components)
 
     prng_key = jax.random.PRNGKey(rng.randint(0, 100))
     params = model.init_params(prng_key)
@@ -239,8 +216,7 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
         # Only dump parameters for frozen trials.
         if frozen:
             fname = os.path.join(trial_dir, f'step{step:04d}_params.pickle')
-            with open(fname, 'wb') as file_rsc:
-                pickle.dump(get_params(opt_state), file_rsc)
+            write_params(get_params(opt_state), fname)
 
         logging.info(eval_df)
 
@@ -257,9 +233,10 @@ def objective(model_cls: AbstractModel, patient_interface, train_ids, test_ids,
     return auc
 
 
-def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
-               mlflow_store: str, num_trials: int, mimic_processed_dir: str,
-               output_dir: str, cpu: bool, job_id: str, trials_time_limit: int,
+def run_trials(model_cls: AbstractModel, pretrained_components: str,
+               study_name: str, optuna_store: str, mlflow_store: str,
+               num_trials: int, mimic_processed_dir: str, output_dir: str,
+               cpu: bool, job_id: str, trials_time_limit: int,
                training_time_limit: int):
 
     termination_time = datetime.now() + timedelta(hours=trials_time_limit)
@@ -311,6 +288,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
             raise ResourceTimeout('Time-limit exceeded, abort.')
 
         return objective(model_cls=model_cls,
+                         pretrained_components=pretrained_components,
                          patient_interface=patient_interface,
                          train_ids=train_ids,
                          test_ids=test_ids,

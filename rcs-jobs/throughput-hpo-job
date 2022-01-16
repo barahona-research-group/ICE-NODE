@@ -28,6 +28,7 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --training-time-limit 36 \
 -N 3 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
+--pretrained_components mimicnet_configs/pretrained_components_rcs.json \
 --cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

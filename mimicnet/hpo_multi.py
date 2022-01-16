@@ -54,6 +54,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--job-id', required=False)
 
+    parser.add_argument('--pretrained-components', required=False)
+
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -67,6 +69,7 @@ if __name__ == '__main__':
     cpu = args.cpu
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
+    pretrained_components = args.pretrained_components
 
     if num_trials > 0:
         N = args.num_processes
@@ -87,6 +90,8 @@ if __name__ == '__main__':
         str(trials_time_limit), '--training-time-limit',
         str(training_time_limit), '--job-id', job_id
     ]
+    if pretrained_components:
+        cmd.extend(['--pretrained-components', pretrained_components])
     if cpu:
         cmd.append('--cpu')
 

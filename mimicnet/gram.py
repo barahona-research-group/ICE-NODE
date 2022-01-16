@@ -64,7 +64,8 @@ class DAGGRAM:
                  attention_method: str,
                  code2index: Dict[str, int],
                  ancestors_mat: jnp.ndarray,
-                 basic_embeddings: Dict[str, jnp.ndarray],
+                 embeddings_dim: int,
+                 basic_embeddings: Optional[Dict[str, jnp.ndarray]],
                  frozen_params: Optional[Any] = None,
                  name: Optional[str] = None,
                  **init_kwargs):
@@ -78,12 +79,9 @@ class DAGGRAM:
                                f'{", ".join(["tanh", "l2"])}.')
         index2code = {i: c for c, i in code2index.items()}
         codes_ordered = map(index2code.get, range(len(index2code)))
-
         self.code2index = code2index
         self.A = self._augment_ancestors_mat(ancestors_mat)
-
-        self.initial_E = jnp.vstack(map(basic_embeddings.get, codes_ordered))
-        self.basic_embeddings_dim = self.initial_E.shape[1]
+        self.embeddings_dim = embeddings_dim
 
         self.init_att, fwd_att = hk.without_apply_rng(
             hk.transform(
@@ -92,6 +90,13 @@ class DAGGRAM:
                             name=f"{name}_DAG_Attention")))
         self.fwd_att = jax.jit(fwd_att)
         self.frozen_params = frozen_params
+        self.G = None
+        self.initial_E = None
+        if frozen_params:
+            self.G = self.compute_embedding_mat(frozen_params)
+        else:
+            self.initial_E = jnp.vstack(
+                map(basic_embeddings.get, codes_ordered))
 
     @staticmethod
     def _augment_ancestors_mat(ancestors_mat: jnp.ndarray):
@@ -111,15 +116,14 @@ class DAGGRAM:
     @partial(jax.jit, static_argnums=(0, ))
     def _self_attention(self, params: Any, E: jnp.ndarray, e_i: jnp.ndarray,
                         ancestors_mask: Tuple[jnp.ndarray]):
-        if self.frozen_params:
-            params = self.frozen_params
-
         E = E[ancestors_mask]
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
     def compute_embedding_mat(self, params):
-        if self.frozen_params:
+        if params is None and self.G:
+            return self.G
+        if params is None and self.frozen_params:
             params = self.frozen_params
 
         E, att_params = params
@@ -133,6 +137,8 @@ class DAGGRAM:
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
+            'embeddings_dim':
+            trial.suggest_int('dx', 50, 250, 50),
             'attention_method':
             trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
             'attention_dim':

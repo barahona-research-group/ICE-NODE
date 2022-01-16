@@ -31,7 +31,7 @@ class GRAM(AbstractModel):
         self.diag_gram = diag_gram
 
         self.dimensions = {
-            'diag_gram': diag_gram.basic_embeddings_dim,
+            'diag_gram': diag_gram.embeddings_dim,
             'diag_in': len(subject_interface.diag_multi_ccs_idx),
             'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size
@@ -152,12 +152,15 @@ class GRAM(AbstractModel):
         return SubjectDiagSequenceJAXInterface(patients, set(), k_graph)
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
-        diag_glove, proc_glove = glove_representation(
+    def create_model(cls, config, patient_interface, train_ids,
+                     pretrained_components):
+        diag_glove, _ = glove_representation(
             diag_idx=patient_interface.diag_multi_ccs_idx,
             proc_idx=patient_interface.proc_multi_ccs_idx,
             ccs_dag=patient_interface.dag,
             subjects=[patient_interface.subjects[i] for i in train_ids],
+            diag_vector_size=config['gram']['diag']['embeddings_dim'],
+            proc_vector_size=50,
             **config['glove'])
 
         diag_gram = DAGGRAM(
