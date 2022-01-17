@@ -92,7 +92,7 @@ class DAGGRAM:
         self.frozen_params = frozen_params
         self.G = None
         self.initial_E = None
-        if frozen_params:
+        if frozen_params is not None:
             self.G = self.compute_embedding_mat(frozen_params)
         else:
             self.initial_E = jnp.vstack(
@@ -107,7 +107,7 @@ class DAGGRAM:
         return [jnp.nonzero(ancestors_v) for ancestors_v in A]
 
     def init_params(self, rng_key):
-        if self.frozen_params:
+        if self.frozen_params is not None:
             return None
 
         e = self.initial_E[0, :]
@@ -121,9 +121,9 @@ class DAGGRAM:
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
     def compute_embedding_mat(self, params):
-        if params is None and self.G:
+        if params is None and self.G is not None:
             return self.G
-        if params is None and self.frozen_params:
+        if params is None and self.frozen_params is not None:
             params = self.frozen_params
 
         E, att_params = params

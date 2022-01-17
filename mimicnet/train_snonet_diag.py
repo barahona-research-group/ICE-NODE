@@ -408,14 +408,14 @@ class SNONETDiag(AbstractModel):
                      pretrained_components):
         pretrained_components = load_config(pretrained_components)
         gram_component = pretrained_components['gram']['diag']['params_file']
-        gram_pretrained_params = load_params(gram_component)
+        diag_gram_pretrained_params = load_params(gram_component)['diag_gram']
 
         diag_gram = DAGGRAM(
             ccs_dag=patient_interface.dag,
             code2index=patient_interface.diag_multi_ccs_idx,
             basic_embeddings=None,
             ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
-            frozen_params=gram_pretrained_params,
+            frozen_params=diag_gram_pretrained_params,
             **config['gram']['diag'])
 
         diag_loss = cls.select_loss(config['training']['diag_loss'],

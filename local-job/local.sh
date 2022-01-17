@@ -1,9 +1,10 @@
-
-if test -n "${STUDY_TAG-}"; then
+STUDY_NAME=""
+if test -n "${STUDY_TAG-}"; then 
   git clone git@github.com:A-Alaa/MIMIC-SNONET.git --branch $STUDY_TAG --single-branch
+  cd MIMIC-SNONET
   STUDY_NAME=${STUDY_TAG}_${MODEL}
 else
-  cp ../mimicnet . -r
+  cp ../mimicnet ../mimicnet_configs . -r
   STUDY_NAME=debug_${MODEL}
 fi
 
@@ -18,12 +19,13 @@ which python
 python -m mimicnet.train_$MODEL \
 --output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/$STUDY_NAME \
 --mimic-processed-dir $HOME/GP/ehr-data/mimic3-transforms \
---study-name $STUDY_TAG \
+--study-name $STUDY_NAME \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials $NUM_TRIALS \
 --trials-time-limit 24 \
 --training-time-limit 12 \
 --job-id 0 \
---cpu 
+--cpu  \
+--pretrained-components mimicnet_configs/pretrained_components_local.json
 

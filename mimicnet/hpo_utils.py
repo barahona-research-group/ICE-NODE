@@ -323,4 +323,5 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
             if trial.number == number:
                 trial = copy.deepcopy(trial)
                 objective_f(trial)
+                return
         raise RuntimeError(f'Trial number {number} not found')

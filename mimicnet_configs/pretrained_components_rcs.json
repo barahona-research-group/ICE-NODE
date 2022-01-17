@@ -1,0 +1,12 @@
+{
+    "gram": {
+        "diag": {
+            "config_file": "/rds/general/user/am8520/home/GP/ehr-data/mimicnet-experiments/exp_01_17_gram/frozen_trial_006/config.json",
+            "params_file": "/rds/general/user/am8520/home/GP/ehr-data/mimicnet-experiments/exp_01_17_gram/frozen_trial_006/step1409_params.pickle"
+        },
+        "proc": {
+            "config_file": "",
+            "params_file": ""
+        }
+    }
+}
