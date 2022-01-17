@@ -8,7 +8,7 @@ else
   STUDY_NAME=debug_${MODEL}
 fi
 
-
+conda activate /home/asem/.conda/envs/mimic3-snonet
 
 OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
@@ -21,8 +21,8 @@ python -m mimicnet.train_$MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials $NUM_TRIALS \
---trials-time-limit 24 \
---training-time-limit 12 \
---job-id 0 \
+--trials-time-limit 48 \
+--training-time-limit 18 \
+--job-id "CDT" \
 --pretrained-components mimicnet_configs/pretrained_components_local.json
 
