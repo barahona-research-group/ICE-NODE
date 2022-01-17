@@ -101,13 +101,24 @@ def capture_args():
     }
 
 
+def mlflow_set_tag(key, value, frozen):
+    if not frozen:
+        mlflow.set_tag(key, value)
+
+
+def mlflow_log_metrics(eval_dict, step, frozen):
+    if not frozen:
+        mlflow.log_metrics(eval_dict, step=step)
+
+
 def objective(model_cls: AbstractModel, pretrained_components,
               patient_interface, train_ids, test_ids, valid_ids, rng,
               eval_freq, job_id, output_dir, codes_by_percentiles,
               trial_stop_time: datetime, frozen: bool, trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
-    mlflow.set_tag('job_id', job_id)
-    mlflow.set_tag('trial_number', trial.number)
+
+    mlflow_set_tag('job_id', job_id, frozen)
+    mlflow_set_tag('trial_number', trial.number, frozen)
 
     if frozen:
         trial_dir = os.path.join(output_dir,
@@ -139,7 +150,7 @@ def objective(model_cls: AbstractModel, pretrained_components,
     logging.info('[DONE] Sampling & Initializing Models')
 
     trial.set_user_attr('parameters_size', parameters_size(params))
-    mlflow.set_tag('parameters_size', parameters_size(params))
+    mlflow_set_tag('parameters_size', parameters_size(params), frozen)
 
     loss_mixing = config['training']['loss_mixing']
     lr = config['training']['lr']
@@ -167,13 +178,13 @@ def objective(model_cls: AbstractModel, pretrained_components,
     epochs = config['training']['epochs']
     iters = int(epochs * len(train_ids) / batch_size)
     trial.set_user_attr('steps', iters)
-    mlflow.set_tag('steps', iters)
+    mlflow_set_tag('steps', iters, frozen)
 
     for step in tqdm(range(iters)):
 
         if datetime.now() > trial_stop_time:
             trial.set_user_attr('timeout', 1)
-            mlflow.set_tag('timeout', 1)
+            mlflow_set_tag('timeout', 1, frozen)
             break
 
         rng.shuffle(train_ids)
@@ -182,14 +193,14 @@ def objective(model_cls: AbstractModel, pretrained_components,
         opt_state = update(step, train_batch, opt_state)
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
-            mlflow.set_tag('nan', 1)
+            mlflow_set_tag('nan', 1, frozen)
             return float('nan')
 
         if not (step % eval_freq == 0 or step == iters - 1):
             continue
 
         trial.set_user_attr("progress", (step + 1) / iters)
-        mlflow.set_tag("progress", (step + 1) / iters)
+        mlflow_set_tag("progress", (step + 1) / iters, frozen)
 
         params = get_params(opt_state)
 
@@ -207,7 +218,7 @@ def objective(model_cls: AbstractModel, pretrained_components,
 
         eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
         try:
-            mlflow.log_metrics(eval_flat, step=step)
+            mlflow_log_metrics(eval_flat, step, frozen)
         except Exception as e:
             logging.warning(f'Exception when logging metrics to mlflow: {e}')
 
@@ -253,9 +264,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=HyperbandPruner())
-    mlflow_uri = f'{mlflow_store}_bystudy/{study_name}'
-    mlflc = MLflowCallback(tracking_uri=mlflow_uri, metric_name="VAL-AUC")
-
     study.set_user_attr('metric', 'auc')
 
     if cpu:
@@ -280,7 +288,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
-    @mlflc.track_in_mlflow()
     def objective_f(trial: optuna.Trial):
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
         if trial_stop_time + timedelta(minutes=20) > termination_time:
@@ -303,7 +310,9 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                          frozen=num_trials <= 0)
 
     if num_trials > 0:
-        study.optimize(objective_f,
+        mlflow_uri = f'{mlflow_store}_bystudy/{study_name}'
+        mlflc = MLflowCallback(tracking_uri=mlflow_uri, metric_name="VAL-AUC")
+        study.optimize(mlflc.track_in_mlflow()(objective_f),
                        n_trials=num_trials,
                        callbacks=[mlflow_callback_noexcept(mlflc)],
                        catch=(RuntimeError, ))
