@@ -24,6 +24,5 @@ python -m mimicnet.train_$MODEL \
 --trials-time-limit 24 \
 --training-time-limit 12 \
 --job-id 0 \
---cpu  \
 --pretrained-components mimicnet_configs/pretrained_components_local.json
 
