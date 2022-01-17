@@ -13,8 +13,6 @@ fi
 OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
-which python
-
 # Run program
 python -m mimicnet.train_$MODEL \
 --output-dir $HOME/GP/ehr-data/mimic3-snonet-exp/$STUDY_NAME \
