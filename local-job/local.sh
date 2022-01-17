@@ -21,8 +21,8 @@ python -m mimicnet.train_$MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials $NUM_TRIALS \
---trials-time-limit 24 \
---training-time-limit 12 \
+--trials-time-limit 72 \
+--training-time-limit 48 \
 --job-id 0 \
 --pretrained-components mimicnet_configs/pretrained_components_local.json
 
