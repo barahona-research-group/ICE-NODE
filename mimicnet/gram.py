@@ -66,6 +66,7 @@ class DAGGRAM:
                  ancestors_mat: jnp.ndarray,
                  embeddings_dim: int,
                  basic_embeddings: Optional[Dict[str, jnp.ndarray]],
+                 tunable_params: Optional[Any] = None,
                  frozen_params: Optional[Any] = None,
                  name: Optional[str] = None,
                  **init_kwargs):
@@ -90,10 +91,13 @@ class DAGGRAM:
                             name=f"{name}_DAG_Attention")))
         self.fwd_att = jax.jit(fwd_att)
         self.frozen_params = frozen_params
+        self.tunable_params = tunable_params
         self.G = None
         self.initial_E = None
         if frozen_params is not None:
             self.G = self.compute_embedding_mat(frozen_params)
+        elif tunable_params is not None:
+            pass
         else:
             self.initial_E = jnp.vstack(
                 map(basic_embeddings.get, codes_ordered))
@@ -109,6 +113,8 @@ class DAGGRAM:
     def init_params(self, rng_key):
         if self.frozen_params is not None:
             return None
+        if self.tunable_params is not None:
+            return self.tunable_params
 
         e = self.initial_E[0, :]
         return self.initial_E, self.init_att(rng_key, e, e)

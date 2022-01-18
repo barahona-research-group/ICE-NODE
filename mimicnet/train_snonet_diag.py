@@ -409,6 +409,11 @@ class SNONETDiag(AbstractModel):
         pretrained_components = load_config(pretrained_components)
         gram_component = pretrained_components['gram']['diag']['params_file']
         diag_gram_pretrained_params = load_params(gram_component)['diag_gram']
+        kwargs = {}
+        if config['gram']['tunable']:
+            kwargs['tunable_params'] = diag_gram_pretrained_params
+        else:
+            kwargs['frozen_params'] = diag_gram_pretrained_params
 
         diag_gram = DAGGRAM(
             ccs_dag=patient_interface.dag,
@@ -432,8 +437,8 @@ class SNONETDiag(AbstractModel):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
         # UNDO
-        config['diag_loss'] = trial.suggest_categorical(
-            'dx_loss', ['balanced_bce', 'softmax'])
+        config['diag_loss'] = 'softmax'
+        # trial.suggest_categorical('dx_loss', ['balanced_bce', 'softmax'])
         # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
@@ -449,7 +454,7 @@ class SNONETDiag(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return SNONETDiag._sample_ode_training_config(trial, epochs=10)
+        return SNONETDiag._sample_ode_training_config(trial, epochs=2)
 
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
@@ -486,6 +491,8 @@ class SNONETDiag(AbstractModel):
         gram_component = pretrained_components['gram']['diag']['config_file']
         gram_component = load_config(gram_component)
 
+        gram_component['gram']['tunable'] = trial.suggest_categorical(
+            'tune', [True, False])
         return {
             'pretrained_components': pretrained_components,
             'glove': None,
