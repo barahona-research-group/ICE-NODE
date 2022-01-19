@@ -353,16 +353,16 @@ class StateInitializer(hk.Module):
 class StateDiagnosesDecoder(hk.Module):
     def __init__(self,
                  hidden_size: int,
-                 gram_size: int,
+                 embeddings_size: int,
                  output_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
         self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
-        self.__lin_gram = hk.Linear(gram_size, name='lin_gram')
+        self.__lin_emb = hk.Linear(embeddings_size, name='lin_gram')
         self.__lin_out = hk.Linear(output_size, name='lin_out')
 
     def __call__(self, h: jnp.ndarray):
         out_h = jnp.tanh(self.__lin_h(h))
-        dec_gram = self.__lin_gram(out_h)
-        logits = self.__lin_out(leaky_relu(dec_gram, negative_slope=2e-1))
-        return dec_gram, logits
+        dec_emb = self.__lin_emb(out_h)
+        logits = self.__lin_out(leaky_relu(dec_emb, negative_slope=2e-1))
+        return dec_emb, logits

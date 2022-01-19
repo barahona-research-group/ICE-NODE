@@ -75,7 +75,7 @@ class SNONETDiag(AbstractModel):
             hk.transform(
                 wrap_module(StateDiagnosesDecoder,
                             hidden_size=self.dimensions['diag_emb'],
-                            embeddings_dim=self.dimensions['diag_emb'],
+                            embeddings_size=self.dimensions['diag_emb'],
                             output_size=self.dimensions['diag_out'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
@@ -401,10 +401,11 @@ class SNONETDiag(AbstractModel):
             raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
     @classmethod
-    def create_model(cls, config, emb_kind, patient_interface, train_ids,
+    def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
         emb_config = config['emb']['diag']
 
+        emb_kind = 'matrix'
         if emb_kind == 'matrix':
             input_dim = len(patient_interface.diag_multi_ccs_idx)
             diag_emb = MatrixEmbeddings(input_dim=input_dim, **emb_config)
