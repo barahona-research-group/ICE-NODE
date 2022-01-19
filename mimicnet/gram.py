@@ -65,9 +65,8 @@ class DAGGRAM:
                  code2index: Dict[str, int],
                  ancestors_mat: jnp.ndarray,
                  embeddings_dim: int,
-                 basic_embeddings: Optional[Dict[str, jnp.ndarray]],
-                 tunable_params: Optional[Any] = None,
-                 frozen_params: Optional[Any] = None,
+                 initial_params: Optional[Any],
+                 mode: str,
                  name: Optional[str] = None,
                  **init_kwargs):
         if attention_method == 'tanh':
@@ -90,17 +89,18 @@ class DAGGRAM:
                             attention_dim=attention_dim,
                             name=f"{name}_DAG_Attention")))
         self.fwd_att = jax.jit(fwd_att)
-        self.frozen_params = frozen_params
-        self.tunable_params = tunable_params
-        self.G = None
-        self.initial_E = None
-        if frozen_params is not None:
-            self.G = self.compute_embedding_mat(frozen_params)
-        elif tunable_params is not None:
-            pass
+        self.mode = mode
+        if mode == 'frozen_params':
+            self.frozen_params = initial_params
+            self.G = self.compute_embedding_mat(initial_params)
+        elif mode == 'tunable_params':
+            self.tunable_params = initial_params
+        elif mode == 'semi_frozen':
+            self.E, self.att_params = initial_params
+        elif mode == 'initial_embeddings':
+            self.initial_E = jnp.vstack(map(initial_params.get, codes_ordered))
         else:
-            self.initial_E = jnp.vstack(
-                map(basic_embeddings.get, codes_ordered))
+            raise RuntimeError(f'Unrecognized mode: {mode}')
 
     @staticmethod
     def _augment_ancestors_mat(ancestors_mat: jnp.ndarray):
@@ -111,13 +111,17 @@ class DAGGRAM:
         return [jnp.nonzero(ancestors_v) for ancestors_v in A]
 
     def init_params(self, rng_key):
-        if self.frozen_params is not None:
+        if self.mode == 'frozen_params':
             return None
-        if self.tunable_params is not None:
+        elif self.mode == 'tunable_params':
             return self.tunable_params
-
-        e = self.initial_E[0, :]
-        return self.initial_E, self.init_att(rng_key, e, e)
+        elif self.mode == 'semi_frozen':
+            return self.att_params
+        elif self.mode == 'initial_embeddings':
+            e = self.initial_E[0, :]
+            return self.initial_E, self.init_att(rng_key, e, e)
+        else:
+            raise RuntimeError(f'Unrecognized mode: {self.mode}')
 
     @partial(jax.jit, static_argnums=(0, ))
     def _self_attention(self, params: Any, E: jnp.ndarray, e_i: jnp.ndarray,
@@ -127,12 +131,13 @@ class DAGGRAM:
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
     def compute_embedding_mat(self, params):
-        if params is None and self.G is not None:
+        if self.mode == 'frozen_params' and params is None:
             return self.G
-        if params is None and self.frozen_params is not None:
-            params = self.frozen_params
+        elif self.mode == 'semi_frozen':
+            E, att_params = self.E, params
+        else:
+            E, att_params = params
 
-        E, att_params = params
         G = map(partial(self._self_attention, att_params, E), E, self.A)
         return jnp.vstack(list(G))
 

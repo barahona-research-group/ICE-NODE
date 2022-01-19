@@ -166,7 +166,8 @@ class GRAM(AbstractModel):
         diag_gram = DAGGRAM(
             ccs_dag=patient_interface.dag,
             code2index=patient_interface.diag_multi_ccs_idx,
-            basic_embeddings=diag_glove,
+            initial_params=diag_glove,
+            mode='initial_embeddings',
             ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
             **config['gram']['diag'])
 

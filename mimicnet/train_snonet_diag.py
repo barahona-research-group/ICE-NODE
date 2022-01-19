@@ -413,9 +413,9 @@ class SNONETDiag(AbstractModel):
         diag_gram = DAGGRAM(
             ccs_dag=patient_interface.dag,
             code2index=patient_interface.diag_multi_ccs_idx,
-            basic_embeddings=None,
             ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
-            frozen_params=diag_gram_pretrained_params,
+            initial_params=diag_gram_pretrained_params,
+            mode='semi_frozen',
             **config['gram']['diag'])
 
         diag_loss = cls.select_loss(config['training']['diag_loss'],
