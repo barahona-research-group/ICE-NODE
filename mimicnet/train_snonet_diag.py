@@ -458,7 +458,7 @@ class SNONETDiag(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return SNONETDiag._sample_ode_training_config(trial, epochs=3)
+        return SNONETDiag._sample_ode_training_config(trial, epochs=10)
 
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
