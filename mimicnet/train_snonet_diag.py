@@ -13,29 +13,29 @@ from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
 from .utils import wrap_module, load_config, load_params
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
-from .gram import DAGGRAM
+from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
+                   AbstractEmbeddingsLayer, MatrixEmbeddings)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
 from .abstract_model import AbstractModel
-from .glove import glove_representation
 
 
 class SNONETDiag(AbstractModel):
     def __init__(self, subject_interface: SubjectJAXInterface,
-                 diag_gram: DAGGRAM, ode_dyn: str, ode_depth: int,
-                 ode_with_bias: bool, ode_init_var: float,
+                 diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
+                 ode_depth: int, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
                  init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
                                      float], max_odeint_days: int):
 
         self.subject_interface = subject_interface
-        self.diag_gram = diag_gram
+        self.diag_emb = diag_emb
         self.tay_reg = tay_reg
         self.max_odeint_days = max_odeint_days
         self.diag_loss = diag_loss
         self.dimensions = {
-            'diag_gram': diag_gram.embeddings_dim,
+            'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_multi_ccs_idx),
             'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size,
@@ -74,8 +74,8 @@ class SNONETDiag(AbstractModel):
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(StateDiagnosesDecoder,
-                            hidden_size=self.dimensions['diag_gram'],
-                            gram_size=self.dimensions['diag_gram'],
+                            hidden_size=self.dimensions['diag_emb'],
+                            embeddings_dim=self.dimensions['diag_emb'],
                             output_size=self.dimensions['diag_out'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
@@ -83,7 +83,7 @@ class SNONETDiag(AbstractModel):
         f_init_init, f_init = hk.without_apply_rng(
             hk.transform(
                 wrap_module(StateInitializer,
-                            hidden_size=self.dimensions['diag_gram'],
+                            hidden_size=self.dimensions['diag_emb'],
                             state_size=state_size,
                             depth=init_depth,
                             name='f_init')))
@@ -99,7 +99,7 @@ class SNONETDiag(AbstractModel):
     def init_params(self, rng_key):
         init_data = self._initialization_data()
         return {
-            "diag_gram": self.diag_gram.init_params(rng_key),
+            "diag_emb": self.diag_emb.init_params(rng_key),
             **{
                 label: init(rng_key, *init_data[label])
                 for label, init in self.initializers.items()
@@ -121,26 +121,26 @@ class SNONETDiag(AbstractModel):
         Creates data for initializing each of the
         modules based on the shapes of init_data.
         """
-        diag_gram_ = jnp.zeros(self.dimensions['diag_gram'])
+        diag_emb_ = jnp.zeros(self.dimensions['diag_emb'])
         state = jnp.zeros(self.dimensions['state'])
         ode_ctrl = jnp.array([])
         return {
             "f_n_ode": [True, state, 0.1, ode_ctrl],
-            "f_update": [state, diag_gram_],
+            "f_update": [state, diag_emb_],
             "f_dec": [state],
-            "f_init": [diag_gram_]
+            "f_init": [diag_emb_]
         }
 
     def _extract_nth_points(self, params: Any, subjects_batch: List[int],
                             n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
-        diag_G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
+        diag_G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
 
         points = self.subject_interface.nth_points_batch(n, subjects_batch)
         if len(points) == 0:
             return None
 
-        diag_gram = {
-            i: self.diag_gram.encode(diag_G, v['diag_multi_ccs_vec'])
+        diag_emb = {
+            i: self.diag_emb.encode(diag_G, v['diag_multi_ccs_vec'])
             for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
         }
         diag_out = {
@@ -152,7 +152,7 @@ class SNONETDiag(AbstractModel):
         return {
             'ode_control': None,
             'days_ahead': days_ahead,
-            'diag_gram': diag_gram,
+            'diag_emb': diag_emb,
             'diag_out': diag_out
         }
 
@@ -172,10 +172,10 @@ class SNONETDiag(AbstractModel):
         return h1, r1, nfe
 
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
-                  diag_gram_error: jnp.ndarray) -> jnp.ndarray:
+                  diag_emb_error: jnp.ndarray) -> jnp.ndarray:
         updated_state = {
-            i: self.f_update(params['f_update'], state[i], gram_error)
-            for i, gram_error in diag_gram_error.items()
+            i: self.f_update(params['f_update'], state[i], emb_error)
+            for i, emb_error in diag_emb_error.items()
         }
 
         return updated_state
@@ -183,34 +183,31 @@ class SNONETDiag(AbstractModel):
     def _f_dec(
         self, params: Any, state: Dict[int, jnp.ndarray], selection: Set[int]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-        gram_out = {
-            i: self.f_dec(params['f_dec'], state[i])
-            for i in selection
-        }
-        gram = {i: g for i, (g, _) in gram_out.items()}
-        out = {i: o for i, (_, o) in gram_out.items()}
+        emb_out = {i: self.f_dec(params['f_dec'], state[i]) for i in selection}
+        emb = {i: g for i, (g, _) in emb_out.items()}
+        out = {i: o for i, (_, o) in emb_out.items()}
 
-        return gram, out
+        return emb, out
 
     def _f_init(self, params, points_n, subjects: Iterable[int],
                 days_ahead: Dict[int, int]):
-        diag_gram = points_n['diag_gram']
+        diag_emb = points_n['diag_emb']
 
         def _state_init(subject_id):
             return {
-                'value': self.f_init(params['f_init'], diag_gram[subject_id]),
+                'value': self.f_init(params['f_init'], diag_emb[subject_id]),
                 'days': days_ahead[subject_id]
             }
 
-        return {i: _state_init(i) for i in (set(diag_gram) & set(subjects))}
+        return {i: _state_init(i) for i in (set(diag_emb) & set(subjects))}
 
     @staticmethod
-    def _gram_error(gram_true, gram_predicted):
-        error_gram = {
-            i: gram_true[i] - gram_predicted[i]
-            for i in gram_predicted.keys()
+    def _emb_error(emb_true, emb_predicted):
+        error_emb = {
+            i: emb_true[i] - emb_predicted[i]
+            for i in emb_predicted.keys()
         }
-        return error_gram
+        return error_emb
 
     def _diag_loss(self, diag_true: Dict[int, jnp.ndarray],
                    diag_predicted: Dict[int, jnp.ndarray]):
@@ -254,7 +251,7 @@ class SNONETDiag(AbstractModel):
             all_points_count += len(points_n)
 
             days_ahead = points_n['days_ahead']
-            diag_gram = points_n['diag_gram']
+            diag_emb = points_n['diag_emb']
             diag_out = points_n['diag_out']
             ode_c = points_n['ode_control']
             delta_days = {
@@ -301,13 +298,13 @@ class SNONETDiag(AbstractModel):
             dyn_loss.append(_dyn_loss)
             nfe.append(_nfe)
             ########## PRE-JUMP DAG LOSS #########################
-            pre_diag_gram, pre_diag_out = nn_decode(state_j, predictable_cases)
+            pre_diag_emb, pre_diag_out = nn_decode(state_j, predictable_cases)
             pre_diag_loss = diag_loss(diag_out, pre_diag_out)
-            pre_diag_gram_error = self._gram_error(diag_gram, pre_diag_gram)
+            pre_diag_emb_error = self._emb_error(diag_emb, pre_diag_emb)
             prejump_diag_loss.append(pre_diag_loss)
             ############## GRU BAYES ####################
             # Using GRUObservationCell to update h.
-            state_j_updated = nn_update(state_j, pre_diag_gram_error)
+            state_j_updated = nn_update(state_j, pre_diag_emb_error)
             state_j.update(state_j_updated)
             # Update the states:
             for subject_id, new_state in state_j.items():
@@ -404,25 +401,36 @@ class SNONETDiag(AbstractModel):
             raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
+    def create_model(cls, config, emb_kind, patient_interface, train_ids,
                      pretrained_components):
-        pretrained_components = load_config(pretrained_components)
-        gram_component = pretrained_components['gram']['diag']['params_file']
-        diag_gram_pretrained_params = load_params(gram_component)['diag_gram']
+        emb_config = config['emb']['diag']
 
-        diag_gram = DAGGRAM(
-            ccs_dag=patient_interface.dag,
-            code2index=patient_interface.diag_multi_ccs_idx,
-            ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
-            initial_params=diag_gram_pretrained_params,
-            mode='semi_frozen',
-            **config['gram']['diag'])
+        if emb_kind == 'matrix':
+            input_dim = len(patient_interface.diag_multi_ccs_idx)
+            diag_emb = MatrixEmbeddings(input_dim=input_dim, **emb_config)
+        elif emb_kind == 'glove_gram':
+            diag_emb = GloVeGRAM(category='diag',
+                                 patient_interface=patient_interface,
+                                 train_ids=train_ids,
+                                 **emb_config)
+        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+            pretrained_components = load_config(pretrained_components)
+            emb_component = pretrained_components['emb']['diag']['params_file']
+            emb_params = load_params(emb_component)['diag_emb']
+            if emb_kind == 'semi_frozen_gram':
+                diag_emb = SemiFrozenGRAM(initial_params=emb_params,
+                                          **emb_config)
+            elif emb_kind == 'frozen_gram':
+                diag_emb = FrozenGRAM(initial_params=emb_params, **emb_config)
+            else:
+                diag_emb = TunableGRAM(initial_params=emb_params, **emb_config)
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
         diag_loss = cls.select_loss(config['training']['diag_loss'],
                                     patient_interface, train_ids)
-
         return cls(subject_interface=patient_interface,
-                   diag_gram=diag_gram,
+                   diag_emb=diag_emb,
                    **config['model'],
                    tay_reg=config['training']['tay_reg'],
                    diag_loss=diag_loss)
@@ -477,19 +485,33 @@ class SNONETDiag(AbstractModel):
     def sample_model_config(trial: optuna.Trial):
         return SNONETDiag._sample_ode_model_config(trial)
 
+    @staticmethod
+    def sample_embeddings_config(trial: optuna.Trial):
+        return {'diag': MatrixEmbeddings.sample_model_config('dx', trial)}
+
     @classmethod
     def sample_experiment_config(cls, trial: optuna.Trial,
                                  pretrained_components: str):
-        pretrained_components = load_config(pretrained_components)
-        # Configurations used for pretraining GRAM.
-        # The configuration will be used to initialize GloVe and GRAM models.
-        gram_component = pretrained_components['gram']['diag']['config_file']
-        gram_component = load_config(gram_component)
+        emb_kind = 'matrix'
+
+        if emb_kind == 'matrix':
+            emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
+        elif emb_kind == 'glove_gram':
+            emb_config = GloVeGRAM.sample_model_config('dx', trial)
+        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+            pretrained_components = load_config(pretrained_components)
+            gram_component = pretrained_components['emb']['diag'][
+                'config_file']
+            gram_component = load_config(gram_component)
+
+            emb_config = gram_component['emb']['diag']
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
         return {
-            'pretrained_components': pretrained_components,
-            'glove': None,
-            'gram': gram_component['gram'],
+            'emb': {
+                'diag': emb_config
+            },
             'model': cls.sample_model_config(trial),
             'training': cls.sample_training_config(trial)
         }

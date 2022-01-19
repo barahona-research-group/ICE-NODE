@@ -13,9 +13,9 @@ import pandas as pd
 
 from .dag import CCSDAG
 from .concept import Subject, HospitalAdmission
+from .jax_interface import AbstractSubjectJAXInterface
 
 glove_logger = logging.getLogger("glove")
-
 """
 This implementation follows the following technical blog:
 http://www.foldl.me/2014/glove-python/
@@ -25,8 +25,8 @@ CooccurrencesType = Dict[Tuple[int, int], int]
 
 
 def build_coocur(subjects: List[Subject],
-                 diag_idx: Mapping[str, int],
-                 proc_idx: Mapping[str, int],
+                 code2idx: Mapping[str, int],
+                 adm_ccs_codes: Callable[[HospitalAdmission], Set[str]],
                  ccs_dag: CCSDAG,
                  window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
@@ -39,82 +39,55 @@ def build_coocur(subjects: List[Subject],
         ccs_dag: CCSDAG object that supports DAG operations on ICD9 codes in their hierarchical organization within CCS.
         window_size_days: the moving time window of the context.
     """
-    def _augment_visits(
-        adm_ccs_codes: Callable[[HospitalAdmission], Set[str]]
-    ) -> Dict[int, Tuple[int, List[str]]]:
-        """
-        Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
-        As described in the paper of GRAM, ancestors duplications are allowed and informative.
-        """
-        subjects_augmented_admissions = {}
-        for subject in subjects:
-            augmented_admissions = []
-            for adm in subject.admissions:
-                augmented_codes = []
-                ccs_codes = adm_ccs_codes(adm)
+    # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
+    # As described in the paper of GRAM, ancestors duplications are allowed and informative.
+    subject_augmented_admissions = {}
+    for subject in subjects:
+        augmented_admissions = []
+        for adm in subject.admissions:
+            augmented_codes = []
+            ccs_codes = adm_ccs_codes(adm)
 
-                for c in ccs_codes:
-                    augmented_codes.append(c)
-                    parents = ccs_dag.get_ccs_parents(c)
-                    augmented_codes.extend(parents)
+            for c in ccs_codes:
+                augmented_codes.append(c)
+                parents = ccs_dag.get_ccs_parents(c)
+                augmented_codes.extend(parents)
 
-                augmented_admissions.append(
-                    (adm.admission_dates[0], augmented_codes))
+            augmented_admissions.append(
+                (adm.admission_dates[0], augmented_codes))
 
-            subjects_augmented_admissions[
-                subject.subject_id] = augmented_admissions
+        subject_augmented_admissions[subject.subject_id] = augmented_admissions
 
-        return subjects_augmented_admissions
+    cooccurrences: CooccurrencesType = defaultdict(int)
+    for subject_id, admissions in subject_augmented_admissions.items():
+        glove_logger.debug(f'admissions({len(admissions)}): {admissions}')
+        for adm_date, adm in admissions:
 
-    def _build_coocurrence(augmented_admissions: Dict[int, Tuple[int,
-                                                                 List[str]]],
-                           code2idx: Dict[str, int]) -> CooccurrencesType:
-        cooccurrences: CooccurrencesType = defaultdict(int)
-        for subject_id, admissions in augmented_admissions.items():
-            glove_logger.debug(f'admissions({len(admissions)}): {admissions}')
-            for adm_date, adm in admissions:
+            def is_context(other_adm):
+                _adm_date, _adm = other_adm
+                delta_days = Subject.days(adm_date, _adm_date)
+                glove_logger.debug(f'delta_days: {delta_days}')
+                # Symmetric context (left+right)
+                return abs(delta_days) <= window_size_days
 
-                def is_context(other_adm):
-                    _adm_date, _adm = other_adm
-                    delta_days = Subject.days(adm_date, _adm_date)
-                    glove_logger.debug(f'delta_days: {delta_days}')
-                    # Symmetric context (left+right)
-                    return abs(delta_days) <= window_size_days
+            context_admissions = filter(is_context, admissions)
 
-                context_admissions = filter(is_context, admissions)
+            glove_logger.debug(f'{list(context_admissions)}')
+            concepts = [c for a in context_admissions for c in a]
 
-                glove_logger.debug(f'{list(context_admissions)}')
-                concepts = [c for a in context_admissions for c in a]
+            concept_count: Dict[int, int] = defaultdict(int)
 
-                concept_count: Dict[int, int] = defaultdict(int)
+            for c in concepts:
+                if c in code2idx:
+                    concept_count[code2idx[c]] += 1
+                else:
+                    glove_logger.debug(f'CCS code {c} not found')
 
-                for c in concepts:
-                    if c in code2idx:
-                        concept_count[code2idx[c]] += 1
-                    else:
-                        glove_logger.debug(
-                            f'CCS code {c} not found'
-                        )
-
-                for i, count_i in concept_count.items():
-                    for j, count_j in concept_count.items():
-                        cooccurrences[(i, j)] += count_i * count_j
-                        cooccurrences[(j, i)] += count_i * count_j
-
-        glove_logger.debug(cooccurrences)
-
-        return cooccurrences
-
-    augmented_admissions_diag = _augment_visits(lambda adm: set(
-        map(ccs_dag.diag_multi_icd2ccs.get, adm.icd9_diag_codes)))
-    augmented_admissions_proc = _augment_visits(lambda adm: set(
-        map(ccs_dag.proc_multi_icd2ccs.get, adm.icd9_proc_codes)))
-
-    glove_logger.debug(augmented_admissions_diag)
-    diag_cooc = _build_coocurrence(augmented_admissions_diag, diag_idx)
-    proc_cooc = _build_coocurrence(augmented_admissions_proc, proc_idx)
-
-    return diag_cooc, proc_cooc
+            for i, count_i in concept_count.items():
+                for j, count_j in concept_count.items():
+                    cooccurrences[(i, j)] += count_i * count_j
+                    cooccurrences[(j, i)] += count_i * count_j
+    return cooccurrences
 
 
 def run_iter(data, learning_rate=0.05, x_max=100, alpha=0.75):
@@ -243,12 +216,10 @@ def train_glove(code2idx: Mapping[str, int],
     return code_vector
 
 
-def glove_representation(diag_idx: Dict[str, int],
-                         proc_idx: Dict[str, int],
-                         ccs_dag: CCSDAG,
-                         subjects: List[Subject],
-                         diag_vector_size: int = 80,
-                         proc_vector_size: int = 50,
+def glove_representation(category: str,
+                         patient_interface: AbstractSubjectJAXInterface,
+                         train_ids: List[Subject],
+                         vector_size: int = 80,
                          iterations=25,
                          window_size_days=45,
                          **kwargs) -> Mapping[str, Mapping[str, np.ndarray]]:
@@ -269,21 +240,28 @@ def glove_representation(diag_idx: Dict[str, int],
     Returns:
         Two dictionaries (tuple) for the GloVe vector representation for diagnoses codes and procedure codes, respectively.
     """
-    glove_logger.setLevel(logging.WARNING)
-    diag_cooc, proc_cooc = build_coocur(subjects,
-                                        diag_idx,
-                                        proc_idx,
-                                        ccs_dag,
-                                        window_size_days=window_size_days)
-    diag_rep = train_glove(code2idx=diag_idx,
-                           cooccurrences=diag_cooc,
-                           vector_size=diag_vector_size,
-                           iterations=iterations,
-                           **kwargs)
-    proc_rep = train_glove(code2idx=proc_idx,
-                           cooccurrences=proc_cooc,
-                           vector_size=proc_vector_size,
-                           iterations=iterations,
-                           **kwargs)
 
-    return diag_rep, proc_rep
+    if category == 'diag':
+        code2idx = patient_interface.diag_multi_ccs_idx
+        adm_ccs_codes = lambda adm: set(
+            map(ccs_dag.diag_multi_icd2ccs.get, adm.icd9_diag_codes))
+
+    elif category == 'proc':
+        code2idx = patient_interface.proc_multi_ccs_idx
+        adm_ccs_codes = lambda adm: set(
+            map(ccs_dag.proc_multi_icd2ccs.get, adm.icd9_proc_codes))
+
+    ccs_dag = patient_interface.dag
+    glove_logger.setLevel(logging.WARNING)
+
+    cooc = build_coocur(
+        subjects=[patient_interface.subjects[i] for i in train_ids],
+        code2idx=code2idx,
+        adm_ccs_codes=adm_ccs_codes,
+        ccs_dag=ccs_dag,
+        window_size_days=window_size_days)
+    return train_glove(code2idx=code2idx,
+                       cooccurrences=cooc,
+                       vector_size=vector_size,
+                       iterations=iterations,
+                       **kwargs)

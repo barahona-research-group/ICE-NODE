@@ -2,7 +2,7 @@ from typing import Dict, List, Any, Optional, Tuple, Iterable
 from enum import Enum, Flag, auto
 import optuna
 from optuna.trial import FrozenTrial
-from .gram import DAGGRAM
+from .gram import GloVeGRAM
 
 
 class LossMixingFlag(Flag):
@@ -65,8 +65,8 @@ class AbstractModel:
         }
 
     @staticmethod
-    def sample_gram_config(trial: optuna.Trial):
-        return {'diag': DAGGRAM.sample_model_config('dx', trial)}
+    def sample_embeddings_config(trial: optuna.Trial):
+        return {'diag': GloVeGRAM.sample_model_config('dx', trial)}
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
@@ -76,19 +76,11 @@ class AbstractModel:
     def sample_model_config(trial: optuna.Trial):
         return {'state_size': trial.suggest_int('s', 100, 350, 50)}
 
-    @staticmethod
-    def sample_glove_config(trial: optuna.Trial):
-        return {
-            'iterations': 30,
-            'window_size_days': 2 * 365
-        }
-
     @classmethod
     def sample_experiment_config(cls, trial: optuna.Trial,
                                  pretrained_components: str):
         return {
-            'glove': cls.sample_glove_config(trial),
-            'gram': cls.sample_gram_config(trial),
+            'emb': cls.sample_embeddings_config(trial),
             'model': cls.sample_model_config(trial),
             'training': cls.sample_training_config(trial)
         }

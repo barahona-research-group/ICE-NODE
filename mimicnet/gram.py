@@ -18,6 +18,8 @@ import haiku as hk
 import optuna
 
 from .utils import wrap_module
+from .jax_interface import AbstractSubjectJAXInterface
+from .glove import glove_representation
 
 
 def unnormalized_softmax(x, axis=-1):
@@ -58,17 +60,34 @@ class DAGL2Attention(hk.Module):
         return -jnp.dot(diff, diff) / den
 
 
-class DAGGRAM:
+class AbstractEmbeddingsLayer:
+    def __init__(self, embeddings_dim):
+        self.embeddings_dim = embeddings_dim
+
+    def init_params(self, prng_key):
+        raise RuntimeError('Should be overriden')
+
+    def compute_embeddings_mat(self, params):
+        raise RuntimeError('Should be overriden')
+
+    def encode(self, params, x: jnp.ndarray) -> jnp.ndarray:
+        raise RuntimeError('Should be overriden')
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        raise RuntimeError('Should be overriden')
+
+
+class AbstractGRAM(AbstractEmbeddingsLayer):
     def __init__(self,
                  attention_dim: int,
                  attention_method: str,
-                 code2index: Dict[str, int],
                  ancestors_mat: jnp.ndarray,
                  embeddings_dim: int,
-                 initial_params: Optional[Any],
-                 mode: str,
                  name: Optional[str] = None,
                  **init_kwargs):
+        super().__init__(embeddings_dim=embeddings_dim)
+
         if attention_method == 'tanh':
             attention_cls = DAGAttention
         elif attention_method == 'l2':
@@ -77,11 +96,7 @@ class DAGGRAM:
             raise RuntimeError('Unrecognized attention method.'
                                f'Got {attention_method}. Expected either of'
                                f'{", ".join(["tanh", "l2"])}.')
-        index2code = {i: c for c, i in code2index.items()}
-        codes_ordered = map(index2code.get, range(len(index2code)))
-        self.code2index = code2index
         self.A = self._augment_ancestors_mat(ancestors_mat)
-        self.embeddings_dim = embeddings_dim
 
         self.init_att, fwd_att = hk.without_apply_rng(
             hk.transform(
@@ -89,18 +104,6 @@ class DAGGRAM:
                             attention_dim=attention_dim,
                             name=f"{name}_DAG_Attention")))
         self.fwd_att = jax.jit(fwd_att)
-        self.mode = mode
-        if mode == 'frozen_params':
-            self.frozen_params = initial_params
-            self.G = self.compute_embedding_mat(initial_params)
-        elif mode == 'tunable_params':
-            self.tunable_params = initial_params
-        elif mode == 'semi_frozen':
-            self.E, self.att_params = initial_params
-        elif mode == 'initial_embeddings':
-            self.initial_E = jnp.vstack(map(initial_params.get, codes_ordered))
-        else:
-            raise RuntimeError(f'Unrecognized mode: {mode}')
 
     @staticmethod
     def _augment_ancestors_mat(ancestors_mat: jnp.ndarray):
@@ -111,17 +114,7 @@ class DAGGRAM:
         return [jnp.nonzero(ancestors_v) for ancestors_v in A]
 
     def init_params(self, rng_key):
-        if self.mode == 'frozen_params':
-            return None
-        elif self.mode == 'tunable_params':
-            return self.tunable_params
-        elif self.mode == 'semi_frozen':
-            return self.att_params
-        elif self.mode == 'initial_embeddings':
-            e = self.initial_E[0, :]
-            return self.initial_E, self.init_att(rng_key, e, e)
-        else:
-            raise RuntimeError(f'Unrecognized mode: {self.mode}')
+        raise RuntimeError(f'Should be overriden')
 
     @partial(jax.jit, static_argnums=(0, ))
     def _self_attention(self, params: Any, E: jnp.ndarray, e_i: jnp.ndarray,
@@ -130,16 +123,14 @@ class DAGGRAM:
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
-    def compute_embedding_mat(self, params):
-        if self.mode == 'frozen_params' and params is None:
-            return self.G
-        elif self.mode == 'semi_frozen':
-            E, att_params = self.E, params
-        else:
-            E, att_params = params
-
+    def _compute_embeddings_mat(self, params):
+        E, att_params = params
         G = map(partial(self._self_attention, att_params, E), E, self.A)
         return jnp.vstack(list(G))
+
+    # This can be overriden.
+    def compute_embeddings_mat(self, params):
+        return self._compute_embeddings_mat(params)
 
     @partial(jax.jit, static_argnums=(0, ))
     def encode(self, G: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
@@ -147,11 +138,169 @@ class DAGGRAM:
 
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
+        raise RuntimeError('Should be overriden')
+
+
+class SemiFrozenGRAM(AbstractGRAM):
+    def __init__(self,
+                 initial_params: Tuple[jnp.ndarray, jnp.ndarray],
+                 attention_dim: int,
+                 attention_method: str,
+                 ancestors_mat: jnp.ndarray,
+                 embeddings_dim: int,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(attention_dim=attention_dim,
+                         attention_method=attention_method,
+                         ancestors_mat=ancestors_mat,
+                         embeddings_dim=embeddings_dim,
+                         name=name)
+        self.E, self.att_params = initial_params
+
+    def init_params(self, rng_key):
+        return self.att_params
+
+    def compute_embeddings_mat(self, params):
+        return self._compute_embeddings_mat((self.E, params))
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        raise RuntimeError('Should not be called')
+
+
+class FrozenGRAM(AbstractGRAM):
+    def __init__(self,
+                 initial_params: Tuple[jnp.ndarray, jnp.ndarray],
+                 attention_dim: int,
+                 attention_method: str,
+                 ancestors_mat: jnp.ndarray,
+                 embeddings_dim: int,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(attention_dim=attention_dim,
+                         attention_method=attention_method,
+                         ancestors_mat=ancestors_mat,
+                         embeddings_dim=embeddings_dim,
+                         name=name)
+        self.G = self.compute_embeddings_mat(initial_params)
+
+    def init_params(self, rng_key):
+        return None
+
+    def compute_embeddings_mat(self, params):
+        if params is None:
+            return self.G
+        return self._compute_embeddings_mat(params)
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        raise RuntimeError('Should not be called')
+
+
+class TunableGRAM(AbstractGRAM):
+    def __init__(self,
+                 initial_params: Tuple[jnp.ndarray, jnp.ndarray],
+                 attention_dim: int,
+                 attention_method: str,
+                 ancestors_mat: jnp.ndarray,
+                 embeddings_dim: int,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(attention_dim=attention_dim,
+                         attention_method=attention_method,
+                         ancestors_mat=ancestors_mat,
+                         embeddings_dim=embeddings_dim,
+                         name=name)
+        self.initial_params = initial_params
+
+    def init_params(self, rng_key):
+        return self.initial_params
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        raise RuntimeError('Should not be called')
+
+
+class GloVeGRAM(AbstractGRAM):
+    def __init__(self,
+                 category: str,
+                 patient_interface: AbstractSubjectJAXInterface,
+                 train_ids: Iterable[int],
+                 glove_config: Dict[str, int],
+                 attention_dim: int,
+                 attention_method: str,
+                 ancestors_mat: jnp.ndarray,
+                 embeddings_dim: int,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        super().__init__(attention_dim=attention_dim,
+                         attention_method=attention_method,
+                         ancestors_mat=ancestors_mat,
+                         embeddings_dim=embeddings_dim,
+                         name=name)
+
+        self.patient_interface = patient_interface
+        self.train_ids = train_ids
+        self.category = category
+        self.glove_config = glove_config
+
+    def init_params(self, rng_key):
+        glove_E = glove_representation(
+            category=self.category,
+            patient_interface=self.patient_interface,
+            train_ids=self.train_ids,
+            vector_size=self.embeddings_dim,
+            **self.glove_config)
+        code2index = self.patient_interface.diag_multi_ccs_idx
+        index2code = {i: c for c, i in code2index.items()}
+        codes_ordered = map(index2code.get, range(len(index2code)))
+        initial_E = jnp.vstack(map(glove_E.get, codes_ordered))
+
+        e = initial_E[0, :]
+        return initial_E, self.init_att(rng_key, e, e)
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
+            'glove_config': {
+                'iterations': 30,
+                'window_size_days': 2 * 365
+            },
             'embeddings_dim':
-            trial.suggest_int('dx', 50, 250, 50),
+            trial.suggest_int(f'{prefix}_k', 50, 250, 50),
             'attention_method':
             trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
             'attention_dim':
             trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
+        }
+
+
+class MatrixEmbeddings(AbstractEmbeddingsLayer):
+    def __init__(self,
+                 embeddings_dim: int,
+                 input_dim: int,
+                 name: Optional[str] = None):
+        super().__init__(embeddings_dim=embeddings_dim)
+
+        self.init_emb, fwd_emb = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(hk.Linear, output_size=embeddings_dim, name=name)))
+
+        self.fwd_emb = jax.jit(fwd_emb)
+        self.input_dim = input_dim
+
+    def init_params(self, prng_key):
+        return self.init_emb(prng_key, jnp.zeros((self.input_dim, )))
+
+    def compute_embeddings_mat(self, params):
+        return params
+
+    @partial(jax.jit, static_argnums=(0, ))
+    def encode(self, params, x: jnp.ndarray) -> jnp.ndarray:
+        return self.fwd_emb(params, x)
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        return {
+            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 50, 300, 50)
         }

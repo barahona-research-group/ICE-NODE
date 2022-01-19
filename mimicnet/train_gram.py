@@ -8,13 +8,13 @@ import jax.numpy as jnp
 import optuna
 
 from .jax_interface import SubjectDiagSequenceJAXInterface
-from .gram import DAGGRAM
+from .gram import GloVeGRAM, AbstractEmbeddingsLayer
 from .metrics import l2_squared, l1_absolute
 from .concept import Subject
-from .dag import CCSDAG
 from .utils import wrap_module
 from .abstract_model import AbstractModel
 from .glove import glove_representation
+from .dag import CCSDAG
 
 
 @jax.jit
@@ -25,13 +25,13 @@ def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
 
 class GRAM(AbstractModel):
     def __init__(self, subject_interface: SubjectDiagSequenceJAXInterface,
-                 diag_gram: DAGGRAM, state_size: int):
+                 diag_emb: AbstractEmbeddingsLayer, state_size: int):
 
         self.subject_interface = subject_interface
-        self.diag_gram = diag_gram
+        self.diag_emb = diag_emb
 
         self.dimensions = {
-            'diag_gram': diag_gram.embeddings_dim,
+            'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_multi_ccs_idx),
             'diag_out': len(subject_interface.diag_multi_ccs_idx),
             'state': state_size
@@ -56,7 +56,7 @@ class GRAM(AbstractModel):
         diag_gram = jnp.zeros(self.dimensions['diag_gram'])
 
         return {
-            "diag_gram": self.diag_gram.init_params(rng_key),
+            "diag_emb": self.diag_emb.init_params(rng_key),
             "gru": self.initializers['gru'](rng_key, diag_gram, state),
             "out": self.initializers['out'](rng_key, state)
         }
@@ -73,8 +73,8 @@ class GRAM(AbstractModel):
 
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
 
-        G = self.diag_gram.compute_embedding_mat(params["diag_gram"])
-        gram = partial(self.diag_gram.encode, G)
+        G = self.diag_emb.compute_embedding_mat(params["diag_emb"])
+        gram = partial(self.diag_emb.encode, G)
         diag_seqs = self.subject_interface.diag_sequences_batch(subjects_batch)
 
         loss = {}
@@ -154,25 +154,13 @@ class GRAM(AbstractModel):
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        diag_glove, _ = glove_representation(
-            diag_idx=patient_interface.diag_multi_ccs_idx,
-            proc_idx=patient_interface.proc_multi_ccs_idx,
-            ccs_dag=patient_interface.dag,
-            subjects=[patient_interface.subjects[i] for i in train_ids],
-            diag_vector_size=config['gram']['diag']['embeddings_dim'],
-            proc_vector_size=50,
-            **config['glove'])
-
-        diag_gram = DAGGRAM(
-            ccs_dag=patient_interface.dag,
-            code2index=patient_interface.diag_multi_ccs_idx,
-            initial_params=diag_glove,
-            mode='initial_embeddings',
-            ancestors_mat=patient_interface.diag_multi_ccs_ancestors_mat,
-            **config['gram']['diag'])
+        diag_emb = GloVeGRAM(category='diag',
+                             patient_interface=patient_interface,
+                             train_ids=train_ids,
+                             **config['emb']['diag'])
 
         return cls(subject_interface=patient_interface,
-                   diag_gram=diag_gram,
+                   diag_emb=diag_emb,
                    **config['model'])
 
     @staticmethod
