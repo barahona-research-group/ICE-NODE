@@ -14,7 +14,7 @@ from .utils import wrap_module, load_config, load_params
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
-                   AbstractEmbeddingsLayer, MatrixEmbeddings)
+                   AbstractEmbeddingsLayer, MatrixEmbeddings, OrthogonalGRAM)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
 from .abstract_model import AbstractModel
@@ -405,10 +405,15 @@ class SNONETDiag(AbstractModel):
                      pretrained_components):
         emb_config = config['emb']['diag']
 
-        emb_kind = 'matrix'
+        emb_kind = 'orthogonal_gram'
         if emb_kind == 'matrix':
             input_dim = len(patient_interface.diag_multi_ccs_idx)
             diag_emb = MatrixEmbeddings(input_dim=input_dim, **emb_config)
+
+        elif emb_kind == 'orthogonal_gram':
+            diag_emb = OrthogonalGRAM('diag',
+                                      patient_interface=patient_interface,
+                                      **emb_config)
         elif emb_kind == 'glove_gram':
             diag_emb = GloVeGRAM(category='diag',
                                  patient_interface=patient_interface,
@@ -493,10 +498,12 @@ class SNONETDiag(AbstractModel):
     @classmethod
     def sample_experiment_config(cls, trial: optuna.Trial,
                                  pretrained_components: str):
-        emb_kind = 'matrix'
+        emb_kind = 'orthogonal_gram'
 
         if emb_kind == 'matrix':
             emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
+        elif emb_kind == 'orthogonal_gram':
+            emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
         elif emb_kind == 'glove_gram':
             emb_config = GloVeGRAM.sample_model_config('dx', trial)
         elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):

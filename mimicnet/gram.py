@@ -229,10 +229,16 @@ class GloVeGRAM(AbstractGRAM):
                  glove_config: Dict[str, int],
                  attention_dim: int,
                  attention_method: str,
-                 ancestors_mat: jnp.ndarray,
                  embeddings_dim: int,
                  name: Optional[str] = None,
                  **init_kwargs):
+
+        if category == 'diag':
+            ancestors_mat = patient_interface.diag_multi_ccs_ancestors_mat
+        else:
+            ancestors_mat = patient_interface.proc_multi_ccs_ancestors_mat
+
+
         super().__init__(attention_dim=attention_dim,
                          attention_method=attention_method,
                          ancestors_mat=ancestors_mat,
@@ -251,7 +257,12 @@ class GloVeGRAM(AbstractGRAM):
             train_ids=self.train_ids,
             vector_size=self.embeddings_dim,
             **self.glove_config)
-        code2index = self.patient_interface.diag_multi_ccs_idx
+
+        if self.category == 'diag':
+            code2index = self.patient_interface.diag_multi_ccs_idx
+        else:
+            code2index = self.patient_interface.proc_multi_ccs_idx
+
         index2code = {i: c for c, i in code2index.items()}
         codes_ordered = map(index2code.get, range(len(index2code)))
         initial_E = jnp.vstack(map(glove_E.get, codes_ordered))
@@ -274,6 +285,45 @@ class GloVeGRAM(AbstractGRAM):
             trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
         }
 
+class OrthogonalGRAM(AbstractGRAM):
+    def __init__(self,
+                 category: str,
+                 patient_interface: AbstractSubjectJAXInterface,
+                 attention_dim: int,
+                 attention_method: str,
+                 name: Optional[str] = None,
+                 **init_kwargs):
+        dag = patient_interface.dag
+
+        if category == 'diag':
+            size = len(patient_interface.diag_multi_ccs_idx)
+            ancestors_mat = patient_interface.diag_multi_ccs_ancestors_mat
+        else:
+            size = len(patient_interface.proc_multi_ccs_idx)
+            ancestors_mat = patient_interface.proc_multi_ccs_ancestors_mat
+
+        super().__init__(attention_dim=attention_dim,
+                         attention_method=attention_method,
+                         ancestors_mat=ancestors_mat,
+                         embeddings_dim=size,
+                         name=name)
+        self.E = jnp.eye(size)
+
+    def init_params(self, rng_key):
+        e = self.E[0, :]
+        return self.init_att(rng_key, e, e)
+
+    def compute_embeddings_mat(self, params):
+        return self._compute_embeddings_mat((self.E, params))
+
+    @staticmethod
+    def sample_model_config(prefix: str, trial: optuna.Trial):
+        return {
+            'attention_method':
+            trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
+            'attention_dim':
+            trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
+        }
 
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
     def __init__(self,
