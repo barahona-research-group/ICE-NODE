@@ -112,9 +112,9 @@ def mlflow_log_metrics(eval_dict, step, frozen):
 
 
 def objective(model_cls: AbstractModel, pretrained_components,
-              patient_interface, train_ids, test_ids, valid_ids, rng,
-              eval_freq, job_id, output_dir, codes_by_percentiles,
-              trial_stop_time: datetime, frozen: bool, trial: optuna.Trial):
+              patient_interface, train_ids, test_ids, valid_ids, rng, job_id,
+              output_dir, codes_by_percentiles, trial_stop_time: datetime,
+              frozen: bool, trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
 
     mlflow_set_tag('job_id', job_id, frozen)
@@ -176,11 +176,13 @@ def objective(model_cls: AbstractModel, pretrained_components,
     batch_size = min(batch_size, len(train_ids))
 
     epochs = config['training']['epochs']
-    iters = int(epochs * len(train_ids) / batch_size)
+    iters = round(epochs * len(train_ids) / batch_size + 0.5)
+    eval_freq = round(iters / (100 * epochs) + 0.5)
+    eval_step = 0
+
     trial.set_user_attr('steps', iters)
     mlflow_set_tag('steps', iters, frozen)
-
-    for step in tqdm(range(iters)):
+    for i in tqdm(range(iters)):
 
         if datetime.now() > trial_stop_time:
             trial.set_user_attr('timeout', 1)
@@ -190,21 +192,23 @@ def objective(model_cls: AbstractModel, pretrained_components,
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
-        opt_state = update(step, train_batch, opt_state)
+        opt_state = update(i, train_batch, opt_state)
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
             return float('nan')
 
-        if not (step % eval_freq == 0 or step == iters - 1):
+        if not (i % eval_freq == 0 or i == iters - 1):
             continue
 
-        trial.set_user_attr("progress", (step + 1) / iters)
-        mlflow_set_tag("progress", (step + 1) / iters, frozen)
+        eval_step += 1
+
+        trial.set_user_attr("progress", (i + 1) / iters)
+        mlflow_set_tag("progress", (i + 1) / iters, frozen)
 
         params = get_params(opt_state)
 
-        if frozen or step == iters - 1:
+        if frozen or i == iters - 1:
             raw_res = {
                 'TRN': eval_(params, train_batch),
                 'VAL': eval_(params, valid_ids),
@@ -218,15 +222,17 @@ def objective(model_cls: AbstractModel, pretrained_components,
 
         eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
         try:
-            mlflow_log_metrics(eval_flat, step, frozen)
+            mlflow_log_metrics(eval_flat, eval_step, frozen)
         except Exception as e:
             logging.warning(f'Exception when logging metrics to mlflow: {e}')
 
-        eval_df.to_csv(os.path.join(trial_dir, f'step{step:04d}_eval.csv'))
+        eval_df.to_csv(os.path.join(trial_dir,
+                                    f'step{eval_step:04d}_eval.csv'))
 
         # Only dump parameters for frozen trials.
         if frozen:
-            fname = os.path.join(trial_dir, f'step{step:04d}_params.pickle')
+            fname = os.path.join(trial_dir,
+                                 f'step{eval_step:04d}_params.pickle')
             write_params(get_params(opt_state), fname)
 
         logging.info(eval_df)
@@ -237,7 +243,7 @@ def objective(model_cls: AbstractModel, pretrained_components,
         if jnp.isnan(auc):
             continue
 
-        trial.report(auc, step)
+        trial.report(auc, eval_step)
 
         if trial.should_prune():
             raise optuna.TrialPruned()
@@ -284,7 +290,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
-    eval_freq = 20
     codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
         20, train_ids)
 
@@ -301,7 +306,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                          test_ids=test_ids,
                          valid_ids=valid_ids,
                          rng=rng,
-                         eval_freq=eval_freq,
                          job_id=job_id,
                          output_dir=output_dir,
                          codes_by_percentiles=codes_by_percentiles,
