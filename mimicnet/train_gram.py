@@ -53,11 +53,11 @@ class GRAM(AbstractModel):
 
     def init_params(self, rng_key):
         state = jnp.zeros(self.dimensions['state'])
-        diag_gram = jnp.zeros(self.dimensions['diag_gram'])
+        diag_emb = jnp.zeros(self.dimensions['diag_emb'])
 
         return {
             "diag_emb": self.diag_emb.init_params(rng_key),
-            "gru": self.initializers['gru'](rng_key, diag_gram, state),
+            "gru": self.initializers['gru'](rng_key, diag_emb, state),
             "out": self.initializers['out'](rng_key, state)
         }
 
@@ -73,8 +73,8 @@ class GRAM(AbstractModel):
 
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
 
-        G = self.diag_emb.compute_embedding_mat(params["diag_emb"])
-        gram = partial(self.diag_emb.encode, G)
+        G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
+        emb = partial(self.diag_emb.encode, G)
         diag_seqs = self.subject_interface.diag_sequences_batch(subjects_batch)
 
         loss = {}
@@ -85,14 +85,14 @@ class GRAM(AbstractModel):
             hierarchical_diag = _diag_seqs['diag_multi_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
             flat_diag = _diag_seqs['diag_multi_ccs_vec'][1:]
-            gram_seqs = map(gram, hierarchical_diag)
+            emb_seqs = map(emb, hierarchical_diag)
 
             diag_detectability[subject_id] = {}
             loss[subject_id] = []
             state = state0
-            for i, diag_gram in enumerate(gram_seqs):
+            for i, diag_emb in enumerate(emb_seqs):
                 y_i = flat_diag[i]
-                output, state = self.gru(params['gru'], diag_gram, state)
+                output, state = self.gru(params['gru'], diag_emb, state)
                 logits = self.out(params['out'], output)
                 diag_detectability[subject_id][i] = {
                     'diag_true': y_i,
@@ -128,7 +128,8 @@ class GRAM(AbstractModel):
         return {}
 
     @staticmethod
-    def create_patient_interface(processed_mimic_tables_dir: str):
+    def create_patient_interface(processed_mimic_tables_dir: str,
+                                 data_tag: str):
         static_df = pd.read_csv(
             f'{processed_mimic_tables_dir}/static_df.csv.gz')
         adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
@@ -154,10 +155,12 @@ class GRAM(AbstractModel):
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        diag_emb = GloVeGRAM(category='diag',
-                             patient_interface=patient_interface,
-                             train_ids=train_ids,
-                             **config['emb']['diag'])
+        diag_emb = cls.create_embedding(
+            emb_config=config['emb']['diag'],
+            emb_kind=config['emb']['kind'],
+            patient_interface=patient_interface,
+            train_ids=train_ids,
+            pretrained_components=pretrained_components)
 
         return cls(subject_interface=patient_interface,
                    diag_emb=diag_emb,

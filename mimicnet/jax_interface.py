@@ -300,6 +300,7 @@ class SubjectJAXInterface(AbstractSubjectJAXInterface):
 
 
 def create_patient_interface(processed_mimic_tables_dir: str,
+                             data_tag = None,
                              ignore_tests=False):
     static_df = pd.read_csv(f'{processed_mimic_tables_dir}/static_df.csv.gz')
     static_df['DOB'] = pd.to_datetime(

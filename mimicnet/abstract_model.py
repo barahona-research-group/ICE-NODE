@@ -2,7 +2,10 @@ from typing import Dict, List, Any, Optional, Tuple, Iterable
 from enum import Enum, Flag, auto
 import optuna
 from optuna.trial import FrozenTrial
-from .gram import GloVeGRAM
+from .utils import load_config, load_params
+from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
+                   AbstractEmbeddingsLayer, MatrixEmbeddings, OrthogonalGRAM)
+from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce)
 
 
 class LossMixingFlag(Flag):
@@ -17,15 +20,19 @@ class LossMixingFlag(Flag):
         return (flag & attr).value != 0
 
 
+class ImplementationException(Exception):
+    pass
+
+
 class AbstractModel:
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        raise Exception('Should be overriden')
+        raise ImplementationException('Should be overriden')
 
     def detailed_loss(self, loss_mixing, params, res):
-        raise Exception('Should be overriden')
+        raise ImplementationException('Should be overriden')
 
     def eval_stats(self, res):
-        raise Exception('Should be overriden')
+        raise ImplementationException('Should be overriden')
 
     def eval(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int]) -> Dict[str, float]:
@@ -43,9 +50,55 @@ class AbstractModel:
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
     @classmethod
+    def create_embedding(cls, emb_config, emb_kind, patient_interface,
+                         train_ids, pretrained_components):
+        if emb_kind == 'matrix':
+            input_dim = len(patient_interface.diag_multi_ccs_idx)
+            return MatrixEmbeddings(input_dim=input_dim, **emb_config)
+
+        if emb_kind == 'orthogonal_gram':
+            return OrthogonalGRAM('diag',
+                                  patient_interface=patient_interface,
+                                  **emb_config)
+        if emb_kind == 'glove_gram':
+            return GloVeGRAM(category='diag',
+                             patient_interface=patient_interface,
+                             train_ids=train_ids,
+                             **emb_config)
+
+        if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+            pretrained_components = load_config(pretrained_components)
+            emb_component = pretrained_components['emb']['diag']['params_file']
+            emb_params = load_params(emb_component)['diag_emb']
+            if emb_kind == 'semi_frozen_gram':
+                return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
+            elif emb_kind == 'frozen_gram':
+                return FrozenGRAM(initial_params=emb_params, **emb_config)
+            else:
+                return TunableGRAM(initial_params=emb_params, **emb_config)
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+
+    @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        raise Exception('Should be overriden')
+        raise ImplementationException('Should be overriden')
+
+    @classmethod
+    def select_loss(cls, loss_label: str, patient_interface, train_ids):
+        if loss_label == 'balanced_focal':
+            return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
+        elif loss_label == 'softmax':
+            return softmax_loss
+        elif loss_label == 'bce':
+            return bce
+        elif loss_label == 'balanced_bce':
+            codes_dist = patient_interface.diag_multi_ccs_frequency_vec(
+                train_ids)
+            weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
+            return lambda t, logits: weighted_bce(t, logits, weights)
+        else:
+            raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
     @staticmethod
     def _sample_training_config(trial: optuna.Trial, epochs):
@@ -56,7 +109,7 @@ class AbstractModel:
 
         return {
             'epochs': epochs,
-            'batch_size': trial.suggest_int('B', 2, 22, 5),
+            'batch_size': trial.suggest_int('B', 2, 27, 5),
             # UNDO/TODO
             'optimizer': 'adam',
             # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
@@ -65,22 +118,44 @@ class AbstractModel:
         }
 
     @staticmethod
-    def sample_embeddings_config(trial: optuna.Trial):
-        return {'diag': GloVeGRAM.sample_model_config('dx', trial)}
+    def sample_embeddings_config(trial: optuna.Trial,
+                                 emb_kind: str,
+                                 pretrained_components: Optional[Any] = None):
+        if emb_kind == 'matrix':
+            emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
+        elif emb_kind == 'orthogonal_gram':
+            emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
+        elif emb_kind == 'glove_gram':
+            emb_config = GloVeGRAM.sample_model_config('dx', trial)
+        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+            pretrained_components = load_config(pretrained_components)
+            gram_component = pretrained_components['emb']['diag'][
+                'config_file']
+            gram_component = load_config(gram_component)
+
+            emb_config = gram_component['emb']['diag']
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+
+        return {'diag': emb_config, 'kind': emb_kind}
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        raise Exception('Should be overriden')
+        raise ImplementationException('Should be overriden')
 
     @staticmethod
     def sample_model_config(trial: optuna.Trial):
         return {'state_size': trial.suggest_int('s', 100, 350, 50)}
 
     @classmethod
-    def sample_experiment_config(cls, trial: optuna.Trial,
+    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str,
                                  pretrained_components: str):
         return {
-            'emb': cls.sample_embeddings_config(trial),
-            'model': cls.sample_model_config(trial),
-            'training': cls.sample_training_config(trial)
+            'emb':
+            cls.sample_embeddings_config(
+                trial, emb_kind, pretrained_components=pretrained_components),
+            'model':
+            cls.sample_model_config(trial),
+            'training':
+            cls.sample_training_config(trial)
         }

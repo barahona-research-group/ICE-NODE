@@ -17,7 +17,7 @@ from jax.experimental import optimizers
 import optuna
 from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
-from optuna.pruners import HyperbandPruner
+from optuna.pruners import HyperbandPruner, PatientPruner
 from optuna.samplers import TPESampler
 from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
@@ -48,6 +48,21 @@ def capture_args():
                         '--mimic-processed-dir',
                         required=True,
                         help='Absolute path to MIMIC-III processed tables')
+
+    parser.add_argument(
+        '-d',
+        '--data-tag',
+        required=True,
+        help='Data identifier tag (m3 for MIMIC-III or m4 for MIMIC-IV')
+
+    parser.add_argument(
+        '-e',
+        '--emb',
+        required=True,
+        help=
+        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram)'
+    )
+
     parser.add_argument('-o',
                         '--output-dir',
                         required=True,
@@ -88,6 +103,8 @@ def capture_args():
 
     return {
         'study_name': args.study_name,
+        'data_tag': args.data_tag,
+        'emb': args.emb,
         'optuna_store': args.optuna_store,
         'mlflow_store': args.mlflow_store,
         'num_trials': args.num_trials,
@@ -111,7 +128,7 @@ def mlflow_log_metrics(eval_dict, step, frozen):
         mlflow.log_metrics(eval_dict, step=step)
 
 
-def objective(model_cls: AbstractModel, pretrained_components,
+def objective(model_cls: AbstractModel, emb: str, pretrained_components,
               patient_interface, train_ids, test_ids, valid_ids, rng, job_id,
               output_dir, codes_by_percentiles, trial_stop_time: datetime,
               frozen: bool, trial: optuna.Trial):
@@ -131,7 +148,8 @@ def objective(model_cls: AbstractModel, pretrained_components,
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling & Initializing Models')
-    config = model_cls.sample_experiment_config(trial, pretrained_components)
+    config = model_cls.sample_experiment_config(
+        trial, emb_kind=emb, pretrained_components=pretrained_components)
 
     try:
         mlflow.log_params(trial.params)
@@ -176,8 +194,8 @@ def objective(model_cls: AbstractModel, pretrained_components,
     batch_size = min(batch_size, len(train_ids))
 
     epochs = config['training']['epochs']
-    iters = round(epochs * len(train_ids) / batch_size + 0.5)
-    eval_freq = round(iters / (100 * epochs) + 0.5)
+    iters = round(epochs * len(train_ids) / batch_size)
+    eval_freq = round(iters / (100 * epochs))
     eval_step = 0
 
     trial.set_user_attr('steps', iters)
@@ -252,14 +270,17 @@ def objective(model_cls: AbstractModel, pretrained_components,
 
 def run_trials(model_cls: AbstractModel, pretrained_components: str,
                study_name: str, optuna_store: str, mlflow_store: str,
-               num_trials: int, mimic_processed_dir: str, output_dir: str,
-               cpu: bool, job_id: str, trials_time_limit: int,
-               training_time_limit: int):
+               num_trials: int, mimic_processed_dir: str, data_tag: str,
+               emb: str, output_dir: str, cpu: bool, job_id: str,
+               trials_time_limit: int, training_time_limit: int):
+
+    data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
 
     termination_time = datetime.now() + timedelta(hours=trials_time_limit)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
-    patient_interface = model_cls.create_patient_interface(mimic_processed_dir)
+    patient_interface = model_cls.create_patient_interface(mimic_processed_dir,
+                                                           data_tag=data_tag)
     logging.info('[DONE] patient interface')
 
     storage = RDBStorage(url=optuna_store,
@@ -269,8 +290,12 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 storage=storage,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
-                                pruner=HyperbandPruner())
-    study.set_user_attr('metric', 'auc')
+                                pruner=PatientPruner(HyperbandPruner(),
+                                                     patience=15))
+
+    study.set_user_attr('metric', 'MICRO-AUC')
+    study.set_user_attr('data', data_tag_fullname[data_tag])
+    study.set_user_attr('embeddings', emb)
 
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
@@ -300,6 +325,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
             raise ResourceTimeout('Time-limit exceeded, abort.')
 
         return objective(model_cls=model_cls,
+                         emb=emb,
                          pretrained_components=pretrained_components,
                          patient_interface=patient_interface,
                          train_ids=train_ids,

@@ -14,7 +14,8 @@ if __name__ == '__main__':
     parser.add_argument('-i',
                         '--mimic-processed-dir',
                         required=True,
-                        help='Absolute path to MIMIC-III processed tables')
+                        help='Absolute path to MIMIC-III/IV processed tables')
+
     parser.add_argument('-o',
                         '--output-dir',
                         required=True,
@@ -24,6 +25,28 @@ if __name__ == '__main__':
                         type=int,
                         required=True,
                         help='Number of HPO trials.')
+
+    parser.add_argument(
+        '-d',
+        '--data-tag',
+        required=True,
+        help='Data identifier tag (m3 for MIMIC-III or m4 for MIMIC-IV')
+
+    parser.add_argument(
+        '-e',
+        '--emb',
+        required=True,
+        help=
+        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram)'
+    )
+    short_tags = {
+        'matrix': 'M',
+        'orthogonal_gram': 'O',
+        'glove_gram': 'G',
+        'semi_frozen_gram': 'S',
+        'frozen_gram': 'F',
+        'tuneble_gram': 'T'
+    }
 
     parser.add_argument(
         '--optuna-store',
@@ -70,6 +93,8 @@ if __name__ == '__main__':
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
     pretrained_components = args.pretrained_components
+    emb = args.emb
+    data_tag = args.data_tag
 
     if num_trials > 0:
         N = args.num_processes
@@ -78,15 +103,16 @@ if __name__ == '__main__':
 
     job_id = args.job_id or 'unknown'
 
-    study_name = f'{study_tag}_{model}'
+    study_name = f'{study_tag}{data_tag}_{model}_{short_tags[emb]}'
+    output_dir = os.path.join(output_dir, study_name)
 
     env = dict(os.environ)
     cmd = [
         sys.executable, '-m', f'mimicnet.train_{model}', '--study-name',
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
         mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
-        mimic_processed_dir, '--num-trials',
-        str(num_trials), '--trials-time-limit',
+        mimic_processed_dir, '--data-tag', data_tag, '--emb', emb,
+        '--num-trials', str(num_trials), '--trials-time-limit',
         str(trials_time_limit), '--training-time-limit',
         str(training_time_limit), '--job-id', job_id
     ]

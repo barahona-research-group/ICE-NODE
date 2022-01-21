@@ -15,7 +15,9 @@ cd $TMPDIR/MIMIC-SNONET
 
 # Run program
 $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
---output-dir $HOME/GP/ehr-data/mimicnet-experiments/${STUDY_TAG}_${MODEL} \
+--output-dir $HOME/GP/ehr-data/mimicnet-experiments \
+--data-tag $DATA_TAG \
+--emb $EMB \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
 --model $MODEL \

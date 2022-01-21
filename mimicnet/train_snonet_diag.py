@@ -8,16 +8,14 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
-                      l2_squared, l1_absolute)
+from .metrics import (l2_squared, l1_absolute)
 from .utils import wrap_module, load_config, load_params
 
 from .jax_interface import (SubjectJAXInterface, create_patient_interface)
-from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
-                   AbstractEmbeddingsLayer, MatrixEmbeddings, OrthogonalGRAM)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
 from .abstract_model import AbstractModel
+from .gram import AbstractEmbeddingsLayer
 
 
 class SNONETDiag(AbstractModel):
@@ -381,81 +379,41 @@ class SNONETDiag(AbstractModel):
         }
 
     @staticmethod
-    def create_patient_interface(mimic_dir):
-        return create_patient_interface(mimic_dir, ignore_tests=True)
-
-    @classmethod
-    def select_loss(cls, loss_label: str, patient_interface, train_ids):
-        if loss_label == 'balanced_focal':
-            return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
-        elif loss_label == 'softmax':
-            return softmax_loss
-        elif loss_label == 'bce':
-            return bce
-        elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_multi_ccs_frequency_vec(
-                train_ids)
-            weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
-            return lambda t, logits: weighted_bce(t, logits, weights)
-        else:
-            raise ValueError(f'Unrecognized diag_loss: {loss_label}')
+    def create_patient_interface(mimic_dir, data_tag: str):
+        return create_patient_interface(mimic_dir,
+                                        data_tag=data_tag,
+                                        ignore_tests=True)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        emb_config = config['emb']['diag']
 
-        emb_kind = 'orthogonal_gram'
-        if emb_kind == 'matrix':
-            input_dim = len(patient_interface.diag_multi_ccs_idx)
-            diag_emb = MatrixEmbeddings(input_dim=input_dim, **emb_config)
-
-        elif emb_kind == 'orthogonal_gram':
-            diag_emb = OrthogonalGRAM('diag',
-                                      patient_interface=patient_interface,
-                                      **emb_config)
-        elif emb_kind == 'glove_gram':
-            diag_emb = GloVeGRAM(category='diag',
-                                 patient_interface=patient_interface,
-                                 train_ids=train_ids,
-                                 **emb_config)
-        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            emb_component = pretrained_components['emb']['diag']['params_file']
-            emb_params = load_params(emb_component)['diag_emb']
-            if emb_kind == 'semi_frozen_gram':
-                diag_emb = SemiFrozenGRAM(initial_params=emb_params,
-                                          **emb_config)
-            elif emb_kind == 'frozen_gram':
-                diag_emb = FrozenGRAM(initial_params=emb_params, **emb_config)
-            else:
-                diag_emb = TunableGRAM(initial_params=emb_params, **emb_config)
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+        diag_emb = cls.create_embedding(
+            emb_config=config['emb']['diag'],
+            emb_kind=config['emb']['kind'],
+            patient_interface=patient_interface,
+            train_ids=train_ids,
+            pretrained_components=pretrained_components)
 
         diag_loss = cls.select_loss(config['training']['diag_loss'],
                                     patient_interface, train_ids)
         return cls(subject_interface=patient_interface,
                    diag_emb=diag_emb,
                    **config['model'],
-                   tay_reg=config['training']['tay_reg'],
                    diag_loss=diag_loss)
 
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
-        config['tay_reg'] = trial.suggest_categorical('tay', [0, 2, 3])
         # UNDO
-        config['diag_loss'] = 'softmax'
+        # config['diag_loss'] = 'softmax'
         # trial.suggest_categorical('dx_loss', ['balanced_bce', 'softmax'])
-        # trial.suggest_categorical('dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
+        config['diag_loss'] = trial.suggest_categorical(
+            'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
-            'L_diag':
-            trial.suggest_float('L_dx', 1e-4, 1, log=True),
-            'L_dyn':
-            trial.suggest_float('L_dyn', 1e-3, 1e3, log=True)
-            if config['tay_reg'] > 0 else 0.0,
+            'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),
+            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
 
@@ -476,6 +434,7 @@ class SNONETDiag(AbstractModel):
             'ode_timescale': trial.suggest_float('ode_ts', 1, 1e4, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
+            'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
             'max_odeint_days':
             # UNDO
             10 * 360  #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
@@ -490,39 +449,6 @@ class SNONETDiag(AbstractModel):
     @staticmethod
     def sample_model_config(trial: optuna.Trial):
         return SNONETDiag._sample_ode_model_config(trial)
-
-    @staticmethod
-    def sample_embeddings_config(trial: optuna.Trial):
-        return {'diag': MatrixEmbeddings.sample_model_config('dx', trial)}
-
-    @classmethod
-    def sample_experiment_config(cls, trial: optuna.Trial,
-                                 pretrained_components: str):
-        emb_kind = 'orthogonal_gram'
-
-        if emb_kind == 'matrix':
-            emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
-        elif emb_kind == 'orthogonal_gram':
-            emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
-        elif emb_kind == 'glove_gram':
-            emb_config = GloVeGRAM.sample_model_config('dx', trial)
-        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            gram_component = pretrained_components['emb']['diag'][
-                'config_file']
-            gram_component = load_config(gram_component)
-
-            emb_config = gram_component['emb']['diag']
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
-
-        return {
-            'emb': {
-                'diag': emb_config
-            },
-            'model': cls.sample_model_config(trial),
-            'training': cls.sample_training_config(trial)
-        }
 
 
 if __name__ == '__main__':

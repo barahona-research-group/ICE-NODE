@@ -44,9 +44,11 @@ export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
 # Run program
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
---output-dir $STORE/GP/ehr-data/mimic3-snonet-exp/${STUDY_TAG}_${MODEL} \
+--output-dir $STORE/GP/ehr-data/mimic3-snonet-exp \
 --mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
+--data-tag $DATA_TAG \
+--emb $EMB \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
