@@ -14,9 +14,21 @@ cd $TMPDIR/MIMIC-SNONET
 # Load modules for any applications
 
 # Run program
+
+OUTPUT_DIR=""
+DATA_DIR=""
+
+if [[ "$DATA_TAG" == "M3" ]]; then
+  OUTPUT_DIR="$HOME/GP/ehr-data/mimicnet-m3-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
+else
+  OUTPUT_DIR="$HOME/GP/ehr-data/mimicnet-m4-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
+fi
+
 $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
---output-dir $HOME/GP/ehr-data/mimicnet-experiments \
---mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
+--output-dir $OUTPUT_DIR \
+--mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \

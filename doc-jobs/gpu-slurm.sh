@@ -43,9 +43,22 @@ export OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8
 export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
 # Run program
+OUTPUT_DIR=""
+DATA_DIR=""
+
+if [[ "$DATA_TAG" == "M3" ]]; then
+  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m3-exp"
+  DATA_DIR="$STORE/GP/ehr-data/mimic3-transforms"
+else
+  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m4-exp"
+  DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
+fi
+
+$HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
+
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
---output-dir $STORE/GP/ehr-data/mimic3-snonet-exp \
---mimic-processed-dir $STORE/GP/ehr-data/mimic3-transforms \
+--output-dir $OUTPUT_DIR \
+--mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \

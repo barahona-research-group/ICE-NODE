@@ -34,8 +34,8 @@ class SNONETDiag(AbstractModel):
         self.diag_loss = diag_loss
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
-            'diag_in': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_multi_ccs_idx),
+            'diag_in': len(subject_interface.diag_ccs_idx),
+            'diag_out': len(subject_interface.diag_ccs_idx),
             'state': state_size,
             'ode_depth': ode_depth,
             'init_depth': init_depth
@@ -110,7 +110,7 @@ class SNONETDiag(AbstractModel):
     def diag_out_index(self) -> List[str]:
         index2code = {
             i: c
-            for c, i in self.subject_interface.diag_single_ccs_idx.items()
+            for c, i in self.subject_interface.diag_ccs_idx.items()
         }
         return list(map(index2code.get, range(len(index2code))))
 
@@ -138,12 +138,12 @@ class SNONETDiag(AbstractModel):
             return None
 
         diag_emb = {
-            i: self.diag_emb.encode(diag_G, v['diag_multi_ccs_vec'])
-            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
+            i: self.diag_emb.encode(diag_G, v['diag_ccs_vec'])
+            for i, v in points.items() if v['diag_ccs_vec'] is not None
         }
         diag_out = {
-            i: v['diag_multi_ccs_vec']
-            for i, v in points.items() if v['diag_multi_ccs_vec'] is not None
+            i: v['diag_ccs_vec']
+            for i, v in points.items() if v['diag_ccs_vec'] is not None
         }
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
 
@@ -382,7 +382,8 @@ class SNONETDiag(AbstractModel):
     def create_patient_interface(mimic_dir, data_tag: str):
         return create_patient_interface(mimic_dir,
                                         data_tag=data_tag,
-                                        ignore_tests=True)
+                                        ignore_tests=True,
+                                        ignore_proc=True)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
@@ -406,10 +407,10 @@ class SNONETDiag(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         # UNDO
-        # config['diag_loss'] = 'softmax'
+        config['diag_loss'] = 'softmax'
         # trial.suggest_categorical('dx_loss', ['balanced_bce', 'softmax'])
-        config['diag_loss'] = trial.suggest_categorical(
-            'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
+        # config['diag_loss'] = trial.suggest_categorical(
+        #     'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
             'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),

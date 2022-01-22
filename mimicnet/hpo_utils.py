@@ -130,8 +130,8 @@ def mlflow_log_metrics(eval_dict, step, frozen):
 
 def objective(model_cls: AbstractModel, emb: str, pretrained_components,
               patient_interface, train_ids, test_ids, valid_ids, rng, job_id,
-              output_dir, codes_by_percentiles, trial_stop_time: datetime,
-              frozen: bool, trial: optuna.Trial):
+              output_dir, trial_stop_time: datetime, frozen: bool,
+              trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
 
     mlflow_set_tag('job_id', job_id, frozen)
@@ -162,6 +162,8 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     model = model_cls.create_model(config, patient_interface, train_ids,
                                    pretrained_components)
+
+    code_partitions = model.code_partitions(patient_interface, train_ids)
 
     prng_key = jax.random.PRNGKey(rng.randint(0, 100))
     params = model.init_params(prng_key)
@@ -238,7 +240,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
                 'VAL': eval_(params, valid_ids)
             }
 
-        eval_df, eval_flat = evaluation_table(raw_res, codes_by_percentiles)
+        eval_df, eval_flat = evaluation_table(raw_res, code_partitions)
         try:
             mlflow_log_metrics(eval_flat, eval_step, frozen)
         except Exception as e:
@@ -315,9 +317,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
-    codes_by_percentiles = patient_interface.diag_single_ccs_by_percentiles(
-        20, train_ids)
-
     def objective_f(trial: optuna.Trial):
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
         if trial_stop_time + timedelta(minutes=20) > termination_time:
@@ -334,7 +333,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                          rng=rng,
                          job_id=job_id,
                          output_dir=output_dir,
-                         codes_by_percentiles=codes_by_percentiles,
                          trial_stop_time=trial_stop_time,
                          trial=trial,
                          frozen=num_trials <= 0)

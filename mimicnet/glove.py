@@ -11,8 +11,8 @@ from typing import AbstractSet, Any, List, Dict, Mapping, Tuple, Optional, Seque
 import numpy as np
 import pandas as pd
 
-from .dag import CCSDAG
-from .concept import Subject, HospitalAdmission
+from .mimic3.dag import CCSDAG
+from .mimic3.concept import Subject, HospitalAdmission
 from .jax_interface import AbstractSubjectJAXInterface
 
 glove_logger = logging.getLogger("glove")
@@ -242,14 +242,14 @@ def glove_representation(category: str,
     """
 
     if category == 'diag':
-        code2idx = patient_interface.diag_multi_ccs_idx
+        code2idx = patient_interface.diag_ccs_idx
         adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.diag_multi_icd2ccs.get, adm.icd9_diag_codes))
+            map(ccs_dag.diag_icd2ccs.get, adm.icd9_diag_codes))
 
     elif category == 'proc':
-        code2idx = patient_interface.proc_multi_ccs_idx
+        code2idx = patient_interface.proc_ccs_idx
         adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.proc_multi_icd2ccs.get, adm.icd9_proc_codes))
+            map(ccs_dag.proc_icd2ccs.get, adm.icd9_proc_codes))
 
     ccs_dag = patient_interface.dag
     glove_logger.setLevel(logging.WARNING)

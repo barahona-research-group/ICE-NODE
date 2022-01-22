@@ -53,7 +53,7 @@ class AbstractModel:
     def create_embedding(cls, emb_config, emb_kind, patient_interface,
                          train_ids, pretrained_components):
         if emb_kind == 'matrix':
-            input_dim = len(patient_interface.diag_multi_ccs_idx)
+            input_dim = len(patient_interface.diag_ccs_idx)
             return MatrixEmbeddings(input_dim=input_dim, **emb_config)
 
         if emb_kind == 'orthogonal_gram':
@@ -79,6 +79,10 @@ class AbstractModel:
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
+    @staticmethod
+    def code_partitions(patient_interface, train_ids):
+        return patient_interface.diag_ccs_by_percentiles(20, train_ids)
+
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
@@ -93,7 +97,7 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_multi_ccs_frequency_vec(
+            codes_dist = patient_interface.diag_ccs_frequency_vec(
                 train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)

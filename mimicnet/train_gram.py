@@ -10,11 +10,12 @@ import optuna
 from .jax_interface import SubjectDiagSequenceJAXInterface
 from .gram import GloVeGRAM, AbstractEmbeddingsLayer
 from .metrics import l2_squared, l1_absolute
-from .concept import Subject
 from .utils import wrap_module
 from .abstract_model import AbstractModel
 from .glove import glove_representation
-from .dag import CCSDAG
+
+from .mimic3.concept import Subject
+from .mimic3.dag import CCSDAG
 
 
 @jax.jit
@@ -32,8 +33,8 @@ class GRAM(AbstractModel):
 
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
-            'diag_in': len(subject_interface.diag_multi_ccs_idx),
-            'diag_out': len(subject_interface.diag_multi_ccs_idx),
+            'diag_in': len(subject_interface.diag_ccs_idx),
+            'diag_out': len(subject_interface.diag_ccs_idx),
             'state': state_size
         }
 
@@ -67,7 +68,7 @@ class GRAM(AbstractModel):
     def diag_out_index(self) -> List[str]:
         index2code = {
             i: c
-            for c, i in self.subject_interface.diag_single_ccs_idx.items()
+            for c, i in self.subject_interface.diag_flatccs_idx.items()
         }
         return list(map(index2code.get, range(len(index2code))))
 
@@ -82,9 +83,9 @@ class GRAM(AbstractModel):
         state0 = jnp.zeros(self.dimensions['state'])
         for subject_id, _diag_seqs in diag_seqs.items():
             # Exclude last one for irrelevance
-            hierarchical_diag = _diag_seqs['diag_multi_ccs_vec'][:-1]
+            hierarchical_diag = _diag_seqs['diag_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
-            flat_diag = _diag_seqs['diag_multi_ccs_vec'][1:]
+            flat_diag = _diag_seqs['diag_ccs_vec'][1:]
             emb_seqs = map(emb, hierarchical_diag)
 
             diag_detectability[subject_id] = {}

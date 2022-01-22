@@ -234,9 +234,9 @@ class GloVeGRAM(AbstractGRAM):
                  **init_kwargs):
 
         if category == 'diag':
-            ancestors_mat = patient_interface.diag_multi_ccs_ancestors_mat
+            ancestors_mat = patient_interface.diag_ccs_ancestors_mat
         else:
-            ancestors_mat = patient_interface.proc_multi_ccs_ancestors_mat
+            ancestors_mat = patient_interface.proc_ccs_ancestors_mat
 
 
         super().__init__(attention_dim=attention_dim,
@@ -259,9 +259,9 @@ class GloVeGRAM(AbstractGRAM):
             **self.glove_config)
 
         if self.category == 'diag':
-            code2index = self.patient_interface.diag_multi_ccs_idx
+            code2index = self.patient_interface.diag_ccs_idx
         else:
-            code2index = self.patient_interface.proc_multi_ccs_idx
+            code2index = self.patient_interface.proc_ccs_idx
 
         index2code = {i: c for c, i in code2index.items()}
         codes_ordered = map(index2code.get, range(len(index2code)))
@@ -296,11 +296,11 @@ class OrthogonalGRAM(AbstractGRAM):
         dag = patient_interface.dag
 
         if category == 'diag':
-            size = len(patient_interface.diag_multi_ccs_idx)
-            ancestors_mat = patient_interface.diag_multi_ccs_ancestors_mat
+            size = len(patient_interface.diag_ccs_idx)
+            ancestors_mat = patient_interface.diag_ccs_ancestors_mat
         else:
-            size = len(patient_interface.proc_multi_ccs_idx)
-            ancestors_mat = patient_interface.proc_multi_ccs_ancestors_mat
+            size = len(patient_interface.proc_ccs_idx)
+            ancestors_mat = patient_interface.proc_ccs_ancestors_mat
 
         super().__init__(attention_dim=attention_dim,
                          attention_method=attention_method,
