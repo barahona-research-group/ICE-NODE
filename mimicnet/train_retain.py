@@ -6,6 +6,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import optuna
+from absl import logging
 
 from .jax_interface import SubjectDiagSequenceJAXInterface
 from .gram import GloVeGRAM, AbstractEmbeddingsLayer
@@ -18,15 +19,17 @@ from .mimic3.concept import Subject
 from .mimic3.dag import CCSDAG
 
 
+
 @jax.jit
 def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
     return -jnp.sum(y * jax.nn.log_softmax(diag_logits) +
                     (1 - y) * jnp.log(1 - jax.nn.softmax(diag_logits)))
 
 
-class GRAM(AbstractModel):
+class RETAIN(AbstractModel):
     def __init__(self, subject_interface: SubjectDiagSequenceJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, state_size: int):
+                 diag_emb: AbstractEmbeddingsLayer, state_a_size: int,
+                 state_b_size: int):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
@@ -35,31 +38,62 @@ class GRAM(AbstractModel):
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
             'diag_out': len(subject_interface.diag_ccs_idx),
-            'state': state_size
+            'state_a': state_a_size,
+            'state_b': state_b_size
         }
 
-        gru_init, gru = hk.without_apply_rng(
+        gru_a_init, gru_a = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU, hidden_size=state_size, name='gru')))
-        self.gru = jax.jit(gru)
+                wrap_module(hk.GRU, hidden_size=state_a_size, name='gru_a')))
+        self.gru_a = jax.jit(gru_a)
 
-        out_init, out = hk.without_apply_rng(
+        gru_b_init, gru_b = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(hk.GRU, hidden_size=state_b_size, name='gru_b')))
+        self.gru_b = jax.jit(gru_b)
+
+        # Followed by a softmax on e1, e2, ..., -> alpha1, alpha2, ...
+        att_layer_a_init, att_layer_a = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(hk.Linear, output_size=1, name='att_layer_a')))
+        self.att_layer_a = jax.jit(att_layer_a)
+
+        # followed by a tanh
+        att_layer_b_init, att_layer_b = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(hk.Linear,
+                            output_size=self.dimensions['diag_emb'],
+                            name='att_layer_b')))
+        self.att_layer_b = jax.jit(att_layer_b)
+
+        decode_init, decode = hk.without_apply_rng(
             hk.transform(
                 wrap_module(hk.Linear,
                             output_size=self.dimensions['diag_out'],
-                            name='out')))
-        self.out = jax.jit(out)
+                            name='decoder')))
+        self.decode = jax.jit(decode)
 
-        self.initializers = {'gru': gru_init, 'out': out_init}
+        self.initializers = {
+            'gru_a': gru_a_init,
+            'gru_b': gru_b_init,
+            'att_layer_a': att_layer_a_init,
+            'att_layer_b': att_layer_b_init,
+            'decode': decode_init
+        }
 
-    def init_params(self, rng_key):
-        state = jnp.zeros(self.dimensions['state'])
+    def init_params(self, prng_key):
+        state_a = jnp.zeros(self.dimensions['state_a'])
+        state_b = jnp.zeros(self.dimensions['state_b'])
+
         diag_emb = jnp.zeros(self.dimensions['diag_emb'])
 
         return {
-            "diag_emb": self.diag_emb.init_params(rng_key),
-            "gru": self.initializers['gru'](rng_key, diag_emb, state),
-            "out": self.initializers['out'](rng_key, state)
+            "diag_emb": self.diag_emb.init_params(prng_key),
+            "gru_a": self.initializers['gru_a'](prng_key, diag_emb, state_a),
+            "gru_b": self.initializers['gru_b'](prng_key, diag_emb, state_b),
+            "att_layer_a": self.initializers['att_layer_a'](prng_key, state_a),
+            "att_layer_b": self.initializers['att_layer_b'](prng_key, state_b),
+            "decode": self.initializers["decode"](prng_key, diag_emb)
         }
 
     def state_size(self):
@@ -80,27 +114,68 @@ class GRAM(AbstractModel):
 
         loss = {}
         diag_detectability = {}
-        state0 = jnp.zeros(self.dimensions['state'])
+        state_a0 = jnp.zeros(self.dimensions['state_a'])
+        state_b0 = jnp.zeros(self.dimensions['state_b'])
+
         for subject_id, _diag_seqs in diag_seqs.items():
-            # Exclude last one for irrelevance
-            hierarchical_diag = _diag_seqs['diag_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
-            diag_ccs = _diag_seqs['diag_ccs_vec'][1:]
-            emb_seqs = map(emb, hierarchical_diag)
+            diag_ccs = _diag_seqs['diag_ccs_vec']
+            logging.debug(len(diag_ccs))
+
+            # step 1 @RETAIN paper
+
+            # v1, v2, ..., vT
+            v_seq = jnp.vstack(map(emb, diag_ccs))
 
             diag_detectability[subject_id] = {}
             loss[subject_id] = []
-            state = state0
-            for i, diag_emb in enumerate(emb_seqs):
-                y_i = diag_ccs[i]
-                output, state = self.gru(params['gru'], diag_emb, state)
-                logits = self.out(params['out'], output)
+            for i in range(1, len(v_seq)):
+                # e: i, ..., 1
+                e_seq = []
+
+                # beta: i, ..., 1
+                b_seq = []
+
+                state_a = state_a0
+                state_b = state_b0
+                for j in reversed(range(i)):
+                    # step 2 @RETAIN paper
+                    g_j, state_a = self.gru_a(params['gru_a'], v_seq[j],
+                                              state_a)
+                    e_j = self.att_layer_a(params['att_layer_a'], g_j)
+                    # After the for-loop apply softmax on e_seq to get
+                    # alpha_seq
+
+                    e_seq.append(e_j)
+
+                    # step 3 @RETAIN paper
+                    h_j, state_b = self.gru_b(params['gru_b'], v_seq[j],
+                                              state_b)
+                    b_j = self.att_layer_b(params['att_layer_b'], h_j)
+
+                    b_seq.append(jnp.tanh(b_j))
+
+                b_seq = jnp.vstack(b_seq)
+
+                # alpha: i, ..., 1
+                a_seq = jax.nn.softmax(jnp.hstack(e_seq))
+
+                # step 4 @RETAIN paper
+
+                # v_i, ..., v_1
+                v_context = v_seq[:i][::-1]
+                c_context = sum(a * (b * v)
+                                for a, b, v in zip(a_seq, b_seq, v_context))
+
+                # step 5 @RETAIN paper
+                logits = self.decode(params['decode'], c_context)
                 diag_detectability[subject_id][i] = {
-                    'diag_true': y_i,
+                    'diag_true': diag_ccs[i],
                     'pre_logits': logits
                 }
-                loss[subject_id].append(diag_loss(y_i, logits))
+                loss[subject_id].append(diag_loss(diag_ccs[i], logits))
 
+        # Loss of all visits 2, ..., T, normalized by T
         loss = [sum(l) / len(l) for l in loss.values()]
 
         return {
@@ -168,10 +243,17 @@ class GRAM(AbstractModel):
                    **config['model'])
 
     @staticmethod
+    def sample_model_config(trial: optuna.Trial):
+        return {
+            'state_a_size': trial.suggest_int('sa', 100, 350, 50),
+            'state_b_size': trial.suggest_int('sb', 100, 350, 50)
+        }
+
+    @staticmethod
     def sample_training_config(trial: optuna.Trial):
         return AbstractModel._sample_training_config(trial, epochs=10)
 
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    run_trials(model_cls=GRAM, **capture_args())
+    run_trials(model_cls=RETAIN, **capture_args())
