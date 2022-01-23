@@ -197,9 +197,6 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     epochs = config['training']['epochs']
     iters = round(epochs * len(train_ids) / batch_size)
-    eval_freq = round(iters / (100 * epochs))
-    eval_step = 0
-
     trial.set_user_attr('steps', iters)
     mlflow_set_tag('steps', iters, frozen)
     for i in tqdm(range(iters)):
@@ -218,13 +215,15 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
             mlflow_set_tag('nan', 1, frozen)
             return float('nan')
 
-        if not (i % eval_freq == 0 or i == iters - 1):
+        eval_step = round((i + 1) * 100 / iters)
+
+        last_step = round(i * 100 / iters)
+
+        if eval_step == last_step:
             continue
 
-        eval_step += 1
-
-        trial.set_user_attr("progress", (i + 1) / iters)
-        mlflow_set_tag("progress", (i + 1) / iters, frozen)
+        trial.set_user_attr("progress", eval_step)
+        mlflow_set_tag("progress", eval_step, frozen)
 
         params = get_params(opt_state)
 
