@@ -292,7 +292,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=PatientPruner(HyperbandPruner(),
-                                                     patience=15))
+                                                     patience=5))
 
     study.set_user_attr('metric', 'MICRO-AUC')
     study.set_user_attr('data', data_tag_fullname[data_tag])
