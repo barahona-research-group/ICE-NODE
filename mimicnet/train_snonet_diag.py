@@ -276,6 +276,7 @@ class SNONETDiag(AbstractModel):
 
             state_0 = nn_init(points_n, reset_subjects, days_ahead)
             subject_state.update(state_0)
+
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
             # 2. cases that have diagnosis at index n.
@@ -351,7 +352,7 @@ class SNONETDiag(AbstractModel):
         diag_alpha = loss_mixing['L_diag']
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
-        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'])
+        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
         diag_loss = (1 - diag_alpha
                      ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
@@ -366,7 +367,7 @@ class SNONETDiag(AbstractModel):
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
             'dyn_loss': dyn_loss,
-            'dyn_loss_per_week': dyn_loss / res['odeint_weeks']
+            'dyn_loss_per_week': dyn_loss / (res['odeint_weeks'] + 1e-10)
         }
 
     def eval_stats(self, res):
@@ -374,7 +375,7 @@ class SNONETDiag(AbstractModel):
         return {
             'all_points_count': res['all_points_count'],
             'predictable_count': res['predictable_count'],
-            'nfe_per_week': nfe / res['odeint_weeks'],
+            'nfe_per_week': nfe / (res['odeint_weeks'] + 1e-10),
             'nfex1000': nfe / 1000
         }
 
