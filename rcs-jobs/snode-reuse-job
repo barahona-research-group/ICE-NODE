@@ -35,7 +35,7 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials -$REUSE_TRIAL \
+--num-trials $REUSE_TRIAL \
 --trials-time-limit 24 \
 --training-time-limit 23 \
 -N 1 \
