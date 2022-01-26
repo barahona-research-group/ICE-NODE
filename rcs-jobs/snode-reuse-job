@@ -37,7 +37,7 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --mlflow-store $MLFLOW_STORE \
 --num-trials -$REUSE_TRIAL \
 --trials-time-limit 24 \
---training-time-limit 12 \
+--training-time-limit 23 \
 -N 1 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --pretrained-components mimicnet_configs/pretrained_components_rcs.json \
