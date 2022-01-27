@@ -54,8 +54,6 @@ else
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
-
 $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
