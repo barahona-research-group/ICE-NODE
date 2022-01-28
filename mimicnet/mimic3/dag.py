@@ -134,6 +134,8 @@ class CCSDAG:
             diag_multi_ccs_codes.add(ccs_code)
             diag_multi_ccs_codes.update(ccs_ch)
 
+        diag_multi_ccs_codes = list(sorted(diag_multi_ccs_codes))
+
         return (diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd,
                 diag_multi_ccs_codes)
 
@@ -178,6 +180,8 @@ class CCSDAG:
         for ccs_code, ccs_ch in proc_multi_ccs_pt2ch.items():
             proc_multi_ccs_codes.add(ccs_code)
             proc_multi_ccs_codes.update(ccs_ch)
+
+        proc_multi_ccs_codes = list(sorted(proc_multi_ccs_codes))
 
         return (proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd,
                 proc_multi_ccs_codes)
