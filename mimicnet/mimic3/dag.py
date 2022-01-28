@@ -28,8 +28,8 @@ class CCSDAG:
         self.diag_icd_label = self.make_diag_icd_dict()
         self.proc_icd_label = self.make_proc_icd_dict()
 
-        self.diag_icd_codes = list(self.diag_icd_label.keys())
-        self.proc_icd_codes = list(self.proc_icd_label.keys())
+        self.diag_icd_codes = list(sorted(self.diag_icd_label.keys()))
+        self.proc_icd_codes = list(sorted(self.proc_icd_label.keys()))
 
         (self.diag_icd2flatccs,
          self.diag_flatccs2icd) = self.make_diag_icd2ccs_dict()
@@ -41,7 +41,7 @@ class CCSDAG:
         (self.proc_ccs_pt2ch, self.proc_icd2ccs, self.proc_ccs2icd,
          self.proc_ccs_codes) = self.make_proc_multi_dictionaries()
 
-        self.diag_flatccs_codes = list(self.diag_flatccs2icd.keys())
+        self.diag_flatccs_codes = list(sorted(self.diag_flatccs2icd.keys()))
 
     def make_diag_icd_dict(self):
         diag_ccs_label_list = self.diag_flatccs_df[

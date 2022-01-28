@@ -43,7 +43,8 @@ class AbstractSubjectJAXInterface:
 
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = []
-        for code in code2index.keys():
+
+        for code in sorted(code2index.keys()):
             ancestors_npvec = np.zeros(len(code2index), dtype=bool)
             ancestors = [
                 a for a in self.dag.get_ccs_parents(code) if a in code2index
@@ -239,9 +240,10 @@ class SubjectJAXInterface(AbstractSubjectJAXInterface):
         self.n_support = sorted(list(self.nth_points.keys()))
 
     def make_static2vec(self):
-        genders = list(set(map(lambda s: s.gender, self.subjects.values())))
-        ethnics = list(
-            set(map(lambda s: s.ethnic_group, self.subjects.values())))
+        genders = list(sorted(set(map(lambda s: s.gender, self.subjects.values()))))
+        ethnics = list(sorted(
+            set(map(lambda s: s.ethnic_group, self.subjects.values()))))
+
         static_columns = genders + ethnics
         static_idx = dict(zip(static_columns, range(len(static_columns))))
 
