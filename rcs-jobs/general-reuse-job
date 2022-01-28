@@ -1,6 +1,6 @@
-#PBS -lselect=1:ncpus=30:mem=360gb
+#PBS -lselect=1:ncpus=32:mem=124gb
 
-#PBS -lwalltime=48:0:0
+#PBS -lwalltime=72:0:0
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -36,8 +36,8 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --num-trials $NUM_TRIALS \
---trials-time-limit 48 \
---training-time-limit 47 \
+--trials-time-limit 72 \
+--training-time-limit 48 \
 -N 1 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --pretrained-components mimicnet_configs/pretrained_components_rcs.json \
