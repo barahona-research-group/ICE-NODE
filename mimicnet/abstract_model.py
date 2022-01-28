@@ -5,7 +5,8 @@ from optuna.trial import FrozenTrial
 from .utils import load_config, load_params
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    AbstractEmbeddingsLayer, MatrixEmbeddings, OrthogonalGRAM)
-from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce)
+from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
+                      admissions_auc_scores)
 
 
 class LossMixingFlag(Flag):
@@ -43,6 +44,10 @@ class AbstractModel:
             'stats': self.eval_stats(res),
             'diag_detectability': res['diag_detectability']
         }
+
+    def admissions_auc_scores(self, params: Any, batch: List[int]):
+        res = self(params, batch, count_nfe=True)
+        return admissions_auc_scores(res['diag_detectability'], 'pre')
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int]) -> float:
@@ -97,8 +102,7 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_ccs_frequency_vec(
-                train_ids)
+            codes_dist = patient_interface.diag_ccs_frequency_vec(train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:

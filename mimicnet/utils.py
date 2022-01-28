@@ -43,7 +43,7 @@ def wrap_module(module, *module_args, **module_kwargs):
 
 def write_params(params, params_file):
     with open(params_file, 'wb') as file_rsc:
-        pickle.dump(params, file_rsc)
+        pickle.dump(params, file_rsc, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_params(params_file):

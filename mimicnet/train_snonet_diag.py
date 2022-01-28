@@ -164,10 +164,11 @@ class SNONETDiag(AbstractModel):
             for i in h.keys()
         }
 
-        nfe = sum(n for h, r, n in h_r_nfe.values())
+        nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
+        nfe_sum = sum(nfe.values())
         r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
         h1 = {i: h for i, (h, r, n) in h_r_nfe.items()}
-        return h1, r1, nfe
+        return h1, r1, (nfe, nfe_sum)
 
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
                   diag_emb_error: jnp.ndarray) -> jnp.ndarray:
@@ -293,9 +294,9 @@ class SNONETDiag(AbstractModel):
             '''
             odeint_weeks += sum(delta_days.values()) / 7
             ################## ODEINT #####################
-            state_j, _dyn_loss, _nfe = nn_ode(state_i, delta_days, ode_c)
+            state_j, _dyn_loss, (n_nfe, n_nfe_sum) = nn_ode(state_i, delta_days, ode_c)
             dyn_loss.append(_dyn_loss)
-            nfe.append(_nfe)
+            nfe.append(n_nfe_sum)
             ########## PRE-JUMP DAG LOSS #########################
             pre_diag_emb, pre_diag_out = nn_decode(state_j, predictable_cases)
             pre_diag_loss = diag_loss(diag_out, pre_diag_out)
@@ -320,6 +321,7 @@ class SNONETDiag(AbstractModel):
 
             for subject_id in post_diag_out.keys():
                 diag_detectability[subject_id][n] = {
+                    'nfe': n_nfe[subject_id],
                     'days_ahead': days_ahead[subject_id],
                     'diag_true': diag_out[subject_id],
                     'pre_logits': pre_diag_out[subject_id],

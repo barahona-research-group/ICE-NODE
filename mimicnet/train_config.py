@@ -20,7 +20,7 @@ from .train_snonet_diag import SNONETDiag
 
 
 def run(model_cls: AbstractModel, config, patient_interface, tag: str,
-        train_ids, test_ids, valid_ids, rng, output_dir):
+        train_ids, test_ids, valid_ids, prng_key, output_dir):
 
     experiment_dir = os.path.join(output_dir, f'config_exp_{tag}')
 
@@ -36,7 +36,6 @@ def run(model_cls: AbstractModel, config, patient_interface, tag: str,
 
     code_partitions = model.code_partitions(patient_interface, train_ids)
 
-    prng_key = jax.random.PRNGKey(rng.randint(0, 100))
     params = model.init_params(prng_key)
     logging.info('[DONE] Sampling & Initializing Models')
 
@@ -141,6 +140,7 @@ if __name__ == '__main__':
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(42)
+
     subjects_id = list(patient_interface.subjects.keys())
     rng.shuffle(subjects_id)
 
@@ -151,6 +151,8 @@ if __name__ == '__main__':
     valid_ids = subjects_id[splits[0]:splits[1]]
     test_ids = subjects_id[splits[1]:]
 
+    prng_key = jax.random.PRNGKey(rng.randint(0, 100))
+
     config = load_config(args.config)
     run(model_cls,
         config=config,
@@ -159,5 +161,5 @@ if __name__ == '__main__':
         train_ids=train_ids,
         valid_ids=valid_ids,
         test_ids=test_ids,
-        rng=rng,
+        prng_key=prng_key,
         output_dir=args.output_dir)

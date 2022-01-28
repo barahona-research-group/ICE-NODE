@@ -174,6 +174,61 @@ def auc_scores(detectability, label_prefix):
     return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
 
 
+def admissions_auc_scores(detectability, label_prefix):
+    def compute_auc(v_truth, v_preds):
+        fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
+        return metrics.auc(fpr, tpr)
+
+    subject_ids = []
+    admission_indexes = []
+    days_ahead = []
+    adm_auc = []
+    nfe = []
+    intervals = []
+
+    for subject_id, admissions in detectability.items():
+        for admission_index, info in admissions.items():
+            # If ground truth has no clinical codes, skip.
+            if set(onp.unique(info['diag_true'])) != {0, 1}:
+                   continue
+
+            if 'days_ahead' in info:
+                days_ahead.append(info['days_ahead'])
+
+                # Record intervals between the current admission and the
+                # previous one.
+                if admission_index == 1:
+                    intervals.append(info['days_ahead'])
+                else:
+                    intervals.append(info['days_ahead'] -
+                                     admissions[admission_index -
+                                                1]['days_ahead'])
+
+            if 'nfe' in info:
+                nfe.append(info['nfe'])
+
+            admission_indexes.append(admission_index)
+            subject_ids.append(subject_id)
+
+            diag_true = info['diag_true']
+            diag_score = jit_sigmoid(info[f'{label_prefix}_logits'])
+            auc_score = compute_auc(diag_true, diag_score)
+            adm_auc.append(auc_score)
+    data = {
+        'SUBJECT_ID': subject_ids,
+        'HADM_IDX': admission_indexes,
+        'AUC': adm_auc
+    }
+    if len(days_ahead) > 0 and len(intervals) > 0:
+        data['DAYS_AHEAD'] = days_ahead
+        data['INTERVALS'] = intervals
+
+    if len(nfe) > 0:
+        data['NFE'] = nfe
+
+    return pd.DataFrame(data)
+
+
 def top_k_detectability_scores(codes_by_percentiles, detections_df,
                                label_prefix):
     rate = {}
@@ -246,11 +301,13 @@ class EvalFlag(Flag):
         return (flag & attr).value != 0
 
 
-def evaluation_table(raw_results, codes_by_percentiles):
+def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
     evals = {colname: {} for colname in raw_results}
     flat_evals = {}
     for colname, res in raw_results.items():
         for rowname, val in res['loss'].items():
+            evals[colname][rowname] = val
+        for rowname, val in res['stats'].items():
             evals[colname][rowname] = val
 
         det = res['diag_detectability']
@@ -262,10 +319,10 @@ def evaluation_table(raw_results, codes_by_percentiles):
         for rowname, val in auc_scores(det, 'pre').items():
             evals[colname][rowname] = val
 
-        det20 = top_k_detectability_df(20, det, ['pre'])
-        det20_scores = top_k_detectability_scores(codes_by_percentiles, det20,
-                                                  'pre')[0]
-        for rowname, val in det20_scores.items():
+        det_topk = top_k_detectability_df(top_k, det, ['pre'])
+        det_topk_scores = top_k_detectability_scores(codes_by_percentiles,
+                                                     det_topk, 'pre')[0]
+        for rowname, val in det_topk_scores.items():
             evals[colname][rowname] = val
 
         evals[colname] = {
