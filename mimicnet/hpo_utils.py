@@ -263,9 +263,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         trial.report(auc, eval_step)
 
         if trial.should_prune():
-            # UNDO
-            logging.info('Pruning supressed, continue!')
-            # raise optuna.TrialPruned()
+            raise optuna.TrialPruned()
     return auc
 
 
