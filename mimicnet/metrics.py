@@ -180,8 +180,12 @@ def admissions_auc_scores(detectability, label_prefix):
         return metrics.auc(fpr, tpr)
 
     subject_ids = []
+    # HADM_ID in MIMIC-III
+    admission_ids = []
+    # Admission order mostly
     admission_indexes = []
     days_ahead = []
+    n_codes = []
     adm_auc = []
     nfe = []
     intervals = []
@@ -190,7 +194,7 @@ def admissions_auc_scores(detectability, label_prefix):
         for admission_index, info in admissions.items():
             # If ground truth has no clinical codes, skip.
             if set(onp.unique(info['diag_true'])) != {0, 1}:
-                   continue
+                continue
 
             if 'days_ahead' in info:
                 days_ahead.append(info['days_ahead'])
@@ -200,24 +204,33 @@ def admissions_auc_scores(detectability, label_prefix):
                 if admission_index == 1:
                     intervals.append(info['days_ahead'])
                 else:
+                    # find most recent admission with predictions made
+                    i = admission_index - 1
+                    while i not in admissions and i > 1:
+                        i = i - 1
+
                     intervals.append(info['days_ahead'] -
-                                     admissions[admission_index -
-                                                1]['days_ahead'])
+                                     admissions[i]['days_ahead'])
 
             if 'nfe' in info:
                 nfe.append(info['nfe'])
 
             admission_indexes.append(admission_index)
+            admission_ids.append(info['admission_id'])
             subject_ids.append(subject_id)
 
             diag_true = info['diag_true']
             diag_score = jit_sigmoid(info[f'{label_prefix}_logits'])
             auc_score = compute_auc(diag_true, diag_score)
             adm_auc.append(auc_score)
+            n_codes.append(diag_true.sum())
+
     data = {
         'SUBJECT_ID': subject_ids,
+        'HADM_ID': admission_ids,
         'HADM_IDX': admission_indexes,
-        'AUC': adm_auc
+        'AUC': adm_auc,
+        'N_CODES': n_codes
     }
     if len(days_ahead) > 0 and len(intervals) > 0:
         data['DAYS_AHEAD'] = days_ahead

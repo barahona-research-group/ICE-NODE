@@ -86,6 +86,8 @@ class GRAM(AbstractModel):
             hierarchical_diag = _diag_seqs['diag_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
             diag_ccs = _diag_seqs['diag_ccs_vec'][1:]
+            admission_id = _diag_seqs['admission_id'][1:]
+
             emb_seqs = map(emb, hierarchical_diag)
 
             diag_detectability[subject_id] = {}
@@ -96,6 +98,7 @@ class GRAM(AbstractModel):
                 output, state = self.gru(params['gru'], diag_emb, state)
                 logits = self.out(params['out'], output)
                 diag_detectability[subject_id][i] = {
+                    'admission_id': admission_id[i],
                     'diag_true': y_i,
                     'pre_logits': logits
                 }

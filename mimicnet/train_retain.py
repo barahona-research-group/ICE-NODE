@@ -19,7 +19,6 @@ from .mimic3.concept import Subject
 from .mimic3.dag import CCSDAG
 
 
-
 @jax.jit
 def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
     return -jnp.sum(y * jax.nn.log_softmax(diag_logits) +
@@ -120,6 +119,8 @@ class RETAIN(AbstractModel):
         for subject_id, _diag_seqs in diag_seqs.items():
             # Exclude first one, we need to predict them for a future step.
             diag_ccs = _diag_seqs['diag_ccs_vec']
+            admission_id = _diag_seqs['admission_id']
+
             logging.debug(len(diag_ccs))
 
             # step 1 @RETAIN paper
@@ -170,6 +171,7 @@ class RETAIN(AbstractModel):
                 # step 5 @RETAIN paper
                 logits = self.decode(params['decode'], c_context)
                 diag_detectability[subject_id][i] = {
+                    'admission_id': admission_id[i],
                     'diag_true': diag_ccs[i],
                     'pre_logits': logits
                 }

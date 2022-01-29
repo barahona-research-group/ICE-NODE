@@ -145,13 +145,15 @@ class SNONETDiag(AbstractModel):
             i: v['diag_ccs_vec']
             for i, v in points.items() if v['diag_ccs_vec'] is not None
         }
+        admission_id = {i: v['admission_id'] for i, v in points.items()}
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
 
         return {
             'ode_control': None,
             'days_ahead': days_ahead,
             'diag_emb': diag_emb,
-            'diag_out': diag_out
+            'diag_out': diag_out,
+            'admission_id': admission_id
         }
 
     def _f_n_ode(self, params, count_nfe, h, t, c):
@@ -249,6 +251,7 @@ class SNONETDiag(AbstractModel):
                 continue
             all_points_count += len(points_n)
 
+            admission_id = points_n['admission_id']
             days_ahead = points_n['days_ahead']
             diag_emb = points_n['diag_emb']
             diag_out = points_n['diag_out']
@@ -271,7 +274,7 @@ class SNONETDiag(AbstractModel):
             # - Initialize new states for subjects that have diagnosis codes
             #   that has not been previously initialized or has been reset.
 
-            # Reset subjects state with long gaps
+            # Reset subjects state with long gaps (e.g. 10 years)
             reset_subjects = set(days_ahead) - set(delta_days)
             map(lambda k: subject_state.pop(k, None), reset_subjects)
 
@@ -294,7 +297,9 @@ class SNONETDiag(AbstractModel):
             '''
             odeint_weeks += sum(delta_days.values()) / 7
             ################## ODEINT #####################
-            state_j, _dyn_loss, (n_nfe, n_nfe_sum) = nn_ode(state_i, delta_days, ode_c)
+            state_j, _dyn_loss, (n_nfe,
+                                 n_nfe_sum) = nn_ode(state_i, delta_days,
+                                                     ode_c)
             dyn_loss.append(_dyn_loss)
             nfe.append(n_nfe_sum)
             ########## PRE-JUMP DAG LOSS #########################
@@ -321,6 +326,7 @@ class SNONETDiag(AbstractModel):
 
             for subject_id in post_diag_out.keys():
                 diag_detectability[subject_id][n] = {
+                    'admission_id': admission_id[subject_id],
                     'nfe': n_nfe[subject_id],
                     'days_ahead': days_ahead[subject_id],
                     'diag_true': diag_out[subject_id],
