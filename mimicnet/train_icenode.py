@@ -399,8 +399,8 @@ class ICENODE(AbstractModel):
         #     'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
-            'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),
-            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
+            'L_diag': 0, #trial.suggest_float('L_dx', 1e-4, 1, log=True),
+            'L_dyn': 0, #trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
 
@@ -417,12 +417,12 @@ class ICENODE(AbstractModel):
                 'ode_dyn', ['mlp', 'gru', 'res'
                             ]),  # Add depth conditional to 'mlp' or 'res'
             'ode_with_bias': False, # trial.suggest_categorical('ode_b', [True, False]),
-            'ode_init_var': 1e-1, # trial.suggest_float('ode_iv', 1e-5, 1, log=True),
+            'ode_init_var': 1e-2, # trial.suggest_float('ode_iv', 1e-5, 1, log=True),
             'ode_timescale': 1, # trial.suggest_float('ode_ts', 1, 5e2, log=True),
             'los_sample_rate': trial.suggest_int('los_f', 1, 8),
             'state_size': trial.suggest_int('s', 30, 300, 30),
             'init_depth': trial.suggest_int('init_d', 1, 4),
-            'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
+            'tay_reg': 0, #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0
