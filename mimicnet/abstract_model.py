@@ -1,29 +1,13 @@
-from typing import Dict, List, Any, Optional, Tuple, Iterable
-from enum import Enum, Flag, auto
+from typing import Dict, List, Any, Optional
 import optuna
-from optuna.trial import FrozenTrial
 from .utils import load_config, load_params
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
-                   AbstractEmbeddingsLayer, MatrixEmbeddings, OrthogonalGRAM)
+                   MatrixEmbeddings, OrthogonalGRAM)
 from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
                       admissions_auc_scores)
 
-
-class LossMixingFlag(Flag):
-    NONE = 0
-    DIAG = auto()
-    NUM = auto()
-    ODE = auto()
-    DYN = auto()
-
-    @staticmethod
-    def has(flag, attr):
-        return (flag & attr).value != 0
-
-
 class ImplementationException(Exception):
     pass
-
 
 class AbstractModel:
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):

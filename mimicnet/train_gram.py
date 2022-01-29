@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Dict, List
+from typing import Any, List
 
 import pandas as pd
 import haiku as hk
@@ -8,13 +8,12 @@ import jax.numpy as jnp
 import optuna
 
 from .jax_interface import SubjectDiagSequenceJAXInterface
-from .gram import GloVeGRAM, AbstractEmbeddingsLayer
+from .gram import AbstractEmbeddingsLayer
 from .metrics import l2_squared, l1_absolute
 from .utils import wrap_module
 from .abstract_model import AbstractModel
-from .glove import glove_representation
 
-from .mimic3.concept import Subject
+from .mimic3.concept import DiagSubject
 from .mimic3.dag import CCSDAG
 
 
@@ -139,22 +138,18 @@ class GRAM(AbstractModel):
         adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
         diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
                               dtype={'ICD9_CODE': str})
-        proc_df = pd.read_csv(f'{processed_mimic_tables_dir}/proc_df.csv.gz',
-                              dtype={'ICD9_CODE': str})
         # Cast columns of dates to datetime64
-        static_df['DOB'] = pd.to_datetime(
-            static_df.DOB, infer_datetime_format=True).dt.normalize()
         adm_df['ADMITTIME'] = pd.to_datetime(
-            adm_df.ADMITTIME, infer_datetime_format=True).dt.normalize()
+            adm_df['ADMITTIME'], infer_datetime_format=True).dt.normalize()
         adm_df['DISCHTIME'] = pd.to_datetime(
-            adm_df.DISCHTIME, infer_datetime_format=True).dt.normalize()
+            adm_df['DISCHTIME'], infer_datetime_format=True).dt.normalize()
 
-        patients = Subject.to_list(static_df, adm_df, diag_df, proc_df, None)
+        patients = DiagSubject.to_list(adm_df, diag_df)
 
         # CCS Knowledge Graph
         k_graph = CCSDAG()
 
-        return SubjectDiagSequenceJAXInterface(patients, set(), k_graph)
+        return SubjectDiagSequenceJAXInterface(patients, k_graph)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,

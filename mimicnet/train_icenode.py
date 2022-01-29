@@ -1,4 +1,3 @@
-from absl import logging
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 
@@ -9,28 +8,25 @@ import jax.numpy as jnp
 import optuna
 
 from .metrics import (l2_squared, l1_absolute)
-from .utils import wrap_module, load_config, load_params
-
-from .jax_interface import (SubjectJAXInterface, create_patient_interface)
+from .utils import wrap_module
+from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
 
-class SNONETDiag(AbstractModel):
-    def __init__(self, subject_interface: SubjectJAXInterface,
+class ICENODE(AbstractModel):
+    def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_depth: int, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
                  init_depth: bool,
-                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray],
-                                     float], max_odeint_days: int):
+                 diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
         self.tay_reg = tay_reg
-        self.max_odeint_days = max_odeint_days
         self.diag_loss = diag_loss
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
@@ -149,17 +145,15 @@ class SNONETDiag(AbstractModel):
         days_ahead = {i: v['days_ahead'] for i, v in points.items()}
 
         return {
-            'ode_control': None,
             'days_ahead': days_ahead,
             'diag_emb': diag_emb,
             'diag_out': diag_out,
             'admission_id': admission_id
         }
 
-    def _f_n_ode(self, params, count_nfe, h, t, c):
-        if c is None:
-            null = jnp.array([])
-            c = {i: null for i in h}
+    def _f_n_ode(self, params, count_nfe, h, t):
+        null = jnp.array([])
+        c = {i: null for i in h}
 
         h_r_nfe = {
             i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
@@ -255,60 +249,40 @@ class SNONETDiag(AbstractModel):
             days_ahead = points_n['days_ahead']
             diag_emb = points_n['diag_emb']
             diag_out = points_n['diag_out']
-            ode_c = points_n['ode_control']
             delta_days = {
                 i: (days_ahead[i] - subject_state[i]['days'])
-                for i in (set(subject_state) & set(days_ahead))
-                if days_ahead[i] -
-                subject_state[i]['days'] <= self.max_odeint_days
+                for i in (set(subject_state) & set(admission_id))
             }
 
             state_i = {i: subject_state[i]['value'] for i in delta_days}
 
-            # From points returned at index n:
-            # - Consider for odeint:
-            #   1. subjects that already have a previous state, and
-            #   2. days difference doesn't exceed maximum days.
-            # - For returned subjects with days difference exceeding the
-            # threshold, reset their previous state.
-            # - Initialize new states for subjects that have diagnosis codes
-            #   that has not been previously initialized or has been reset.
+            # - From points returned at index n Consider for odeint only subjects that already have a previous state, and
+            # - Initialize new states for subjects that have diagnosis codes which has not been previously initialized.
 
-            # Reset subjects state with long gaps (e.g. 10 years)
-            reset_subjects = set(days_ahead) - set(delta_days)
-            map(lambda k: subject_state.pop(k, None), reset_subjects)
+            initialize_subjects = set(admission_id) - set(delta_days)
 
-            state_0 = nn_init(points_n, reset_subjects, days_ahead)
+            state_0 = nn_init(points_n, initialize_subjects, days_ahead)
             subject_state.update(state_0)
 
             # This intersection ensures only prediction for:
             # 1. cases that are integrable (i.e. with previous state), and
             # 2. cases that have diagnosis at index n.
-            predictable_cases = set(delta_days).intersection(diag_out.keys())
-            predictable_count += len(predictable_cases)
+            predictable_count += len(delta_days)
 
             # No. of "Predictable" diagnostic points
-            diag_weights.append(len(predictable_cases))
-            '''
-            Idea: scale days_forward to weeks_forward.
-            This can:
-                1. Improve the numerical stability and accuracy of numerical integration.
-                2. Force the ode_dyn model to learn weekly dynamics, which is a suitable time scale for cancer development.
-            '''
+            diag_weights.append(len(delta_days))
             odeint_weeks += sum(delta_days.values()) / 7
             ################## ODEINT #####################
             state_j, _dyn_loss, (n_nfe,
-                                 n_nfe_sum) = nn_ode(state_i, delta_days,
-                                                     ode_c)
+                                 n_nfe_sum) = nn_ode(state_i, delta_days)
             dyn_loss.append(_dyn_loss)
             nfe.append(n_nfe_sum)
-            ########## PRE-JUMP DAG LOSS #########################
-            pre_diag_emb, pre_diag_out = nn_decode(state_j, predictable_cases)
+            ########## PRE-JUMP DiAG LOSS #########################
+            pre_diag_emb, pre_diag_out = nn_decode(state_j, delta_days)
             pre_diag_loss = diag_loss(diag_out, pre_diag_out)
             pre_diag_emb_error = self._emb_error(diag_emb, pre_diag_emb)
             prejump_diag_loss.append(pre_diag_loss)
-            ############## GRU BAYES ####################
-            # Using GRUObservationCell to update h.
+            ############## UPDATE ####################
             state_j_updated = nn_update(state_j, pre_diag_emb_error)
             state_j.update(state_j_updated)
             # Update the states:
@@ -319,7 +293,7 @@ class SNONETDiag(AbstractModel):
                 }
 
             ############### POST-JUNP DAG LOSS ########################
-            _, post_diag_out = nn_decode(state_j_updated, predictable_cases)
+            _, post_diag_out = nn_decode(state_j_updated, delta_days)
 
             post_diag_loss = diag_loss(diag_out, post_diag_out)
             postjump_diag_loss.append(post_diag_loss)
@@ -389,10 +363,7 @@ class SNONETDiag(AbstractModel):
 
     @staticmethod
     def create_patient_interface(mimic_dir, data_tag: str):
-        return create_patient_interface(mimic_dir,
-                                        data_tag=data_tag,
-                                        ignore_tests=True,
-                                        ignore_proc=True)
+        return create_patient_interface(mimic_dir, data_tag=data_tag)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
@@ -431,7 +402,7 @@ class SNONETDiag(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return SNONETDiag._sample_ode_training_config(trial, epochs=10)
+        return ICENODE._sample_ode_training_config(trial, epochs=10)
 
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
@@ -441,13 +412,10 @@ class SNONETDiag(AbstractModel):
                             ]),  # Add depth conditional to 'mlp' or 'res'
             'ode_with_bias': trial.suggest_categorical('ode_b', [True, False]),
             'ode_init_var': trial.suggest_float('ode_iv', 1e-5, 1, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e4, log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 5e2, log=True),
             'state_size': trial.suggest_int('s', 100, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
             'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
-            'max_odeint_days':
-            # UNDO
-            10 * 360  #trial.suggest_int('mx_ode_ds', 8 * 7, 16 * 7, 7)
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0
@@ -458,9 +426,9 @@ class SNONETDiag(AbstractModel):
 
     @staticmethod
     def sample_model_config(trial: optuna.Trial):
-        return SNONETDiag._sample_ode_model_config(trial)
+        return ICENODE._sample_ode_model_config(trial)
 
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    run_trials(model_cls=SNONETDiag, **capture_args())
+    run_trials(model_cls=ICENODE, **capture_args())

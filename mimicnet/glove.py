@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .mimic3.dag import CCSDAG
-from .mimic3.concept import Subject, HospitalAdmission
+from .mimic3.concept import DiagSubject, DiagnosisAdmission
 from .jax_interface import AbstractSubjectJAXInterface
 
 glove_logger = logging.getLogger("glove")
@@ -24,9 +24,9 @@ http://www.foldl.me/2014/glove-python/
 CooccurrencesType = Dict[Tuple[int, int], int]
 
 
-def build_coocur(subjects: List[Subject],
+def build_coocur(subjects: List[DiagSubject],
                  code2idx: Mapping[str, int],
-                 adm_ccs_codes: Callable[[HospitalAdmission], Set[str]],
+                 adm_ccs_codes: Callable[[DiagnosisAdmission], Set[str]],
                  ccs_dag: CCSDAG,
                  window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
@@ -65,7 +65,7 @@ def build_coocur(subjects: List[Subject],
 
             def is_context(other_adm):
                 _adm_date, _adm = other_adm
-                delta_days = Subject.days(adm_date, _adm_date)
+                delta_days = DiagSubject.days(adm_date, _adm_date)
                 glove_logger.debug(f'delta_days: {delta_days}')
                 # Symmetric context (left+right)
                 return abs(delta_days) <= window_size_days
@@ -218,7 +218,7 @@ def train_glove(code2idx: Mapping[str, int],
 
 def glove_representation(category: str,
                          patient_interface: AbstractSubjectJAXInterface,
-                         train_ids: List[Subject],
+                         train_ids: List[DiagSubject],
                          vector_size: int = 80,
                          iterations=25,
                          window_size_days=45,
@@ -245,11 +245,8 @@ def glove_representation(category: str,
         code2idx = patient_interface.diag_ccs_idx
         adm_ccs_codes = lambda adm: set(
             map(ccs_dag.diag_icd2ccs.get, adm.icd9_diag_codes))
-
-    elif category == 'proc':
-        code2idx = patient_interface.proc_ccs_idx
-        adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.proc_icd2ccs.get, adm.icd9_proc_codes))
+    else:
+        raise ValueError(f'Category {category} is not supported')
 
     ccs_dag = patient_interface.dag
     glove_logger.setLevel(logging.WARNING)

@@ -2,10 +2,9 @@ import os
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, Dict, Any, Optional, Tuple
+from typing import Iterable, Dict, Any
 from functools import partial
 from datetime import datetime, timedelta
-import pickle
 import copy
 from absl import logging
 from tqdm import tqdm
@@ -15,7 +14,6 @@ import jax.numpy as jnp
 from jax.experimental import optimizers
 
 import optuna
-from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner, PatientPruner
 from optuna.samplers import TPESampler

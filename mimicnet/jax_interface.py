@@ -1,26 +1,19 @@
 from __future__ import annotations
 import logging
-import math
-import re
 from collections import defaultdict
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Tuple, Union, Set
-from enum import Flag, auto
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-import pandas.api.types as ptypes
 
 import jax.numpy as jnp
 
-from .mimic3.concept import (Subject, DiagPoint, Test)
+from .mimic3.concept import (DiagSubject, DiagPoint)
 from .mimic3.dag import CCSDAG
-
-jax_interface_logger = logging.getLogger("jax_interface")
 
 
 class AbstractSubjectJAXInterface:
-    def __init__(self, subjects: List[Subject], dag: CCSDAG):
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
 
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
@@ -31,13 +24,8 @@ class AbstractSubjectJAXInterface:
         self.diag_flatccs_idx = dict(
             zip(dag.diag_flatccs_codes, range(len(dag.diag_flatccs_codes))))
 
-        self.proc_ccs_idx = dict(
-            zip(dag.proc_ccs_codes, range(len(dag.proc_ccs_codes))))
-
         self.diag_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
             self.diag_ccs_idx)
-        self.proc_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
-            self.proc_ccs_idx)
 
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = []
@@ -53,9 +41,6 @@ class AbstractSubjectJAXInterface:
         return jnp.vstack(ancestors_mat)
 
     def diag_ccs_to_vec(self, diag_ccs_codes):
-        if len(diag_ccs_codes) == 0:
-            return None
-
         n_cols = len(self.diag_ccs_idx)
         mask = np.zeros(n_cols)
         for c in diag_ccs_codes:
@@ -71,16 +56,6 @@ class AbstractSubjectJAXInterface:
         for c in diag_flatccs_codes:
             mask[self.diag_flatccs_idx[c]] = 1
 
-        return jnp.array(mask)
-
-    def proc_ccs_to_vec(self, proc_ccs_codes):
-        if len(proc_ccs_codes) == 0:
-            return None
-
-        n_cols = len(self.proc_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in proc_ccs_codes:
-            mask[self.proc_ccs_idx[c]] = 1
         return jnp.array(mask)
 
     def diag_flatccs_frequency(self, subjects: Optional[List[int]] = None):
@@ -181,7 +156,7 @@ class AbstractSubjectJAXInterface:
 
 
 class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
-    def __init__(self, subjects: List[Subject], dag: CCSDAG):
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.diag_sequences = self.make_diag_sequences()
 
@@ -229,98 +204,8 @@ class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
         return {i: self.diag_sequences[i] for i in subjects_batch}
 
 
-# class SubjectJAXInterface(AbstractSubjectJAXInterface):
-#     def __init__(self, subjects: List[Subject], test_id_set: Set[int],
-#                  dag: CCSDAG):
-#         super().__init__(subjects, test_id_set, dag)
-
-#         self.static_features, self.static_idx = self.make_static2vec()
-#         self.nth_points = self.make_nth_points()
-#         self.n_support = sorted(list(self.nth_points.keys()))
-
-#     def make_static2vec(self):
-#         genders = list(
-#             sorted(set(map(lambda s: s.gender, self.subjects.values()))))
-#         ethnics = list(
-#             sorted(set(map(lambda s: s.ethnic_group, self.subjects.values()))))
-
-#         static_columns = genders + ethnics
-#         static_idx = dict(zip(static_columns, range(len(static_columns))))
-
-#         static_features = {}
-#         n_cols = len(static_idx)
-
-#         for subject_id, subject in self.subjects.items():
-#             subject_features = np.zeros(n_cols)
-#             ones_indices = map(static_idx.get,
-#                                [subject.gender, subject.ethnic_group])
-#             subject_features[list(ones_indices)] = 1
-#             static_features[subject_id] = jnp.array(subject_features)
-
-#         return static_features, static_idx
-
-#     def tests2vec(self, tests: List[Test]) -> Tuple[jnp.ndarray, jnp.ndarray]:
-#         if len(self.test_idx) == 0 or len(tests) == 0:
-#             return None
-
-#         n_cols = len(self.test_idx)
-#         vals = np.zeros(n_cols)
-#         mask = np.zeros(n_cols)
-#         for test in tests:
-#             idx = self.test_idx[test.item_id]
-#             vals[idx] = test.value
-#             mask[idx] = 1
-
-#         return jnp.array(vals), jnp.array(mask)
-
-#     def make_nth_points(self):
-#         nth_points = defaultdict(dict)
-
-#         for subject_id, subject in self.subjects.items():
-#             for n, point in enumerate(SubjectPoint.subject_to_points(subject)):
-#                 jaxified = self.jaxify_subject_point(point)
-#                 if jaxified:
-#                     nth_points[n][subject_id] = jaxified
-
-#         return nth_points
-
-#     def jaxify_subject_point(self, point):
-#         diag_flatccs_codes = set(
-#             map(self.dag.diag_icd2flatccs.get, point.icd9_diag_codes))
-
-#         diag_ccs_codes = set(
-#             map(self.dag.diag_icd2ccs.get, point.icd9_diag_codes))
-
-#         proc_ccs_codes = set(
-#             map(self.dag.proc_icd2ccs.get, point.icd9_proc_codes))
-
-#         jaxified = {
-#             'age': point.age,
-#             'days_ahead': point.days_ahead,
-#             'diag_ccs_vec': self.diag_ccs_to_vec(diag_ccs_codes),
-#             'diag_flatccs_vec': self.diag_flatccs_to_vec(diag_flatccs_codes),
-#             'proc_ccs_vec': self.proc_ccs_to_vec(proc_ccs_codes),
-#             'tests': self.tests2vec(point.tests),
-#             'admission_id': point.admission_id
-#         }
-#         # Check if none of the following information exist, then return None.
-#         check = ['diag_ccs_vec', 'proc_ccs_vec', 'tests']
-#         if any(jaxified[l] is not None for l in check):
-#             return jaxified
-#         else:
-#             return None
-
-#     def nth_points_batch(self, n: int, batch: List[int]):
-#         if n not in self.nth_points:
-#             return {}
-#         return {k: v for k, v in self.nth_points[n].items() if k in batch}
-
-#     def subject_static(self, subject_id):
-#         return self.static_features[subject_id]
-
-
 class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
-    def __init__(self, subjects: List[Subject], dag: CCSDAG):
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.nth_points = self.make_nth_points()
         self.n_support = sorted(list(self.nth_points.keys()))
@@ -364,9 +249,9 @@ def create_patient_interface(processed_mimic_tables_dir: str, data_tag=None):
     diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
                           dtype={'ICD9_CODE': str})
 
-    patients = Subject.to_list(adm_df=adm_df, diag_df=diag_df)
+    patients = DiagSubject.to_list(adm_df=adm_df, diag_df=diag_df)
 
     # CCS Knowledge Graph
     k_graph = CCSDAG()
 
-    return SubjectJAXInterface(patients, test_items, k_graph)
+    return DiagnosisJAXInterface(patients, k_graph)

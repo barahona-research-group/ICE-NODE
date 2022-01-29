@@ -43,7 +43,10 @@ class DiagSubject:
                     'admission_dates': (adm_row.ADMITTIME, adm_row.DISCHTIME),
                     'icd9_diag_codes': set()
                 }
-            ehr[subject_id] = {'admissions': subject_admissions}
+            ehr[subject_id] = {
+                'subject_id': subject_id,
+                'admissions': subject_admissions
+            }
 
         # Diag concepts
         for subject_id, subject_diag_df in diag_df.groupby('SUBJECT_ID'):
@@ -68,19 +71,7 @@ class DiagPoint:
 
     @classmethod
     def subject_to_points(cls, subject: DiagSubject) -> Dict[int, DiagPoint]:
-        def _first_day_date(subject):
-            first_admission_date = subject.admissions[0].admission_dates[0]
-            if len(subject.tests) == 0:
-                return first_admission_date
-
-            first_test_date = subject.tests[0].date
-            if DiagSubject.days(first_test_date, first_admission_date) > 0:
-                return first_admission_date
-            else:
-                return first_test_date
-
-        first_day_date = _first_day_date(subject)
-
+        first_day_date = subject.admissions[0].admission_dates[0]
         points = {}
         for adm in subject.admissions:
             days_ahead = DiagSubject.days(adm.admission_dates[0],
