@@ -1,7 +1,9 @@
 from __future__ import annotations
 from datetime import date
 from typing import Dict, List, Tuple, Set
+from collections import defaultdict
 
+from absl import logging
 import pandas as pd
 
 from .dag import CCSDAG
@@ -21,11 +23,41 @@ class DiagnosisAdmission:
 class DiagSubject:
     """
     Subject class encapsulates the patient EHRs diagnostic codes.
+
+    Note: Some admissions for particular patients have the same ADMITTIME.
+    For these cases the one with earlier DISCHTIME will be merged to the other.
     """
     def __init__(self, subject_id: int, admissions: List[DiagnosisAdmission]):
         self.subject_id = subject_id
-        self.admissions = sorted(admissions,
+
+        admissions_disjoint = self.merge_complete_overlaps(admissions)
+        self.admissions = sorted(admissions_disjoint,
                                  key=lambda a: a.admission_dates[0])
+
+#         for a1, a2 in zip(self.admissions[:-1], self.admissions[1:]):
+#             if a1.admission_dates[0] == a2.admission_dates[0]:
+#                 logging.info(f'same day admission: {self.subject_id}')
+#             if a1.admission_dates[1] == a2.admission_dates[0]:
+#                 logging.info(f'same day readmission: {self.subject_id}')
+
+    @staticmethod
+    def merge_complete_overlaps(admissions):
+        overlap = defaultdict(list)
+        merged = []
+        for adm in admissions:
+            overlap[adm.admission_dates[0]].append(adm)
+
+        for adms in overlap.values():
+            # All codes, merged.
+            icd9_diag_codes = set.union(*list(a.icd9_diag_codes for a in adms))
+
+            key = lambda i: adms[i].admission_dates[1]
+            arg_latest_disch = max(range(len(adms)), key=key)
+            super_admission = adms[arg_latest_disch]
+            super_admission.icd9_diag_codes = icd9_diag_codes
+
+            merged.append(super_admission)
+        return merged
 
     @classmethod
     def days(cls, d1, d2):
@@ -91,5 +123,4 @@ class AdmissionInfo:
                               los=los,
                               admission_id=adm.admission_id,
                               icd9_diag_codes=adm.icd9_diag_codes))
-
         return adms

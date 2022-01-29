@@ -1,6 +1,7 @@
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 
+from absl import logging
 import haiku as hk
 import jax
 import jax.numpy as jnp
@@ -159,7 +160,7 @@ class ICENODE(AbstractModel):
 
         h_r_nfe = {
             i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
-            for i in h.keys()
+            for i in t.keys()
         }
 
         nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
@@ -169,13 +170,17 @@ class ICENODE(AbstractModel):
         return h1, r1, (nfe, nfe_sum)
 
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
-                  diag_emb_error: jnp.ndarray) -> jnp.ndarray:
+                  diag_emb: jnp.ndarray, diag_out: jnp.ndarray) -> jnp.ndarray:
+        decoded_emb, _ = self._f_dec(params, state)
+        delta_emb = self._emb_error(diag_emb, decoded_emb)
         updated_state = {
-            i: self.f_update(params['f_update'], state[i], emb_error)
-            for i, emb_error in diag_emb_error.items()
+            i: self.f_update(params['f_update'], state[i], delta)
+            for i, delta in delta_emb.items()
         }
+        _, post_diag_out = self._f_dec(params, updated_state)
+        update_loss = self._diag_loss(diag_out, post_diag_out)
 
-        return updated_state
+        return updated_state, update_loss
 
     def _f_dec(
         self, params: Any, state: Dict[int, jnp.ndarray]
@@ -285,31 +290,37 @@ class ICENODE(AbstractModel):
                         'pre_logits': pred_diag_out[subject_id]
                     }
 
+                state, _update_loss = nn_update(state, diag_emb, diag_out)
+                update_loss += _update_loss
+
             # Within-admission integration for the LoS
-            max_los = max(adm_los.values())
-            for los in range(max_los):
-                delta_days = {i: 1 for i in adm_id if los <= adm_los[i]}
-                state_inpatient = {i: state[i] for i in delta_days}
+            # Consider two-steps for the LoS (median and last time point)
+            los_sample_rate = 2
+            for i in range(los_sample_rate - 1):
+                delta_days = {
+                    i: los / los_sample_rate
+                    for i, los in adm_los.items()
+                    if los > 0
+                }
                 ################## ODEINT BETWEEN ADMS #####################
-                state_inpatient, _, _ = nn_ode(state_inpatient, delta_days)
-                ############## UPDATE ####################
-                pred_diag_emb, _ = nn_decode(state_inpatient)
-                delta_emb = self._emb_error(diag_emb, pred_diag_emb)
-                state_inpatient = nn_update(state_inpatient, delta_emb)
-                _, post_diag_out = nn_decode(state_inpatient)
-                update_loss += diag_loss(diag_out, post_diag_out)
-                state.update(state_inpatient)
+                state, _, _ = nn_ode(state, delta_days)
+                ustate, _update_loss = nn_update(state, diag_emb, diag_out)
+                state.update(ustate)
+                update_loss += _update_loss
 
             update_losses.append(update_loss)
-
             # Update the states:
             for subject_id, new_state in state.items():
                 subject_state[subject_id] = {
-                    'time': adm_time[subject_id] + adm_los[subject_id],
-                    'state': new_state
+                    'time':
+                    adm_time[subject_id] + adm_los[subject_id] *
+                    (1. - 1. / los_sample_rate),
+                    'state':
+                    new_state
                 }
 
-        prediction_loss = jnp.average(prediction_losses, weights=adm_counts[1:])
+        prediction_loss = jnp.average(prediction_losses,
+                                      weights=adm_counts[1:])
         update_loss = jnp.average(update_losses, weights=adm_counts)
         ret = {
             'prediction_loss': prediction_loss,
@@ -334,8 +345,8 @@ class ICENODE(AbstractModel):
         l2_alpha = loss_mixing['L_l2']
         dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
-        diag_loss = (1 - diag_alpha
-                     ) * prediction_loss + diag_alpha * update_loss
+        diag_loss = (1 -
+                     diag_alpha) * prediction_loss + diag_alpha * update_loss
         loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
             dyn_alpha * dyn_loss)
 

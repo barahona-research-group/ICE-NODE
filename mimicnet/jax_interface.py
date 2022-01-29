@@ -11,7 +11,16 @@ from .mimic3.dag import CCSDAG
 
 
 class AbstractSubjectJAXInterface:
+    """
+    Class to prepare EHRs information to predictive models.
+    NOTE: admissions with overlapping admission dates for the same patietn
+    are merged. Hence, in case patients end up with one admission, they
+    are discarded.
+    """
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
+
+        # Filter subjects with admissions less than two.
+        subjects = [s for s in subjects if len(s.admissions) > 1]
 
         self.subjects = dict(
             zip(map(lambda s: s.subject_id, subjects), subjects))
