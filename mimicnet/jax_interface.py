@@ -1,14 +1,12 @@
 from __future__ import annotations
-import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 import pandas as pd
-
 import jax.numpy as jnp
 
-from .mimic3.concept import (DiagSubject, DiagPoint)
+from .mimic3.concept import (DiagSubject, AdmissionInfo)
 from .mimic3.dag import CCSDAG
 
 
@@ -207,36 +205,39 @@ class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
 class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
-        self.nth_points = self.make_nth_points()
-        self.n_support = sorted(list(self.nth_points.keys()))
+        self.nth_admission = self.make_nth_admission()
+        self.n_support = sorted(list(self.nth_admission.keys()))
 
-    def make_nth_points(self):
-        nth_points = defaultdict(dict)
+    def make_nth_admission(self):
+        nth_admission = defaultdict(dict)
 
         for subject_id, subject in self.subjects.items():
-            for n, point in enumerate(DiagPoint.subject_to_points(subject)):
-                nth_points[n][subject_id] = self.jaxify_subject_point(point)
+            admissions = AdmissionInfo.subject_to_admissions(subject)
+            for n, adm in enumerate(admissions):
+                nth_admission[n][subject_id] = self.jaxify_subject_admission(
+                    adm)
 
-        return nth_points
+        return nth_admission
 
-    def jaxify_subject_point(self, point):
+    def jaxify_subject_admission(self, admission: AdmissionInfo):
         diag_flatccs_codes = set(
-            map(self.dag.diag_icd2flatccs.get, point.icd9_diag_codes))
+            map(self.dag.diag_icd2flatccs.get, admission.icd9_diag_codes))
 
         diag_ccs_codes = set(
-            map(self.dag.diag_icd2ccs.get, point.icd9_diag_codes))
+            map(self.dag.diag_icd2ccs.get, admission.icd9_diag_codes))
 
         return {
-            'days_ahead': point.days_ahead,
+            'time': admission.admission_time,
+            'los': admission.los,
             'diag_ccs_vec': self.diag_ccs_to_vec(diag_ccs_codes),
             'diag_flatccs_vec': self.diag_flatccs_to_vec(diag_flatccs_codes),
-            'admission_id': point.admission_id
+            'admission_id': admission.admission_id
         }
 
-    def nth_points_batch(self, n: int, batch: List[int]):
-        if n not in self.nth_points:
+    def nth_admission_batch(self, n: int, batch: List[int]):
+        if n not in self.nth_admission:
             return {}
-        return {k: v for k, v in self.nth_points[n].items() if k in batch}
+        return {k: v for k, v in self.nth_admission[n].items() if k in batch}
 
 
 def create_patient_interface(processed_mimic_tables_dir: str, data_tag=None):

@@ -61,25 +61,35 @@ class DiagSubject:
         return list(map(lambda args: cls(**args), ehr.values()))
 
 
-class DiagPoint:
-    def __init__(self, subject_id: int, days_ahead: int, admission_id: int,
-                 icd9_diag_codes: Set[str]):
+class AdmissionInfo:
+    def __init__(self, subject_id: int, admission_time: int, los: int,
+                 admission_id: int, icd9_diag_codes: Set[str]):
         self.subject_id = subject_id
-        self.days_ahead = days_ahead
+        # Time as days since the first admission
+        self.admission_time = admission_time
+        # Length of Stay
+        self.los = los
         self.admission_id = admission_id
         self.icd9_diag_codes = icd9_diag_codes
 
     @classmethod
-    def subject_to_points(cls, subject: DiagSubject) -> Dict[int, DiagPoint]:
+    def subject_to_admissions(
+            cls, subject: DiagSubject) -> Dict[int, AdmissionInfo]:
         first_day_date = subject.admissions[0].admission_dates[0]
-        points = {}
+        adms = []
         for adm in subject.admissions:
-            days_ahead = DiagSubject.days(adm.admission_dates[0],
-                                          first_day_date)
+            # days since first admission
+            time = DiagSubject.days(adm.admission_dates[0],
+                                    subject.admissions[0].admission_dates[0])
 
-            points[days_ahead] = cls(subject_id=subject.subject_id,
-                                     days_ahead=days_ahead,
-                                     admission_id=adm.admission_id,
-                                     icd9_diag_codes=adm.icd9_diag_codes)
+            los = DiagSubject.days(adm.admission_dates[1],
+                                   adm.admission_dates[0])
 
-        return list(sorted(points.values(), key=lambda p: p.days_ahead))
+            adms.append(
+                AdmissionInfo(subject_id=subject.subject_id,
+                              admission_time=time,
+                              los=los,
+                              admission_id=adm.admission_id,
+                              icd9_diag_codes=adm.icd9_diag_codes))
+
+        return adms

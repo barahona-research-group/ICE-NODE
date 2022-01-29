@@ -125,30 +125,32 @@ class ICENODE(AbstractModel):
             "f_init": [diag_emb_]
         }
 
-    def _extract_nth_points(self, params: Any, subjects_batch: List[int],
-                            n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
+    def _extract_nth_admission(self, params: Any, subjects_batch: List[int],
+                               n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
         diag_G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
 
-        points = self.subject_interface.nth_points_batch(n, subjects_batch)
-        if len(points) == 0:
+        adms = self.subject_interface.nth_admission_batch(n, subjects_batch)
+        if len(adms) == 0:
             return None
 
         diag_emb = {
             i: self.diag_emb.encode(diag_G, v['diag_ccs_vec'])
-            for i, v in points.items() if v['diag_ccs_vec'] is not None
+            for i, v in adms.items() if v['diag_ccs_vec'] is not None
         }
         diag_out = {
             i: v['diag_ccs_vec']
-            for i, v in points.items() if v['diag_ccs_vec'] is not None
+            for i, v in adms.items() if v['diag_ccs_vec'] is not None
         }
-        admission_id = {i: v['admission_id'] for i, v in points.items()}
-        days_ahead = {i: v['days_ahead'] for i, v in points.items()}
+        los = {i: v['los'] for i, v in adms.items()}
+        adm_id = {i: v['admission_id'] for i, v in adms.items()}
+        adm_time = {i: v['time'] for i, v in adms.items()}
 
         return {
-            'days_ahead': days_ahead,
+            'time': adm_time,
+            'los': los,
             'diag_emb': diag_emb,
             'diag_out': diag_out,
-            'admission_id': admission_id
+            'admission_id': adm_id
         }
 
     def _f_n_ode(self, params, count_nfe, h, t):
@@ -176,25 +178,22 @@ class ICENODE(AbstractModel):
         return updated_state
 
     def _f_dec(
-        self, params: Any, state: Dict[int, jnp.ndarray], selection: Set[int]
+        self, params: Any, state: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-        emb_out = {i: self.f_dec(params['f_dec'], state[i]) for i in selection}
+        emb_out = {i: self.f_dec(params['f_dec'], state[i]) for i in state}
         emb = {i: g for i, (g, _) in emb_out.items()}
         out = {i: o for i, (_, o) in emb_out.items()}
 
         return emb, out
 
-    def _f_init(self, params, points_n, subjects: Iterable[int],
-                days_ahead: Dict[int, int]):
-        diag_emb = points_n['diag_emb']
-
-        def _state_init(subject_id):
-            return {
-                'value': self.f_init(params['f_init'], diag_emb[subject_id]),
-                'days': days_ahead[subject_id]
+    def _f_init(self, params, diag_emb):
+        return {
+            i: {
+                'time': 0,
+                'state': self.f_init(params['f_init'], diag_emb[i])
             }
-
-        return {i: _state_init(i) for i in (set(diag_emb) & set(subjects))}
+            for i in diag_emb
+        }
 
     @staticmethod
     def _emb_error(emb_true, emb_predicted):
@@ -219,115 +218,114 @@ class ICENODE(AbstractModel):
                  params: Any,
                  subjects_batch: List[int],
                  count_nfe: bool = False):
-        nth_points = partial(self._extract_nth_points, params, subjects_batch)
+        nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
         nn_decode = partial(self._f_dec, params)
         nn_init = partial(self._f_init, params)
         diag_loss = self._diag_loss
         subject_state = dict()
-        dyn_loss = []
-        nfe = []
+        dyn_losses = []
+        total_nfe = 0
 
-        prejump_diag_loss = []
-        postjump_diag_loss = []
-        diag_weights = []
+        prediction_losses = []
+        update_losses = []
+        adm_counts = []
 
         diag_detectability = {i: {} for i in subjects_batch}
-        all_points_count = 0
-        predictable_count = 0
         odeint_weeks = 0.0
 
         for n in self.subject_interface.n_support:
-            points_n = nth_points(n)
+            adm_n = nth_adm(n)
+            if adm_n is None:
+                break
+            adm_id = adm_n['admission_id']
+            adm_los = adm_n['los']  # length of stay
+            adm_time = adm_n['time']
+            diag_emb = adm_n['diag_emb']
+            diag_out = adm_n['diag_out']
 
-            if points_n is None:
-                continue
-            all_points_count += len(points_n)
+            # To normalize the prediction loss by the number of patients
+            adm_counts.append(len(adm_id))
 
-            admission_id = points_n['admission_id']
-            days_ahead = points_n['days_ahead']
-            diag_emb = points_n['diag_emb']
-            diag_out = points_n['diag_out']
-            delta_days = {
-                i: (days_ahead[i] - subject_state[i]['days'])
-                for i in (set(subject_state) & set(admission_id))
-            }
+            update_loss = 0.0
+            if n == 0:
+                # Initialize all states for first admission (no predictions)
+                state_0 = nn_init(diag_emb)
+                subject_state.update(state_0)
+                assert all(
+                    i in subject_state for i in subjects_batch
+                ), "Expected all subjects have at least one admission"
+                state = {i: subject_state[i]['state'] for i in adm_id}
+            else:
+                # Between-admissions integration (and predictions)
 
-            state_i = {i: subject_state[i]['value'] for i in delta_days}
+                # time-difference betweel last discharge and current admission
+                delta_days = {
+                    i: (adm_time[i] - subject_state[i]['time'])
+                    for i in adm_id
+                }
+                state = {i: subject_state[i]['state'] for i in adm_id}
 
-            # - From points returned at index n Consider for odeint only subjects that already have a previous state, and
-            # - Initialize new states for subjects that have diagnosis codes which has not been previously initialized.
+                odeint_weeks += sum(delta_days.values()) / 7
+                ################## ODEINT BETWEEN ADMS #####################
+                state, dyn_loss, (nfe, nfe_sum) = nn_ode(state, delta_days)
+                dyn_losses.append(dyn_loss)
+                total_nfe += nfe_sum
+                ########## DIAG LOSS #########################
+                pred_diag_emb, pred_diag_out = nn_decode(state)
+                prediction_losses.append(diag_loss(diag_out, pred_diag_out))
 
-            initialize_subjects = set(admission_id) - set(delta_days)
+                for subject_id in state.keys():
+                    diag_detectability[subject_id][n] = {
+                        'admission_id': adm_id[subject_id],
+                        'nfe': nfe[subject_id],
+                        'time': adm_time[subject_id],
+                        'diag_true': diag_out[subject_id],
+                        'pre_logits': pred_diag_out[subject_id]
+                    }
 
-            state_0 = nn_init(points_n, initialize_subjects, days_ahead)
-            subject_state.update(state_0)
+            # Within-admission integration for the LoS
+            max_los = max(adm_los.values())
+            for los in range(max_los):
+                delta_days = {i: 1 for i in adm_id if los <= adm_los[i]}
+                state_inpatient = {i: state[i] for i in delta_days}
+                ################## ODEINT BETWEEN ADMS #####################
+                state_inpatient, _, _ = nn_ode(state_inpatient, delta_days)
+                ############## UPDATE ####################
+                pred_diag_emb, _ = nn_decode(state_inpatient)
+                delta_emb = self._emb_error(diag_emb, pred_diag_emb)
+                state_inpatient = nn_update(state_inpatient, delta_emb)
+                _, post_diag_out = nn_decode(state_inpatient)
+                update_loss += diag_loss(diag_out, post_diag_out)
+                state.update(state_inpatient)
 
-            # This intersection ensures only prediction for:
-            # 1. cases that are integrable (i.e. with previous state), and
-            # 2. cases that have diagnosis at index n.
-            predictable_count += len(delta_days)
+            update_losses.append(update_loss)
 
-            # No. of "Predictable" diagnostic points
-            diag_weights.append(len(delta_days))
-            odeint_weeks += sum(delta_days.values()) / 7
-            ################## ODEINT #####################
-            state_j, _dyn_loss, (n_nfe,
-                                 n_nfe_sum) = nn_ode(state_i, delta_days)
-            dyn_loss.append(_dyn_loss)
-            nfe.append(n_nfe_sum)
-            ########## PRE-JUMP DiAG LOSS #########################
-            pre_diag_emb, pre_diag_out = nn_decode(state_j, delta_days)
-            pre_diag_loss = diag_loss(diag_out, pre_diag_out)
-            pre_diag_emb_error = self._emb_error(diag_emb, pre_diag_emb)
-            prejump_diag_loss.append(pre_diag_loss)
-            ############## UPDATE ####################
-            state_j_updated = nn_update(state_j, pre_diag_emb_error)
-            state_j.update(state_j_updated)
             # Update the states:
-            for subject_id, new_state in state_j.items():
+            for subject_id, new_state in state.items():
                 subject_state[subject_id] = {
-                    'days': days_ahead[subject_id],
-                    'value': new_state
+                    'time': adm_time[subject_id] + adm_los[subject_id],
+                    'state': new_state
                 }
 
-            ############### POST-JUNP DAG LOSS ########################
-            _, post_diag_out = nn_decode(state_j_updated, delta_days)
-
-            post_diag_loss = diag_loss(diag_out, post_diag_out)
-            postjump_diag_loss.append(post_diag_loss)
-
-            for subject_id in post_diag_out.keys():
-                diag_detectability[subject_id][n] = {
-                    'admission_id': admission_id[subject_id],
-                    'nfe': n_nfe[subject_id],
-                    'days_ahead': days_ahead[subject_id],
-                    'diag_true': diag_out[subject_id],
-                    'pre_logits': pre_diag_out[subject_id],
-                    'post_logits': post_diag_out[subject_id]
-                }
-
-        prejump_diag_loss = jnp.average(prejump_diag_loss,
-                                        weights=diag_weights)
-        postjump_diag_loss = jnp.average(postjump_diag_loss,
-                                         weights=diag_weights)
+        prediction_loss = jnp.average(prediction_losses, weights=adm_counts[1:])
+        update_loss = jnp.average(update_losses, weights=adm_counts)
         ret = {
-            'prejump_diag_loss': prejump_diag_loss,
-            'postjump_diag_loss': postjump_diag_loss,
-            'dyn_loss': jnp.sum(sum(dyn_loss)),
+            'prediction_loss': prediction_loss,
+            'update_loss': update_loss,
+            'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
-            'all_points_count': all_points_count,
-            'predictable_count': predictable_count,
-            'nfe': sum(nfe),
+            'admissions_count': sum(adm_counts),
+            'nfe': total_nfe,
             'diag_detectability': diag_detectability
         }
 
         return ret
 
     def detailed_loss(self, loss_mixing, params, res):
-        prejump_diag_loss = res['prejump_diag_loss']
-        postjump_diag_loss = res['postjump_diag_loss']
+        prediction_loss = res['prediction_loss']
+        update_loss = res['update_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
@@ -337,13 +335,13 @@ class ICENODE(AbstractModel):
         dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
         diag_loss = (1 - diag_alpha
-                     ) * prejump_diag_loss + diag_alpha * postjump_diag_loss
+                     ) * prediction_loss + diag_alpha * update_loss
         loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
             dyn_alpha * dyn_loss)
 
         return {
-            'prejump_diag_loss': prejump_diag_loss,
-            'postjump_diag_loss': postjump_diag_loss,
+            'prediction_loss': prediction_loss,
+            'update_loss': update_loss,
             'diag_loss': diag_loss,
             'loss': loss,
             'l1_loss': l1_loss,
@@ -355,8 +353,7 @@ class ICENODE(AbstractModel):
     def eval_stats(self, res):
         nfe = res['nfe']
         return {
-            'all_points_count': res['all_points_count'],
-            'predictable_count': res['predictable_count'],
+            'admissions_count': res['admissions_count'],
             'nfe_per_week': nfe / (res['odeint_weeks'] + 1e-10),
             'nfex1000': nfe / 1000
         }
