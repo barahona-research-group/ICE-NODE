@@ -21,14 +21,15 @@ class ICENODE(AbstractModel):
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_depth: int, ode_with_bias: bool, ode_init_var: float,
-                 ode_timescale: float, tay_reg: Optional[int], state_size: int,
-                 init_depth: bool,
+                 ode_timescale: float, los_sample_rate: int,
+                 tay_reg: Optional[int], state_size: int, init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
         self.tay_reg = tay_reg
         self.diag_loss = diag_loss
+        self.los_sample_rate = los_sample_rate
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
@@ -294,13 +295,10 @@ class ICENODE(AbstractModel):
                 update_loss += _update_loss
 
             # Within-admission integration for the LoS
-            # Consider two-steps for the LoS (median and last time point)
-            los_sample_rate = 2
-            for i in range(los_sample_rate - 1):
+            for i in range(self.los_sample_rate - 1):
                 delta_days = {
-                    i: los / los_sample_rate
-                    for i, los in adm_los.items()
-                    if los > 0
+                    i: los / self.los_sample_rate
+                    for i, los in adm_los.items() if los > 0
                 }
                 ################## ODEINT BETWEEN ADMS #####################
                 state, _, _ = nn_ode(state, delta_days)
@@ -314,7 +312,7 @@ class ICENODE(AbstractModel):
                 subject_state[subject_id] = {
                     'time':
                     adm_time[subject_id] + adm_los[subject_id] *
-                    (1. - 1. / los_sample_rate),
+                    (1. - 1. / self.los_sample_rate),
                     'state':
                     new_state
                 }
@@ -421,7 +419,8 @@ class ICENODE(AbstractModel):
             'ode_with_bias': trial.suggest_categorical('ode_b', [True, False]),
             'ode_init_var': trial.suggest_float('ode_iv', 1e-5, 1, log=True),
             'ode_timescale': trial.suggest_float('ode_ts', 1, 5e2, log=True),
-            'state_size': trial.suggest_int('s', 100, 350, 50),
+            'los_sample_rate': trial.suggest_int('los_f', 2, 4),
+            'state_size': trial.suggest_int('s', 50, 350, 50),
             'init_depth': trial.suggest_int('init_d', 1, 4),
             'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
