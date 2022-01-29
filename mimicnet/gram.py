@@ -278,11 +278,11 @@ class GloVeGRAM(AbstractGRAM):
                 'window_size_days': 2 * 365
             },
             'embeddings_dim':
-            trial.suggest_int(f'{prefix}_k', 50, 250, 50),
+            trial.suggest_int(f'{prefix}_k', 30, 300, 30),
             'attention_method':
             trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
             'attention_dim':
-            trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
+            trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
 
 class OrthogonalGRAM(AbstractGRAM):
@@ -322,7 +322,7 @@ class OrthogonalGRAM(AbstractGRAM):
             'attention_method':
             trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
             'attention_dim':
-            trial.suggest_int(f'{prefix}_att_d', 50, 250, 50),
+            trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
 
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
@@ -352,5 +352,5 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
-            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 50, 300, 50)
+            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 30, 300, 30)
         }

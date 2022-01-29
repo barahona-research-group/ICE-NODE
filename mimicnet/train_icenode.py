@@ -416,11 +416,11 @@ class ICENODE(AbstractModel):
             'ode_dyn': trial.suggest_categorical(
                 'ode_dyn', ['mlp', 'gru', 'res'
                             ]),  # Add depth conditional to 'mlp' or 'res'
-            'ode_with_bias': trial.suggest_categorical('ode_b', [True, False]),
-            'ode_init_var': trial.suggest_float('ode_iv', 1e-5, 1, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 5e2, log=True),
-            'los_sample_rate': trial.suggest_int('los_f', 2, 5),
-            'state_size': trial.suggest_int('s', 50, 350, 50),
+            'ode_with_bias': False, # trial.suggest_categorical('ode_b', [True, False]),
+            'ode_init_var': 1e-1, # trial.suggest_float('ode_iv', 1e-5, 1, log=True),
+            'ode_timescale': 1, # trial.suggest_float('ode_ts', 1, 5e2, log=True),
+            'los_sample_rate': trial.suggest_int('los_f', 1, 8),
+            'state_size': trial.suggest_int('s', 30, 300, 30),
             'init_depth': trial.suggest_int('init_d', 1, 4),
             'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
