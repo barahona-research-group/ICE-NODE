@@ -1,153 +1,267 @@
-from typing import Dict, List, Any, Optional
-import optuna
-from .utils import load_config, load_params
-from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
-                   MatrixEmbeddings, OrthogonalGRAM)
-from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
-                      admissions_auc_scores)
+from __future__ import annotations
+from collections import defaultdict
+from typing import Any, List, Optional
 
-class ImplementationException(Exception):
-    pass
+import numpy as np
+import pandas as pd
+import jax.numpy as jnp
 
-class AbstractModel:
-    def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        raise ImplementationException('Should be overriden')
+from .mimic3.concept import (DiagSubject, AdmissionInfo)
+from .mimic3.dag import CCSDAG
 
-    def detailed_loss(self, loss_mixing, params, res):
-        raise ImplementationException('Should be overriden')
 
-    def eval_stats(self, res):
-        raise ImplementationException('Should be overriden')
+class AbstractSubjectJAXInterface:
+    """
+    Class to prepare EHRs information to predictive models.
+    NOTE: admissions with overlapping admission dates for the same patietn
+    are merged. Hence, in case patients end up with one admission, they
+    are discarded.
+    """
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
 
-    def eval(self, loss_mixing: Dict[str, float], params: Any,
-             batch: List[int]) -> Dict[str, float]:
-        res = self(params, batch, count_nfe=True)
+        # Filter subjects with admissions less than two.
+        subjects = [s for s in subjects if len(s.admissions) > 1]
+
+        self.subjects = dict(
+            zip(map(lambda s: s.subject_id, subjects), subjects))
+        self.dag: CCSDAG = dag
+
+        self.diag_ccs_idx = dict(
+            zip(dag.diag_ccs_codes, range(len(dag.diag_ccs_codes))))
+        self.diag_flatccs_idx = dict(
+            zip(dag.diag_flatccs_codes, range(len(dag.diag_flatccs_codes))))
+
+        self.diag_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
+            self.diag_ccs_idx)
+
+    def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
+        ancestors_mat = []
+
+        for code in sorted(code2index.keys()):
+            ancestors_npvec = np.zeros(len(code2index), dtype=bool)
+            ancestors = [
+                a for a in self.dag.get_ccs_parents(code) if a in code2index
+            ]
+            for ancestor_j in map(code2index.get, ancestors):
+                ancestors_npvec[ancestor_j] = 1
+            ancestors_mat.append(jnp.array(ancestors_npvec))
+        return jnp.vstack(ancestors_mat)
+
+    def diag_ccs_to_vec(self, diag_ccs_codes):
+        n_cols = len(self.diag_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_ccs_codes:
+            mask[self.diag_ccs_idx[c]] = 1
+        return jnp.array(mask)
+
+    def diag_flatccs_to_vec(self, diag_flatccs_codes):
+        if len(diag_flatccs_codes) == 0:
+            return None
+
+        n_cols = len(self.diag_flatccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_flatccs_codes:
+            mask[self.diag_flatccs_idx[c]] = 1
+
+        return jnp.array(mask)
+
+    def diag_flatccs_frequency(self, subjects: Optional[List[int]] = None):
+        subjects = subjects or self.subjects.keys()
+        counter = defaultdict(int)
+        for subject_id in subjects:
+            for adm in self.subjects[subject_id].admissions:
+                ccs_codes = set(
+                    map(self.dag.diag_icd2flatccs.get, adm.icd9_diag_codes))
+                for code in ccs_codes:
+                    counter[self.diag_flatccs_idx[code]] += 1
+        return counter
+
+    def diag_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
+        counts = self.diag_flatccs_frequency(subjects)
+        n_cols = len(self.diag_flatccs_idx)
+
+        counts_vec = np.zeros(n_cols)
+        for i, c in counts.items():
+            counts_vec[i] = c
+        return jnp.array(counts_vec)
+
+    def diag_ccs_frequency(self, subjects: Optional[List[int]] = None):
+        subjects = subjects or self.subjects.keys()
+        counter = defaultdict(int)
+        for subject_id in subjects:
+            for adm in self.subjects[subject_id].admissions:
+                ccs_codes = set(
+                    map(self.dag.diag_icd2ccs.get, adm.icd9_diag_codes))
+                for code in ccs_codes:
+                    counter[self.diag_ccs_idx[code]] += 1
+        return counter
+
+    def diag_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
+        counts = self.diag_ccs_frequency(subjects)
+        n_cols = len(self.diag_ccs_idx)
+
+        counts_vec = np.zeros(n_cols)
+        for i, c in counts.items():
+            counts_vec[i] = c
+        return jnp.array(counts_vec)
+
+    def diag_flatccs_by_percentiles(self,
+                                    section_percentage: float = 20,
+                                    subjects: Optional[List[int]] = None):
+        n_sections = int(100 / section_percentage)
+        sections = list(
+            zip(range(0, 100, section_percentage),
+                range(section_percentage, 101, section_percentage)))
+
+        frequency = self.diag_flatccs_frequency(subjects)
+
+        frequency_df = pd.DataFrame({
+            'code': frequency.keys(),
+            'frequency': frequency.values()
+        })
+
+        frequency_df = frequency_df.sort_values('frequency')
+        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
+        frequency_df['cum_perc'] = 100 * frequency_df[
+            'cum_sum'] / frequency_df["frequency"].sum()
+
+        codes_by_percentiles = []
+        for l, u in sections:
+            codes = frequency_df[(frequency_df['cum_perc'] > l)
+                                 & (frequency_df['cum_perc'] <= u)].code
+            codes_by_percentiles.append(set(codes))
+
+        return codes_by_percentiles
+
+    def diag_ccs_by_percentiles(self,
+                                section_percentage: float = 20,
+                                subjects: Optional[List[int]] = None):
+        n_sections = int(100 / section_percentage)
+        sections = list(
+            zip(range(0, 100, section_percentage),
+                range(section_percentage, 101, section_percentage)))
+
+        frequency = self.diag_ccs_frequency(subjects)
+
+        frequency_df = pd.DataFrame({
+            'code': frequency.keys(),
+            'frequency': frequency.values()
+        })
+
+        frequency_df = frequency_df.sort_values('frequency')
+        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
+        frequency_df['cum_perc'] = 100 * frequency_df[
+            'cum_sum'] / frequency_df["frequency"].sum()
+
+        codes_by_percentiles = []
+        for l, u in sections:
+            codes = frequency_df[(frequency_df['cum_perc'] > l)
+                                 & (frequency_df['cum_perc'] <= u)].code
+            codes_by_percentiles.append(set(codes))
+
+        return codes_by_percentiles
+
+
+class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
+        super().__init__(subjects, dag)
+        self.diag_sequences = self.make_diag_sequences()
+
+    def diag_ccs_to_vec(self, diag_ccs_codes):
+        n_cols = len(self.diag_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_ccs_codes:
+            mask[self.diag_ccs_idx[c]] = 1
+        return jnp.array(mask)
+
+    def diag_flatccs_to_vec(self, diag_flatccs_codes):
+        n_cols = len(self.diag_flatccs_idx)
+        mask = np.zeros(n_cols)
+        for c in diag_flatccs_codes:
+            mask[self.diag_flatccs_idx[c]] = 1
+
+        return jnp.array(mask)
+
+    def make_diag_sequences(self):
+        _diag_sequences = {}
+        for subject_id, subject in self.subjects.items():
+            _diag_sequences[subject_id] = {
+                'diag_ccs_vec': [],
+                'diag_flatccs_vec': [],
+                'admission_id': []
+            }
+
+            for adm in subject.admissions:
+                codes = adm.icd9_diag_codes
+                diag_flatccs_codes = set(
+                    map(self.dag.diag_icd2flatccs.get, codes))
+                _s = self.diag_flatccs_to_vec(diag_flatccs_codes)
+
+                diag_ccs_codes = set(map(self.dag.diag_icd2ccs.get, codes))
+                _m = self.diag_ccs_to_vec(diag_ccs_codes)
+
+                _diag_sequences[subject_id]['diag_ccs_vec'].append(_m)
+                _diag_sequences[subject_id]['diag_flatccs_vec'].append(_s)
+                _diag_sequences[subject_id]['admission_id'].append(
+                    adm.admission_id)
+
+        return _diag_sequences
+
+    def diag_sequences_batch(self, subjects_batch):
+        return {i: self.diag_sequences[i] for i in subjects_batch}
+
+
+class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
+    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
+        super().__init__(subjects, dag)
+        self.nth_admission = self.make_nth_admission()
+        self.n_support = sorted(list(self.nth_admission.keys()))
+
+    def make_nth_admission(self):
+        nth_admission = defaultdict(dict)
+
+        for subject_id, subject in self.subjects.items():
+            admissions = AdmissionInfo.subject_to_admissions(subject)
+            for n, adm in enumerate(admissions):
+                nth_admission[n][subject_id] = self.jaxify_subject_admission(
+                    adm)
+
+        return nth_admission
+
+    def jaxify_subject_admission(self, admission: AdmissionInfo):
+        diag_flatccs_codes = set(
+            map(self.dag.diag_icd2flatccs.get, admission.icd9_diag_codes))
+
+        diag_ccs_codes = set(
+            map(self.dag.diag_icd2ccs.get, admission.icd9_diag_codes))
 
         return {
-            'loss': self.detailed_loss(loss_mixing, params, res),
-            'stats': self.eval_stats(res),
-            'diag_detectability': res['diag_detectability']
+            'time': admission.admission_time,
+            'los': admission.los,
+            'diag_ccs_vec': self.diag_ccs_to_vec(diag_ccs_codes),
+            'diag_flatccs_vec': self.diag_flatccs_to_vec(diag_flatccs_codes),
+            'admission_id': admission.admission_id
         }
 
-    def admissions_auc_scores(self, params: Any, batch: List[int]):
-        res = self(params, batch, count_nfe=True)
-        return admissions_auc_scores(res['diag_detectability'], 'pre')
+    def nth_admission_batch(self, n: int, batch: List[int]):
+        if n not in self.nth_admission:
+            return {}
+        return {k: v for k, v in self.nth_admission[n].items() if k in batch}
 
-    def loss(self, loss_mixing: Dict[str, float], params: Any,
-             batch: List[int]) -> float:
-        res = self(params, batch, count_nfe=False)
-        return self.detailed_loss(loss_mixing, params, res)['loss']
 
-    @classmethod
-    def create_embedding(cls, emb_config, emb_kind, patient_interface,
-                         train_ids, pretrained_components):
-        if emb_kind == 'matrix':
-            input_dim = len(patient_interface.diag_ccs_idx)
-            return MatrixEmbeddings(input_dim=input_dim, **emb_config)
+def create_patient_interface(processed_mimic_tables_dir: str, data_tag=None):
+    adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
+    # Cast columns of dates to datetime64
+    adm_df['ADMITTIME'] = pd.to_datetime(
+        adm_df['ADMITTIME'], infer_datetime_format=True).dt.normalize()
+    adm_df['DISCHTIME'] = pd.to_datetime(
+        adm_df['DISCHTIME'], infer_datetime_format=True).dt.normalize()
+    diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
+                          dtype={'ICD9_CODE': str})
 
-        if emb_kind == 'orthogonal_gram':
-            return OrthogonalGRAM('diag',
-                                  patient_interface=patient_interface,
-                                  **emb_config)
-        if emb_kind == 'glove_gram':
-            return GloVeGRAM(category='diag',
-                             patient_interface=patient_interface,
-                             train_ids=train_ids,
-                             **emb_config)
+    patients = DiagSubject.to_list(adm_df=adm_df, diag_df=diag_df)
 
-        if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            emb_component = pretrained_components['emb']['diag']['params_file']
-            emb_params = load_params(emb_component)['diag_emb']
-            if emb_kind == 'semi_frozen_gram':
-                return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
-            elif emb_kind == 'frozen_gram':
-                return FrozenGRAM(initial_params=emb_params, **emb_config)
-            else:
-                return TunableGRAM(initial_params=emb_params, **emb_config)
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+    # CCS Knowledge Graph
+    k_graph = CCSDAG()
 
-    @staticmethod
-    def code_partitions(patient_interface, train_ids):
-        return patient_interface.diag_ccs_by_percentiles(20, train_ids)
-
-    @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
-        raise ImplementationException('Should be overriden')
-
-    @classmethod
-    def select_loss(cls, loss_label: str, patient_interface, train_ids):
-        if loss_label == 'balanced_focal':
-            return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
-        elif loss_label == 'softmax':
-            return softmax_loss
-        elif loss_label == 'bce':
-            return bce
-        elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_ccs_frequency_vec(train_ids)
-            weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
-            return lambda t, logits: weighted_bce(t, logits, weights)
-        else:
-            raise ValueError(f'Unrecognized diag_loss: {loss_label}')
-
-    @staticmethod
-    def _sample_training_config(trial: optuna.Trial, epochs):
-        l_mixing = {
-            'L_l1': 0, #trial.suggest_float('l1', 1e-7, 1e-1, log=True),
-            'L_l2': 0, #trial.suggest_float('l2', 1e-6, 1e-1, log=True),
-        }
-
-        return {
-            'epochs': epochs,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            # UNDO/TODO
-            'optimizer': 'adam',
-            # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'loss_mixing': l_mixing
-        }
-
-    @staticmethod
-    def sample_embeddings_config(trial: optuna.Trial,
-                                 emb_kind: str,
-                                 pretrained_components: Optional[Any] = None):
-        if emb_kind == 'matrix':
-            emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
-        elif emb_kind == 'orthogonal_gram':
-            emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
-        elif emb_kind == 'glove_gram':
-            emb_config = GloVeGRAM.sample_model_config('dx', trial)
-        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            gram_component = pretrained_components['emb']['diag'][
-                'config_file']
-            gram_component = load_config(gram_component)
-
-            emb_config = gram_component['emb']['diag']
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
-
-        return {'diag': emb_config, 'kind': emb_kind}
-
-    @staticmethod
-    def sample_training_config(trial: optuna.Trial):
-        raise ImplementationException('Should be overriden')
-
-    @staticmethod
-    def sample_model_config(trial: optuna.Trial):
-        return {'state_size': trial.suggest_int('s', 100, 350, 50)}
-
-    @classmethod
-    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str,
-                                 pretrained_components: str):
-        return {
-            'emb':
-            cls.sample_embeddings_config(
-                trial, emb_kind, pretrained_components=pretrained_components),
-            'model':
-            cls.sample_model_config(trial),
-            'training':
-            cls.sample_training_config(trial)
-        }
+    return DiagnosisJAXInterface(patients, k_graph)
