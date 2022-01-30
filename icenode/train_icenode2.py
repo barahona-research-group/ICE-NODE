@@ -188,4 +188,4 @@ class ICENODE2(ICENODE):
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    run_trials(model_cls=ICENODE, **capture_args())
+    run_trials(model_cls=ICENODE2, **capture_args())
