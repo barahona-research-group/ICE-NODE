@@ -174,8 +174,8 @@ class ICENODE(AbstractModel):
         return h1, r1, (nfe, nfe_sum)
 
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
-                  diag_emb: jnp.ndarray, diag_out: jnp.ndarray) -> jnp.ndarray:
-        decoded_emb, _ = self._f_dec(params, state)
+                  diag_emb: jnp.ndarray, diag_out: jnp.ndarray,
+                  decoded_emb: jnp.ndarray) -> jnp.ndarray:
         delta_emb = self._emb_error(diag_emb, decoded_emb)
         updated_state = {
             i: self.f_update(params['f_update'], state[i], delta)
@@ -239,11 +239,16 @@ class ICENODE(AbstractModel):
 
         prediction_losses = []
         update_losses = []
+        # For within LoS prediction loss after odeint.
+        los_losses = []
+
         adm_counts = []
 
         diag_detectability = {i: {} for i in subjects_batch}
         odeint_weeks = 0.0
 
+        update_loss = 0.0
+        los_loss = 0.0
         for n in self.subject_interface.n_support:
             adm_n = nth_adm(n)
             if adm_n is None:
@@ -251,16 +256,15 @@ class ICENODE(AbstractModel):
             adm_id = adm_n['admission_id']
             adm_los = adm_n['los']  # length of stay
             adm_time = adm_n['time']
-            diag_emb = adm_n['diag_emb']
-            diag_out = adm_n['diag_out']
+            emb = adm_n['diag_emb']
+            diag = adm_n['diag_out']
 
             # To normalize the prediction loss by the number of patients
             adm_counts.append(len(adm_id))
 
-            update_loss = 0.0
             if n == 0:
                 # Initialize all states for first admission (no predictions)
-                state_0 = nn_init(diag_emb)
+                state_0 = nn_init(emb)
                 subject_state.update(state_0)
                 assert all(
                     i in subject_state for i in subjects_batch
@@ -282,21 +286,23 @@ class ICENODE(AbstractModel):
                 dyn_losses.append(dyn_loss)
                 total_nfe += nfe_sum
                 ########## DIAG LOSS #########################
-                pred_diag_emb, pred_diag_out = nn_decode(state)
-                prediction_losses.append(diag_loss(diag_out, pred_diag_out))
+                dec_emb, dec_diag = nn_decode(state)
+                prediction_losses.append(diag_loss(diag, dec_diag))
 
                 for subject_id in state.keys():
                     diag_detectability[subject_id][n] = {
                         'admission_id': adm_id[subject_id],
                         'nfe': nfe[subject_id],
                         'time': adm_time[subject_id],
-                        'diag_true': diag_out[subject_id],
-                        'pre_logits': pred_diag_out[subject_id]
+                        'diag_true': diag[subject_id],
+                        'pre_logits': dec_diag[subject_id]
                     }
 
-                state, _update_loss = nn_update(state, diag_emb, diag_out)
+                state, _update_loss = nn_update(state, emb, diag, dec_emb)
                 update_loss += _update_loss
 
+
+            los_loss = 0.0
             # Within-admission integration for the LoS
             for i in range(self.los_sample_rate - 1):
                 delta_days = {
@@ -305,11 +311,16 @@ class ICENODE(AbstractModel):
                 }
                 ################## ODEINT BETWEEN ADMS #####################
                 state, _, _ = nn_ode(state, delta_days)
-                ustate, _update_loss = nn_update(state, diag_emb, diag_out)
-                state.update(ustate)
+                dec_emb, dec_diag = nn_decode(state)
+                los_loss += diag_loss(diag, dec_diag)
+
+
+                state, _update_loss = nn_update(state, emb, diag, dec_emb)
                 update_loss += _update_loss
 
             update_losses.append(update_loss)
+            los_losses.append(los_loss)
+
             # Update the states:
             for subject_id, new_state in state.items():
                 subject_state[subject_id] = {
@@ -323,9 +334,12 @@ class ICENODE(AbstractModel):
         prediction_loss = jnp.average(prediction_losses,
                                       weights=adm_counts[1:])
         update_loss = jnp.average(update_losses, weights=adm_counts)
+        los_loss = jnp.average(los_losses, weights=adm_counts)
+
         ret = {
             'prediction_loss': prediction_loss,
             'update_loss': update_loss,
+            'los_loss': los_loss,
             'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
@@ -338,22 +352,26 @@ class ICENODE(AbstractModel):
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
         update_loss = res['update_loss']
+        los_loss = res['los_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
-        diag_alpha = loss_mixing['L_diag']
+        pred_alpha = loss_mixing['L_pred']
+        los_alpha = loss_mixing['L_los']
+        update_alpha = loss_mixing['L_update']
+
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
         dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
-        diag_loss = (1 -
-                     diag_alpha) * prediction_loss + diag_alpha * update_loss
-        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-            dyn_alpha * dyn_loss)
+        diag_loss = (pred_alpha * prediction_loss + update_alpha * update_loss +los_alpha * los_loss)
+
+        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha * dyn_loss)
 
         return {
             'prediction_loss': prediction_loss,
             'update_loss': update_loss,
+            'los_loss': los_loss,
             'diag_loss': diag_loss,
             'loss': loss,
             'l1_loss': l1_loss,
@@ -402,7 +420,9 @@ class ICENODE(AbstractModel):
         #     'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
 
         config['loss_mixing'] = {
-            'L_diag': trial.suggest_float('L_dx', 1e-4, 1, log=True),
+            'L_pred': trial.suggest_float('L_pred', 1e-4, 1, log=True),
+            'L_los': trial.suggest_float('L_los', 1e-4, 1, log=True),
+            'L_update': trial.suggest_float('L_update', 1e-4, 1, log=True),
             'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }

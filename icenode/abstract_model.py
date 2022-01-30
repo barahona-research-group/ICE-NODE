@@ -95,8 +95,8 @@ class AbstractModel:
     @staticmethod
     def _sample_training_config(trial: optuna.Trial, epochs):
         l_mixing = {
-            'L_l1': 0, #trial.suggest_float('l1', 1e-7, 1e-1, log=True),
-            'L_l2': 0, #trial.suggest_float('l2', 1e-6, 1e-1, log=True),
+            'L_l1': trial.suggest_float('l1', 1e-8, 1e-2, log=True),
+            'L_l2': trial.suggest_float('l2', 1e-7, 1e-2, log=True),
         }
 
         return {
