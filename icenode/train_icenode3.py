@@ -4,13 +4,15 @@ from typing import (Any, Callable, Dict, List, Optional, Tuple)
 from absl import logging
 import jax
 import jax.numpy as jnp
+import optuna
 
 from .jax_interface import DiagnosisJAXInterface
 from .gram import AbstractEmbeddingsLayer
 from .train_icenode import ICENODE
+from .abstract_model import AbstractModel
 
 
-class ICENODE2(ICENODE):
+class ICENODE3(ICENODE):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
@@ -31,30 +33,32 @@ class ICENODE2(ICENODE):
                          init_depth=init_depth,
                          diag_loss=diag_loss)
 
-    def _f_n_ode_los(self, params, count_nfe, h, t):
+        self.d2d_sample_rate = 2 * los_sample_rate
+
+    def _f_n_ode_d2d(self, params, count_nfe, h, t):
         null = jnp.array([])
         c = {i: null for i in h}
 
-        if any(ti <= 0 for ti in t.values()):
-            logging.error('Zero time ODEINT')
-
         h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], self.los_sample_rate, count_nfe,
+            i: self.f_n_ode(params['f_n_ode'], self.d2d_sample_rate, count_nfe,
                             h[i], t[i], c[i])
             for i in t.keys()
         }
+        nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
+        nfe_sum = sum(nfe.values())
+        drdt = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
 
-        h = {i: h for i, (h, r, n) in h_r_nfe.items()}
-        h_final = {i: hi[-1, :] for i, hi in h.items()}
-        return h, h_final
+        h_samples = {i: h for i, (h, r, n) in h_r_nfe.items()}
+        h_final = {i: hi[-1, :] for i, hi in h_samples.items()}
+        return h_samples, h_final, (drdt, nfe, nfe_sum)
 
-    def _f_dec_los(
-        self, params: Any, state: Dict[int, jnp.ndarray]
+    def _f_dec_d2d(
+        self, params: Any, state_samples: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
 
         dec_out = {
-            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state[i])
-            for i in state
+            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
+            for i, state in state_samples.items()
         }
         emb = {i: jnp.mean(g, axis=0) for i, (g, _) in dec_out.items()}
         out = {i: jnp.mean(o, axis=0) for i, (_, o) in dec_out.items()}
@@ -66,29 +70,22 @@ class ICENODE2(ICENODE):
                  subjects_batch: List[int],
                  count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
-        # nODE between two admissions
-        nn_ode = partial(self._f_n_ode, params, count_nfe)
         # nODE: within an admission (LoS: Legth of Stay)
-        nn_ode_los = partial(self._f_n_ode_los, params, count_nfe)
+        nn_ode_d2d = partial(self._f_n_ode_d2d, params, count_nfe)
 
         nn_update = partial(self._f_update, params)
 
-        # For decoding just before admissions
-        nn_decode = partial(self._f_dec, params)
-
         # For decoding over samples within a single admission
-        nn_decode_los = partial(self._f_dec_los, params)
+        nn_decode_d2d = partial(self._f_dec_d2d, params)
 
         nn_init = partial(self._f_init, params)
         diag_loss = self._diag_loss
-        subject_state = dict()
+        subject_state = {}
         dyn_losses = []
         total_nfe = 0
 
         prediction_losses = []
         update_losses = []
-        # For within LoS prediction loss after odeint.
-        los_losses = []
 
         adm_counts = []
 
@@ -109,33 +106,30 @@ class ICENODE2(ICENODE):
             adm_counts.append(len(adm_id))
 
             update_loss = 0.0
-            los_loss = 0.0
             if n == 0:
                 # Initialize all states for first admission (no predictions)
-                state_0 = nn_init(emb)
-                subject_state.update(state_0)
-                assert all(
-                    i in subject_state for i in subjects_batch
-                ), "Expected all subjects have at least one admission"
-                state = {i: subject_state[i]['state'] for i in adm_id}
-            else:
-                # Between-admissions integration (and predictions)
+                state0 = nn_init(emb)
+                subject_state.update(state0)
+                state0 = {i: subject_state[i]['state'] for i in adm_id}
+                # Integrate until first discharge
+                state_samples, state, (drdt, _,
+                                       nfe_sum) = nn_ode_d2d(state0, adm_los)
+                dec_emb, dec_diag = nn_decode_d2d(state_samples)
 
-                # time-difference betweel last discharge and current admission
-                delta_days = {
-                    i: (adm_time[i] - subject_state[i]['time'])
+                odeint_weeks += sum(adm_los.values()) / 7
+
+            else:
+                state = {i: subject_state[i]['state'] for i in adm_id}
+
+                d2d_time = {
+                    i: adm_time[i] + adm_los[i] - subject_state[i]['time']
                     for i in adm_id
                 }
-                state = {i: subject_state[i]['state'] for i in adm_id}
 
-                odeint_weeks += sum(delta_days.values()) / 7
-                ################## ODEINT BETWEEN ADMS #####################
-                state, dyn_loss, (nfe, nfe_sum) = nn_ode(state, delta_days)
-                dyn_losses.append(dyn_loss)
-                total_nfe += nfe_sum
-                ########## DIAG LOSS #########################
-                dec_emb, dec_diag = nn_decode(state)
-                prediction_losses.append(diag_loss(diag, dec_diag))
+                # Integrate until next discharge
+                state_samples, state, (drdt, nfe,
+                                       nfe_sum) = nn_ode_d2d(state, d2d_time)
+                dec_emb, dec_diag = nn_decode_d2d(state_samples)
 
                 for subject_id in state.keys():
                     diag_detectability[subject_id][n] = {
@@ -145,16 +139,15 @@ class ICENODE2(ICENODE):
                         'diag_true': diag[subject_id],
                         'pre_logits': dec_diag[subject_id]
                     }
+                prediction_losses.append(diag_loss(diag, dec_diag))
 
-            # Within-admission integration for the LoS
-            ################## ODEINT BETWEEN ADMS #####################
-            state_los, state = nn_ode_los(state, adm_los)
-            dec_emb, dec_diag = nn_decode_los(state_los)
-            los_loss += diag_loss(diag, dec_diag)
+                odeint_weeks += sum(d2d_time.values()) / 7
 
+            dyn_losses.append(drdt)
+            total_nfe += nfe_sum
+            # Update state at discharge
             state, update_loss = nn_update(state, emb, diag, dec_emb)
             update_losses.append(update_loss)
-            los_losses.append(los_loss)
 
             # Update the states:
             for subject_id, new_state in state.items():
@@ -166,12 +159,11 @@ class ICENODE2(ICENODE):
         prediction_loss = jnp.average(prediction_losses,
                                       weights=adm_counts[1:])
         update_loss = jnp.average(update_losses, weights=adm_counts)
-        los_loss = jnp.average(los_losses, weights=adm_counts)
 
         ret = {
             'prediction_loss': prediction_loss,
             'update_loss': update_loss,
-            'los_loss': los_loss,
+            'los_loss': 0.0,
             'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
@@ -181,7 +173,26 @@ class ICENODE2(ICENODE):
 
         return ret
 
+    @staticmethod
+    def _sample_ode_training_config(trial: optuna.Trial, epochs):
+        config = AbstractModel._sample_training_config(trial, epochs)
+        config['diag_loss'] = 'softmax'
+
+        config['loss_mixing'] = {
+            'L_pred': trial.suggest_float('L_pred', 1e-4, 1, log=True),
+            'L_los': 0.0,
+            'L_update': trial.suggest_float('L_update', 1e-4, 1, log=True),
+            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
+            **config['loss_mixing']
+        }
+
+        return config
+
+    @staticmethod
+    def sample_training_config(trial: optuna.Trial):
+        return ICENODE3._sample_ode_training_config(trial, epochs=10)
+
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    run_trials(model_cls=ICENODE2, **capture_args())
+    run_trials(model_cls=ICENODE3, **capture_args())
