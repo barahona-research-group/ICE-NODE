@@ -57,7 +57,7 @@ class ICENODE2(ICENODE):
 
         dec_out = {i: jax.vmap(partial(self.f_dec, params['f_dec']))(state[i]) for i in state}
         emb = {i: jnp.mean(g, axis=0) for i, (g, _) in dec_out.items()}
-        out = {i: jnp.max(o, axis=0) for i, (_, o) in dec_out.items()}
+        out = {i: jnp.mean(o, axis=0) for i, (_, o) in dec_out.items()}
 
         return emb, out
 
@@ -185,116 +185,6 @@ class ICENODE2(ICENODE):
         }
 
         return ret
-
-    def detailed_loss(self, loss_mixing, params, res):
-        prediction_loss = res['prediction_loss']
-        update_loss = res['update_loss']
-        los_loss = res['los_loss']
-        l1_loss = l1_absolute(params)
-        l2_loss = l2_squared(params)
-        dyn_loss = res['dyn_loss']
-        pred_alpha = loss_mixing['L_pred']
-        los_alpha = loss_mixing['L_los']
-        update_alpha = loss_mixing['L_update']
-
-        l1_alpha = loss_mixing['L_l1']
-        l2_alpha = loss_mixing['L_l2']
-        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
-
-        diag_loss = (pred_alpha * prediction_loss + update_alpha * update_loss +los_alpha * los_loss)
-
-        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha * dyn_loss)
-
-        return {
-            'prediction_loss': prediction_loss,
-            'update_loss': update_loss,
-            'los_loss': los_loss,
-            'diag_loss': diag_loss,
-            'loss': loss,
-            'l1_loss': l1_loss,
-            'l2_loss': l2_loss,
-            'dyn_loss': dyn_loss,
-            'dyn_loss_per_week': dyn_loss / (res['odeint_weeks'] + 1e-10)
-        }
-
-    def eval_stats(self, res):
-        nfe = res['nfe']
-        return {
-            'admissions_count': res['admissions_count'],
-            'nfe_per_week': nfe / (res['odeint_weeks'] + 1e-10),
-            'nfex1000': nfe / 1000
-        }
-
-    @staticmethod
-    def create_patient_interface(mimic_dir, data_tag: str):
-        return create_patient_interface(mimic_dir, data_tag=data_tag)
-
-    @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
-
-        diag_emb = cls.create_embedding(
-            emb_config=config['emb']['diag'],
-            emb_kind=config['emb']['kind'],
-            patient_interface=patient_interface,
-            train_ids=train_ids,
-            pretrained_components=pretrained_components)
-
-        diag_loss = cls.select_loss(config['training']['diag_loss'],
-                                    patient_interface, train_ids)
-        return cls(subject_interface=patient_interface,
-                   diag_emb=diag_emb,
-                   **config['model'],
-                   diag_loss=diag_loss)
-
-    @staticmethod
-    def _sample_ode_training_config(trial: optuna.Trial, epochs):
-        config = AbstractModel._sample_training_config(trial, epochs)
-        # UNDO
-        config['diag_loss'] = 'softmax'
-        # trial.suggest_categorical('dx_loss', ['balanced_bce', 'softmax'])
-        # config['diag_loss'] = trial.suggest_categorical(
-        #     'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
-
-        config['loss_mixing'] = {
-            'L_pred': trial.suggest_float('L_pred', 1e-4, 1, log=True),
-            'L_los': trial.suggest_float('L_los', 1e-4, 1, log=True),
-            'L_update': trial.suggest_float('L_update', 1e-4, 1, log=True),
-            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
-            **config['loss_mixing']
-        }
-
-        return config
-
-    @staticmethod
-    def sample_training_config(trial: optuna.Trial):
-        return ICENODE._sample_ode_training_config(trial, epochs=10)
-
-    @staticmethod
-    def _sample_ode_model_config(trial: optuna.Trial):
-        model_params = {
-            'ode_dyn': trial.suggest_categorical(
-                'ode_dyn', ['mlp', 'gru', 'res'
-                            ]),  # Add depth conditional to 'mlp' or 'res'
-            'ode_with_bias': False, # trial.suggest_categorical('ode_b', [True, False]),
-            'ode_init_var': trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
-            'los_sample_rate': trial.suggest_int('los_f', 1, 8),
-            'state_size': trial.suggest_int('s', 30, 300, 30),
-            'init_depth': trial.suggest_int('init_d', 1, 4),
-            'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
-        }
-        if model_params['ode_dyn'] == 'gru':
-            model_params['ode_depth'] = 0
-        else:
-            model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 4)
-
-        return model_params
-
-    @staticmethod
-    def sample_model_config(trial: optuna.Trial):
-        return ICENODE._sample_ode_model_config(trial)
-
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
