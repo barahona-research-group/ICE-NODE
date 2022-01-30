@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
     env = dict(os.environ)
     cmd = [
-        sys.executable, '-m', f'mimicnet.train_{model}', '--study-name',
+        sys.executable, '-m', f'icenode.train_{model}', '--study-name',
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
         mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
         mimic_processed_dir, '--data-tag', data_tag, '--emb', emb,

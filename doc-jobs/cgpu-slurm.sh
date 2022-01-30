@@ -15,9 +15,9 @@ WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/MIMIC-SNONET.git $WORKDIR/MIMIC-SNONET --branch $STUDY_TAG --single-branch
+git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch
 
-cd $WORKDIR/MIMIC-SNONET
+cd $WORKDIR/ICENODE
 
 # >>> conda initialize >>>
 # !! Contents within this block are managed by 'conda init' !!
@@ -41,14 +41,14 @@ OUTPUT_DIR=""
 DATA_DIR=""
 
 if [[ "$DATA_TAG" == "M3" ]]; then
-  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m3-exp"
+  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m3-exp"
   DATA_DIR="$STORE/GP/ehr-data/mimic3-transforms"
 else
-  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m4-exp"
+  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m4-exp"
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.train_config \
+$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m icenode.train_config \
 --config $CONFIG \
 --config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \

@@ -4,18 +4,18 @@
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
-$HOME/anaconda3/condabin/conda activate mimicnet
+$HOME/anaconda3/condabin/conda activate icenode
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/MIMIC-SNONET.git $TMPDIR/MIMIC-SNONET --branch $STUDY_TAG --single-branch 
+git clone git@github.com:A-Alaa/ICENODE.git $TMPDIR/ICENODE --branch $STUDY_TAG --single-branch 
 
-cd $TMPDIR/MIMIC-SNONET
+cd $TMPDIR/ICENODE
 
 # Load modules for any applications
 
 # Run program
-$HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
---output-dir $HOME/GP/ehr-data/mimicnet-experiments \
+$HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
+--output-dir $HOME/GP/ehr-data/icenode-experiments \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
@@ -28,7 +28,7 @@ $HOME/anaconda3/envs/mimicnet/bin/python -m mimicnet.hpo_multi \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --trials-time-limit 2 \
 --training-time-limit 1 \
---pretrained-components mimicnet_configs/pretrained_components_rcs.json \
+--pretrained-components icenode_configs/pretrained_components_rcs.json \
 --cpu 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

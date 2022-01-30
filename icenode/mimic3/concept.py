@@ -24,15 +24,19 @@ class DiagSubject:
     """
     Subject class encapsulates the patient EHRs diagnostic codes.
 
-    Note: Some admissions for particular patients have the same ADMITTIME.
+    Notes:
+        - Some admissions for particular patients have the same ADMITTIME.
     For these cases the one with earlier DISCHTIME will be merged to the other.
     """
     def __init__(self, subject_id: int, admissions: List[DiagnosisAdmission]):
         self.subject_id = subject_id
 
-        admissions_disjoint = self.merge_complete_overlaps(admissions)
+        admissions_disjoint = self.merge_overlaps(admissions)
+
         self.admissions = sorted(admissions_disjoint,
                                  key=lambda a: a.admission_dates[0])
+
+
 
 #         for a1, a2 in zip(self.admissions[:-1], self.admissions[1:]):
 #             if a1.admission_dates[0] == a2.admission_dates[0]:
@@ -41,23 +45,30 @@ class DiagSubject:
 #                 logging.info(f'same day readmission: {self.subject_id}')
 
     @staticmethod
-    def merge_complete_overlaps(admissions):
-        overlap = defaultdict(list)
-        merged = []
-        for adm in admissions:
-            overlap[adm.admission_dates[0]].append(adm)
+    def merge_overlaps(admissions):
+        admissions = sorted(admissions, key=lambda adm: adm.admission_dates[0])
 
-        for adms in overlap.values():
-            # All codes, merged.
-            icd9_diag_codes = set.union(*list(a.icd9_diag_codes for a in adms))
+        super_admissions = [admissions[0]]
+        for adm in admissions[1:]:
+            s_adm = super_admissions[-1]
+            (s_admittime, s_dischtime) = s_adm.admission_dates
 
-            key = lambda i: adms[i].admission_dates[1]
-            arg_latest_disch = max(range(len(adms)), key=key)
-            super_admission = adms[arg_latest_disch]
-            super_admission.icd9_diag_codes = icd9_diag_codes
+            assert s_admittime <= s_dischtime, "Precedence of admittime violated!"
 
-            merged.append(super_admission)
-        return merged
+            admittime, dischtime = adm.admission_dates
+            if admittime <= s_dischtime:
+                super_admissions.pop()
+                s_interval = (s_admittime, max(dischtime, s_dischtime))
+                s_codes = set.union(s_adm.icd9_diag_codes, adm.icd9_diag_codes)
+                s_adm = DiagnosisAdmission(admission_id=s_adm.admission_id,
+                                           admission_dates=s_interval,
+                                           icd9_diag_codes=s_codes)
+                super_admissions.append(s_adm)
+            else:
+                super_admissions.append(adm)
+
+        return super_admissions
+
 
     @classmethod
     def days(cls, d1, d2):
@@ -115,7 +126,7 @@ class AdmissionInfo:
                                     subject.admissions[0].admission_dates[0])
 
             los = DiagSubject.days(adm.admission_dates[1],
-                                   adm.admission_dates[0])
+                                   adm.admission_dates[0]) + 1
 
             adms.append(
                 AdmissionInfo(subject_id=subject.subject_id,

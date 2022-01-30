@@ -1,1 +1,1 @@
-conda env create -f env/mimicnet.yml
+conda env create -f env/icenode.yml

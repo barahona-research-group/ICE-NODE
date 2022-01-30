@@ -13,9 +13,9 @@ WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/MIMIC-SNONET.git $WORKDIR/MIMIC-SNONET --branch $STUDY_TAG --single-branch
+git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch
 
-cd $WORKDIR/MIMIC-SNONET
+cd $WORKDIR/ICENODE
 
 # PostgresQL
 source ~/.pgdb-am8520-am8520
@@ -47,14 +47,14 @@ OUTPUT_DIR=""
 DATA_DIR=""
 
 if [[ "$DATA_TAG" == "M3" ]]; then
-  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m3-exp"
+  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m3-exp"
   DATA_DIR="$STORE/GP/ehr-data/mimic3-transforms"
 else
-  OUTPUT_DIR="$STORE/GP/ehr-data/mimicnet-m4-exp"
+  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m4-exp"
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
+$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m icenode.hpo_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
@@ -68,5 +68,5 @@ $STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m mimicnet.hpo_multi \
 --training-time-limit 72 \
 --job-id doc-${SLURM_JOB_ID} \
 -N 1 \
---pretrained-components mimicnet_configs/pretrained_components_doc.json
+--pretrained-components icenode_configs/pretrained_components_doc.json
 

@@ -1,6 +1,6 @@
 if test -n "${STUDY_TAG-}"; then 
-  git clone git@github.com:A-Alaa/MIMIC-SNONET.git --branch $STUDY_TAG --single-branch
-  cd MIMIC-SNONET
+  git clone git@github.com:A-Alaa/ICENODE.git --branch $STUDY_TAG --single-branch
+  cd ICENODE
 else
   cp ../mimicnet ../mimicnet_configs . -r
   export STUDY_TAG="debug"
