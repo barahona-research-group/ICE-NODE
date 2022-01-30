@@ -298,7 +298,7 @@ class ICENODE(AbstractModel):
             for i in range(self.los_sample_rate - 1):
                 delta_days = {
                     i: los / self.los_sample_rate
-                    for i, los in adm_los.items() if los > 0
+                    for i, los in adm_los.items()
                 }
                 ################## ODEINT BETWEEN ADMS #####################
                 state, _, _ = nn_ode(state, delta_days)

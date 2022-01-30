@@ -48,7 +48,7 @@ else
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m icenode.train_config \
+$STORE/opt/anaconda3/envs/icenode/bin/python -m icenode.train_config \
 --config $CONFIG \
 --config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \

@@ -54,7 +54,7 @@ else
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/mimic3-snonet/bin/python -m icenode.hpo_multi \
+$STORE/opt/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
