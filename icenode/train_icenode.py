@@ -159,6 +159,9 @@ class ICENODE(AbstractModel):
         null = jnp.array([])
         c = {i: null for i in h}
 
+        if any(ti <= 0 for ti in t.values()):
+            logging.error('Zero time ODEINT')
+
         h_r_nfe = {
             i: self.f_n_ode(params['f_n_ode'], count_nfe, h[i], t[i], c[i])
             for i in t.keys()
