@@ -240,20 +240,18 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, count_nfe, h, t, c):
-        t = t / self.timescale
+    def __call__(self, n_samples, count_nfe, h, t, c):
+        t = jnp.linspace(0.0, t / self.timescale, n_samples)
         if hk.running_init():
-            return self.ode_dyn((h, jnp.zeros(1)), t, c), jnp.zeros(1), 0
+            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0], c)
+            h = jnp.broadcast_to(h, (len(t), len(h)))
+            return h, jnp.zeros(1), 0
         if count_nfe:
-            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)),
-                                     jnp.array([0.0, t]), c)
+            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t, c)
         else:
-            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), jnp.array([0.0, t]),
-                          c)
+            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t, c)
             nfe = 0
-        h1 = jnp.split(h, 2)[1].squeeze()
-        r1 = jnp.split(r, 2)[1].squeeze()
-        return h1, r1, nfe
+        return h, r[-1], nfe
 
 
 class NumericObsModel(hk.Module):

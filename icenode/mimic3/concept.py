@@ -126,7 +126,13 @@ class AdmissionInfo:
                                     subject.admissions[0].admission_dates[0])
 
             los = DiagSubject.days(adm.admission_dates[1],
-                                   adm.admission_dates[0]) + 1
+                                   adm.admission_dates[0]) + 0.5
+
+            # This 0.5 means if a patient is admitted and discharged at
+            # the same day, then we assume 0.5 day as length of stay (12 hours)
+            # In general, this would generalize the assumption to:
+            # Admissions during a day happen at the midnight 00:01
+            # While discharges during a day happen at the afternoon 12:00
 
             adms.append(
                 AdmissionInfo(subject_id=subject.subject_id,

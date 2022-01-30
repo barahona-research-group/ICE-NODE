@@ -17,7 +17,7 @@ cd $TMPDIR/ICENODE
 $HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
 --output-dir $HOME/GP/ehr-data/icenode-experiments \
 --mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
---study-tag $STUDY_TAG \
+--study-tag debug_$STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL \
