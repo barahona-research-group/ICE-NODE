@@ -437,6 +437,7 @@ class ICENODE(AbstractModel):
             'init_depth': 3,  # trial.suggest_int('init_d', 2, 5),
             'tay_reg': 3,  #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
+        model_params['ode_depth'] = 3
         # if model_params['ode_dyn'] == 'gru':
         #     model_params['ode_depth'] = 0
         # else:
