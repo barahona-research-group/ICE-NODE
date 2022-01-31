@@ -97,11 +97,15 @@ class ICENODE(AbstractModel):
 
         self.init_data = self._initialization_data()
 
-        if diag_seq_combiner == 'mean':
-            self._f_dec = self._f_dec_mean_combine
+        if diag_seq_combiner == 'last':
+            self._f_dec_seq = self._f_dec_last_combine
+        elif diag_seq_combiner == 'mean':
+            self._f_dec_seq = self._f_dec_mean_combine
         elif diag_seq_combiner == 'max':
-            self._f_dec = self._f_dec_max_combine
+            self._f_dec_seq = self._f_dec_max_combine
         elif diag_seq_combiner == 'att':
+            self._f_dec_seq = self._f_dec_att_combine
+
             f_combine_init, f_combine = hk.without_apply_rng(
                 hk.transform(
                     wrap_module(DiagnosticSamplesCombine,
@@ -211,13 +215,19 @@ class ICENODE(AbstractModel):
 
         return updated_state, update_loss
 
+    def _f_dec(self, params: Any, state: Dict[int, jnp.ndarray]):
+        dec = {i: self.f_dec(params['f_dec'], state[i]) for i in state}
+        emb = {i: e for i, (e, d) in dec.items()}
+        diag = {i: d for i, (e, d) in dec.items()}
+        return emb, diag
+
     def _f_dec_att_combine(
-        self, params: Any, state_samples: Dict[int, jnp.ndarray]
+        self, params: Any, state_seq: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
 
         dec_seq = {
             i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_samples.items()
+            for i, state in state_seq.items()
         }
 
         emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
@@ -230,35 +240,47 @@ class ICENODE(AbstractModel):
         return emb, diag
 
     def _f_dec_mean_combine(
-        self, params: Any, state_samples: Dict[int, jnp.ndarray]
+        self, params: Any, state_seq: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
 
-        dec_out = {
+        dec_seq = {
             i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_samples.items()
+            for i, state in state_seq.items()
         }
 
-        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_out.items()}
+        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
 
         diag = {
             i: jnp.mean(d_seq, axis=0)
-            for i, (_, d_seq) in dec_out.items()
+            for i, (_, d_seq) in dec_seq.items()
         }
 
         return emb, diag
 
     def _f_dec_max_combine(
-        self, params: Any, state_samples: Dict[int, jnp.ndarray]
+        self, params: Any, state_seq: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
 
-        dec_out = {
+        dec_seq = {
             i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_samples.items()
+            for i, state in state_seq.items()
         }
 
-        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_out.items()}
+        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
 
-        diag = {i: jnp.max(d_seq, axis=0) for i, (_, d_seq) in dec_out.items()}
+        diag = {i: jnp.max(d_seq, axis=0) for i, (_, d_seq) in dec_seq.items()}
+
+        return emb, diag
+
+    def _f_dec_last_combine(
+        self, params: Any, state_seq: Dict[int, jnp.ndarray]
+    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
+        dec = {
+            i: self.f_dec(params['f_dec'], state_seq[i][-1, :])
+            for i in state_seq
+        }
+        emb = {i: e for i, (e, d) in dec.items()}
+        diag = {i: d for i, (e, d) in dec.items()}
 
         return emb, diag
 
@@ -300,7 +322,7 @@ class ICENODE(AbstractModel):
         nn_update = partial(self._f_update, params)
 
         # For decoding over samples
-        nn_decode = partial(self._f_dec, params)
+        nn_decode_seq = partial(self._f_dec_seq, params)
 
         nn_init = partial(self._f_init, params)
         diag_loss = self._diag_loss
@@ -336,9 +358,8 @@ class ICENODE(AbstractModel):
                 subject_state.update(state0)
                 state0 = {i: subject_state[i]['state'] for i in adm_id}
                 # Integrate until first discharge
-                state_samples, state, (drdt, _,
-                                       nfe_sum) = nn_ode(state0, adm_los)
-                dec_emb, dec_diag = nn_decode(state_samples)
+                state_seq, state, (drdt, _, nfe_sum) = nn_ode(state0, adm_los)
+                dec_emb, dec_diag = nn_decode_seq(state_seq)
 
                 odeint_weeks += sum(adm_los.values()) / 7
 
@@ -351,9 +372,9 @@ class ICENODE(AbstractModel):
                 }
 
                 # Integrate until next discharge
-                state_samples, state, (drdt, nfe,
-                                       nfe_sum) = nn_ode(state, d2d_time)
-                dec_emb, dec_diag = nn_decode(state_samples)
+                state_seq, state, (drdt, nfe,
+                                   nfe_sum) = nn_ode(state, d2d_time)
+                dec_emb, dec_diag = nn_decode_seq(state_seq)
 
                 for subject_id in state.keys():
                     diag_detectability[subject_id][n] = {
@@ -491,9 +512,9 @@ class ICENODE(AbstractModel):
             'ode_timescale':
             trial.suggest_float('ode_ts', 1, 1e1, log=True),
             'trajectory_sample_rate':
-            trial.suggest_int('los_f', 2, 20),
+            trial.suggest_int('los_f', 2, 25),
             'diag_seq_combiner':
-            trial.suggest_categorical('comb', ['mean', 'max', 'att']),
+            trial.suggest_categorical('comb', ['last', 'mean', 'max', 'att']),
             'state_size':
             trial.suggest_int('s', 30, 300, 30),
             'init_depth':
