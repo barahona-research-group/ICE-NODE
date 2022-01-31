@@ -385,7 +385,7 @@ class StateDiagnosesDecoder(hk.Module):
     def __call__(self, h: jnp.ndarray):
         dec_emb = self.__dec1(h)
         dec_diag = self.__dec2(dec_emb)
-        return dec_emb, dec_diag
+        return dec_emb, jax.nn.softmax(dec_diag)
 
 
 class DiagnosticSamplesCombine(hk.Module):

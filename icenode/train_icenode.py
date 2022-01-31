@@ -18,6 +18,11 @@ from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
 
+@jax.jit
+def loss(y: jnp.ndarray, p: jnp.ndarray):
+    return -jnp.mean(y * jnp.log(p + 1e-10) + (1 - y) * jnp.log(1 - p + 1e-10))
+
+
 class ICENODE(AbstractModel):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
@@ -391,9 +396,9 @@ class ICENODE(AbstractModel):
             patient_interface=patient_interface,
             train_ids=train_ids,
             pretrained_components=pretrained_components)
-
-        diag_loss = cls.select_loss(config['training']['diag_loss'],
-                                    patient_interface, train_ids)
+        diag_loss = loss
+        # diag_loss = cls.select_loss(config['training']['diag_loss'],
+        #                             patient_interface, train_ids)
         return cls(subject_interface=patient_interface,
                    diag_emb=diag_emb,
                    **config['model'],
@@ -403,7 +408,7 @@ class ICENODE(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         # UNDO
-        config['diag_loss'] = 'softmax'
+        # config['diag_loss'] = 'softmax'
         # trial.suggest_categorical('dx_loss', ['balanced_bce', 'softmax'])
         # config['diag_loss'] = trial.suggest_categorical(
         #     'dx_loss', ['balanced_focal', 'bce', 'softmax', 'balanced_bce'])
@@ -424,24 +429,23 @@ class ICENODE(AbstractModel):
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
         model_params = {
-            'ode_dyn':
-            'gru',  #trial.suggest_categorical('ode_dyn', ['mlp', 'gru', 'res']),  # Add depth conditional to 'mlp' or 'res'
+            'ode_dyn': trial.suggest_categorical(
+                'ode_dyn', ['mlp', 'gru', 'res'
+                            ]),  # Add depth conditional to 'mlp' or 'res'
             'ode_with_bias':
             False,  # trial.suggest_categorical('ode_b', [True, False]),
             'ode_init_var':
             1e-2,  #trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
-            'ode_timescale':
-            1,  #trial.suggest_float('ode_ts', 1, 1e1, log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
             'trajectory_sample_rate': 25,  #trial.suggest_int('los_f', 2, 25),
             'state_size': 100,  #trial.suggest_int('s', 30, 300, 30),
             'init_depth': 3,  # trial.suggest_int('init_d', 2, 5),
             'tay_reg': 3,  #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
-        model_params['ode_depth'] = 3
-        # if model_params['ode_dyn'] == 'gru':
-        #     model_params['ode_depth'] = 0
-        # else:
-        #     model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 4)
+        if model_params['ode_dyn'] == 'gru':
+            model_params['ode_depth'] = 0
+        else:
+            model_params['ode_depth'] = 3  # trial.suggest_int('ode_d', 1, 4)
 
         return model_params
 
