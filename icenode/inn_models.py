@@ -133,7 +133,7 @@ class InvertibleLayers(hk.Module):
 
     def inverse(self, v):
         for layer, sorter in zip(reversed(self.layers[1:]), self.sorters):
-            u, ldJ = layer(False, v)
+            u = layer(False, v)
             v = u[sorter]
 
         return self.layers[0](False, v)

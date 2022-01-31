@@ -28,9 +28,8 @@ class ICENODE_I(AbstractModel):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_depth: int, ode_with_bias: bool, ode_init_var: float,
+                 ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int], state_size: int,
-                 init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
 
         self.subject_interface = subject_interface
@@ -41,9 +40,7 @@ class ICENODE_I(AbstractModel):
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
             'diag_out': len(subject_interface.diag_ccs_idx),
-            'state': state_size,
-            'ode_depth': ode_depth,
-            'init_depth': init_depth
+            'state': state_size
         }
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
@@ -59,13 +56,15 @@ class ICENODE_I(AbstractModel):
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_size,
-                            depth=ode_depth,
+                            depth=2,
                             timescale=ode_timescale,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
                             name='f_n_ode',
                             tay_reg=tay_reg)))
-        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
+        f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
+        self.f_n_ode = (
+            lambda params, *args: f_n_ode(params['f_n_ode'], *args))
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
@@ -135,7 +134,7 @@ class ICENODE_I(AbstractModel):
         return {
             "f_n_ode": [2, True, state, 0.1, ode_ctrl],
             "f_update": [state, diag_emb_],
-            "f_dec1": [state],
+            "f_dec1": [True, state],
             "f_dec2": [diag_emb_]
         }
 
@@ -254,12 +253,11 @@ class ICENODE_I(AbstractModel):
 
             update_loss = 0.0
             if n == 0:
-                state0 = {i: {'time': 0, 'state': h_n[i]} for i in h_n}
-                subject_state.update(state0)
+                subject_state = {i: {'time': 0, 'state': h_n[i]} for i in h_n}
                 state0 = {i: subject_state[i]['state'] for i in adm_id}
                 # Integrate until first discharge
                 state, (drdt, _, nfe_sum) = nn_ode(state0, adm_los)
-                dec_emb, dec_diag = nn_decode(state)
+                _, dec_diag = nn_decode(state)
                 odeint_weeks += sum(adm_los.values()) / 7
 
             else:
@@ -362,8 +360,7 @@ class ICENODE_I(AbstractModel):
                      pretrained_components):
 
         # Equate embeddings size with state size.
-        config['emb']['diag']['embeddings_dim'] = config['model'][
-            'state_size']
+        config['emb']['diag']['embeddings_dim'] = config['model']['state_size']
 
         diag_emb = cls.create_embedding(
             emb_config=config['emb']['diag'],
