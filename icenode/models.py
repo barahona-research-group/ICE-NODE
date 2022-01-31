@@ -363,32 +363,25 @@ class StateDiagnosesDecoder(hk.Module):
                  n_layers_d1: int,
                  n_layers_d2: int,
                  embeddings_size: int,
-                 output_size: int,
+                 diag_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        d1_layers = []
-        for i in range(n_layers_d1 - 1):
-            d1_layers.append(hk.Linear(embeddings_size, name=f'd1_{i}'))
 
-            if i == n_layers_d1 - 2:
-                d1_layers.append(jnp.tanh)
-            else:
-                d1_layers.append(lambda x: leaky_relu(x, 0.2))
+        def build_layers(n_layers, output_size):
+            layers = [
+                lambda x: leaky_relu(
+                    hk.Linear(embeddings_size, name=f'd_{i}')(x), 0.2)
+                for i in range(n_layers - 2)
+            ]
+            layers.append(lambda x: jnp.tanh(
+                hk.Linear(embeddings_size, name=f'd_{n_layers - 2}')(x)))
+            layers.append(hk.Linear(output_size, name=f'd_{n_layers - 1}'))
+            return layers
 
-        self.__dec1 = hk.Sequential(
-            [d1_layers] + [hk.Linear(embeddings_size, name='lin_emb')])
-
-        d2_layers = []
-        for i in range(n_layers_d2 - 1):
-            d2_layers.append(hk.Linear(embeddings_size, name=f'd2_{i}'))
-
-            if i == n_layers_d2 - 2:
-                d2_layers.append(jnp.tanh)
-            else:
-                d2_layers.append(lambda x: leaky_relu(x, 0.2))
-
-        self.__dec2 = hk.Sequential([d2_layers] +
-                                    [hk.Linear(output_size, name='lin_diag')])
+        self.__dec1 = hk.Sequential(build_layers(n_layers_d1, embeddings_size),
+                                    name='dec_1')
+        self.__dec2 = hk.Sequential(build_layers(n_layers_d2, diag_size),
+                                    name='dec_2')
 
     def __call__(self, h: jnp.ndarray):
         dec_emb = self.__dec1(h)

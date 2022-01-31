@@ -76,7 +76,7 @@ class ICENODE(AbstractModel):
                             n_layers_d1=3,
                             n_layers_d2=2,
                             embeddings_size=self.dimensions['diag_emb'],
-                            output_size=self.dimensions['diag_out'],
+                            diag_size=self.dimensions['diag_out'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
@@ -518,7 +518,8 @@ class ICENODE(AbstractModel):
             trial.suggest_categorical('comb', ['last', 'mean', 'max', 'att']),
             'state_size':
             trial.suggest_int('s', 30, 300, 30),
-            'init_depth': 3, # trial.suggest_int('init_d', 2, 5),
+            'init_depth':
+            3,  # trial.suggest_int('init_d', 2, 5),
             'tay_reg':
             trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
