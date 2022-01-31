@@ -12,24 +12,27 @@ from .metrics import (l2_squared, l1_absolute)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer)
+                     DiagnosesUpdate, StateDiagnosesDecoder, StateInitializer,
+                     DiagnosticSamplesCombine)
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
 
 class ICENODE(AbstractModel):
+
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_depth: int, ode_with_bias: bool, ode_init_var: float,
-                 ode_timescale: float, los_sample_rate: int,
-                 tay_reg: Optional[int], state_size: int, init_depth: bool,
+                 ode_timescale: float, trajectory_sample_rate: int,
+                 diag_seq_combiner: str, tay_reg: Optional[int],
+                 state_size: int, init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
         self.tay_reg = tay_reg
         self.diag_loss = diag_loss
-        self.los_sample_rate = los_sample_rate
+        self.trajectory_sample_rate = trajectory_sample_rate
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
@@ -92,12 +95,35 @@ class ICENODE(AbstractModel):
             'f_init': f_init_init
         }
 
+        self.init_data = self._initialization_data()
+
+        if diag_seq_combiner == 'mean':
+            self._f_dec = self._f_dec_mean_combine
+        elif diag_seq_combiner == 'max':
+            self._f_dec = self._f_dec_max_combine
+        elif diag_seq_combiner == 'att':
+            f_combine_init, f_combine = hk.without_apply_rng(
+                hk.transform(
+                    wrap_module(DiagnosticSamplesCombine,
+                                embeddings_size=self.dimensions['diag_emb'],
+                                name='f_combine')))
+            self.f_combine = jax.jit(f_combine)
+
+            self.initializers['f_combine'] = f_combine_init
+            self.init_data['f_combine'] = [
+                jnp.zeros((3, self.dimensions['diag_emb'])),
+                jnp.zeros((3, self.dimensions['diag_out']))
+            ]
+
+        else:
+            raise ValueError(
+                f'Unrecognized combiner label: {diag_seq_combiner}')
+
     def init_params(self, rng_key):
-        init_data = self._initialization_data()
         return {
             "diag_emb": self.diag_emb.init_params(rng_key),
             **{
-                label: init(rng_key, *init_data[label])
+                label: init(rng_key, *self.init_data[label])
                 for label, init in self.initializers.items()
             }
         }
@@ -159,19 +185,18 @@ class ICENODE(AbstractModel):
         null = jnp.array([])
         c = {i: null for i in h}
 
-        if any(ti <= 0 for ti in t.values()):
-            logging.error('Zero time ODEINT')
-
         h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], 2, count_nfe, h[i], t[i], c[i])
+            i: self.f_n_ode(params['f_n_ode'], self.trajectory_sample_rate,
+                            count_nfe, h[i], t[i], c[i])
             for i in t.keys()
         }
-
         nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
         nfe_sum = sum(nfe.values())
-        r1 = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
-        h1 = {i: h[-1, :] for i, (h, r, n) in h_r_nfe.items()}
-        return h1, r1, (nfe, nfe_sum)
+        drdt = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
+
+        h_samples = {i: h for i, (h, r, n) in h_r_nfe.items()}
+        h_final = {i: hi[-1, :] for i, hi in h_samples.items()}
+        return h_samples, h_final, (drdt, nfe, nfe_sum)
 
     def _f_update(self, params: Any, state: Dict[int, jnp.ndarray],
                   diag_emb: jnp.ndarray, diag_out: jnp.ndarray,
@@ -186,14 +211,56 @@ class ICENODE(AbstractModel):
 
         return updated_state, update_loss
 
-    def _f_dec(
-        self, params: Any, state: Dict[int, jnp.ndarray]
+    def _f_dec_att_combine(
+        self, params: Any, state_samples: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-        dec_out = {i: self.f_dec(params['f_dec'], state[i]) for i in state}
-        emb = {i: g for i, (g, _) in dec_out.items()}
-        out = {i: o for i, (_, o) in dec_out.items()}
 
-        return emb, out
+        dec_seq = {
+            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
+            for i, state in state_samples.items()
+        }
+
+        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
+
+        diag = {
+            i: self.f_combine(params['f_combine'], e_seq, d_seq)
+            for i, (e_seq, d_seq) in dec_seq.items()
+        }
+
+        return emb, diag
+
+    def _f_dec_mean_combine(
+        self, params: Any, state_samples: Dict[int, jnp.ndarray]
+    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
+
+        dec_out = {
+            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
+            for i, state in state_samples.items()
+        }
+
+        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_out.items()}
+
+        diag = {
+            i: jnp.mean(d_seq, axis=0)
+            for i, (_, d_seq) in dec_out.items()
+        }
+
+        return emb, diag
+
+    def _f_dec_max_combine(
+        self, params: Any, state_samples: Dict[int, jnp.ndarray]
+    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
+
+        dec_out = {
+            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
+            for i, state in state_samples.items()
+        }
+
+        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_out.items()}
+
+        diag = {i: jnp.max(d_seq, axis=0) for i, (_, d_seq) in dec_out.items()}
+
+        return emb, diag
 
     def _f_init(self, params, diag_emb):
         return {
@@ -229,18 +296,20 @@ class ICENODE(AbstractModel):
                  count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
+
         nn_update = partial(self._f_update, params)
+
+        # For decoding over samples
         nn_decode = partial(self._f_dec, params)
+
         nn_init = partial(self._f_init, params)
         diag_loss = self._diag_loss
-        subject_state = dict()
+        subject_state = {}
         dyn_losses = []
         total_nfe = 0
 
         prediction_losses = []
         update_losses = []
-        # For within LoS prediction loss after odeint.
-        los_losses = []
 
         adm_counts = []
 
@@ -260,35 +329,31 @@ class ICENODE(AbstractModel):
             # To normalize the prediction loss by the number of patients
             adm_counts.append(len(adm_id))
 
-
             update_loss = 0.0
-            los_loss = 0.0
             if n == 0:
                 # Initialize all states for first admission (no predictions)
-                state_0 = nn_init(emb)
-                subject_state.update(state_0)
-                assert all(
-                    i in subject_state for i in subjects_batch
-                ), "Expected all subjects have at least one admission"
-                state = {i: subject_state[i]['state'] for i in adm_id}
-            else:
-                # Between-admissions integration (and predictions)
+                state0 = nn_init(emb)
+                subject_state.update(state0)
+                state0 = {i: subject_state[i]['state'] for i in adm_id}
+                # Integrate until first discharge
+                state_samples, state, (drdt, _,
+                                       nfe_sum) = nn_ode(state0, adm_los)
+                dec_emb, dec_diag = nn_decode(state_samples)
 
-                # time-difference betweel last discharge and current admission
-                delta_days = {
-                    i: (adm_time[i] - subject_state[i]['time'])
+                odeint_weeks += sum(adm_los.values()) / 7
+
+            else:
+                state = {i: subject_state[i]['state'] for i in adm_id}
+
+                d2d_time = {
+                    i: adm_time[i] + adm_los[i] - subject_state[i]['time']
                     for i in adm_id
                 }
-                state = {i: subject_state[i]['state'] for i in adm_id}
 
-                odeint_weeks += sum(delta_days.values()) / 7
-                ################## ODEINT BETWEEN ADMS #####################
-                state, dyn_loss, (nfe, nfe_sum) = nn_ode(state, delta_days)
-                dyn_losses.append(dyn_loss)
-                total_nfe += nfe_sum
-                ########## DIAG LOSS #########################
-                dec_emb, dec_diag = nn_decode(state)
-                prediction_losses.append(diag_loss(diag, dec_diag))
+                # Integrate until next discharge
+                state_samples, state, (drdt, nfe,
+                                       nfe_sum) = nn_ode(state, d2d_time)
+                dec_emb, dec_diag = nn_decode(state_samples)
 
                 for subject_id in state.keys():
                     diag_detectability[subject_id][n] = {
@@ -298,48 +363,30 @@ class ICENODE(AbstractModel):
                         'diag_true': diag[subject_id],
                         'pre_logits': dec_diag[subject_id]
                     }
+                prediction_losses.append(diag_loss(diag, dec_diag))
 
-                state, _update_loss = nn_update(state, emb, diag, dec_emb)
-                update_loss += _update_loss
+                odeint_weeks += sum(d2d_time.values()) / 7
 
-
-            # Within-admission integration for the LoS
-            for i in range(self.los_sample_rate - 1):
-                delta_days = {
-                    i: los / self.los_sample_rate
-                    for i, los in adm_los.items()
-                }
-                ################## ODEINT BETWEEN ADMS #####################
-                state, _, _ = nn_ode(state, delta_days)
-                dec_emb, dec_diag = nn_decode(state)
-                los_loss += diag_loss(diag, dec_diag)
-
-
-                state, _update_loss = nn_update(state, emb, diag, dec_emb)
-                update_loss += _update_loss
-
+            dyn_losses.append(drdt)
+            total_nfe += nfe_sum
+            # Update state at discharge
+            state, update_loss = nn_update(state, emb, diag, dec_emb)
             update_losses.append(update_loss)
-            los_losses.append(los_loss)
 
             # Update the states:
             for subject_id, new_state in state.items():
                 subject_state[subject_id] = {
-                    'time':
-                    adm_time[subject_id] + adm_los[subject_id] *
-                    (1. - 1. / self.los_sample_rate),
-                    'state':
-                    new_state
+                    'time': adm_time[subject_id] + adm_los[subject_id],
+                    'state': new_state
                 }
 
         prediction_loss = jnp.average(prediction_losses,
                                       weights=adm_counts[1:])
         update_loss = jnp.average(update_losses, weights=adm_counts)
-        los_loss = jnp.average(los_losses, weights=adm_counts)
 
         ret = {
             'prediction_loss': prediction_loss,
             'update_loss': update_loss,
-            'los_loss': los_loss,
             'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
@@ -352,26 +399,24 @@ class ICENODE(AbstractModel):
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
         update_loss = res['update_loss']
-        los_loss = res['los_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
         pred_alpha = loss_mixing['L_pred']
-        los_alpha = loss_mixing['L_los']
         update_alpha = loss_mixing['L_update']
 
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
         dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
-        diag_loss = (pred_alpha * prediction_loss + update_alpha * update_loss +los_alpha * los_loss)
+        diag_loss = (pred_alpha * prediction_loss + update_alpha * update_loss)
 
-        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha * dyn_loss)
+        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
+            dyn_alpha * dyn_loss)
 
         return {
             'prediction_loss': prediction_loss,
             'update_loss': update_loss,
-            'los_loss': los_loss,
             'diag_loss': diag_loss,
             'loss': loss,
             'l1_loss': l1_loss,
@@ -421,7 +466,6 @@ class ICENODE(AbstractModel):
 
         config['loss_mixing'] = {
             'L_pred': trial.suggest_float('L_pred', 1e-4, 1, log=True),
-            'L_los': trial.suggest_float('L_los', 1e-4, 1, log=True),
             'L_update': trial.suggest_float('L_update', 1e-4, 1, log=True),
             'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
@@ -436,16 +480,26 @@ class ICENODE(AbstractModel):
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
         model_params = {
-            'ode_dyn': trial.suggest_categorical(
+            'ode_dyn':
+            trial.suggest_categorical(
                 'ode_dyn', ['mlp', 'gru', 'res'
                             ]),  # Add depth conditional to 'mlp' or 'res'
-            'ode_with_bias': False, # trial.suggest_categorical('ode_b', [True, False]),
-            'ode_init_var': trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e1, log=True),
-            'los_sample_rate': trial.suggest_int('los_f', 2, 15),
-            'state_size': trial.suggest_int('s', 30, 300, 30),
-            'init_depth': trial.suggest_int('init_d', 1, 4),
-            'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
+            'ode_with_bias':
+            False,  # trial.suggest_categorical('ode_b', [True, False]),
+            'ode_init_var':
+            trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
+            'ode_timescale':
+            trial.suggest_float('ode_ts', 1, 1e1, log=True),
+            'trajectory_sample_rate':
+            trial.suggest_int('los_f', 2, 20),
+            'diag_seq_combiner':
+            trial.suggest_categorical('comb', ['mean', 'max', 'att']),
+            'state_size':
+            trial.suggest_int('s', 30, 300, 30),
+            'init_depth':
+            trial.suggest_int('init_d', 1, 4),
+            'tay_reg':
+            trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         if model_params['ode_dyn'] == 'gru':
             model_params['ode_depth'] = 0

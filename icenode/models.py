@@ -58,6 +58,7 @@ class MLPDynamics(hk.Module):
     """
     Dynamics for ODE as an MLP.
     """
+
     def __init__(self,
                  state_size: int,
                  depth: int,
@@ -89,6 +90,7 @@ class ResDynamics(hk.Module):
     """
     Dynamics for ODE as an MLP.
     """
+
     def __init__(self,
                  state_size: int,
                  depth: int,
@@ -122,6 +124,7 @@ class GRUDynamics(hk.Module):
     """
     Modified GRU unit to deal with latent state ``h(t)``.
     """
+
     def __init__(self,
                  state_size: int,
                  with_bias: bool,
@@ -175,6 +178,7 @@ class GRUDynamics(hk.Module):
 
 
 class TaylorAugmented(hk.Module):
+
     def __init__(self, order, dynamics_cls, **dynamics_kwargs):
         super().__init__(name=f"{dynamics_kwargs.get('name')}_augment")
         self.order = order or 0
@@ -220,6 +224,7 @@ class TaylorAugmented(hk.Module):
 
 
 class NeuralODE(hk.Module):
+
     def __init__(self,
                  ode_dyn_cls: Any,
                  state_size: int,
@@ -259,6 +264,7 @@ class NumericObsModel(hk.Module):
     The mapping from hidden h to the distribution parameters of Y(t).
     The dimension of the transformation is |h|->|obs_hidden|->|2D|.
     """
+
     def __init__(self,
                  numeric_size: int,
                  numeric_hidden_size: int,
@@ -281,6 +287,7 @@ class NumericObsModel(hk.Module):
 
 class GRUBayes(hk.Module):
     """Implements discrete update based on the received observations."""
+
     def __init__(self, state_size: int, name: Optional[str] = None):
         super().__init__(name=name)
         self.__prep = hk.Sequential([
@@ -304,6 +311,7 @@ class GRUBayes(hk.Module):
 
 class DiagnosesUpdate(hk.Module):
     """Implements discrete update based on the received observations."""
+
     def __init__(self, state_size: int, name: Optional[str] = None):
         super().__init__(name=name)
         self.__prep = hk.Sequential([
@@ -324,6 +332,7 @@ class DiagnosesUpdate(hk.Module):
 
 
 class StateInitializer(hk.Module):
+
     def __init__(self,
                  hidden_size: int,
                  state_size: int,
@@ -349,18 +358,39 @@ class StateInitializer(hk.Module):
 
 
 class StateDiagnosesDecoder(hk.Module):
+
     def __init__(self,
                  hidden_size: int,
                  embeddings_size: int,
                  output_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        self.__lin_h = hk.Linear(hidden_size // 2, name='lin_h_hidden')
-        self.__lin_emb = hk.Linear(embeddings_size, name='lin_gram')
-        self.__lin_out = hk.Linear(output_size, name='lin_out')
+        self.__dec1 = hk.Sequential([
+            hk.Linear(hidden_size, name='lin_h_hidden'), jnp.tanh,
+            hk.Linear(embeddings_size, name='lin_emb')
+        ])
+        self.__dec2 = hk.Linear(output_size, name='lin_out')
 
     def __call__(self, h: jnp.ndarray):
-        out_h = jnp.tanh(self.__lin_h(h))
-        dec_emb = self.__lin_emb(out_h)
-        logits = self.__lin_out(leaky_relu(dec_emb, negative_slope=2e-1))
-        return dec_emb, logits
+        dec_emb = self.__dec1(h)
+        dec_diag = self.__dec2(dec_emb)
+        return dec_emb, dec_diag
+
+
+class DiagnosticSamplesCombine(hk.Module):
+
+    def __init__(self, embeddings_size: int, name: Optional[str] = None):
+        super().__init__(name=name)
+        self.__gru = hk.GRU(embeddings_size // 2, name='gru')
+        self.__att = hk.Linear(1)
+
+    def __call__(self, emb_samples: jnp.ndarray, diag_samples):
+        initial_state = self.__gru.initial_state(1).squeeze()
+        rnn_states, _ = hk.dynamic_unroll(self.__gru,
+                                       emb_samples,
+                                       initial_state,
+                                       reverse=True)
+        att_weights = jax.vmap(self.__att)(rnn_states[::-1])
+        att_weights = jax.nn.softmax(att_weights)
+
+        return sum(a * v for a, v in zip(att_weights, diag_samples))
