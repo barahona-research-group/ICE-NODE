@@ -24,8 +24,7 @@ class ICENODE(AbstractModel):
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_depth: int, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, trajectory_sample_rate: int,
-                 diag_seq_combiner: str, tay_reg: Optional[int],
-                 state_size: int, init_depth: bool,
+                 tay_reg: Optional[int], state_size: int, init_depth: bool,
                  diag_loss: Callable[[jnp.ndarray, jnp.ndarray], float]):
 
         self.subject_interface = subject_interface
@@ -73,7 +72,7 @@ class ICENODE(AbstractModel):
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(StateDiagnosesDecoder,
-                            n_layers_d1=3,
+                            n_layers_d1=5,
                             n_layers_d2=2,
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
@@ -97,32 +96,6 @@ class ICENODE(AbstractModel):
         }
 
         self.init_data = self._initialization_data()
-
-        if diag_seq_combiner == 'last':
-            self._f_dec_seq = self._f_dec_last_combine
-        elif diag_seq_combiner == 'mean':
-            self._f_dec_seq = self._f_dec_mean_combine
-        elif diag_seq_combiner == 'max':
-            self._f_dec_seq = self._f_dec_max_combine
-        elif diag_seq_combiner == 'att':
-            self._f_dec_seq = self._f_dec_att_combine
-
-            f_combine_init, f_combine = hk.without_apply_rng(
-                hk.transform(
-                    wrap_module(DiagnosticSamplesCombine,
-                                embeddings_size=self.dimensions['diag_emb'],
-                                name='f_combine')))
-            self.f_combine = jax.jit(f_combine)
-
-            self.initializers['f_combine'] = f_combine_init
-            self.init_data['f_combine'] = [
-                jnp.zeros((3, self.dimensions['diag_emb'])),
-                jnp.zeros((3, self.dimensions['diag_out']))
-            ]
-
-        else:
-            raise ValueError(
-                f'Unrecognized combiner label: {diag_seq_combiner}')
 
     def init_params(self, rng_key):
         return {
@@ -222,56 +195,7 @@ class ICENODE(AbstractModel):
         diag = {i: d for i, (e, d) in dec.items()}
         return emb, diag
 
-    def _f_dec_att_combine(
-        self, params: Any, state_seq: Dict[int, jnp.ndarray]
-    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-
-        dec_seq = {
-            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_seq.items()
-        }
-        dec = {
-            i: self.f_combine(params['f_combine'], e_seq, d_seq)
-            for i, (e_seq, d_seq) in dec_seq.items()
-        }
-        emb = {i: e for i, (e, d) in dec.items()}
-        diag = {i: d for i, (e, d) in dec.items()}
-        return emb, diag
-
-    def _f_dec_mean_combine(
-        self, params: Any, state_seq: Dict[int, jnp.ndarray]
-    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-
-        dec_seq = {
-            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_seq.items()
-        }
-
-        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
-
-        diag = {
-            i: jnp.mean(d_seq, axis=0)
-            for i, (_, d_seq) in dec_seq.items()
-        }
-
-        return emb, diag
-
-    def _f_dec_max_combine(
-        self, params: Any, state_seq: Dict[int, jnp.ndarray]
-    ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
-
-        dec_seq = {
-            i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
-            for i, state in state_seq.items()
-        }
-
-        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
-
-        diag = {i: jnp.max(d_seq, axis=0) for i, (_, d_seq) in dec_seq.items()}
-
-        return emb, diag
-
-    def _f_dec_last_combine(
+    def _f_dec_seq(
         self, params: Any, state_seq: Dict[int, jnp.ndarray]
     ) -> Tuple[Dict[int, jnp.ndarray], Dict[int, jnp.ndarray]]:
         dec = {
@@ -495,36 +419,28 @@ class ICENODE(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return ICENODE._sample_ode_training_config(trial, epochs=15)
+        return ICENODE._sample_ode_training_config(trial, epochs=20)
 
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
         model_params = {
             'ode_dyn':
-            trial.suggest_categorical(
-                'ode_dyn', ['mlp', 'gru', 'res'
-                            ]),  # Add depth conditional to 'mlp' or 'res'
+            'gru',  #trial.suggest_categorical('ode_dyn', ['mlp', 'gru', 'res']),  # Add depth conditional to 'mlp' or 'res'
             'ode_with_bias':
             False,  # trial.suggest_categorical('ode_b', [True, False]),
             'ode_init_var':
-            trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
+            1e-2,  #trial.suggest_float('ode_iv', 1e-4, 1e-1, log=True),
             'ode_timescale':
-            trial.suggest_float('ode_ts', 1, 1e1, log=True),
-            'trajectory_sample_rate':
-            trial.suggest_int('los_f', 2, 25),
-            'diag_seq_combiner':
-            trial.suggest_categorical('comb', ['last', 'mean', 'max', 'att']),
-            'state_size':
-            trial.suggest_int('s', 30, 300, 30),
-            'init_depth':
-            3,  # trial.suggest_int('init_d', 2, 5),
-            'tay_reg':
-            trial.suggest_categorical('tay', [0, 2, 3, 4]),
+            1,  #trial.suggest_float('ode_ts', 1, 1e1, log=True),
+            'trajectory_sample_rate': 25,  #trial.suggest_int('los_f', 2, 25),
+            'state_size': 100,  #trial.suggest_int('s', 30, 300, 30),
+            'init_depth': 3,  # trial.suggest_int('init_d', 2, 5),
+            'tay_reg': 3,  #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
-        if model_params['ode_dyn'] == 'gru':
-            model_params['ode_depth'] = 0
-        else:
-            model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 4)
+        # if model_params['ode_dyn'] == 'gru':
+        #     model_params['ode_depth'] = 0
+        # else:
+        #     model_params['ode_depth'] = trial.suggest_int('ode_d', 1, 4)
 
         return model_params
 
