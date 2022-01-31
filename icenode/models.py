@@ -360,16 +360,35 @@ class StateInitializer(hk.Module):
 class StateDiagnosesDecoder(hk.Module):
 
     def __init__(self,
-                 hidden_size: int,
+                 n_layers_d1: int,
+                 n_layers_d2: int,
                  embeddings_size: int,
                  output_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        self.__dec1 = hk.Sequential([
-            hk.Linear(hidden_size, name='lin_h_hidden'), jnp.tanh,
-            hk.Linear(embeddings_size, name='lin_emb')
-        ])
-        self.__dec2 = hk.Linear(output_size, name='lin_out')
+        d1_layers = []
+        for i in range(n_layers_d1 - 1):
+            d1_layers.append(hk.Linear(embeddings_size, name=f'd1_{i}'))
+
+            if i == n_layers_d1 - 2:
+                d1_layers.append(jnp.tanh)
+            else:
+                d1_layers.append(lambda x: leaky_relu(x, 0.2))
+
+        self.__dec1 = hk.Sequential(
+            [d1_layers] + [hk.Linear(embeddings_size, name='lin_emb')])
+
+        d2_layers = []
+        for i in range(n_layers_d2 - 1):
+            d2_layers.append(hk.Linear(embeddings_size, name=f'd2_{i}'))
+
+            if i == n_layers_d2 - 2:
+                d2_layers.append(jnp.tanh)
+            else:
+                d2_layers.append(lambda x: leaky_relu(x, 0.2))
+
+        self.__dec2 = hk.Sequential([d2_layers] +
+                                    [hk.Linear(output_size, name='lin_diag')])
 
     def __call__(self, h: jnp.ndarray):
         dec_emb = self.__dec1(h)
@@ -381,16 +400,27 @@ class DiagnosticSamplesCombine(hk.Module):
 
     def __init__(self, embeddings_size: int, name: Optional[str] = None):
         super().__init__(name=name)
-        self.__gru = hk.GRU(embeddings_size // 2, name='gru')
-        self.__att = hk.Linear(1)
+        self.__gru_e = hk.GRU(embeddings_size // 2, name='gru_1')
+        self.__gru_d = hk.GRU(embeddings_size // 2, name='gru_2')
+        self.__att_e = hk.Linear(1)
+        self.__att_d = hk.Linear(1)
 
-    def __call__(self, emb_samples: jnp.ndarray, diag_samples):
-        initial_state = self.__gru.initial_state(1).squeeze()
-        rnn_states, _ = hk.dynamic_unroll(self.__gru,
-                                       emb_samples,
-                                       initial_state,
-                                       reverse=True)
-        att_weights = jax.vmap(self.__att)(rnn_states[::-1])
-        att_weights = jax.nn.softmax(att_weights)
+    def __call__(self, emb_seq: jnp.ndarray, diag_seq):
+        initial_state = self.__gru_e.initial_state(1).squeeze()
+        rnn_states_e, _ = hk.dynamic_unroll(self.__gru_e,
+                                            emb_seq,
+                                            initial_state,
+                                            reverse=True)
+        att_weights_e = jax.vmap(self.__att_e)(rnn_states_e)
+        att_weights_e = jax.nn.tanh(att_weights_e)
 
-        return sum(a * v for a, v in zip(att_weights, diag_samples))
+        initial_state = self.__gru_d.initial_state(1).squeeze()
+        rnn_states_d, _ = hk.dynamic_unroll(self.__gru_d,
+                                            emb_seq,
+                                            initial_state,
+                                            reverse=True)
+        att_weights_d = jax.vmap(self.__att_d)(rnn_states_d)
+        att_weights_d = jax.nn.softmax(att_weights_d)
+
+        return (sum(a * e for a, e in zip(att_weights_e, emb_seq)),
+                sum(a * d for a, d in zip(att_weights_d, diag_seq)))

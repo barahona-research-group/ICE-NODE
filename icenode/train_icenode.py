@@ -73,7 +73,8 @@ class ICENODE(AbstractModel):
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(StateDiagnosesDecoder,
-                            hidden_size=self.dimensions['diag_emb'],
+                            n_layers_d1=3,
+                            n_layers_d2=2,
                             embeddings_size=self.dimensions['diag_emb'],
                             output_size=self.dimensions['diag_out'],
                             name='f_dec')))
@@ -496,7 +497,7 @@ class ICENODE(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return ICENODE._sample_ode_training_config(trial, epochs=10)
+        return ICENODE._sample_ode_training_config(trial, epochs=15)
 
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
@@ -517,8 +518,7 @@ class ICENODE(AbstractModel):
             trial.suggest_categorical('comb', ['last', 'mean', 'max', 'att']),
             'state_size':
             trial.suggest_int('s', 30, 300, 30),
-            'init_depth':
-            trial.suggest_int('init_d', 1, 4),
+            'init_depth': 3, # trial.suggest_int('init_d', 2, 5),
             'tay_reg':
             trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
