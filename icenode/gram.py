@@ -27,6 +27,7 @@ def unnormalized_softmax(x, axis=-1):
 
 
 class DAGAttention(hk.Module):
+
     def __init__(self,
                  attention_dim,
                  name: Optional[str] = None,
@@ -46,6 +47,7 @@ class DAGL2Attention(hk.Module):
     The Lipschitz Constant of Self-Attention:
     https://arxiv.org/abs/2006.04710
     """
+
     def __init__(self,
                  attention_dim,
                  name: Optional[str] = None,
@@ -61,6 +63,7 @@ class DAGL2Attention(hk.Module):
 
 
 class AbstractEmbeddingsLayer:
+
     def __init__(self, embeddings_dim):
         self.embeddings_dim = embeddings_dim
 
@@ -79,6 +82,7 @@ class AbstractEmbeddingsLayer:
 
 
 class AbstractGRAM(AbstractEmbeddingsLayer):
+
     def __init__(self,
                  attention_dim: int,
                  attention_method: str,
@@ -142,6 +146,7 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
 
 
 class SemiFrozenGRAM(AbstractGRAM):
+
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -169,6 +174,7 @@ class SemiFrozenGRAM(AbstractGRAM):
 
 
 class FrozenGRAM(AbstractGRAM):
+
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -198,6 +204,7 @@ class FrozenGRAM(AbstractGRAM):
 
 
 class TunableGRAM(AbstractGRAM):
+
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -222,6 +229,7 @@ class TunableGRAM(AbstractGRAM):
 
 
 class GloVeGRAM(AbstractGRAM):
+
     def __init__(self,
                  category: str,
                  patient_interface: AbstractSubjectJAXInterface,
@@ -237,7 +245,6 @@ class GloVeGRAM(AbstractGRAM):
             ancestors_mat = patient_interface.diag_ccs_ancestors_mat
         else:
             ancestors_mat = patient_interface.proc_ccs_ancestors_mat
-
 
         super().__init__(attention_dim=attention_dim,
                          attention_method=attention_method,
@@ -285,7 +292,9 @@ class GloVeGRAM(AbstractGRAM):
             trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
 
+
 class OrthogonalGRAM(AbstractGRAM):
+
     def __init__(self,
                  category: str,
                  patient_interface: AbstractSubjectJAXInterface,
@@ -325,7 +334,9 @@ class OrthogonalGRAM(AbstractGRAM):
             trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
 
+
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
+
     def __init__(self,
                  embeddings_dim: int,
                  input_dim: int,
@@ -352,5 +363,6 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
-            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 30, 300, 30)
+            'embeddings_dim':
+            100  # trial.suggest_int(f'{prefix}_k', 30, 300, 30)
         }

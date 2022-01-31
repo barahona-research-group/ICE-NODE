@@ -369,13 +369,12 @@ class StateDiagnosesDecoder(hk.Module):
 
         def build_layers(n_layers, output_size):
             layers = [
-                lambda x: leaky_relu(
-                    hk.Linear(embeddings_size, name=f'd_{i}')(x), 0.2)
+                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
                 for i in range(n_layers - 2)
             ]
-            layers.append(lambda x: jnp.tanh(
-                hk.Linear(embeddings_size, name=f'd_{n_layers - 2}')(x)))
-            layers.append(hk.Linear(output_size, name=f'd_{n_layers - 1}'))
+            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
+            layers.append(hk.Linear(output_size))
+
             return layers
 
         self.__dec1 = hk.Sequential(build_layers(n_layers_d1, embeddings_size),
