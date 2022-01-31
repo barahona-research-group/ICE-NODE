@@ -230,14 +230,12 @@ class ICENODE(AbstractModel):
             i: jax.vmap(partial(self.f_dec, params['f_dec']))(state)
             for i, state in state_seq.items()
         }
-
-        emb = {i: jnp.mean(e_seq, axis=0) for i, (e_seq, _) in dec_seq.items()}
-
-        diag = {
+        dec = {
             i: self.f_combine(params['f_combine'], e_seq, d_seq)
             for i, (e_seq, d_seq) in dec_seq.items()
         }
-
+        emb = {i: e for i, (e, d) in dec.items()}
+        diag = {i: d for i, (e, d) in dec.items()}
         return emb, diag
 
     def _f_dec_mean_combine(
