@@ -9,6 +9,7 @@ from jax.experimental.ode import odeint
 from jax.nn import softplus, sigmoid, leaky_relu
 
 from .odeint_nfe import odeint as odeint_nfe
+from .inn_models import InvertibleLayers
 
 # MIT License
 
@@ -386,6 +387,33 @@ class StateDiagnosesDecoder(hk.Module):
         dec_emb = self.__dec1(h)
         dec_diag = self.__dec2(dec_emb)
         return dec_emb, jax.nn.softmax(dec_diag)
+
+
+class EmbeddingsDecoder(hk.Module):
+
+    def __init__(self,
+                 n_layers: int,
+                 embeddings_size: int,
+                 diag_size: int,
+                 name: Optional[str] = None):
+        super().__init__(name=name)
+
+        def build_layers(n_layers, output_size):
+            layers = [
+                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
+                for i in range(n_layers - 2)
+            ]
+            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
+            layers.append(hk.Linear(output_size))
+
+            return layers
+
+        self.__dec = hk.Sequential(build_layers(n_layers, diag_size),
+                                   name='dec')
+
+    def __call__(self, emb: jnp.ndarray):
+        dec_diag = self.__dec(emb)
+        return jax.nn.softmax(dec_diag)
 
 
 class DiagnosticSamplesCombine(hk.Module):
