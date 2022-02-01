@@ -8,8 +8,7 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (l2_squared, l1_absolute,
-                      softmax_logits_balanced_focal_bce)
+from .metrics import (l2_squared, l1_absolute, softmax_logits_bce)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
@@ -175,10 +174,7 @@ class ICENODE(AbstractModel):
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag: Dict[int, jnp.ndarray]):
-        l = {
-            i: softmax_logits_balanced_focal_bce(diag[i], dec_diag[i])
-            for i in diag.keys()
-        }
+        l = {i: softmax_logits_bce(diag[i], dec_diag[i]) for i in diag}
         return sum(l.values()) / len(l)
 
     def __call__(self,
@@ -233,7 +229,7 @@ class ICENODE(AbstractModel):
             state_e, (drdt, nfe, nfe_sum) = nn_ode(state_e, d2d_time)
             dec_diag = nn_decode(state_e)
 
-            for subject_id in state_e.keys():
+            for subject_id in state_e:
                 diag_detectability[subject_id][n] = {
                     'admission_id': adm_id[subject_id],
                     'nfe': nfe[subject_id],
