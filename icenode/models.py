@@ -391,6 +391,31 @@ class EmbeddingsDecoder(hk.Module):
         dec_diag = self.__dec(emb)
         return jax.nn.softmax(dec_diag)
 
+class EmbeddingsDecoder_Logits(hk.Module):
+
+    def __init__(self,
+                 n_layers: int,
+                 embeddings_size: int,
+                 diag_size: int,
+                 name: Optional[str] = None):
+        super().__init__(name=name)
+
+        def build_layers(n_layers, output_size):
+            layers = [
+                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
+                for i in range(n_layers - 2)
+            ]
+            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
+            layers.append(hk.Linear(output_size))
+
+            return layers
+
+        self.__dec = hk.Sequential(build_layers(n_layers, diag_size),
+                                   name='dec')
+
+    def __call__(self, emb: jnp.ndarray):
+        return self.__dec(emb)
+
 
 class DiagnosticSamplesCombine(hk.Module):
 

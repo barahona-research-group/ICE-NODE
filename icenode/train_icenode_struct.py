@@ -12,7 +12,7 @@ from .metrics import (l2_squared, l1_absolute)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     EmbeddingsDecoder)
+                     EmbeddingsDecoder_Logits)
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
@@ -75,7 +75,7 @@ class ICENODE(AbstractModel):
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
-                wrap_module(EmbeddingsDecoder,
+                wrap_module(EmbeddingsDecoder_Logits,
                             n_layers=2,
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
