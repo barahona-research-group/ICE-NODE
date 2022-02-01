@@ -47,12 +47,13 @@ class ICENODE(AbstractModel):
             ode_dyn_cls = MLPDynamics
         else:
             raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
+        state_emb_size = self.dimensions['diag_emb'] + state_size
 
         f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
-                            state_size=state_size,
+                            state_size=state_emb_size,
                             depth=3,
                             timescale=ode_timescale,
                             with_bias=ode_with_bias,
@@ -65,7 +66,9 @@ class ICENODE(AbstractModel):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU, hidden_size=state_size, name='f_update')))
+                wrap_module(hk.GRU,
+                            hidden_size=state_emb_size,
+                            name='f_update')))
         f_update = jax.jit(f_update)
         self.f_update = (
             lambda params, *args: f_update(params['f_update'], *args)[1])
@@ -173,7 +176,7 @@ class ICENODE(AbstractModel):
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray, diag: jnp.ndarray) -> jnp.ndarray:
         new_state = {i: self.f_update(params, emb[i], state_e[i]) for i in emb}
-        _, dec_diag = self._f_dec(params, new_state)
+        dec_diag = self._f_dec(params, new_state)
         update_loss = self._diag_loss(diag, dec_diag)
         return new_state, update_loss
 

@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=72:0:0
 
-#PBS -J 1-30
+#PBS -J 1-10
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -39,7 +39,7 @@ $HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
 --num-trials 30 \
 --trials-time-limit 72 \
 --training-time-limit 48 \
--N 2 \
+-N 4 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
 --pretrained-components icenode_configs/pretrained_components_rcs.json \
 --cpu 

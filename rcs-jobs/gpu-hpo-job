@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=24:0:0
 
-#PBS -J 1-15
+#PBS -J 1-10
 
 # Load GPU modeuls
 module load cuda/11.4.2
