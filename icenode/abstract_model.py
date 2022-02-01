@@ -3,13 +3,16 @@ import optuna
 from .utils import load_config, load_params
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    MatrixEmbeddings, OrthogonalGRAM)
-from .metrics import (bce, softmax_loss, balanced_focal_bce, weighted_bce,
-                      admissions_auc_scores)
+from .metrics import (bce, softmax_logits_bce, balanced_focal_bce,
+                      weighted_bce, admissions_auc_scores)
+
 
 class ImplementationException(Exception):
     pass
 
+
 class AbstractModel:
+
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise ImplementationException('Should be overriden')
 
@@ -81,8 +84,8 @@ class AbstractModel:
     def select_loss(cls, loss_label: str, patient_interface, train_ids):
         if loss_label == 'balanced_focal':
             return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
-        elif loss_label == 'softmax':
-            return softmax_loss
+        elif loss_label == 'softmax_logits_bce':
+            return softmax_logits_bce
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':

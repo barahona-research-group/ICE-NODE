@@ -26,15 +26,22 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray):
 
 
 @jax.jit
+def softmax_logits_bce(y: jnp.ndarray, logits: jnp.ndarray):
+    return -jnp.mean(y * jax.nn.log_softmax(logits) +
+                     (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
+
+
+@jax.jit
 def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, weights: jnp.ndarray):
     return jnp.mean(weights * (y * softplus(-logits) +
                                (1 - y) * softplus(logits)))
 
 
 @jax.jit
-def softmax_loss(y: jnp.ndarray, logits: jnp.ndarray):
-    return -jnp.sum(y * jax.nn.log_softmax(logits) +
-                    (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
+def softmax_logits_weighted_bce(y: jnp.ndarray, logits: jnp.ndarray,
+                                weights: jnp.ndarray):
+    return -jnp.mean(weights * (y * jax.nn.log_softmax(logits) +
+                                (1 - y) * jnp.log(1 - jax.nn.softmax(logits))))
 
 
 # The following loss function employs two concepts:
@@ -61,6 +68,25 @@ def balanced_focal_bce(y: jnp.ndarray,
     # Note: softplut(logits) = -log(1 - sigmoid(logits)) = -log(1-p)
     return jnp.mean(y * (w1 / e1) * softplus(-logits) + (1 - y) *
                     (w0 / e0) * softplus(logits))
+
+
+@jax.jit
+def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
+                                      logits: jnp.ndarray,
+                                      gamma=2,
+                                      beta=0.999):
+    n1 = jnp.sum(y)
+    n0 = jnp.size(y) - n1
+    # Effective number of samples.
+    e1 = (1 - beta**n1) / (1 - beta) + 1e-1
+    e0 = (1 - beta**n0) / (1 - beta) + 1e-1
+
+    # Focal weighting
+    p = jax.nn.softmax(logits)
+    w1 = jnp.power(1 - p, gamma)
+    w0 = jnp.power(p, gamma)
+    return -jnp.mean(y * (w1 / e1) * jax.nn.log_softmax(logits) + (1 - y) *
+                     (w0 / e0) * jnp.log(1 - p))
 
 
 @jax.jit
@@ -149,6 +175,7 @@ def confusion_matrix_scores(cm: jnp.ndarray):
 
 
 def auc_scores(detectability, label_prefix):
+
     def compute_auc(v_truth, v_preds):
         fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
         return metrics.auc(fpr, tpr)
@@ -175,6 +202,7 @@ def auc_scores(detectability, label_prefix):
 
 
 def admissions_auc_scores(detectability, label_prefix):
+
     def compute_auc(v_truth, v_preds):
         fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
         return metrics.auc(fpr, tpr)

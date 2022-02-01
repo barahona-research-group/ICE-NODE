@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (l2_squared, l1_absolute)
+from .metrics import (l2_squared, l1_absolute, softmax_logits_weighted_bce)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
@@ -16,22 +16,25 @@ from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
-
-@jax.jit
-def softmax_logits_loss(y: jnp.ndarray, logits: jnp.ndarray):
-    return -jnp.sum(y * jax.nn.log_softmax(logits) +
-                    (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
+# The following loss function employs two concepts:
+# A) Effective number of sample, to mitigate class imbalance:
+# Paper: Class-Balanced Loss Based on Effective Number of Samples (Cui et al)
+# B) Focal loss, to underweight the easy to classify samples:
+# Paper: Focal Loss for Dense Object Detection (Lin et al)
 
 
 class ICENODE(AbstractModel):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_with_bias: bool, ode_init_var: float,
+                 train_ids: List[int], diag_emb: AbstractEmbeddingsLayer,
+                 ode_dyn: str, ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int],
                  state_size: int):
 
         self.subject_interface = subject_interface
+        code_dist = subject_interface.diag_ccs_frequency_vec(train_ids)
+        self.code_weights = code_dist.sum() / (code_dist +
+                                               1e-1) * len(code_dist)
         self.diag_emb = diag_emb
         self.tay_reg = tay_reg
         self.dimensions = {
@@ -190,7 +193,11 @@ class ICENODE(AbstractModel):
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag: Dict[int, jnp.ndarray]):
-        l = {i: softmax_logits_loss(diag[i], dec_diag[i]) for i in diag.keys()}
+        l = {
+            i: softmax_logits_weighted_bce(diag[i], dec_diag[i],
+                                           self.code_weights)
+            for i in diag.keys()
+        }
         return sum(l.values()) / len(l)
 
     def __call__(self,
@@ -327,6 +334,7 @@ class ICENODE(AbstractModel):
             train_ids=train_ids,
             pretrained_components=pretrained_components)
         return cls(subject_interface=patient_interface,
+                   train_ids=train_ids,
                    diag_emb=diag_emb,
                    **config['model'])
 
