@@ -224,6 +224,11 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         if eval_step == last_step and i < iters - 1:
             continue
 
+        study_attrs = trial.study.user_attrs
+        if study_attrs['halt']:
+            trial.set_user_attr('halted', 1)
+            raise StudyHalted('Study is halted')
+
         trial.set_user_attr("progress", eval_step)
         mlflow_set_tag("progress", eval_step, frozen)
 
@@ -266,7 +271,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
         trial.report(auc, eval_step)
 
-        if trial.should_prune():
+        if study_attrs['enable_prune'] and trial.should_prune():
             raise optuna.TrialPruned()
     return auc
 
@@ -300,6 +305,17 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     study.set_user_attr('data', data_tag_fullname[data_tag])
     study.set_user_attr('embeddings', emb)
 
+    study_attrs = study.user_attrs
+    # A flag that we can control from the DB to halt training on all machines.
+    # (False initiallly)
+    if 'halt' not in study_attrs:
+        study.set_user_attr('halt', False)
+
+    # A flag that we can control from the DB to enable/disable pruning (True
+    # initially)
+    if 'enable_prune' not in study_attrs:
+        study.set_user_attr('enable_prune', True)
+
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
     else:
@@ -320,7 +336,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
 
     def objective_f(trial: optuna.Trial):
         study_attrs = study.user_attrs
-        if study_attrs.get('halt', False):
+        if study_attrs['halt']:
             trial.set_user_attr('halted', 1)
             raise StudyHalted('Study is halted')
 
