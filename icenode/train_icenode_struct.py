@@ -65,16 +65,6 @@ class ICENODE(AbstractModel):
         self.f_n_ode = (
             lambda params, *args: f_n_ode(params['f_n_ode'], *args))
 
-        f_update_init, f_update = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(StateUpdate,
-                            state_size=state_size,
-                            embeddings_size=self.dimensions['diag_emb'],
-                            name='f_update')))
-        f_update = jax.jit(f_update)
-        self.f_update = (
-            lambda params, *args: f_update(params['f_update'], *args))
-
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(EmbeddingsDecoder_Logits,
@@ -85,11 +75,7 @@ class ICENODE(AbstractModel):
         f_dec = jax.jit(f_dec)
         self.f_dec = (lambda params, *args: f_dec(params['f_dec'], *args))
 
-        self.initializers = {
-            'f_n_ode': f_n_ode_init,
-            'f_update': f_update_init,
-            'f_dec': f_dec_init
-        }
+        self.initializers = {'f_n_ode': f_n_ode_init, 'f_dec': f_dec_init}
         self.init_data = self._initialization_data()
 
     def join_state_emb(self, state, emb):
@@ -130,7 +116,6 @@ class ICENODE(AbstractModel):
         ode_ctrl = jnp.array([])
         return {
             "f_n_ode": [2, True, state_emb, 0.1, ode_ctrl],
-            "f_update": [state, emb, emb],
             "f_dec": [emb],
         }
 
@@ -175,13 +160,12 @@ class ICENODE(AbstractModel):
         state_e = {i: h[-1, :] for i, (h, r, n) in h_r_nfe.items()}
         return state_e, (drdt, nfe, nfe_sum)
 
-    def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
+    def _f_update(self, state_e: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
         new_state = {}
         for i in emb:
             emb_nominal = emb[i]
-            state, emb_pred = self.split_state_emb(state_e[i])
-            state = self.f_update(params, state, emb_pred, emb_nominal)
+            state, _ = self.split_state_emb(state_e[i])
             new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
 
@@ -203,7 +187,7 @@ class ICENODE(AbstractModel):
                  count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
-        nn_update = partial(self._f_update, params)
+        nn_update = self._f_update
         nn_decode = partial(self._f_dec, params)
         diag_loss = self._diag_loss
 
@@ -338,7 +322,7 @@ class ICENODE(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing'] = {
-            'L_pred': trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
+            'L_pred': trial.suggest_float('L_pred', 1e-2, 1e2, log=True),
             'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
