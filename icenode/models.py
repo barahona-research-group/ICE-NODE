@@ -309,31 +309,7 @@ class GRUBayes(hk.Module):
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
 
-
-class DiagnosesUpdate(hk.Module):
-    """Implements discrete update based on the received observations."""
-
-    def __init__(self, state_size: int, name: Optional[str] = None):
-        super().__init__(name=name)
-        self.__prep = hk.Sequential([
-            hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
-            lambda o: leaky_relu(o, negative_slope=2e-1),
-            hk.Linear(state_size, with_bias=True,
-                      name=f'{name}_prep2'), jnp.tanh
-        ])
-
-        self.__gru_d = hk.GRU(state_size)
-
-    def __call__(self, state: jnp.ndarray,
-                 error_gram: jnp.ndarray) -> jnp.ndarray:
-
-        gru_input = self.__prep(error_gram)
-        _, updated_state = self.__gru_d(gru_input, state)
-        return updated_state
-
-
 class StateInitializer(hk.Module):
-
     def __init__(self,
                  hidden_size: int,
                  state_size: int,
