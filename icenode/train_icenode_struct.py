@@ -68,11 +68,11 @@ class ICENODE(AbstractModel):
             hk.transform(
                 wrap_module(StateUpdate,
                             state_size=state_size,
-                            embeddings_size=self.dimensions['diag-emb'],
+                            embeddings_size=self.dimensions['diag_emb'],
                             name='f_update')))
         f_update = jax.jit(f_update)
         self.f_update = (
-            lambda params, *args: f_update(params['f_update'], *args)[1])
+            lambda params, *args: f_update(params['f_update'], *args))
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
@@ -180,7 +180,7 @@ class ICENODE(AbstractModel):
         for i in emb:
             emb_nominal = emb[i]
             state, emb_pred = self.split_state_emb(state_e[i])
-            state = self.f_update(params, emb_pred, emb_nominal)
+            state = self.f_update(params, state, emb_pred, emb_nominal)
             new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
 
@@ -260,7 +260,7 @@ class ICENODE(AbstractModel):
             total_nfe += nfe_sum
 
             # Update state at discharge
-            state_e, update_loss = nn_update(state_e, emb, diag)
+            state_e = nn_update(state_e, emb)
 
             # Update the states:
             for subject_id, new_state in state_e.items():
