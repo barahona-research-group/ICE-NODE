@@ -12,7 +12,7 @@ from .metrics import (l2_squared, l1_absolute)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     EmbeddingsDecoder_Logits)
+                     EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
 
@@ -66,8 +66,9 @@ class ICENODE(AbstractModel):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU,
-                            hidden_size=state_emb_size,
+                wrap_module(StateUpdate,
+                            state_size=state_size,
+                            embeddings_size=self.dimensions['diag-emb'],
                             name='f_update')))
         f_update = jax.jit(f_update)
         self.f_update = (
@@ -128,7 +129,7 @@ class ICENODE(AbstractModel):
         ode_ctrl = jnp.array([])
         return {
             "f_n_ode": [2, True, state_emb, 0.1, ode_ctrl],
-            "f_update": [emb, state_emb],
+            "f_update": [state, emb, emb],
             "f_dec": [emb],
         }
 
@@ -174,11 +175,14 @@ class ICENODE(AbstractModel):
         return state_e, (drdt, nfe, nfe_sum)
 
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
-                  emb: jnp.ndarray, diag: jnp.ndarray) -> jnp.ndarray:
-        new_state = {i: self.f_update(params, emb[i], state_e[i]) for i in emb}
-        dec_diag = self._f_dec(params, new_state)
-        update_loss = self._diag_loss(diag, dec_diag)
-        return new_state, update_loss
+                  emb: jnp.ndarray) -> jnp.ndarray:
+        new_state = {}
+        for i in emb:
+            emb_nominal = emb[i]
+            state, emb_pred = self.split_state_emb(state_e[i])
+            state = self.f_update(params, emb_pred, emb_nominal)
+            new_state[i] = self.join_state_emb(state, emb_nominal)
+        return new_state
 
     def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
         emb = {i: self.split_state_emb(state_e[i])[1] for i in state_e}
@@ -212,7 +216,6 @@ class ICENODE(AbstractModel):
         total_nfe = 0
 
         prediction_losses = []
-        update_losses = []
 
         adm_counts = []
         diag_detectability = {i: {} for i in subjects_batch}
@@ -258,7 +261,6 @@ class ICENODE(AbstractModel):
 
             # Update state at discharge
             state_e, update_loss = nn_update(state_e, emb, diag)
-            update_losses.append(update_loss)
 
             # Update the states:
             for subject_id, new_state in state_e.items():
@@ -268,11 +270,9 @@ class ICENODE(AbstractModel):
                 }
 
         prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
-        update_loss = jnp.average(update_losses, weights=adm_counts)
 
         ret = {
             'prediction_loss': prediction_loss,
-            'update_loss': update_loss,
             'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
@@ -284,26 +284,20 @@ class ICENODE(AbstractModel):
 
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
-        update_loss = res['update_loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         dyn_loss = res['dyn_loss']
         pred_alpha = loss_mixing['L_pred']
-        update_alpha = loss_mixing['L_update']
 
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
         dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
 
-        diag_loss = (pred_alpha * prediction_loss + update_alpha * update_loss)
-
-        loss = diag_loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (
-            dyn_alpha * dyn_loss)
+        loss = (pred_alpha * prediction_loss) + (l1_alpha * l1_loss) + (
+            l2_alpha * l2_loss) + (dyn_alpha * dyn_loss)
 
         return {
             'prediction_loss': prediction_loss,
-            'update_loss': update_loss,
-            'diag_loss': diag_loss,
             'loss': loss,
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
@@ -340,8 +334,7 @@ class ICENODE(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing'] = {
-            'L_pred': trial.suggest_float('L_pred', 1e-4, 1, log=True),
-            'L_update': trial.suggest_float('L_update', 1e-4, 1, log=True),
+            'L_pred': trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
             'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
@@ -360,7 +353,7 @@ class ICENODE(AbstractModel):
             'ode_with_bias': False,
             'ode_init_var': 1e-2,
             'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
-            'state_size': trial.suggest_int('s', 5, 55, 10),
+            'state_size': trial.suggest_int('s', 10, 100, 10),
             'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         return model_params

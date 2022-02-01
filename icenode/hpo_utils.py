@@ -29,6 +29,10 @@ from .abstract_model import AbstractModel
 class ResourceTimeout(Exception):
     pass
 
+class StudyHalted(Exception):
+    pass
+
+
 
 def mlflow_callback_noexcept(callback):
     def apply(study, trial):
@@ -217,7 +221,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
         last_step = round(i * 100 / iters)
 
-        if eval_step == last_step:
+        if eval_step == last_step and i < iters - 1:
             continue
 
         trial.set_user_attr("progress", eval_step)
@@ -247,7 +251,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
                                     f'step{eval_step:04d}_eval.csv'))
 
         # Only dump parameters for frozen trials.
-        if frozen:
+        if frozen or i == iters - 1:
             fname = os.path.join(trial_dir,
                                  f'step{eval_step:04d}_params.pickle')
             write_params(get_params(opt_state), fname)
@@ -315,6 +319,12 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     test_ids = subjects_id[splits[1]:]
 
     def objective_f(trial: optuna.Trial):
+        study_attrs = study.user_attrs
+        if study_attrs.get('halt', False):
+            trial.set_user_attr('halted', 1)
+            raise StudyHalted('Study is halted')
+
+
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
         if trial_stop_time + timedelta(minutes=20) > termination_time:
             trial.set_user_attr('timeout', 1)

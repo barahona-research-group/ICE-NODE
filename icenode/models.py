@@ -309,7 +309,32 @@ class GRUBayes(hk.Module):
         _, updated_state = self.__gru_d(gru_input, state)
         return updated_state
 
+
+class StateUpdate(hk.Module):
+    """Implements discrete update based on the received observations."""
+
+    def __init__(self,
+                 state_size: int,
+                 embeddings_size: int,
+                 name: Optional[str] = None):
+        super().__init__(name=name)
+        self.__project = hk.Sequential([
+            hk.Linear(embeddings_size, with_bias=True, name=f'{name}_prep'),
+            jnp.tanh
+        ])
+
+        self.__gru = hk.GRU(state_size)
+
+    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray,
+                 nominal_emb: jnp.ndarray) -> jnp.ndarray:
+
+        gru_input = self.__project(jnp.hstack((emb, nominal_emb)))
+        _, updated_state = self.__gru(gru_input, state)
+        return updated_state
+
+
 class StateInitializer(hk.Module):
+
     def __init__(self,
                  hidden_size: int,
                  state_size: int,
@@ -390,6 +415,7 @@ class EmbeddingsDecoder(hk.Module):
     def __call__(self, emb: jnp.ndarray):
         dec_diag = self.__dec(emb)
         return jax.nn.softmax(dec_diag)
+
 
 class EmbeddingsDecoder_Logits(hk.Module):
 
