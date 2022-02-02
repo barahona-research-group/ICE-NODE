@@ -316,6 +316,11 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     if 'enable_prune' not in study_attrs:
         study.set_user_attr('enable_prune', True)
 
+    # A description text to be altered from the DB to describe the differences
+    # between tags.
+    if 'description' not in study_attrs:
+        study.set_user_attr('description', "No description")
+
     if cpu:
         jax.config.update('jax_platform_name', 'cpu')
     else:
