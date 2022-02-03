@@ -12,9 +12,19 @@ from .metrics import (l2_squared, l1_absolute, softmax_logits_bce)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     EmbeddingsDecoder_Logits, StateUpdate)
+                     EmbeddingsDecoder, StateUpdate)
 from .abstract_model import AbstractModel
 from .gram import AbstractEmbeddingsLayer
+
+
+class DecayLambda1(hk.Module):
+
+    def __init__(self, name='lambda_decay'):
+        super().__init__(name=name)
+        #self.lambd = hk.get_parameter('lambda', [], init=jnp.zeros)
+
+    def __call__(self):
+        return 1 # jax.nn.softplus(self.lambd)
 
 
 class ICENODE(AbstractModel):
@@ -22,9 +32,8 @@ class ICENODE(AbstractModel):
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float,
-                 tay_reg: Optional[int], loss_half_life: int, state_size: int):
+                 tay_reg: Optional[int], state_size: int):
 
-        self.loss_half_life = loss_half_life
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
         self.tay_reg = tay_reg
@@ -66,17 +75,22 @@ class ICENODE(AbstractModel):
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
-                wrap_module(EmbeddingsDecoder_Logits,
+                wrap_module(EmbeddingsDecoder,
                             n_layers=2,
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
+        f_lambda_init, f_lambda = hk.without_apply_rng(
+            hk.transform(wrap_module(DecayLambda1)))
+        self.f_lambda = jax.jit(f_lambda)
+
         self.initializers = {
             'f_n_ode': f_n_ode_init,
             'f_update': f_update_init,
-            'f_dec': f_dec_init
+            'f_dec': f_dec_init,
+            'f_lambda': f_lambda_init
         }
 
     def join_state_emb(self, state, emb):
@@ -88,12 +102,33 @@ class ICENODE(AbstractModel):
         # state_e.shape: (state_size + embeddings_size)
         return jnp.split(state_e, (self.dimensions['state'], ))
 
-    def diag_loss(self, state_e: jnp.ndarray, ti: float, tf: float,
-                  diag: jnp.ndarray, f_dec_params: Any):
-        _, emb = self.split_state_emb(state_e)
-        dec_diag = self.f_dec(f_dec_params, emb)
-        exponent = (ti - tf) / self.loss_half_life
-        return softmax_logits_bce(diag, dec_diag) * jnp.power(0.5, exponent)
+
+    # Instanteneous Cross-Entropy
+    def diag_loss(self, h: jnp.ndarray, dhdt: jnp.ndarray,
+                  ti: float, tf: float,
+                  y: jnp.ndarray, f_dec_params: Any):
+        _, e = self.split_state_emb(h)
+        _, dedt = self.split_state_emb(dhdt)
+        _, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
+
+        y_hat = self.f_dec(f_dec_params, e)
+        dldy = (y - y_hat) / (y_hat*(1 - y_hat) + 1e-15)
+        dldt = -jnp.mean(dldy * dydt)
+        return dldt
+
+    # Instanteneous Cross-Entropy
+    def diag_loss2(self, h: jnp.ndarray, dhdt: jnp.ndarray,
+                  ti: float, tf: float,
+                  y: jnp.ndarray, f_dec_params: Any):
+        _, e = self.split_state_emb(h)
+        _, dedt = self.split_state_emb(dhdt)
+        _, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
+
+        y_hat = self.f_dec(f_dec_params, e)
+        dldy = (y - y_hat) / (y_hat*(1 - y_hat) + 1e-15)
+        dldt = -jnp.mean(dldy * dydt)
+        return dldt
+
 
     def init_params(self, rng_key):
         emb = jnp.zeros(self.dimensions['diag_emb'])
@@ -102,7 +137,9 @@ class ICENODE(AbstractModel):
         state_emb = self.join_state_emb(state, emb)
 
         dec_params = self.initializers['f_dec'](rng_key, emb)
-        loss_args = (0.1, diag, dec_params)
+        # lambda_param = self.initializers['f_lambda'](rng_key)
+
+        loss_args = (0.1, diag, dec_params)#, lambda_param)
         ode_params = self.initializers['f_n_ode'](rng_key, True, state_emb,
                                                   0.1, *loss_args)
         update_params = self.initializers['f_update'](rng_key, state, emb, emb)
@@ -111,7 +148,8 @@ class ICENODE(AbstractModel):
             "diag_emb": self.diag_emb.init_params(rng_key),
             'f_n_ode': ode_params,
             'f_dec': dec_params,
-            'f_update': update_params
+            'f_update': update_params,
+            # 'f_lambda': lambda_param
         }
 
     def state_size(self):
@@ -158,8 +196,9 @@ class ICENODE(AbstractModel):
         # r: Integrated dynamics penalty
         # n: Number of dynamics function calls
         s_l_r_n = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], tf[i],
-                            tf[i], diag[i], params['f_dec'])
+            i:
+            self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], tf[i],
+                         tf[i], diag[i], params['f_dec'])
             for i in tf
         }
 
@@ -340,7 +379,6 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn',
                                                  ['mlp', 'gru', 'res']),
-            'loss_half_life': trial.suggest_float('t0.5', 5e-1, 2e2),
             'ode_with_bias': False,
             'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
                                                 log=True),

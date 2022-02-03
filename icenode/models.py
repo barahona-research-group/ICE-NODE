@@ -211,10 +211,9 @@ class LossAugmentedDynamics(hk.Module):
                  *loss_args):
         h, _, _ = h_l_r
 
-        dLdt = self.loss_f(h, t, *loss_args)
-
         dhdt, _drdt = self.sol_recursive(h, t)
 
+        dLdt = self.loss_f(h, dhdt, t, *loss_args)
         return dhdt, dLdt, jnp.mean(_drdt**2)
 
 
@@ -412,27 +411,17 @@ class EmbeddingsDecoder(hk.Module):
         return jax.nn.softmax(dec_diag)
 
 
-class EmbeddingsDecoder_Logits(hk.Module):
+class EmbeddingsDecoder_Logits(EmbeddingsDecoder):
 
     def __init__(self,
                  n_layers: int,
                  embeddings_size: int,
                  diag_size: int,
                  name: Optional[str] = None):
-        super().__init__(name=name)
-
-        def build_layers(n_layers, output_size):
-            layers = [
-                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
-                for i in range(n_layers - 2)
-            ]
-            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
-            layers.append(hk.Linear(output_size))
-
-            return layers
-
-        self.__dec = hk.Sequential(build_layers(n_layers, diag_size),
-                                   name='dec')
+        super().__init__(n_layers=n_layers,
+                         embeddings_size=embeddings_size,
+                         diag_size=diag_size,
+                         name=name)
 
     def __call__(self, emb: jnp.ndarray):
         return self.__dec(emb)
