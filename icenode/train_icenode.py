@@ -109,25 +109,23 @@ class ICENODE(AbstractModel):
                   y: jnp.ndarray, f_dec_params: Any):
         _, e = self.split_state_emb(h)
         _, dedt = self.split_state_emb(dhdt)
-        _, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
+        y_hat, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
 
-        y_hat = self.f_dec(f_dec_params, e)
         dldy = (y - y_hat) / (y_hat*(1 - y_hat) + 1e-15)
         dldt = -jnp.mean(dldy * dydt)
         return dldt
 
-    # Instanteneous Cross-Entropy
-    def diag_loss2(self, h: jnp.ndarray, dhdt: jnp.ndarray,
-                  ti: float, tf: float,
-                  y: jnp.ndarray, f_dec_params: Any):
-        _, e = self.split_state_emb(h)
-        _, dedt = self.split_state_emb(dhdt)
-        _, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
+    # Decaying Cross-Entropy
+    # def diag_loss2(self, h: jnp.ndarray, dhdt: jnp.ndarray,
+    #               ti: float, tf: float,
+    #               y: jnp.ndarray, f_dec_params: Any):
+    #     _, e = self.split_state_emb(h)
+    #     _, dydt = jax.jvp(partial(self.f_dec, f_dec_params), (e,), (dedt,))
 
-        y_hat = self.f_dec(f_dec_params, e)
-        dldy = (y - y_hat) / (y_hat*(1 - y_hat) + 1e-15)
-        dldt = -jnp.mean(dldy * dydt)
-        return dldt
+    #     y_hat = self.f_dec(f_dec_params, e)
+    #     dldy = (y - y_hat) / (y_hat*(1 - y_hat) + 1e-15)
+    #     dldt = -jnp.mean(dldy * dydt)
+    #     return dldt
 
 
     def init_params(self, rng_key):
@@ -382,7 +380,7 @@ class ICENODE(AbstractModel):
             'ode_with_bias': False,
             'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
                                                 log=True),
-            'state_size': trial.suggest_int('s', 10, 100, 10),
+            'state_size': trial.suggest_int('s', 10, 50, 10),
             'tay_reg': 0  #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         return model_params

@@ -363,5 +363,5 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
-            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 30, 300, 30)
+            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 20, 240, 20)
         }
