@@ -340,7 +340,7 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn',
                                                  ['mlp', 'gru', 'res']),
-            'loss_half_life': trial.suggest_int('t0.5', 5e-1, 2e2),
+            'loss_half_life': trial.suggest_float('t0.5', 5e-1, 2e2),
             'ode_with_bias': False,
             'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
                                                 log=True),
