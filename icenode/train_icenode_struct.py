@@ -298,8 +298,8 @@ class ICENODE(AbstractModel):
 
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
-        l1_loss = l1_absolute(params)
-        l2_loss = l2_squared(params)
+        l1_loss = 0 # l1_absolute(params)
+        l2_loss = 0 #l2_squared(params)
         dyn_loss = res['dyn_loss']
         pred_alpha = loss_mixing['L_pred']
 
@@ -348,8 +348,8 @@ class ICENODE(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing'] = {
-            'L_pred': trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
-            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
+            'L_pred': 1, # trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
+            'L_dyn': 0,  # trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
 
@@ -364,12 +364,12 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn',
                                                  ['mlp', 'gru', 'res']),
-            'loss_half_life': trial.suggest_int('t0.5', 7, 7 * 12),
+            'loss_half_life': trial.suggest_int('t0.5', 1, 1e2),
             'ode_with_bias': False,
             'ode_init_var': 1e-2,
             'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
-            'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
+            'tay_reg': 0 #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         return model_params
 
