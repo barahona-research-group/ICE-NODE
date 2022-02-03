@@ -101,11 +101,11 @@ class ICENODE(AbstractModel):
         diag = jnp.zeros(self.dimensions['diag_out'])
         state_emb = self.join_state_emb(state, emb)
 
-        dec_params = self.initializers['f_dec'](emb)
+        dec_params = self.initializers['f_dec'](rng_key, emb)
         loss_args = (0.1, diag, dec_params)
-        ode_params = self.initializers['f_n_ode'](True, state_emb, 0.1,
-                                                  *loss_args)
-        update_params = self.initializers['f_update'](state, emb, emb)
+        ode_params = self.initializers['f_n_ode'](rng_key, True, state_emb,
+                                                  0.1, *loss_args)
+        update_params = self.initializers['f_update'](rng_key, state, emb, emb)
 
         return {
             "diag_emb": self.diag_emb.init_params(rng_key),
@@ -159,7 +159,7 @@ class ICENODE(AbstractModel):
         # n: Number of dynamics function calls
         s_l_r_n = {
             i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], tf[i],
-                            tf[i], diag, params['f_dec'])
+                            tf[i], diag[i], params['f_dec'])
             for i in tf
         }
 
@@ -178,12 +178,11 @@ class ICENODE(AbstractModel):
                   emb: jnp.ndarray) -> jnp.ndarray:
         new_state = {}
         for i in emb:
-            emb_nominal = emb[i]
             state, emb_pred = self.split_state_emb(state_e[i])
             # state.shape: (state_size)
             # emb_pred.shape: (embeddings_size)
-            state = self.f_update(params, state, emb_pred, emb_nominal)
-            new_state[i] = self.join_state_emb(state, emb_nominal)
+            state = self.f_update(params['f_update'], state, emb_pred, emb[i])
+            new_state[i] = self.join_state_emb(state, emb[i])
         return new_state
 
     def __call__(self,
@@ -233,12 +232,13 @@ class ICENODE(AbstractModel):
             }
 
             # Integrate until next discharge
-            state_dj, l, r, n, n_sum, dec_diag = nn_ode(state_di, d2d_time)
+            state_dj, l, r, nfe, nfe_sum, dec_diag = nn_ode(
+                state_di, d2d_time, diag)
 
             for subject_id in state_dj.keys():
                 diag_detectability[subject_id][n] = {
                     'admission_id': adm_id[subject_id],
-                    'nfe': n[subject_id],
+                    'nfe': nfe[subject_id],
                     'time': adm_time[subject_id],
                     'diag_true': diag[subject_id],
                     'pre_logits': dec_diag[subject_id]
@@ -247,7 +247,7 @@ class ICENODE(AbstractModel):
             odeint_weeks += sum(d2d_time.values()) / 7
             prediction_losses.append(l)
             dyn_losses.append(r)
-            total_nfe += n_sum
+            total_nfe += nfe_sum
 
             # Update state at discharge
             state_dj = nn_update(state_dj, emb)

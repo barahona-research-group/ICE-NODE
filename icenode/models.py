@@ -244,13 +244,13 @@ class NeuralODE(hk.Module):
         t = jnp.array([0.0, tf])
 
         if hk.running_init():
-            h, l, r = self.ode_dyn((h, jnp.zeros(1)), t[0], *loss_args)
-            return h, jnp.zeros(1), jnp.zeros(1), 0
+            h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], *loss_args)
+            return h, 0.0, 0.0, 0
         if count_nfe:
-            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1), jnp.zeros(1)), t,
+            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, 0.0, 0.0), t,
                                         *loss_args)
         else:
-            h, l, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t, *loss_args)
+            h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, *loss_args)
             nfe = 0
         return h[-1, :], l[-1], r[-1], nfe
 
