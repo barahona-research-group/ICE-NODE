@@ -79,7 +79,7 @@ class ICENODE(ICENODE_TL):
                   tf: float, y: jnp.ndarray, f_dec_params: Any):
         _, e = self.split_state_emb(h)
         y_hat = self.f_dec(f_dec_params, e)
-        dldy = softmax_logits_bce(y, y_hat)
+        dldy = softmax_logits_bce(y, y_hat) * 1e-6
         return dldy * jnp.power(0.5, (ti - tf) / self.loss_half_life)
 
     def _f_n_ode(self, params, count_nfe, state_e, tf, diag):
