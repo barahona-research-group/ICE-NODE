@@ -1,6 +1,7 @@
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
 
+from absl import logging
 import jax
 import jax.numpy as jnp
 
@@ -13,7 +14,6 @@ from .train_icenode_tl import ICENODE as ICENODE_TL
 
 
 class ICENODE(ICENODE_TL):
-
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, loss_half_life: int,
@@ -73,7 +73,7 @@ class ICENODE(ICENODE_TL):
         loss_vals = {}
         for i in diag:
             t_seq = jnp.linspace(0.0, t[i], self.trajectory_samples + 1)[1:]
-            t_diff = self.lambd * (t_seq[-1] - t_seq)
+            t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - t[i]))
             loss_seq = [
                 softmax_logits_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
@@ -178,7 +178,7 @@ class ICENODE(ICENODE_TL):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'loss_half_life': trial.suggest_int('lt0.5', 1, 2e2, log=True),
+            'loss_half_life': trial.suggest_int('lt0.5', 7, 2e2, log=True),
             'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),

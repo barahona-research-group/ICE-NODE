@@ -16,7 +16,6 @@ from .abstract_model import AbstractModel
 
 
 class ICENODE(ICENODE_TL):
-
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, loss_half_life: int,
@@ -82,7 +81,7 @@ class ICENODE(ICENODE_TL):
         y_hat = self.f_dec(f_dec_params, e)
         dldy = softmax_logits_bce(y, y_hat)
         lambd = jnp.log(2) / self.loss_half_life
-        return dldy * jnp.exp(lambd * (ti - tf))
+        return dldy * jax.lax.stop_gradient(jnp.exp(-lambd * jnp.abs(ti - tf)))
 
     def _f_n_ode(self, params, count_nfe, state_e, delta_t, diag):
         # s: Integrated state
@@ -211,7 +210,7 @@ class ICENODE(ICENODE_TL):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'loss_half_life': trial.suggest_int('lt0.5', 1, 1e2, log=True),
+            'loss_half_life': trial.suggest_int('lt0.5', 7, 1e2, log=True),
             'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
