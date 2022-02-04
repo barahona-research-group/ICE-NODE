@@ -26,7 +26,7 @@ class ICENODE(ICENODE_TL):
                          state_size=state_size)
 
         self.trajectory_samples = 3
-        self.loss_half_life = loss_half_life
+        self.lambd = jnp.log(2) / loss_half_life
 
     def split_state_emb_seq(self, seq):
         # seq.shape: (time_samples, state_size + embeddings_size)
@@ -38,12 +38,12 @@ class ICENODE(ICENODE_TL):
                             count_nfe, state_e[i], t[i])
             for i in t
         }
-        nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
+        nfe = {i: n for i, (_, _, n) in h_r_nfe.items()}
         nfe_sum = sum(nfe.values())
-        drdt = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
+        r = jnp.sum(sum(r for (_, r, _) in h_r_nfe.values()))
 
-        state_seq = {i: h[1:, :] for i, (h, r, n) in h_r_nfe.items()}
-        return state_seq, (drdt, nfe, nfe_sum)
+        state_seq = {i: h[1:, :] for i, (h, _, _) in h_r_nfe.items()}
+        return state_seq, (r, nfe, nfe_sum)
 
     def _f_update(self, params: Any, state_seq: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
@@ -53,7 +53,7 @@ class ICENODE(ICENODE_TL):
             state, emb_pred = self.split_state_emb_seq(state_seq[i])
             # state.shape: (timesamples, state_size)
             # emb_pred.shape: (timesamples, embeddings_size)
-            state = self.f_update(params['f_dec'], state[-1], emb_pred[-1],
+            state = self.f_update(params['f_update'], state[-1], emb_pred[-1],
                                   emb_nominal)
             new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
@@ -73,12 +73,12 @@ class ICENODE(ICENODE_TL):
         loss_vals = {}
         for i in diag:
             t_seq = jnp.linspace(0.0, t[i], self.trajectory_samples + 1)[1:]
-            t_diff = (t_seq[-1] - t_seq) / self.loss_half_life
+            t_diff = self.lambd * (t_seq[-1] - t_seq)
             loss_seq = [
                 softmax_logits_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
             ]
-            loss_vals[i] = sum(l * jnp.power(0.5, dt)
+            loss_vals[i] = sum(l * jnp.exp(dt)
                                for (l, dt) in zip(loss_seq, t_diff))
 
         return sum(loss_vals.values()) / len(loss_vals)

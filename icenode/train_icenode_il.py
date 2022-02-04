@@ -12,6 +12,7 @@ from .gram import AbstractEmbeddingsLayer
 from .models import NeuralODE_IL, GRUDynamics, ResDynamics, MLPDynamics
 from .train_icenode_tl import ICENODE as ICENODE_TL
 from .utils import wrap_module
+from .abstract_model import AbstractModel
 
 
 class ICENODE(ICENODE_TL):
@@ -79,8 +80,9 @@ class ICENODE(ICENODE_TL):
                   tf: float, y: jnp.ndarray, f_dec_params: Any):
         _, e = self.split_state_emb(h)
         y_hat = self.f_dec(f_dec_params, e)
-        dldy = softmax_logits_bce(y, y_hat) * 1e-6
-        return dldy * jnp.power(0.5, (ti - tf) / self.loss_half_life)
+        dldy = softmax_logits_bce(y, y_hat)
+        lambd = jnp.log(2) / self.loss_half_life
+        return dldy * jnp.exp(lambd * (ti - tf))
 
     def _f_n_ode(self, params, count_nfe, state_e, tf, diag):
         # s: Integrated state
@@ -192,11 +194,24 @@ class ICENODE(ICENODE_TL):
         return ret
 
     @staticmethod
+    def _sample_ode_training_config(trial: optuna.Trial, epochs):
+        config = AbstractModel._sample_training_config(trial, epochs)
+        config['loss_mixing']['L_dyn'] = trial.suggest_float('L_dyn',
+                                                             1e-3,
+                                                             1e4,
+                                                             log=True)
+        return config
+
+    @staticmethod
+    def sample_training_config(trial: optuna.Trial):
+        return ICENODE._sample_ode_training_config(trial, epochs=20)
+
+    @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'loss_half_life': trial.suggest_int('lt0.5', 1, 2e2, log=True),
+            'loss_half_life': trial.suggest_int('lt0.5', 1, 1e2, log=True),
             'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
