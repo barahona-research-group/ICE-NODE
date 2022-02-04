@@ -25,7 +25,7 @@ class ICENODE(ICENODE_TL):
                          ode_init_var=ode_init_var,
                          state_size=state_size)
 
-        self.trajectory_samples = 10
+        self.trajectory_samples = 3
         self.loss_half_life = loss_half_life
 
     def split_state_emb_seq(self, seq):
