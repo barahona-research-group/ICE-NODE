@@ -364,10 +364,10 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn',
                                                  ['mlp', 'gru', 'res']),
-            'loss_half_life': trial.suggest_int('t0.5', 1, 1e2),
+            'loss_half_life': trial.suggest_float('t0.5', 1, 2e2),
             'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-9, 1e-2, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
+            'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2, log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2),
             'state_size': trial.suggest_int('s', 10, 100, 10),
             'tay_reg': 0 #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
