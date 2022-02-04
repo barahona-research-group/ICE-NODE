@@ -3,13 +3,15 @@ from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
 
 import jax
 import jax.numpy as jnp
-
+import haiku as hk
 import optuna
 
 from .metrics import (softmax_logits_bce)
 from .jax_interface import (DiagnosisJAXInterface)
 from .gram import AbstractEmbeddingsLayer
+from .models import NeuralODE_IL, GRUDynamics, ResDynamics, MLPDynamics
 from .train_icenode_tl import ICENODE as ICENODE_TL
+from .utils import wrap_module
 
 
 class ICENODE(ICENODE_TL):
@@ -25,63 +27,82 @@ class ICENODE(ICENODE_TL):
                          ode_init_var=ode_init_var,
                          state_size=state_size)
 
-        self.trajectory_samples = 3
+        if ode_dyn == 'gru':
+            ode_dyn_cls = GRUDynamics
+        elif ode_dyn == 'res':
+            ode_dyn_cls = ResDynamics
+        elif ode_dyn == 'mlp':
+            ode_dyn_cls = MLPDynamics
+        else:
+            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
+
+        state_emb_size = self.dimensions['diag_emb'] + state_size
+        f_n_ode_init, f_n_ode = hk.without_apply_rng(
+            hk.transform(
+                wrap_module(NeuralODE_IL,
+                            ode_dyn_cls=ode_dyn_cls,
+                            state_size=state_emb_size,
+                            depth=3,
+                            loss_f=self.diag_loss,
+                            with_bias=ode_with_bias,
+                            init_var=ode_init_var,
+                            name='f_n_ode_il',
+                            tay_reg=3)))
+        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
         self.loss_half_life = loss_half_life
 
-    def split_state_emb_seq(self, seq):
-        # seq.shape: (time_samples, state_size + embeddings_size)
-        return jnp.split(seq, (self.dimensions['state'], ), axis=1)
+        self.initializers['f_n_ode'] = f_n_ode_init
 
-    def _f_n_ode(self, params, count_nfe, state_e, t):
-        h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], self.trajectory_samples + 1,
-                            count_nfe, state_e[i], t[i])
-            for i in t
-        }
-        nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
-        nfe_sum = sum(nfe.values())
-        drdt = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
+    def init_params(self, rng_key):
+        emb = jnp.zeros(self.dimensions['diag_emb'])
+        state = jnp.zeros(self.dimensions['state'])
+        diag = jnp.zeros(self.dimensions['diag_out'])
+        state_emb = self.join_state_emb(state, emb)
 
-        state_seq = {i: h[1:, :] for i, (h, r, n) in h_r_nfe.items()}
-        return state_seq, (drdt, nfe, nfe_sum)
+        dec_params = self.initializers['f_dec'](rng_key, emb)
+        # lambda_param = self.initializers['f_lambda'](rng_key)
 
-    def _f_update(self, params: Any, state_seq: Dict[int, jnp.ndarray],
-                  emb: jnp.ndarray) -> jnp.ndarray:
-        new_state = {}
-        for i in emb:
-            emb_nominal = emb[i]
-            state, emb_pred = self.split_state_emb_seq(state_seq[i])
-            # state.shape: (timesamples, state_size)
-            # emb_pred.shape: (timesamples, embeddings_size)
-            state = self.f_update(params['f_dec'], state[-1], emb_pred[-1],
-                                  emb_nominal)
-            new_state[i] = self.join_state_emb(state, emb_nominal)
-        return new_state
+        loss_args = (0.1, diag, dec_params)
+        ode_params = self.initializers['f_n_ode'](rng_key, True, state_emb,
+                                                  0.1, *loss_args)
+        update_params = self.initializers['f_update'](rng_key, state, emb, emb)
 
-    def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
-        emb = {i: self.split_state_emb_seq(state_e[i])[1] for i in state_e}
-        # each (emb_i in emb).shape: (timesamples, emebddings_size)
-
-        # each (out_i in output).shape: (timesamples, diag_size)
         return {
-            i: jax.vmap(partial(self.f_dec, params['f_dec']))(emb[i])
-            for i in emb
+            "diag_emb": self.diag_emb.init_params(rng_key),
+            'f_n_ode': ode_params,
+            'f_dec': dec_params,
+            'f_update': update_params
         }
 
-    def _diag_loss(self, diag: Dict[int, jnp.ndarray],
-                   dec_diag_seq: Dict[int, jnp.ndarray], t: Dict[int, float]):
-        loss_vals = {}
-        for i in diag:
-            t_seq = jnp.linspace(0.0, t[i], self.trajectory_samples + 1)[1:]
-            t_diff = (t_seq[-1] - t_seq) / self.loss_half_life
-            loss_seq = [
-                softmax_logits_bce(diag[i], dec_diag_seq[i][j])
-                for j in range(self.trajectory_samples)
-            ]
-            loss_vals[i] = sum(l * jnp.power(0.5, dt)
-                               for (l, dt) in zip(loss_seq, t_diff))
+    @partial(jax.jit, static_argnums=(0, ))
+    def diag_loss(self, h: jnp.ndarray, dhdt: jnp.ndarray, ti: float,
+                  tf: float, y: jnp.ndarray, f_dec_params: Any):
+        _, e = self.split_state_emb(h)
+        y_hat = self.f_dec(f_dec_params, e)
+        dldy = softmax_logits_bce(y, y_hat)
+        return dldy * jnp.power(0.5, (ti - tf) / self.loss_half_life)
 
-        return sum(loss_vals.values()) / len(loss_vals)
+    def _f_n_ode(self, params, count_nfe, state_e, tf, diag):
+        # s: Integrated state
+        # l: Integrated loss
+        # r: Integrated dynamics penalty
+        # n: Number of dynamics function calls
+        s_l_r_n = {
+            i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], tf[i],
+                            tf[i], diag[i], params['f_dec'])
+            for i in tf
+        }
+
+        state_e = {i: s for i, (s, _, _, _) in s_l_r_n.items()}
+        l = jnp.sum(sum(l for (_, l, _, _) in s_l_r_n.values()))
+        r = jnp.sum(sum(r for (_, _, r, _) in s_l_r_n.values()))
+        n = {i: n for i, (_, _, _, n) in s_l_r_n.items()}
+        dec_diag = {
+            i: self.f_dec(params['f_dec'],
+                          self.split_state_emb(se)[1])
+            for i, se in state_e.items()
+        }
+        return state_e, l, r, n, sum(n.values()), dec_diag
 
     def __call__(self,
                  params: Any,
@@ -90,8 +111,6 @@ class ICENODE(ICENODE_TL):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
-        nn_decode = partial(self._f_dec, params)
-        diag_loss = self._diag_loss
 
         adm0 = nth_adm(0)
         subject_state = {
@@ -132,26 +151,25 @@ class ICENODE(ICENODE_TL):
             }
 
             # Integrate until next discharge
-            state_seq, (r, nfe, nfe_sum) = nn_ode(state_di, d2d_time)
-            dec_diag_seq = nn_decode(state_seq)
+            state_dj, l, r, nfe, nfe_sum, dec_diag = nn_ode(
+                state_di, d2d_time, diag)
 
-            for subject_id in state_seq.keys():
+            for subject_id in state_dj.keys():
                 diag_detectability[subject_id][n] = {
                     'admission_id': adm_id[subject_id],
                     'nfe': nfe[subject_id],
                     'time': adm_time[subject_id],
-                    'los': adm_los[subject_id],
                     'diag_true': diag[subject_id],
-                    'pre_logits': dec_diag_seq[subject_id][-1, :]
+                    'pre_logits': dec_diag[subject_id]
                 }
 
             odeint_weeks += sum(d2d_time.values()) / 7
-            prediction_losses.append(diag_loss(diag, dec_diag_seq, d2d_time))
+            prediction_losses.append(l)
             dyn_losses.append(r)
             total_nfe += nfe_sum
 
             # Update state at discharge
-            state_dj = nn_update(state_seq, emb)
+            state_dj = nn_update(state_dj, emb)
 
             # Update the states:
             for subject_id, new_state in state_dj.items():

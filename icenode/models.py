@@ -76,13 +76,12 @@ class MLPDynamics(hk.Module):
                       name=f'lin_{i}') for i in range(depth)
         ]
 
-    def __call__(self, h, t, c):
-        out = jnp.hstack((c, h, t))
+    def __call__(self, h):
+        out = h
 
         for lin in self.lin[:-1]:
             out = lin(out)
             out = leaky_relu(out, negative_slope=2e-1)
-            out = jnp.hstack((c, out, t))
         out = self.lin[-1](out)
         return jnp.tanh(out)
 
@@ -108,15 +107,13 @@ class ResDynamics(hk.Module):
                       name=f'lin_{i}') for i in range(depth)
         ]
 
-    def __call__(self, h, t, c):
-        out = jnp.hstack((c, h, t))
-
+    def __call__(self, h):
+        out = h
         res = jnp.zeros_like(h)
         for lin in self.lin[:-1]:
             out = lin(out)
             out = leaky_relu(out, negative_slope=2e-1) + res
             res = out
-            out = jnp.hstack((c, out, t))
         out = self.lin[-1](out)
         return jnp.tanh(out)
 
@@ -134,7 +131,7 @@ class GRUDynamics(hk.Module):
                  name: Optional[str] = None,
                  **ignored_kwargs):
         super().__init__(name=name)
-        self.__hc_r = hk.Sequential([
+        self.h_r = hk.Sequential([
             hk.Linear(state_size,
                       with_bias=with_bias,
                       w_init=w_init,
@@ -142,7 +139,7 @@ class GRUDynamics(hk.Module):
                       name='hc_r'), sigmoid
         ])
 
-        self.__hc_z = hk.Sequential([
+        self.h_z = hk.Sequential([
             hk.Linear(state_size,
                       with_bias=with_bias,
                       w_init=w_init,
@@ -150,7 +147,7 @@ class GRUDynamics(hk.Module):
                       name='hc_z'), sigmoid
         ])
 
-        self.__rhc_g = hk.Sequential([
+        self.rh_g = hk.Sequential([
             hk.Linear(state_size,
                       with_bias=with_bias,
                       w_init=w_init,
@@ -158,8 +155,7 @@ class GRUDynamics(hk.Module):
                       name='rhc_g'), jnp.tanh
         ])
 
-    def __call__(self, h: jnp.ndarray, t: float,
-                 c: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, h: jnp.ndarray) -> jnp.ndarray:
         """
         Returns a change due to one step of using GRU-ODE for all h.
         Args:
@@ -168,13 +164,9 @@ class GRUDynamics(hk.Module):
         Returns:
             dh/dt
         """
-        htc = jnp.hstack((h, c))
-
-        r = self.__hc_r(htc)
-        z = self.__hc_z(htc)
-        rhtc = jnp.hstack([r * h, c])
-        g = self.__rhc_g(rhtc)
-
+        r = self.h_r(h)
+        z = self.h_z(h)
+        g = self.rh_g(r * h)
         return (1 - z) * (g - h)
 
 
@@ -185,14 +177,14 @@ class TaylorAugmented(hk.Module):
         self.order = order or 0
         self.f = dynamics_cls(**dynamics_kwargs)
 
-    def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
+    def sol_recursive(self, h: jnp.ndarray, t: float):
         """
         https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
         By Jacob Kelly
         Recursively compute higher order derivatives of dynamics of ODE.
         """
         if self.order < 2:
-            return self.f(h, t, c), jnp.zeros_like(h)
+            return self.f(h), jnp.zeros_like(h)
 
         h_shape = h.shape
 
@@ -201,7 +193,7 @@ class TaylorAugmented(hk.Module):
             Closure to expand z.
             """
             _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
-            dh = jnp.ravel(self.f(_h, _t, c))
+            dh = jnp.ravel(self.f(_h))
             dt = jnp.array([1.])
             dh_t = jnp.concatenate((dh, dt))
             return dh_t
@@ -215,13 +207,12 @@ class TaylorAugmented(hk.Module):
         return (jnp.reshape(y0[:-1],
                             h_shape), jnp.reshape(yns[-2][:-1], h_shape))
 
-    def __call__(self, h_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
-                 c: jnp.ndarray):
+    def __call__(self, h_r: Tuple[jnp.ndarray, jnp.ndarray], t: float):
         h, _ = h_r
 
-        dydt, _drdt = self.sol_recursive(h, t, c)
+        dydt, drdt = self.sol_recursive(h, t)
 
-        return dydt, jnp.mean(_drdt**2)
+        return dydt, jnp.mean(drdt**2)
 
 
 class NeuralODE(hk.Module):
@@ -246,18 +237,104 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, n_samples, count_nfe, h, t, c):
+    def __call__(self, n_samples, count_nfe, h, t):
         t = jnp.linspace(0.0, t / self.timescale, n_samples)
         if hk.running_init():
-            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0], c)
+            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0])
             h = jnp.broadcast_to(h, (len(t), len(h)))
             return h, jnp.zeros(1), 0
         if count_nfe:
-            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t, c)
+            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t)
         else:
-            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t, c)
+            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t)
             nfe = 0
         return h, r[-1], nfe
+
+
+class TaylorAndLossAugmentedDynamics(hk.Module):
+
+    def __init__(self, loss_f: Callable[[jnp.ndarray], float], order: int,
+                 dynamics_cls, **dynamics_kwargs):
+        super().__init__(name=f"{dynamics_kwargs.get('name')}_augment")
+        self.order = order or 0
+        self.f = dynamics_cls(**dynamics_kwargs)
+        self.loss_f = loss_f
+
+    def sol_recursive(self, h: jnp.ndarray, t: float):
+        """
+        https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
+        By Jacob Kelly
+        Recursively compute higher order derivatives of dynamics of ODE.
+        """
+        if self.order < 2:
+            return self.f(h, t), jnp.zeros_like(h)
+
+        h_shape = h.shape
+
+        def g(h_t):
+            """
+            Closure to expand z.
+            """
+            _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
+            dh = jnp.ravel(self.f(_h))
+            dt = jnp.array([1.])
+            dh_t = jnp.concatenate((dh, dt))
+            return dh_t
+
+        h_t = jnp.concatenate((jnp.ravel(h), jnp.array([t])))
+
+        (h0, [*hns]) = jet(g, (h_t, ), ((jnp.ones_like(h_t), ), ))
+        for _ in range(self.order - 1):
+            (h0, [*hns]) = jet(g, (h_t, ), ((h0, *hns), ))
+
+        return (jnp.reshape(h0[:-1],
+                            h_shape), jnp.reshape(hns[-2][:-1], h_shape))
+
+    def __call__(self, h_l_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
+                 *loss_args):
+        h, _, _ = h_l_r
+
+        dhdt, _drdt = self.sol_recursive(h, t)
+
+        dLdt = self.loss_f(h, dhdt, t, *loss_args)
+        return dhdt, dLdt, jnp.mean(_drdt**2)
+
+
+class NeuralODE_IL(hk.Module):
+
+    def __init__(self,
+                 ode_dyn_cls: Any,
+                 state_size: int,
+                 depth: int,
+                 loss_f: Callable[[jnp.ndarray], float],
+                 tay_reg: int,
+                 with_bias: bool,
+                 init_var: float,
+                 name: Optional[str] = None):
+        super().__init__(name=name)
+        init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
+        init_kwargs = {'with_bias': with_bias, 'b_init': None, 'w_init': init}
+        self.ode_dyn = TaylorAndLossAugmentedDynamics(loss_f=loss_f,
+                                                      order=tay_reg,
+                                                      dynamics_cls=ode_dyn_cls,
+                                                      state_size=state_size,
+                                                      depth=depth,
+                                                      name='ode_dyn',
+                                                      **init_kwargs)
+
+    def __call__(self, count_nfe: bool, h: jnp.ndarray, tf, *loss_args):
+        t = jnp.array([0.0, tf])
+
+        if hk.running_init():
+            h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], *loss_args)
+            return h, 0.0, 0.0, 0
+        if count_nfe:
+            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, 0.0, 0.0), t,
+                                        *loss_args)
+        else:
+            h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, *loss_args)
+            nfe = 0
+        return h[-1, :], l[-1], r[-1], nfe
 
 
 class NumericObsModel(hk.Module):

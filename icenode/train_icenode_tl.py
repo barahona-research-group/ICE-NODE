@@ -51,9 +51,7 @@ class ICENODE(AbstractModel):
                             init_var=ode_init_var,
                             name='f_n_ode',
                             tay_reg=3)))
-        f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
-        self.f_n_ode = (
-            lambda params, *args: f_n_ode(params['f_n_ode'], *args))
+        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
@@ -61,9 +59,7 @@ class ICENODE(AbstractModel):
                             state_size=state_size,
                             embeddings_size=self.dimensions['diag_emb'],
                             name='f_update')))
-        f_update = jax.jit(f_update)
-        self.f_update = (
-            lambda params, *args: f_update(params['f_update'], *args))
+        self.f_update = jax.jit(f_update)
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
@@ -72,8 +68,7 @@ class ICENODE(AbstractModel):
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
                             name='f_dec')))
-        f_dec = jax.jit(f_dec)
-        self.f_dec = (lambda params, *args: f_dec(params['f_dec'], *args))
+        self.f_dec = jax.jit(f_dec)
 
         self.initializers = {
             'f_n_ode': f_n_ode_init,
@@ -117,9 +112,8 @@ class ICENODE(AbstractModel):
         emb = jnp.zeros(self.dimensions['diag_emb'])
         state = jnp.zeros(self.dimensions['state'])
         state_emb = jnp.hstack((state, emb))
-        ode_ctrl = jnp.array([])
         return {
-            "f_n_ode": [2, True, state_emb, 0.1, ode_ctrl],
+            "f_n_ode": [2, True, state_emb, 0.1],
             "f_update": [state, emb, emb],
             "f_dec": [emb],
         }
@@ -153,9 +147,8 @@ class ICENODE(AbstractModel):
         }
 
     def _f_n_ode(self, params, count_nfe, state_e, t):
-        c = jnp.array([])
         h_r_nfe = {
-            i: self.f_n_ode(params, 2, count_nfe, state_e[i], t[i], c)
+            i: self.f_n_ode(params['f_n_ode'], 2, count_nfe, state_e[i], t[i])
             for i in t
         }
         nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
@@ -171,13 +164,13 @@ class ICENODE(AbstractModel):
         for i in emb:
             emb_nominal = emb[i]
             state, emb_pred = self.split_state_emb(state_e[i])
-            state = self.f_update(params, state, emb_pred, emb_nominal)
+            state = self.f_update(params['f_update'], state, emb_pred, emb_nominal)
             new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
 
     def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
         emb = {i: self.split_state_emb(state_e[i])[1] for i in state_e}
-        return {i: self.f_dec(params, emb[i]) for i in emb}
+        return {i: self.f_dec(params['f_dec'], emb[i]) for i in emb}
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag: Dict[int, jnp.ndarray]):
