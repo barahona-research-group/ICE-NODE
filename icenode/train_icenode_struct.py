@@ -23,8 +23,7 @@ class ICENODE(AbstractModel):
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float,
                  ode_timescale: float, tay_reg: Optional[int],
-                 loss_half_life: int,
-                 state_size: int):
+                 loss_half_life: int, state_size: int):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
@@ -64,7 +63,7 @@ class ICENODE(AbstractModel):
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
                 wrap_module(StateUpdate,
-                            state_size=state_size,
+                            state_size=state_emb_size,
                             embeddings_size=self.dimensions['diag_emb'],
                             name='f_update')))
         f_update = jax.jit(f_update)
@@ -94,7 +93,7 @@ class ICENODE(AbstractModel):
         return jnp.hstack((state, emb))
 
     def split_state_emb_seq(self, seq):
-        # seq.shape: (time_samples, state_size + embeddings_size)
+        # seq.shape: (state_size + embeddings_size)
         return jnp.split(seq, (self.dimensions['state'], ), axis=1)
 
     def init_params(self, rng_key):
@@ -127,7 +126,7 @@ class ICENODE(AbstractModel):
         ode_ctrl = jnp.array([])
         return {
             "f_n_ode": [2, True, state_emb, 0.1, ode_ctrl],
-            "f_update": [state, emb, emb],
+            "f_update": [state_emb, emb, emb],
             "f_dec": [emb],
         }
 
@@ -175,15 +174,16 @@ class ICENODE(AbstractModel):
 
     def _f_update(self, params: Any, state_seq: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
-        new_state = {}
+        new_state_emb = {}
         for i in emb:
             emb_nominal = emb[i]
+            state_emb = state_seq[i][-1]
             state, emb_pred = self.split_state_emb_seq(state_seq[i])
             # state.shape: (timesamples, state_size)
             # emb_pred.shape: (timesamples, embeddings_size)
-            state = self.f_update(params, state[-1], emb_pred[-1], emb_nominal)
-            new_state[i] = self.join_state_emb(state, emb_nominal)
-        return new_state
+            new_state_emb[i] = self.f_update(params, state_emb, emb_pred[-1],
+                                             emb_nominal)
+        return new_state_emb
 
     def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
         emb = {i: self.split_state_emb_seq(state_e[i])[1] for i in state_e}
@@ -298,8 +298,8 @@ class ICENODE(AbstractModel):
 
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
-        l1_loss = 0 # l1_absolute(params)
-        l2_loss = 0 #l2_squared(params)
+        l1_loss = 0  # l1_absolute(params)
+        l2_loss = 0  #l2_squared(params)
         dyn_loss = res['dyn_loss']
         pred_alpha = loss_mixing['L_pred']
 
@@ -348,7 +348,7 @@ class ICENODE(AbstractModel):
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing'] = {
-            'L_pred': 1, # trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
+            'L_pred': 1,  # trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
             'L_dyn': 0,  # trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
             **config['loss_mixing']
         }
@@ -366,10 +366,11 @@ class ICENODE(AbstractModel):
                                                  ['mlp', 'gru', 'res']),
             'loss_half_life': trial.suggest_int('t0.5', 1, 1e2),
             'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-9, 1e-2, log=True),
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
+            'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
+                                                log=True),
+            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2),
             'state_size': trial.suggest_int('s', 10, 100, 10),
-            'tay_reg': 0 #trial.suggest_categorical('tay', [0, 2, 3, 4]),
+            'tay_reg': 0  #trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
         return model_params
 

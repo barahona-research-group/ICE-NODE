@@ -332,7 +332,6 @@ class StateUpdate(hk.Module):
         _, updated_state = self.__gru(gru_input, state)
         return updated_state
 
-
 class StateInitializer(hk.Module):
 
     def __init__(self,
