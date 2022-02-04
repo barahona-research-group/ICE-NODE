@@ -94,7 +94,7 @@ class ICENODE(ICENODE_TL):
         subject_state = {
             i: {
                 'state_e': self.join_state_emb(None, adm0['diag_emb'][i]),
-                'time': adm0['los'][i]
+                'time': adm0['time'][i] + adm0['los'][i]
             }
             for i in adm0['admission_id']
         }
@@ -137,6 +137,7 @@ class ICENODE(ICENODE_TL):
                     'admission_id': adm_id[subject_id],
                     'nfe': nfe[subject_id],
                     'time': adm_time[subject_id],
+                    'los': adm_los[subject_id],
                     'diag_true': diag[subject_id],
                     'pre_logits': dec_diag_seq[subject_id][-1, :]
                 }

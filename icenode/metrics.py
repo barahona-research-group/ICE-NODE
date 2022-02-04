@@ -212,38 +212,37 @@ def admissions_auc_scores(detectability, label_prefix):
     admission_ids = []
     # Admission order mostly
     admission_indexes = []
-    days_ahead = []
+    # Time as days since first discharge
+    time = []
+    los = []
     n_codes = []
     adm_auc = []
     nfe = []
     intervals = []
 
     for subject_id, admissions in detectability.items():
-        for admission_index, info in admissions.items():
+        for i, admission_index in enumerate(sorted(admissions.keys())):
+            info = admissions[admission_index]
             # If ground truth has no clinical codes, skip.
             if set(onp.unique(info['diag_true'])) != {0, 1}:
                 continue
 
-            if 'days_ahead' in info:
-                days_ahead.append(info['days_ahead'])
+            if 'time' in info:
+                time.append(info['time'])
 
-                # Record intervals between the current admission and the
-                # previous one.
-                if admission_index == 1:
-                    intervals.append(info['days_ahead'])
+                # Record intervals between two discharges
+                if i == 0:
+                    intervals.append(0)
                 else:
-                    # find most recent admission with predictions made
-                    i = admission_index - 1
-                    while i not in admissions and i > 1:
-                        i = i - 1
-
-                    intervals.append(info['days_ahead'] -
-                                     admissions[i]['days_ahead'])
+                    intervals.append(info['time'] - time[-1])
 
             if 'nfe' in info:
                 nfe.append(info['nfe'])
 
-            admission_indexes.append(admission_index)
+            if 'los' in info:
+                los.append(info['los'])
+
+            admission_indexes.append(i)
             admission_ids.append(info['admission_id'])
             subject_ids.append(subject_id)
 
@@ -260,9 +259,10 @@ def admissions_auc_scores(detectability, label_prefix):
         'AUC': adm_auc,
         'N_CODES': n_codes
     }
-    if len(days_ahead) > 0 and len(intervals) > 0:
-        data['DAYS_AHEAD'] = days_ahead
+    if len(time) > 0 and len(intervals) > 0 and len(los) > 0:
+        data['TIME'] = time
         data['INTERVALS'] = intervals
+        data['LOS'] = los
 
     if len(nfe) > 0:
         data['NFE'] = nfe
