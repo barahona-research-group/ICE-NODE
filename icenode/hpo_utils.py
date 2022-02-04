@@ -15,7 +15,7 @@ from jax.experimental import optimizers
 
 import optuna
 from optuna.storages import RDBStorage
-from optuna.pruners import PercentilePruner, PatientPruner, NopPruner
+from optuna.pruners import HyperbandPruner, PatientPruner
 from optuna.samplers import TPESampler
 from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
@@ -299,7 +299,8 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 storage=storage,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
-                                pruner=NopPruner())
+                                pruner=PatientPruner(HyperbandPruner(),
+                                                     patience=5))
 
     study.set_user_attr('metric', 'MICRO-AUC')
     study.set_user_attr('data', data_tag_fullname[data_tag])
