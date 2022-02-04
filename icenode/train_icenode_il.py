@@ -84,19 +84,19 @@ class ICENODE(ICENODE_TL):
         lambd = jnp.log(2) / self.loss_half_life
         return dldy * jnp.exp(lambd * (ti - tf))
 
-    def _f_n_ode(self, params, count_nfe, state_e, tf, diag):
+    def _f_n_ode(self, params, count_nfe, state_e, delta_t, diag):
         # s: Integrated state
         # l: Integrated loss
         # r: Integrated dynamics penalty
         # n: Number of dynamics function calls
         s_l_r_n = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], tf[i],
-                            tf[i], diag[i], params['f_dec'])
-            for i in tf
+            i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i],
+                            delta_t[i], delta_t[i], diag[i], params['f_dec'])
+            for i in delta_t
         }
 
         state_e = {i: s for i, (s, _, _, _) in s_l_r_n.items()}
-        l = jnp.sum(sum(l for (_, l, _, _) in s_l_r_n.values()))
+        l = jnp.sum(sum(l / delta_t[i] for i, (_, l, _, _) in s_l_r_n.items()))
         r = jnp.sum(sum(r for (_, _, r, _) in s_l_r_n.values()))
         n = {i: n for i, (_, _, _, n) in s_l_r_n.items()}
         dec_diag = {
