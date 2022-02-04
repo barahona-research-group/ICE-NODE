@@ -15,7 +15,7 @@ from jax.experimental import optimizers
 
 import optuna
 from optuna.storages import RDBStorage
-from optuna.pruners import HyperbandPruner, PatientPruner
+from optuna.pruners import NopPruner
 from optuna.samplers import TPESampler
 from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
@@ -29,12 +29,13 @@ from .abstract_model import AbstractModel
 class ResourceTimeout(Exception):
     pass
 
+
 class StudyHalted(Exception):
     pass
 
 
-
 def mlflow_callback_noexcept(callback):
+
     def apply(study, trial):
         try:
             return callback(study, trial)
@@ -298,8 +299,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 storage=storage,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
-                                pruner=PatientPruner(HyperbandPruner(),
-                                                     patience=5))
+                                pruner=NopPruner())
 
     study.set_user_attr('metric', 'MICRO-AUC')
     study.set_user_attr('data', data_tag_fullname[data_tag])
@@ -339,7 +339,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
         if study_attrs['halt']:
             trial.set_user_attr('halted', 1)
             raise StudyHalted('Study is halted')
-
 
         trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
         if trial_stop_time + timedelta(minutes=20) > termination_time:
