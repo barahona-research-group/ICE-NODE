@@ -129,7 +129,7 @@ class ICENODE(ICENODE_TL):
             }
 
             # Integrate until next discharge
-            state_seq, (drdt, nfe, nfe_sum) = nn_ode(state_di, d2d_time)
+            state_seq, (r, nfe, nfe_sum) = nn_ode(state_di, d2d_time)
             dec_diag_seq = nn_decode(state_seq)
 
             for subject_id in state_seq.keys():
@@ -144,7 +144,7 @@ class ICENODE(ICENODE_TL):
 
             odeint_weeks += sum(d2d_time.values()) / 7
             prediction_losses.append(diag_loss(diag, dec_diag_seq, d2d_time))
-            dyn_losses.append(drdt)
+            dyn_losses.append(r)
             total_nfe += nfe_sum
 
             # Update state at discharge
@@ -161,6 +161,7 @@ class ICENODE(ICENODE_TL):
 
         ret = {
             'prediction_loss': prediction_loss,
+            'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,

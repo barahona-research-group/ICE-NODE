@@ -50,7 +50,7 @@ class ICENODE(AbstractModel):
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
                             name='f_n_ode',
-                            tay_reg=0)))
+                            tay_reg=3)))
         f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
         self.f_n_ode = (
             lambda params, *args: f_n_ode(params['f_n_ode'], *args))
@@ -210,6 +210,7 @@ class ICENODE(AbstractModel):
         adm_counts = []
         diag_detectability = {i: {} for i in subjects_batch}
         odeint_weeks = 0.0
+        dyn_losses = []
 
         for n in self.subject_interface.n_support[1:]:
             adm_n = nth_adm(n)
@@ -232,7 +233,7 @@ class ICENODE(AbstractModel):
             }
 
             # Integrate until next discharge
-            state_e, (_, nfe, nfe_sum) = nn_ode(state_e, d2d_time)
+            state_e, (r, nfe, nfe_sum) = nn_ode(state_e, d2d_time)
             dec_diag = nn_decode(state_e)
 
             for subject_id in state_e.keys():
@@ -246,6 +247,7 @@ class ICENODE(AbstractModel):
                 }
 
             odeint_weeks += sum(d2d_time.values()) / 7
+            dyn_losses.append(r)
             prediction_losses.append(diag_loss(diag, dec_diag))
             total_nfe += nfe_sum
 
@@ -263,6 +265,7 @@ class ICENODE(AbstractModel):
 
         ret = {
             'prediction_loss': prediction_loss,
+            'dyn_loss': jnp.sum(sum(dyn_losses)),
             'odeint_weeks': odeint_weeks,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
@@ -273,7 +276,14 @@ class ICENODE(AbstractModel):
 
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
-        return {'loss': prediction_loss}
+        dyn_loss = res['dyn_loss']
+        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
+        loss = prediction_loss + dyn_alpha * dyn_loss
+        return {
+            'loss': loss,
+            'prediction_loss': prediction_loss,
+            'dyn_loss': dyn_loss
+        }
 
     def eval_stats(self, res):
         nfe = res['nfe']
@@ -302,7 +312,12 @@ class ICENODE(AbstractModel):
 
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
-        return AbstractModel._sample_training_config(trial, epochs)
+        config = AbstractModel._sample_training_config(trial, epochs)
+        config['loss_mixing']['L_dyn'] = trial.suggest_float('L_dyn',
+                                                             1e-6,
+                                                             1e3,
+                                                             log=True)
+        return config
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
