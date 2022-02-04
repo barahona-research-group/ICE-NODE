@@ -335,7 +335,7 @@ class ICENODE(AbstractModel):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing'] = {
             'L_pred': trial.suggest_float('L_pred', 1e-4, 1e2, log=True),
-            'L_dyn': trial.suggest_float('L_dyn', 1e-3, 1e3, log=True),
+            'L_dyn': trial.suggest_float('L_dyn', 1e-6, 1e3, log=True),
             **config['loss_mixing']
         }
 
@@ -348,11 +348,10 @@ class ICENODE(AbstractModel):
     @staticmethod
     def _sample_ode_model_config(trial: optuna.Trial):
         model_params = {
-            'ode_dyn': trial.suggest_categorical('ode_dyn',
-                                                 ['mlp', 'gru', 'res']),
+            'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'ode_init_var': 1e-2,
-            'ode_timescale': trial.suggest_float('ode_ts', 1, 1e2, log=True),
+            'ode_init_var': trial.suggest_float('ode_iv', 1e-15, 1e-2, log=True),
+            'ode_timescale': 1, #trial.suggest_float('ode_ts', 1, 1e2, log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
             'tay_reg': trial.suggest_categorical('tay', [0, 2, 3, 4]),
         }
