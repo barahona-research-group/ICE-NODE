@@ -310,6 +310,7 @@ class NeuralODE_IL(hk.Module):
                  tay_reg: int,
                  with_bias: bool,
                  init_var: float,
+                 timescale: float,
                  name: Optional[str] = None):
         super().__init__(name=name)
         init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
@@ -321,9 +322,10 @@ class NeuralODE_IL(hk.Module):
                                                       depth=depth,
                                                       name='ode_dyn',
                                                       **init_kwargs)
+        self.timescale = timescale
 
     def __call__(self, count_nfe: bool, h: jnp.ndarray, tf, *loss_args):
-        t = jnp.array([0.0, tf])
+        t = jnp.array([0.0, tf / self.timescale])
 
         if hk.running_init():
             h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], *loss_args)
@@ -335,56 +337,6 @@ class NeuralODE_IL(hk.Module):
             h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, *loss_args)
             nfe = 0
         return h[-1, :], l[-1], r[-1], nfe
-
-
-class NumericObsModel(hk.Module):
-    """
-    The mapping from hidden h to the distribution parameters of Y(t).
-    The dimension of the transformation is |h|->|obs_hidden|->|2D|.
-    """
-
-    def __init__(self,
-                 numeric_size: int,
-                 numeric_hidden_size: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.__numeric_size = numeric_size
-        self.__numeric_hidden_size = numeric_hidden_size
-        self.__lin_mean = hk.Linear(numeric_size)
-        self.__lin_logvar = hk.Linear(numeric_size)
-
-    def __call__(self, h: jnp.ndarray) -> jnp.ndarray:
-        out = hk.Linear(self.__numeric_hidden_size)(h)
-        out = leaky_relu(out, negative_slope=2e-1)
-
-        out_logvar = leaky_relu(self.__lin_logvar(out),
-                                negative_slope=2e-1) - 5
-        out_mean = 4 * jnp.tanh(self.__lin_mean(out))
-        return out_mean, out_logvar
-
-
-class GRUBayes(hk.Module):
-    """Implements discrete update based on the received observations."""
-
-    def __init__(self, state_size: int, name: Optional[str] = None):
-        super().__init__(name=name)
-        self.__prep = hk.Sequential([
-            hk.Linear(state_size, with_bias=True, name=f'{name}_prep1'),
-            lambda o: leaky_relu(o, negative_slope=2e-1),
-            hk.Linear(state_size, with_bias=True,
-                      name=f'{name}_prep2'), jnp.tanh
-        ])
-
-        self.__gru_d = hk.GRU(state_size)
-
-    def __call__(self, state: jnp.ndarray, error_numeric: jnp.ndarray,
-                 numeric_mask: jnp.ndarray,
-                 error_gram: jnp.ndarray) -> jnp.ndarray:
-
-        error_numeric = error_numeric * numeric_mask
-        gru_input = self.__prep(jnp.hstack((error_numeric, error_gram)))
-        _, updated_state = self.__gru_d(gru_input, state)
-        return updated_state
 
 
 class StateUpdate(hk.Module):
@@ -508,7 +460,9 @@ class EmbeddingsDecoder_Logits(hk.Module):
                 lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
                 for i in range(n_layers - 2)
             ]
-            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
+            if n_layers >= 2:
+                layers.append(
+                    lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
             layers.append(hk.Linear(output_size))
 
             return layers

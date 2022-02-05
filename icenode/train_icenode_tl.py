@@ -21,7 +21,8 @@ class ICENODE(AbstractModel):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_with_bias: bool, ode_init_var: float, state_size: int):
+                 ode_with_bias: bool, ode_init_var: float, state_size: int,
+                 timescale: float):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
@@ -45,8 +46,8 @@ class ICENODE(AbstractModel):
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_emb_size,
-                            depth=3,
-                            timescale=1,
+                            depth=1,
+                            timescale=timescale,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
                             name='f_n_ode',
@@ -64,7 +65,7 @@ class ICENODE(AbstractModel):
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(EmbeddingsDecoder_Logits,
-                            n_layers=2,
+                            n_layers=1,
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
                             name='f_dec')))
@@ -321,9 +322,10 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
+            'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
+            'timescale': 7
         }
         return model_params
 

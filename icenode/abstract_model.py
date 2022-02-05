@@ -108,7 +108,7 @@ class AbstractModel:
             # UNDO/TODO
             'optimizer': 'adam',
             # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
             'loss_mixing': l_mixing
         }
 

@@ -16,16 +16,18 @@ from .abstract_model import AbstractModel
 
 
 class ICENODE(ICENODE_TL):
+
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, loss_half_life: int,
-                 state_size: int):
+                 state_size: int, timescale: float):
         super().__init__(subject_interface=subject_interface,
                          diag_emb=diag_emb,
                          ode_dyn=ode_dyn,
                          ode_with_bias=ode_with_bias,
                          ode_init_var=ode_init_var,
-                         state_size=state_size)
+                         state_size=state_size,
+                         timescale=timescale)
 
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
@@ -42,14 +44,17 @@ class ICENODE(ICENODE_TL):
                 wrap_module(NeuralODE_IL,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_emb_size,
-                            depth=3,
+                            depth=1,
                             loss_f=self.diag_loss,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
+                            timescale=timescale,
                             name='f_n_ode_il',
                             tay_reg=3)))
         self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, ))
-        self.loss_half_life = loss_half_life
+
+        self.timescale = timescale
+        self.loss_half_life = loss_half_life / timescale
 
         self.initializers['f_n_ode'] = f_n_ode_init
 
@@ -89,8 +94,9 @@ class ICENODE(ICENODE_TL):
         # r: Integrated dynamics penalty
         # n: Number of dynamics function calls
         s_l_r_n = {
-            i: self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i],
-                            delta_t[i], delta_t[i], diag[i], params['f_dec'])
+            i:
+            self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], delta_t[i],
+                         delta_t[i] / self.timescale, diag[i], params['f_dec'])
             for i in delta_t
         }
 
@@ -214,6 +220,7 @@ class ICENODE(ICENODE_TL):
             'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
+            'timescale': 7
         }
         return model_params
 

@@ -14,19 +14,21 @@ from .train_icenode_tl import ICENODE as ICENODE_TL
 
 
 class ICENODE(ICENODE_TL):
+
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, loss_half_life: int,
-                 state_size: int):
+                 state_size: int, timescale: float):
         super().__init__(subject_interface=subject_interface,
                          diag_emb=diag_emb,
                          ode_dyn=ode_dyn,
                          ode_with_bias=ode_with_bias,
                          ode_init_var=ode_init_var,
-                         state_size=state_size)
-
+                         state_size=state_size,
+                         timescale=timescale)
+        self.timescale = timescale
         self.trajectory_samples = 3
-        self.lambd = jnp.log(2) / loss_half_life
+        self.lambd = jnp.log(2) / (loss_half_life / timescale)
 
     def split_state_emb_seq(self, seq):
         # seq.shape: (time_samples, state_size + embeddings_size)
@@ -72,8 +74,9 @@ class ICENODE(ICENODE_TL):
                    dec_diag_seq: Dict[int, jnp.ndarray], t: Dict[int, float]):
         loss_vals = {}
         for i in diag:
-            t_seq = jnp.linspace(0.0, t[i], self.trajectory_samples + 1)[1:]
-            t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - t[i]))
+            ti = t[i] / self.timescale
+            t_seq = jnp.linspace(0.0, ti, self.trajectory_samples + 1)[1:]
+            t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - ti))
             loss_seq = [
                 softmax_logits_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
@@ -179,9 +182,10 @@ class ICENODE(ICENODE_TL):
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
             'loss_half_life': trial.suggest_int('lt0.5', 7, 2e2, log=True),
-            'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
+            'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
+            'timescale': 7
         }
         return model_params
 
