@@ -65,7 +65,7 @@ class ICENODE(AbstractModel):
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 wrap_module(EmbeddingsDecoder_Logits,
-                            n_layers=1,
+                            n_layers=2,
                             embeddings_size=self.dimensions['diag_emb'],
                             diag_size=self.dimensions['diag_out'],
                             name='f_dec')))
@@ -322,7 +322,7 @@ class ICENODE(AbstractModel):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-12, 1e-2,
+            'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
             'timescale': 7

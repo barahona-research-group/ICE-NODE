@@ -216,7 +216,8 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         if tree_hasnan(get_params(opt_state)):
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
-            return float('nan')
+            raise optuna.TrialPruned()
+            # return float('nan')
 
         eval_step = round((i + 1) * 100 / iters)
 

@@ -217,7 +217,7 @@ class ICENODE(ICENODE_TL):
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
             'loss_half_life': trial.suggest_int('lt0.5', 7, 1e2, log=True),
-            'ode_init_var': trial.suggest_float('ode_i', 1e-15, 1e-2,
+            'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
             'timescale': 7
