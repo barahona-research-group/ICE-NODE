@@ -95,8 +95,11 @@ class ICENODE(ICENODE_TL):
         l_norm = jnp.average(loss_vals, weights=loss_weights)
         return l_norm, sum(loss_vals) / len(loss_vals)
 
-    def __call__(self, params: Any, subjects_batch: List[int],
-                 count_nfe: bool):
+    def __call__(self,
+                 params: Any,
+                 subjects_batch: List[int],
+                 count_nfe: bool = False,
+                 interval_norm: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -155,8 +158,12 @@ class ICENODE(ICENODE_TL):
             odeint_time.append(sum(d2d_time.values()))
             dyn_loss += sum(r.values())
 
-            pred_loss, _ = diag_loss(diag, dec_diag_seq, d2d_time)
-            prediction_losses.append(pred_loss)
+            pred_loss_norm, pred_loss_avg = diag_loss(diag, dec_diag_seq,
+                                                      d2d_time)
+            if interval_norm:
+                prediction_losses.append(pred_loss_norm)
+            else:
+                prediction_losses.append(pred_loss_avg)
 
             total_nfe += sum(nfe.values())
 
@@ -192,7 +199,7 @@ class ICENODE(ICENODE_TL):
             'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
-            'timescale': 7
+            'timescale': 60
         }
         return model_params
 

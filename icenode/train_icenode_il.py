@@ -112,7 +112,8 @@ class ICENODE(ICENODE_TL):
         state_e = {i: s for i, (s, _, _, _) in s_l_r_n.items()}
         l = [s_l_r_n[i][1] for i in sorted(t.keys())]
         w = [1 / t[i] for i in sorted(t.keys())]
-        l = jnp.average(l, weights=w)
+        l_norm = jnp.average(l, weights=w)
+        l_avg = sum(l) / len(l)
 
         r = jnp.sum(sum(r for (_, _, r, _) in s_l_r_n.values()))
         dec_diag = {
@@ -120,12 +121,13 @@ class ICENODE(ICENODE_TL):
                           self.split_state_emb(se)[1])
             for i, se in state_e.items()
         }
-        return state_e, l, r, n, sum(n.values()), dec_diag
+        return state_e, (l_norm, l_avg), r, n, sum(n.values()), dec_diag
 
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
-                 count_nfe: bool = False):
+                 count_nfe: bool = False,
+                 interval_norm: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -167,7 +169,7 @@ class ICENODE(ICENODE_TL):
             }
 
             # Integrate until next discharge
-            state_dj, l, r, nfe, nfe_sum, dec_diag = nn_ode(
+            state_dj, (l_norm, l_avg), r, nfe, nfe_sum, dec_diag = nn_ode(
                 state_di, d2d_time, diag)
 
             for subject_id in state_dj.keys():
@@ -180,7 +182,12 @@ class ICENODE(ICENODE_TL):
                 }
 
             odeint_time.append(sum(d2d_time.values()))
-            prediction_losses.append(l)
+
+            if interval_norm:
+                prediction_losses.append(l_norm)
+            else:
+                prediction_losses.append(l_avg)
+
             dyn_loss += r
             total_nfe += nfe_sum
 
@@ -207,12 +214,8 @@ class ICENODE(ICENODE_TL):
 
         return ret
 
-    @staticmethod
-    def sample_training_config(trial: optuna.Trial):
-        return ICENODE._sample_ode_training_config(trial, epochs=20)
-
-    @staticmethod
-    def _sample_ode_model_config(trial: optuna.Trial):
+    @classmethod
+    def _sample_ode_model_config(cls, trial: optuna.Trial):
         model_params = {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
@@ -220,7 +223,7 @@ class ICENODE(ICENODE_TL):
             'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
                                                 log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
-            'timescale': 7
+            'timescale': 60
         }
         return model_params
 

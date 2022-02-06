@@ -30,7 +30,7 @@ class AbstractModel:
     def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
         loss_mixing = opt_obj[-1]
         params = self.get_params(opt_obj)
-        res = self(params, batch, count_nfe=True)
+        res = self(params, batch)
 
         return {
             'loss': self.detailed_loss(loss_mixing, params, res),
@@ -50,14 +50,17 @@ class AbstractModel:
     def init_params(self, prng_seed: int = 0):
         raise ImplementationException('Should be ovreriden')
 
+    @staticmethod
+    def optimizer_class(label: str):
+        if label == 'adam':
+            return optimizers.adam
+        if label == 'sgd':
+            return optimizers.sgd
+
     def init_optimizer(self, config, params):
         lr = config['training']['lr']
-        if config['training']['optimizer'] == 'adam':
-            optimizer = optimizers.adam
-        else:
-            optimizer = optimizers.sgd
-
-        opt_init, opt_update, get_params = optimizer(step_size=lr)
+        opt_cls = self.optimizer_class(config['training']['optimizer'])
+        opt_init, opt_update, get_params = opt_cls(step_size=lr)
         opt_state = opt_init(params)
         return opt_state, opt_update, get_params
 
@@ -147,8 +150,8 @@ class AbstractModel:
         else:
             raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
-    @staticmethod
-    def _sample_training_config(trial: optuna.Trial, epochs):
+    @classmethod
+    def _sample_training_config(cls, trial: optuna.Trial, epochs):
         l_mixing = {
             'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
             'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
@@ -164,8 +167,9 @@ class AbstractModel:
             'loss_mixing': l_mixing
         }
 
-    @staticmethod
-    def sample_embeddings_config(trial: optuna.Trial,
+    @classmethod
+    def sample_embeddings_config(cls,
+                                 trial: optuna.Trial,
                                  emb_kind: str,
                                  pretrained_components: Optional[Any] = None):
         if emb_kind == 'matrix':
@@ -186,12 +190,12 @@ class AbstractModel:
 
         return {'diag': emb_config, 'kind': emb_kind}
 
-    @staticmethod
-    def sample_training_config(trial: optuna.Trial):
+    @classmethod
+    def sample_training_config(cls, trial: optuna.Trial):
         raise ImplementationException('Should be overriden')
 
-    @staticmethod
-    def sample_model_config(trial: optuna.Trial):
+    @classmethod
+    def sample_model_config(cls, trial: optuna.Trial):
         return {'state_size': trial.suggest_int('s', 100, 350, 50)}
 
     @classmethod
