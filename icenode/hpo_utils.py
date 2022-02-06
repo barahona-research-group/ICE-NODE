@@ -160,8 +160,9 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model = model_cls.create_model(config, patient_interface, train_ids,
-                                   pretrained_components)
+    model: AbstractModel = model_cls.create_model(config, patient_interface,
+                                                  train_ids,
+                                                  pretrained_components)
 
     code_partitions = model.code_partitions(patient_interface, train_ids)
 
@@ -233,18 +234,12 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         if frozen or i == iters - 1:
             fname = os.path.join(trial_dir,
                                  f'step{eval_step:04d}_params.pickle')
-            model.write_params(opt_obj)
+            model.write_params(opt_obj, fname)
 
         logging.info(eval_df)
 
         auc = eval_df.loc['MICRO-AUC', 'VAL']
-
-        # nan is returned when no predictions actually made.
-        if jnp.isnan(auc):
-            continue
-
         trial.report(auc, eval_step)
-
         if study_attrs['enable_prune'] and trial.should_prune():
             raise optuna.TrialPruned()
     return auc
