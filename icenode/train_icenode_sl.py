@@ -37,15 +37,21 @@ class ICENODE(ICENODE_TL):
     def _f_n_ode(self, params, count_nfe, state_e, t):
         h_r_nfe = {
             i: self.f_n_ode(params['f_n_ode'], self.trajectory_samples + 1,
-                            count_nfe, state_e[i], t[i])
+                            False, state_e[i], t[i])
             for i in t
         }
-        nfe = {i: n for i, (_, _, n) in h_r_nfe.items()}
-        nfe_sum = sum(nfe.values())
-        r = jnp.sum(sum(r for (_, r, _) in h_r_nfe.values()))
+        if count_nfe:
+            n = {
+                i: self.f_n_ode(params['f_n_ode'], 2, True, state_e[i],
+                                t[i])[-1]
+                for i in t
+            }
+        else:
+            n = {i: 0 for i in t}
 
+        r = {i: r[-1] for i, (_, r, _) in h_r_nfe.items()}
         state_seq = {i: h[1:, :] for i, (h, _, _) in h_r_nfe.items()}
-        return state_seq, (r, nfe, nfe_sum)
+        return state_seq, r, n
 
     def _f_update(self, params: Any, state_seq: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
@@ -72,24 +78,25 @@ class ICENODE(ICENODE_TL):
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag_seq: Dict[int, jnp.ndarray], t: Dict[int, float]):
-        loss_vals = {}
+        loss_vals = []
+        loss_weights = []
         for i in diag:
             ti = t[i] / self.timescale
+            loss_weights.append(1 / ti)
+
             t_seq = jnp.linspace(0.0, ti, self.trajectory_samples + 1)[1:]
             t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - ti))
             loss_seq = [
                 softmax_logits_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
             ]
-            loss_vals[i] = sum(l * jnp.exp(dt)
-                               for (l, dt) in zip(loss_seq, t_diff))
+            loss_vals.append(
+                sum(l * jnp.exp(dt) for (l, dt) in zip(loss_seq, t_diff)))
+        l_norm = jnp.average(loss_vals, weights=loss_weights)
+        return l_norm, sum(loss_vals) / len(loss_vals)
 
-        return sum(loss_vals.values()) / len(loss_vals)
-
-    def __call__(self,
-                 params: Any,
-                 subjects_batch: List[int],
-                 count_nfe: bool = False):
+    def __call__(self, params: Any, subjects_batch: List[int],
+                 count_nfe: bool):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -105,14 +112,12 @@ class ICENODE(ICENODE_TL):
             for i in adm0['admission_id']
         }
 
-        dyn_losses = []
         total_nfe = 0
-
         prediction_losses = []
-
         adm_counts = []
         diag_detectability = {i: {} for i in subjects_batch}
-        odeint_weeks = 0.0
+        odeint_time = []
+        dyn_loss = 0
 
         for n in self.subject_interface.n_support[1:]:
             adm_n = nth_adm(n)
@@ -124,10 +129,9 @@ class ICENODE(ICENODE_TL):
             emb = adm_n['diag_emb']
             diag = adm_n['diag_out']
 
-            # To normalize the prediction loss by the number of patients
             adm_counts.append(len(adm_id))
 
-            state_di = {i: subject_state[i]['state_e'] for i in adm_id}
+            state_e = {i: subject_state[i]['state_e'] for i in adm_id}
 
             d2d_time = {
                 i: adm_time[i] + adm_los[i] - subject_state[i]['time']
@@ -135,7 +139,7 @@ class ICENODE(ICENODE_TL):
             }
 
             # Integrate until next discharge
-            state_seq, (r, nfe, nfe_sum) = nn_ode(state_di, d2d_time)
+            state_seq, r, nfe = nn_ode(state_e, d2d_time)
             dec_diag_seq = nn_decode(state_seq)
 
             for subject_id in state_seq.keys():
@@ -148,16 +152,19 @@ class ICENODE(ICENODE_TL):
                     'pre_logits': dec_diag_seq[subject_id][-1, :]
                 }
 
-            odeint_weeks += sum(d2d_time.values()) / 7
-            prediction_losses.append(diag_loss(diag, dec_diag_seq, d2d_time))
-            dyn_losses.append(r)
-            total_nfe += nfe_sum
+            odeint_time.append(sum(d2d_time.values()))
+            dyn_loss += sum(r.values())
+
+            pred_loss, _ = diag_loss(diag, dec_diag_seq, d2d_time)
+            prediction_losses.append(pred_loss)
+
+            total_nfe += sum(nfe.values())
 
             # Update state at discharge
-            state_dj = nn_update(state_seq, emb)
+            state_e = nn_update(state_seq, emb)
 
             # Update the states:
-            for subject_id, new_state in state_dj.items():
+            for subject_id, new_state in state_e.items():
                 subject_state[subject_id] = {
                     'time': adm_time[subject_id] + adm_los[subject_id],
                     'state_e': new_state
@@ -167,8 +174,8 @@ class ICENODE(ICENODE_TL):
 
         ret = {
             'prediction_loss': prediction_loss,
-            'dyn_loss': jnp.sum(sum(dyn_losses)),
-            'odeint_weeks': odeint_weeks,
+            'dyn_loss': dyn_loss,
+            'odeint_weeks': sum(odeint_time) / 7.0,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
             'diag_detectability': diag_detectability

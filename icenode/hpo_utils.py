@@ -2,8 +2,6 @@ import os
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, Dict, Any
-from functools import partial
 from datetime import datetime, timedelta
 import copy
 from absl import logging
@@ -11,7 +9,6 @@ from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
-from jax.experimental import optimizers
 
 import optuna
 from optuna.storages import RDBStorage
@@ -22,7 +19,7 @@ from sqlalchemy.pool import NullPool
 import mlflow
 
 from .metrics import evaluation_table
-from .utils import (parameters_size, tree_hasnan, write_config, write_params)
+from .utils import (write_config)
 from .abstract_model import AbstractModel
 
 
@@ -168,33 +165,11 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     code_partitions = model.code_partitions(patient_interface, train_ids)
 
-    prng_key = jax.random.PRNGKey(rng.randint(0, 100))
-    params = model.init_params(prng_key)
+    opt_obj = model.init(config)
     logging.info('[DONE] Sampling & Initializing Models')
 
-    trial.set_user_attr('parameters_size', parameters_size(params))
-    mlflow_set_tag('parameters_size', parameters_size(params), frozen)
-
-    loss_mixing = config['training']['loss_mixing']
-    lr = config['training']['lr']
-    if config['training']['optimizer'] == 'adam':
-        optimizer = optimizers.adam
-    else:
-        optimizer = optimizers.sgd
-
-    opt_init, opt_update, get_params = optimizer(step_size=lr)
-    opt_state = opt_init(params)
-
-    loss_ = partial(model.loss, loss_mixing)
-    eval_ = partial(model.eval, loss_mixing)
-
-    def update(
-            step: int, batch: Iterable[int],
-            opt_state: optimizers.OptimizerState) -> optimizers.OptimizerState:
-        params = get_params(opt_state)
-        grads = jax.grad(loss_)(params, batch)
-        return opt_update(step, grads, opt_state)
-
+    trial.set_user_attr('parameters_size', model.parameters_size(opt_obj))
+    mlflow_set_tag('parameters_size', model.parameters_size(opt_obj), frozen)
     batch_size = config['training']['batch_size']
     batch_size = min(batch_size, len(train_ids))
 
@@ -212,15 +187,14 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
-        opt_state = update(i, train_batch, opt_state)
-        if tree_hasnan(get_params(opt_state)):
+        opt_obj = model.step_optimizer(i, opt_obj, train_batch)
+        if model.hasnan(opt_obj):
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
             raise optuna.TrialPruned()
             # return float('nan')
 
         eval_step = round((i + 1) * 100 / iters)
-
         last_step = round(i * 100 / iters)
 
         if eval_step == last_step and i < iters - 1:
@@ -234,18 +208,16 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         trial.set_user_attr("progress", eval_step)
         mlflow_set_tag("progress", eval_step, frozen)
 
-        params = get_params(opt_state)
-
         if frozen or i == iters - 1:
             raw_res = {
-                'TRN': eval_(params, train_batch),
-                'VAL': eval_(params, valid_ids),
-                'TST': eval_(params, test_ids)
+                'TRN': model.eval(opt_obj, train_batch),
+                'VAL': model.eval(opt_obj, valid_ids),
+                'TST': model.eval(opt_obj, test_ids)
             }
         else:
             raw_res = {
-                'TRN': eval_(params, train_batch),
-                'VAL': eval_(params, valid_ids)
+                'TRN': model.eval(opt_obj, train_batch),
+                'VAL': model.eval(opt_obj, valid_ids)
             }
 
         eval_df, eval_flat = evaluation_table(raw_res, code_partitions)
@@ -261,7 +233,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         if frozen or i == iters - 1:
             fname = os.path.join(trial_dir,
                                  f'step{eval_step:04d}_params.pickle')
-            write_params(get_params(opt_state), fname)
+            model.write_params(opt_obj)
 
         logging.info(eval_df)
 
@@ -301,7 +273,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                                 load_if_exists=True,
                                 sampler=TPESampler(),
                                 pruner=PatientPruner(HyperbandPruner(),
-                                                     patience=5))
+                                                     patience=50))
 
     study.set_user_attr('metric', 'MICRO-AUC')
     study.set_user_attr('data', data_tag_fullname[data_tag])

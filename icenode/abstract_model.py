@@ -1,6 +1,11 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Iterable
+from functools import partial
+
+import jax
+from jax.experimental import optimizers
 import optuna
-from .utils import load_config, load_params
+from .utils import (load_config, load_params, parameters_size, tree_hasnan,
+                    write_params)
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    MatrixEmbeddings, OrthogonalGRAM)
 from .metrics import (bce, softmax_logits_bce, balanced_focal_bce,
@@ -22,8 +27,9 @@ class AbstractModel:
     def eval_stats(self, res):
         raise ImplementationException('Should be overriden')
 
-    def eval(self, loss_mixing: Dict[str, float], params: Any,
-             batch: List[int]) -> Dict[str, float]:
+    def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
+        loss_mixing = opt_obj[-1]
+        params = self.get_params(opt_obj)
         res = self(params, batch, count_nfe=True)
 
         return {
@@ -33,13 +39,59 @@ class AbstractModel:
         }
 
     def admissions_auc_scores(self, params: Any, batch: List[int]):
-        res = self(params, batch, count_nfe=True)
+        res = self(params, batch)
         return admissions_auc_scores(res['diag_detectability'], 'pre')
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int]) -> float:
         res = self(params, batch, count_nfe=False)
         return self.detailed_loss(loss_mixing, params, res)['loss']
+
+    def init_params(self, prng_seed: int = 0):
+        raise ImplementationException('Should be ovreriden')
+
+    def init_optimizer(self, config, params):
+        lr = config['training']['lr']
+        if config['training']['optimizer'] == 'adam':
+            optimizer = optimizers.adam
+        else:
+            optimizer = optimizers.sgd
+
+        opt_init, opt_update, get_params = optimizer(step_size=lr)
+        opt_state = opt_init(params)
+        return opt_state, opt_update, get_params
+
+    def step_optimizer(self, step, opt_object, batch):
+        opt_state, opt_update, get_params, loss_, loss_mixing = opt_object
+        params = get_params(opt_state)
+        grads = jax.grad(loss_)(params, batch)
+        opt_state = opt_update(step, grads, opt_state)
+        return opt_state, opt_update, get_params, loss_, loss_mixing
+
+    def init(self, config: Dict[str, Any], prng_seed: int = 0):
+        params = self.init_params(prng_seed)
+        opt_state, opt_update, get_params = self.init_optimizer(config, params)
+
+        loss_mixing = config['training']['loss_mixing']
+        loss_ = partial(self.loss, loss_mixing)
+
+        return opt_state, opt_update, get_params, loss_, loss_mixing
+
+    def get_params(self, opt_object):
+        opt_state, _, get_params, _, _ = opt_object
+        return get_params(opt_state)
+
+    def parameters_size(self, opt_object):
+        params = self.get_params(opt_object)
+        return parameters_size(params)
+
+    def hasnan(self, opt_obj):
+        params = self.get_params(opt_obj)
+        return tree_hasnan(params)
+
+    def write_params(self, opt_obj, fname):
+        params = self.get_params(opt_obj)
+        write_params(params, fname)
 
     @classmethod
     def create_embedding(cls, emb_config, emb_kind, patient_interface,
@@ -98,8 +150,8 @@ class AbstractModel:
     @staticmethod
     def _sample_training_config(trial: optuna.Trial, epochs):
         l_mixing = {
-            'L_l1': 0, #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0 # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+            'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
         }
 
         return {
@@ -108,7 +160,7 @@ class AbstractModel:
             # UNDO/TODO
             'optimizer': 'adam',
             # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
-            'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),
+            'lr': trial.suggest_float('lr', 5e-4, 5e-3, log=True),
             'loss_mixing': l_mixing
         }
 

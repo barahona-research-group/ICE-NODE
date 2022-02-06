@@ -88,22 +88,33 @@ class ICENODE(ICENODE_TL):
         lambd = jnp.log(2) / self.loss_half_life
         return dldy * jax.lax.stop_gradient(jnp.exp(-lambd * jnp.abs(ti - tf)))
 
-    def _f_n_ode(self, params, count_nfe, state_e, delta_t, diag):
+    def _f_n_ode(self, params, count_nfe, state_e, t, diag):
         # s: Integrated state
         # l: Integrated loss
         # r: Integrated dynamics penalty
         # n: Number of dynamics function calls
         s_l_r_n = {
-            i:
-            self.f_n_ode(params['f_n_ode'], count_nfe, state_e[i], delta_t[i],
-                         delta_t[i] / self.timescale, diag[i], params['f_dec'])
-            for i in delta_t
+            i: self.f_n_ode(params['f_n_ode'], False, state_e[i], t[i],
+                            t[i] / self.timescale, diag[i], params['f_dec'])
+            for i in t
         }
 
+        if count_nfe:
+            n = {
+                i: self.f_n_ode(params['f_n_ode'], True, state_e[i], t[i],
+                                t[i] / self.timescale, diag[i],
+                                params['f_dec'])[-1]
+                for i in t
+            }
+        else:
+            n = {i: 0 for i in t}
+
         state_e = {i: s for i, (s, _, _, _) in s_l_r_n.items()}
-        l = jnp.sum(sum(l / delta_t[i] for i, (_, l, _, _) in s_l_r_n.items()))
+        l = [s_l_r_n[i][1] for i in sorted(t.keys())]
+        w = [1 / t[i] for i in sorted(t.keys())]
+        l = jnp.average(l, weights=w)
+
         r = jnp.sum(sum(r for (_, _, r, _) in s_l_r_n.values()))
-        n = {i: n for i, (_, _, _, n) in s_l_r_n.items()}
         dec_diag = {
             i: self.f_dec(params['f_dec'],
                           self.split_state_emb(se)[1])
@@ -128,14 +139,12 @@ class ICENODE(ICENODE_TL):
             for i in adm0['admission_id']
         }
 
-        dyn_losses = []
         total_nfe = 0
-
         prediction_losses = []
-
         adm_counts = []
         diag_detectability = {i: {} for i in subjects_batch}
-        odeint_weeks = 0.0
+        odeint_time = []
+        dyn_loss = 0
 
         for n in self.subject_interface.n_support[1:]:
             adm_n = nth_adm(n)
@@ -172,7 +181,7 @@ class ICENODE(ICENODE_TL):
 
             odeint_weeks += sum(d2d_time.values()) / 7
             prediction_losses.append(l)
-            dyn_losses.append(r)
+            dyn_loss += sum(r.values())
             total_nfe += nfe_sum
 
             # Update state at discharge
@@ -189,23 +198,14 @@ class ICENODE(ICENODE_TL):
 
         ret = {
             'prediction_loss': prediction_loss,
-            'dyn_loss': jnp.sum(sum(dyn_losses)),
-            'odeint_weeks': odeint_weeks,
+            'dyn_loss': dyn_loss,
+            'odeint_weeks': sum(odeint_time) / 7.0,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
             'diag_detectability': diag_detectability
         }
 
         return ret
-
-    @staticmethod
-    def _sample_ode_training_config(trial: optuna.Trial, epochs):
-        config = AbstractModel._sample_training_config(trial, epochs)
-        config['loss_mixing']['L_dyn'] = trial.suggest_float('L_dyn',
-                                                             1e-3,
-                                                             1e4,
-                                                             log=True)
-        return config
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):

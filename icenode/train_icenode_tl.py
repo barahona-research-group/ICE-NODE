@@ -86,7 +86,8 @@ class ICENODE(AbstractModel):
     def split_state_emb(self, state_emb):
         return jnp.split(state_emb, (self.dimensions['state'], ))
 
-    def init_params(self, rng_key):
+    def init_params(self, prng_seed=0):
+        rng_key = jax.random.PRNGKey(prng_seed)
         return {
             "diag_emb": self.diag_emb.init_params(rng_key),
             **{
@@ -149,15 +150,20 @@ class ICENODE(AbstractModel):
 
     def _f_n_ode(self, params, count_nfe, state_e, t):
         h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], 2, count_nfe, state_e[i], t[i])
+            i: self.f_n_ode(params['f_n_ode'], 2, False, state_e[i], t[i])
             for i in t
         }
-        nfe = {i: n for i, (h, r, n) in h_r_nfe.items()}
-        nfe_sum = sum(nfe.values())
-        drdt = jnp.sum(sum(r for (h, r, n) in h_r_nfe.values()))
-
-        state_e = {i: h[-1, :] for i, (h, r, n) in h_r_nfe.items()}
-        return state_e, (drdt, nfe, nfe_sum)
+        if count_nfe:
+            n = {
+                i: self.f_n_ode(params['f_n_ode'], 2, True, state_e[i],
+                                t[i])[-1]
+                for i in t
+            }
+        else:
+            n = {i: 0 for i in t}
+        r = {i: r.squeeze() for i, (_, r, _) in h_r_nfe.items()}
+        state_e = {i: h[-1, :] for i, (h, _, _) in h_r_nfe.items()}
+        return state_e, r, n
 
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
@@ -165,7 +171,8 @@ class ICENODE(AbstractModel):
         for i in emb:
             emb_nominal = emb[i]
             state, emb_pred = self.split_state_emb(state_e[i])
-            state = self.f_update(params['f_update'], state, emb_pred, emb_nominal)
+            state = self.f_update(params['f_update'], state, emb_pred,
+                                  emb_nominal)
             new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
 
@@ -174,14 +181,18 @@ class ICENODE(AbstractModel):
         return {i: self.f_dec(params['f_dec'], emb[i]) for i in emb}
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
-                   dec_diag: Dict[int, jnp.ndarray]):
-        l = {i: softmax_logits_bce(diag[i], dec_diag[i]) for i in diag.keys()}
-        return sum(l.values()) / len(l)
+                   dec_diag: Dict[int, jnp.ndarray], t: Dict[int,
+                                                             jnp.ndarray]):
+        T = [1 / ti for ti in sorted(t.keys())]
+        l = [
+            softmax_logits_bce(diag[i], dec_diag[i])
+            for i in sorted(diag.keys())
+        ]
+        l_norm = jnp.average(l, weights=T)
+        return l_norm, sum(l) / len(l)
 
-    def __call__(self,
-                 params: Any,
-                 subjects_batch: List[int],
-                 count_nfe: bool = False):
+    def __call__(self, params: Any, subjects_batch: List[int],
+                 count_nfe: bool):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -203,8 +214,8 @@ class ICENODE(AbstractModel):
 
         adm_counts = []
         diag_detectability = {i: {} for i in subjects_batch}
-        odeint_weeks = 0.0
-        dyn_losses = []
+        odeint_time = []
+        dyn_loss = 0
 
         for n in self.subject_interface.n_support[1:]:
             adm_n = nth_adm(n)
@@ -216,7 +227,6 @@ class ICENODE(AbstractModel):
             emb = adm_n['diag_emb']
             diag = adm_n['diag_out']
 
-            # To normalize the prediction loss by the number of patients
             adm_counts.append(len(adm_id))
 
             state_e = {i: subject_state[i]['state_e'] for i in adm_id}
@@ -227,7 +237,7 @@ class ICENODE(AbstractModel):
             }
 
             # Integrate until next discharge
-            state_e, (r, nfe, nfe_sum) = nn_ode(state_e, d2d_time)
+            state_e, r, nfe = nn_ode(state_e, d2d_time)
             dec_diag = nn_decode(state_e)
 
             for subject_id in state_e.keys():
@@ -240,10 +250,13 @@ class ICENODE(AbstractModel):
                     'pre_logits': dec_diag[subject_id]
                 }
 
-            odeint_weeks += sum(d2d_time.values()) / 7
-            dyn_losses.append(r)
-            prediction_losses.append(diag_loss(diag, dec_diag))
-            total_nfe += nfe_sum
+            odeint_time.append(sum(d2d_time.values()))
+            dyn_loss += sum(r.values())
+
+            pred_loss, _ = diag_loss(diag, dec_diag, d2d_time)
+            prediction_losses.append(pred_loss)
+
+            total_nfe += sum(nfe.values())
 
             # Update state at discharge
             state_e = nn_update(state_e, emb)
@@ -259,8 +272,8 @@ class ICENODE(AbstractModel):
 
         ret = {
             'prediction_loss': prediction_loss,
-            'dyn_loss': jnp.sum(sum(dyn_losses)),
-            'odeint_weeks': odeint_weeks,
+            'dyn_loss': dyn_loss,
+            'odeint_weeks': sum(odeint_time) / 7.0,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
             'diag_detectability': diag_detectability
@@ -271,11 +284,12 @@ class ICENODE(AbstractModel):
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
         dyn_loss = res['dyn_loss']
-        dyn_alpha = loss_mixing['L_dyn'] / (res['odeint_weeks'] + 1e-10)
-        loss = prediction_loss + dyn_alpha * dyn_loss
+        dyn_alpha = loss_mixing['L_dyn']
+
+        loss = prediction_loss + (dyn_alpha * dyn_loss) / res['odeint_weeks']
         return {
             'loss': loss,
-            'prediction_loss': prediction_loss,
+            'prediction_loss': res['prediction_loss'],
             'dyn_loss': dyn_loss
         }
 
@@ -283,8 +297,8 @@ class ICENODE(AbstractModel):
         nfe = res['nfe']
         return {
             'admissions_count': res['admissions_count'],
-            'nfe_per_week': nfe / (res['odeint_weeks'] + 1e-10),
-            'nfex1000': nfe / 1000
+            'nfe_per_week': nfe / res['odeint_weeks'],
+            'Kfe': nfe / 1000
         }
 
     @staticmethod
@@ -309,7 +323,7 @@ class ICENODE(AbstractModel):
         config = AbstractModel._sample_training_config(trial, epochs)
         config['loss_mixing']['L_dyn'] = trial.suggest_float('L_dyn',
                                                              1e-6,
-                                                             1e3,
+                                                             1,
                                                              log=True)
         return config
 
@@ -336,4 +350,6 @@ class ICENODE(AbstractModel):
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
+    from jax import config
+    config.update('jax_debug_nans', True)
     run_trials(model_cls=ICENODE, **capture_args())
