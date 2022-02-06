@@ -311,12 +311,12 @@ class ICENODE(AbstractModel):
         }
 
     def init_optimizer(self, config, params):
-        lr = config['training']['lr']
-        opt_init, opt_update, get_params = optimizers.sgd(step_size=lr)
+        lr1, lr2 = config['training']['lr1'], config['training']['lr2']
+        opt_init, opt_update, get_params = optimizers.adam(step_size=lr1)
         opt_state = opt_init({'f_n_ode': params['f_n_ode']})
         opt1 = (opt_state, opt_update, get_params)
 
-        opt_init, opt_update, get_params = optimizers.sgd(step_size=lr)
+        opt_init, opt_update, get_params = optimizers.adam(step_size=lr2)
         opt_state = opt_init({
             'f_dec': params['f_dec'],
             'diag_emb': params['diag_emb'],
@@ -357,14 +357,12 @@ class ICENODE(AbstractModel):
                                                         count_nfe=False,
                                                         interval_norm=False)
 
-        grads1 = tree_map(lambda g: g / detailed['odeint_weeks'],
-                          {'f_n_ode': grads['f_n_ode']})
-        grads2 = tree_map(
-            lambda g: g / detailed['admissions_count'], {
-                'f_dec': grads['f_dec'],
-                'f_update': grads['f_update'],
-                'diag_emb': grads['diag_emb']
-            })
+        grads1 = {'f_n_ode': grads['f_n_ode']}
+        grads2 = {
+            'f_dec': grads['f_dec'],
+            'f_update': grads['f_update'],
+            'diag_emb': grads['diag_emb']
+        }
 
         opt1_state = opt1_update(step, grads1, opt1_state)
         opt2_state = opt2_update(step, grads2, opt2_state)
@@ -391,8 +389,26 @@ class ICENODE(AbstractModel):
                    **config['model'])
 
     @staticmethod
+    def _sample_training_config(trial: optuna.Trial, epochs):
+        l_mixing = {
+            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+            'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+        }
+
+        return {
+            'epochs': epochs,
+            'batch_size': trial.suggest_int('B', 2, 27, 5),
+            # UNDO/TODO
+            'optimizer': 'adam',
+            # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
+            'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
+            'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
+            'loss_mixing': l_mixing
+        }
+
+    @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
-        config = AbstractModel._sample_training_config(trial, epochs)
+        config = ICENODE._sample_training_config(trial, epochs)
         config['loss_mixing'][
             'L_dyn'] = 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
         return config
