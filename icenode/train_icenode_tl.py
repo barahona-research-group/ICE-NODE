@@ -343,10 +343,7 @@ class ICENODE(AbstractModel):
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
-        config['loss_mixing']['L_dyn'] = trial.suggest_float('L_dyn',
-                                                             1e-6,
-                                                             1,
-                                                             log=True)
+        config['loss_mixing']['L_dyn'] = 0 # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
         return config
 
     @staticmethod
