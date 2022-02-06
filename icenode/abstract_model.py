@@ -71,14 +71,15 @@ class AbstractModel:
         opt_state = opt_update(step, grads, opt_state)
         return opt_state, opt_update, get_params, loss_, loss_mixing
 
-    def init(self, config: Dict[str, Any], prng_seed: int = 0):
-        params = self.init_params(prng_seed)
+    def init_with_params(self, config: Dict[str, Any], params: Any):
         opt_state, opt_update, get_params = self.init_optimizer(config, params)
-
         loss_mixing = config['training']['loss_mixing']
         loss_ = partial(self.loss, loss_mixing)
-
         return opt_state, opt_update, get_params, loss_, loss_mixing
+
+    def init(self, config: Dict[str, Any], prng_seed: int = 0):
+        params = self.init_params(prng_seed)
+        return self.init_with_params(config, params)
 
     def get_params(self, opt_object):
         opt_state, _, get_params, _, _ = opt_object

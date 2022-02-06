@@ -43,13 +43,10 @@ class ICENODE(ICENODE_SL):
         opt2 = (opt_state, opt_update, get_params)
         return opt1, opt2
 
-    def init(self, config: Dict[str, Any], prng_seed: int = 0):
-        params = self.init_params(prng_seed)
+    def init_with_params(self, config: Dict[str, Any], params: Any):
         opt1, opt2 = self.init_optimizer(config, params)
-
         loss_mixing = config['training']['loss_mixing']
         loss_ = partial(self.loss, loss_mixing)
-
         return opt1, opt2, loss_, loss_mixing
 
     def get_params(self, model_state):
