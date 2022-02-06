@@ -191,8 +191,11 @@ class ICENODE(AbstractModel):
         l_norm = jnp.average(l, weights=T)
         return l_norm, sum(l) / len(l)
 
-    def __call__(self, params: Any, subjects_batch: List[int],
-                 count_nfe: bool):
+    def __call__(self,
+                 params: Any,
+                 subjects_batch: List[int],
+                 count_nfe: bool,
+                 interval_norm: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -253,8 +256,11 @@ class ICENODE(AbstractModel):
             odeint_time.append(sum(d2d_time.values()))
             dyn_loss += sum(r.values())
 
-            pred_loss, _ = diag_loss(diag, dec_diag, d2d_time)
-            prediction_losses.append(pred_loss)
+            pred_loss_norm, pred_loss_avg = diag_loss(diag, dec_diag, d2d_time)
+            if interval_norm:
+                prediction_losses.append(pred_loss_norm)
+            else:
+                prediction_losses.append(pred_loss_avg)
 
             total_nfe += sum(nfe.values())
 
@@ -300,6 +306,22 @@ class ICENODE(AbstractModel):
             'nfe_per_week': nfe / res['odeint_weeks'],
             'Kfe': nfe / 1000
         }
+
+    def step_optimizer(self, step, opt_object, batch):
+        opt_state, opt_update, get_params, loss_, loss_mixing = opt_object
+        params = get_params(opt_state)
+
+        if (step / 10) % 2 == 0:
+            interval_norm = True
+        else:
+            interval_norm = False
+
+        grads = jax.grad(loss_)(params,
+                                batch,
+                                count_nfe=False,
+                                interval_norm=interval_norm)
+        opt_state = opt_update(step, grads, opt_state)
+        return opt_state, opt_update, get_params, loss_, loss_mixing
 
     @staticmethod
     def create_patient_interface(mimic_dir, data_tag: str):

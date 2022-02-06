@@ -43,8 +43,8 @@ class AbstractModel:
         return admissions_auc_scores(res['diag_detectability'], 'pre')
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
-             batch: List[int]) -> float:
-        res = self(params, batch, count_nfe=False)
+             batch: List[int], **kwargs) -> float:
+        res = self(params, batch, **kwargs)
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
     def init_params(self, prng_seed: int = 0):
@@ -160,7 +160,7 @@ class AbstractModel:
             # UNDO/TODO
             'optimizer': 'adam',
             # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
-            'lr': trial.suggest_float('lr', 5e-4, 5e-3, log=True),
+            'lr': trial.suggest_float('lr', 1e-4, 5e-3, log=True),
             'loss_mixing': l_mixing
         }
 
