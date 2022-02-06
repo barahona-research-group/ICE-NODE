@@ -179,9 +179,9 @@ class ICENODE(ICENODE_TL):
                     'pre_logits': dec_diag[subject_id]
                 }
 
-            odeint_weeks += sum(d2d_time.values()) / 7
+            odeint_time.append(sum(d2d_time.values()))
             prediction_losses.append(l)
-            dyn_loss += sum(r.values())
+            dyn_loss += r
             total_nfe += nfe_sum
 
             # Update state at discharge
