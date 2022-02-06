@@ -420,6 +420,4 @@ class ICENODE(AbstractModel):
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
-    from jax import config
-    config.update('jax_debug_nans', True)
     run_trials(model_cls=ICENODE, **capture_args())
