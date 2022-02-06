@@ -4,12 +4,13 @@ from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 from absl import logging
 import haiku as hk
 import jax
+from jax.experimental import optimizers
 import jax.numpy as jnp
 
 import optuna
 
 from .metrics import (l2_squared, l1_absolute, softmax_logits_bce)
-from .utils import wrap_module
+from .utils import wrap_module, tree_map
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      EmbeddingsDecoder_Logits, StateUpdate)
@@ -296,7 +297,9 @@ class ICENODE(AbstractModel):
         return {
             'loss': loss,
             'prediction_loss': res['prediction_loss'],
-            'dyn_loss': dyn_loss
+            'dyn_loss': dyn_loss,
+            'admissions_count': res['admissions_count'],
+            'odeint_weeks': res['odeint_weeks']
         }
 
     def eval_stats(self, res):
@@ -307,21 +310,68 @@ class ICENODE(AbstractModel):
             'Kfe': nfe / 1000
         }
 
-    def step_optimizer(self, step, opt_object, batch):
-        opt_state, opt_update, get_params, loss_, loss_mixing = opt_object
-        params = get_params(opt_state)
+    def init_optimizer(self, config, params):
+        lr = config['training']['lr']
+        opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+        opt_state = opt_init({'f_n_ode': params['f_n_ode']})
+        opt1 = (opt_state, opt_update, get_params)
 
-        if (step / 10) % 2 == 0:
-            interval_norm = True
-        else:
-            interval_norm = False
+        opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+        opt_state = opt_init({
+            'f_dec': params['f_dec'],
+            'diag_emb': params['diag_emb'],
+            'f_update': params['f_update']
+        })
+        opt2 = (opt_state, opt_update, get_params)
+        return opt1, opt2
 
-        grads = jax.grad(loss_)(params,
-                                batch,
-                                count_nfe=False,
-                                interval_norm=interval_norm)
-        opt_state = opt_update(step, grads, opt_state)
-        return opt_state, opt_update, get_params, loss_, loss_mixing
+    def init(self, config: Dict[str, Any], prng_seed: int = 0):
+        params = self.init_params(prng_seed)
+        opt1, opt2 = self.init_optimizer(config, params)
+
+        loss_mixing = config['training']['loss_mixing']
+        loss_ = partial(self.loss, loss_mixing)
+
+        return opt1, opt2, loss_, loss_mixing
+
+    def get_params(self, model_state):
+        opt1, opt2, _, _ = model_state
+        opt1_state, _, get_params1 = opt1
+        opt2_state, _, get_params2 = opt2
+        return {**get_params1(opt1_state), **get_params2(opt2_state)}
+
+    def loss(self, loss_mixing: Dict[str, float], params: Any,
+             batch: List[int], **kwargs) -> float:
+        res = self(params, batch, **kwargs)
+        detailed = self.detailed_loss(loss_mixing, params, res)
+        return detailed['loss'], detailed
+
+    def step_optimizer(self, step, model_state, batch):
+        opt1, opt2, loss_, loss_mixing = model_state
+        opt1_state, opt1_update, get_params1 = opt1
+        opt2_state, opt2_update, get_params2 = opt2
+
+        params = self.get_params(model_state)
+        grads, detailed = jax.grad(loss_, has_aux=True)(params,
+                                                        batch,
+                                                        count_nfe=False,
+                                                        interval_norm=False)
+
+        grads1 = tree_map(lambda g: g / detailed['odeint_weeks'],
+                          {'f_n_ode': grads['f_n_ode']})
+        grads2 = tree_map(
+            lambda g: g / detailed['admissions_count'], {
+                'f_dec': grads['f_dec'],
+                'f_update': grads['f_update'],
+                'diag_emb': grads['diag_emb']
+            })
+
+        opt1_state = opt1_update(step, grads1, opt1_state)
+        opt2_state = opt2_update(step, grads2, opt2_state)
+
+        opt1 = (opt1_state, opt1_update, get_params1)
+        opt2 = (opt2_state, opt2_update, get_params2)
+        return opt1, opt2, loss_, loss_mixing
 
     @staticmethod
     def create_patient_interface(mimic_dir, data_tag: str):
@@ -343,7 +393,8 @@ class ICENODE(AbstractModel):
     @staticmethod
     def _sample_ode_training_config(trial: optuna.Trial, epochs):
         config = AbstractModel._sample_training_config(trial, epochs)
-        config['loss_mixing']['L_dyn'] = 0 # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+        config['loss_mixing'][
+            'L_dyn'] = 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
         return config
 
     @staticmethod
