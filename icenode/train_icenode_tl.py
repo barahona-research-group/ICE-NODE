@@ -312,11 +312,11 @@ class ICENODE(AbstractModel):
 
     def init_optimizer(self, config, params):
         lr = config['training']['lr']
-        opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+        opt_init, opt_update, get_params = optimizers.sgd(step_size=lr)
         opt_state = opt_init({'f_n_ode': params['f_n_ode']})
         opt1 = (opt_state, opt_update, get_params)
 
-        opt_init, opt_update, get_params = optimizers.adam(step_size=lr)
+        opt_init, opt_update, get_params = optimizers.sgd(step_size=lr)
         opt_state = opt_init({
             'f_dec': params['f_dec'],
             'diag_emb': params['diag_emb'],
