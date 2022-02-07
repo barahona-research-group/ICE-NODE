@@ -215,17 +215,11 @@ class ICENODE(ICENODE_TL):
         return ret
 
     @classmethod
-    def _sample_ode_model_config(cls, trial: optuna.Trial):
-        model_params = {
-            'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
-            'ode_with_bias': False,
+    def sample_model_config(cls, trial: optuna.Trial):
+        return {
             'loss_half_life': trial.suggest_int('lt0.5', 7, 1e2, log=True),
-            'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
-                                                log=True),
-            'state_size': trial.suggest_int('s', 10, 100, 10),
-            'timescale': 60
+            **ICENODE_TL.sample_model_config(trial)
         }
-        return model_params
 
 
 if __name__ == '__main__':

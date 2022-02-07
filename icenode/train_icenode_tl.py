@@ -4,7 +4,7 @@ from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
 from absl import logging
 import haiku as hk
 import jax
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 import jax.numpy as jnp
 
 import optuna
@@ -345,35 +345,28 @@ class ICENODE(AbstractModel):
                    **config['model'])
 
     @classmethod
-    def _sample_training_config(cls, trial: optuna.Trial, epochs):
-        l_mixing = {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-        }
-
-        return {
-            'epochs': epochs,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            # UNDO/TODO
-            'optimizer': 'adamax',
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'loss_mixing': l_mixing
-        }
-
-    @classmethod
-    def _sample_ode_training_config(cls, trial: optuna.Trial, epochs):
-        config = cls._sample_training_config(trial, epochs)
-        config['loss_mixing'][
-            'L_dyn'] = 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-        return config
-
-    @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
-        return cls._sample_ode_training_config(trial, epochs=20)
+        return {
+            'epochs':
+            20,
+            'batch_size':
+            trial.suggest_int('B', 2, 27, 5),
+            'optimizer':
+            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
+            'lr':
+            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'lr_halving_epochs':
+            5,
+            'loss_mixing': {
+                'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+                'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+                'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+            }
+        }
 
     @classmethod
-    def _sample_ode_model_config(cls, trial: optuna.Trial):
-        model_params = {
+    def sample_model_config(cls, trial: optuna.Trial):
+        return {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
             'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
@@ -381,11 +374,6 @@ class ICENODE(AbstractModel):
             'state_size': trial.suggest_int('s', 10, 100, 10),
             'timescale': 60
         }
-        return model_params
-
-    @classmethod
-    def sample_model_config(cls, trial: optuna.Trial):
-        return cls._sample_ode_model_config(trial)
 
 
 if __name__ == '__main__':

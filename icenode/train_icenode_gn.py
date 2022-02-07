@@ -50,20 +50,24 @@ class ICENODE(ICENODE_TL):
         opt_state = opt_update(step, {**grads1, **grads2}, opt_state)
         return opt_state, opt_update, get_params, loss_, loss_mixing
 
-
     @classmethod
-    def _sample_training_config(cls, trial: optuna.Trial, epochs):
-        l_mixing = {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-        }
-
+    def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': epochs,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'optimizer': 'adam',
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'loss_mixing': l_mixing
+            'epochs':
+            20,
+            'batch_size':
+            trial.suggest_int('B', 2, 27, 5),
+            'optimizer':
+            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
+            'lr':
+            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'lr_halving_epochs':
+            5,
+            'loss_mixing': {
+                'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+                'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+                'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+            }
         }
 
 

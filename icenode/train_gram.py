@@ -165,11 +165,6 @@ class GRAM(AbstractModel):
                    diag_emb=diag_emb,
                    **config['model'])
 
-    @staticmethod
-    def sample_training_config(trial: optuna.Trial):
-        return AbstractModel._sample_training_config(trial, epochs=10)
-
-
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials
     run_trials(model_cls=GRAM, **capture_args())

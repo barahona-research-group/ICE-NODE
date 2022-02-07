@@ -27,9 +27,13 @@ class ICENODE(ICENODE_SL):
                          timescale=timescale)
 
     def init_optimizer(self, config, params):
-        opt_cls = self.optimizer_class(config['training']['optimizer'])
-        lr1 = config['training']['lr']
+        c = config['training']
+        opt_cls = self.optimizer_class(c['optimizer'])
+        lr1 = c['lr']
         lr2 = 10 * lr1
+        lr1 = self.lr_schedule(lr1, c['epochs'], c['lr_halving_epochs'])
+        lr2 = self.lr_schedule(lr2, c['epochs'], c['lr_halving_epochs'])
+
         opt_init, opt_update, get_params = opt_cls(step_size=lr1)
         opt_state = opt_init({'f_n_ode': params['f_n_ode']})
         opt1 = (opt_state, opt_update, get_params)
@@ -87,20 +91,25 @@ class ICENODE(ICENODE_SL):
         return opt1, opt2, loss_, loss_mixing
 
     @classmethod
-    def _sample_training_config(cls, trial: optuna.Trial, epochs):
-        l_mixing = {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-        }
-
+    def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': epochs,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'loss_half_life': trial.suggest_int('lt0.5', 7, 2e2, log=True),
-            # UNDO/TODO
-            'optimizer': 'adamax',
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'loss_mixing': l_mixing
+            'epochs':
+            20,
+            'batch_size':
+            trial.suggest_int('B', 2, 27, 5),
+            'loss_half_life':
+            trial.suggest_int('lt0.5', 7, 2e2, log=True),
+            'optimizer':
+            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
+            'lr':
+            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'lr_halving_epochs':
+            5,
+            'loss_mixing': {
+                'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+                'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+                'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+            }
         }
 
 

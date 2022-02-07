@@ -2,7 +2,7 @@ from typing import Dict, List, Any, Optional, Iterable
 from functools import partial
 
 import jax
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 import optuna
 from .utils import (load_config, load_params, parameters_size, tree_hasnan,
                     write_params)
@@ -60,9 +60,19 @@ class AbstractModel:
         if label == 'adamax':
             return optimizers.adamax
 
+    @staticmethod
+    def lr_schedule(lr, n_epochs, halving_epochs):
+        if halving_epochs is None:
+            return lr
+        decay_steps = 100 * halving_epochs / n_epochs
+        return optimizers.exponential_decay(lr,
+                                            decay_steps=decay_steps,
+                                            decay_rate=0.5)
+
     def init_optimizer(self, config, params):
-        lr = config['training']['lr']
-        opt_cls = self.optimizer_class(config['training']['optimizer'])
+        c = config['training']
+        lr = self.lr_schedule(c['lr'], c['epochs'], c['lr_halving_epochs'])
+        opt_cls = self.optimizer_class(c['optimizer'])
         opt_init, opt_update, get_params = opt_cls(step_size=lr)
         opt_state = opt_init(params)
         return opt_state, opt_update, get_params
@@ -155,19 +165,18 @@ class AbstractModel:
             raise ValueError(f'Unrecognized diag_loss: {loss_label}')
 
     @classmethod
-    def _sample_training_config(cls, trial: optuna.Trial, epochs):
+    def sample_training_config(cls, trial: optuna.Trial):
         l_mixing = {
             'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
             'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
         }
 
         return {
-            'epochs': epochs,
+            'epochs': 10,
             'batch_size': trial.suggest_int('B', 2, 27, 5),
-            # UNDO/TODO
             'optimizer': 'adam',
-            # 'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
             'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
+            'lr_halving_epochs': None,
             'loss_mixing': l_mixing
         }
 
@@ -193,10 +202,6 @@ class AbstractModel:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
         return {'diag': emb_config, 'kind': emb_kind}
-
-    @classmethod
-    def sample_training_config(cls, trial: optuna.Trial):
-        raise ImplementationException('Should be overriden')
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
