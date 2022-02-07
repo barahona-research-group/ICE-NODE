@@ -179,6 +179,9 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     trial.set_user_attr('steps', iters)
     mlflow_set_tag('steps', iters, frozen)
     for i in tqdm(range(iters)):
+        eval_step = round((i + 1) * 100 / iters)
+        last_step = round(i * 100 / iters)
+
 
         if datetime.now() > trial_stop_time:
             trial.set_user_attr('timeout', 1)
@@ -188,15 +191,12 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
-        opt_obj = model.step_optimizer(i, opt_obj, train_batch)
+        opt_obj = model.step_optimizer(eval_step, opt_obj, train_batch)
         if model.hasnan(opt_obj):
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
             raise optuna.TrialPruned()
             # return float('nan')
-
-        eval_step = round((i + 1) * 100 / iters)
-        last_step = round(i * 100 / iters)
 
         if eval_step == last_step and i < iters - 1:
             continue
