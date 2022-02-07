@@ -57,6 +57,8 @@ class AbstractModel:
             return optimizers.adam
         if label == 'sgd':
             return optimizers.sgd
+        if label == 'adamax':
+            return optimizers.adamax
 
     def init_optimizer(self, config, params):
         lr = config['training']['lr']

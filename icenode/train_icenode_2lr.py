@@ -95,7 +95,7 @@ class ICENODE(ICENODE_TL):
             'epochs': epochs,
             'batch_size': trial.suggest_int('B', 2, 27, 5),
             # UNDO/TODO
-            'optimizer': trial.suggest_categorical('opt', ['adam', 'sgd']),
+            'optimizer': 'adamax',#trial.suggest_categorical('opt', ['adam', 'sgd']),
             'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
             'loss_mixing': l_mixing

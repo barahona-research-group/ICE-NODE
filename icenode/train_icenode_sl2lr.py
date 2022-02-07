@@ -98,7 +98,7 @@ class ICENODE(ICENODE_SL):
             'batch_size': trial.suggest_int('B', 2, 27, 5),
             'loss_half_life': trial.suggest_int('lt0.5', 7, 2e2, log=True),
             # UNDO/TODO
-            'optimizer': 'adam',
+            'optimizer': 'adamax',
             'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
             'loss_mixing': l_mixing
         }
