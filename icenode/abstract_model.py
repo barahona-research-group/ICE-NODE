@@ -38,7 +38,8 @@ class AbstractModel:
             'diag_detectability': res['diag_detectability']
         }
 
-    def admissions_auc_scores(self, params: Any, batch: List[int]):
+    def admissions_auc_scores(self, model_state: Any, batch: List[int]):
+        params = self.get_params(model_state)
         res = self(params, batch)
         return admissions_auc_scores(res['diag_detectability'], 'pre')
 
@@ -64,8 +65,8 @@ class AbstractModel:
         opt_state = opt_init(params)
         return opt_state, opt_update, get_params
 
-    def step_optimizer(self, step, opt_object, batch):
-        opt_state, opt_update, get_params, loss_, loss_mixing = opt_object
+    def step_optimizer(self, step, model_state, batch):
+        opt_state, opt_update, get_params, loss_, loss_mixing = model_state
         params = get_params(opt_state)
         grads = jax.grad(loss_)(params, batch)
         opt_state = opt_update(step, grads, opt_state)

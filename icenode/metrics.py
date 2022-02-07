@@ -232,9 +232,9 @@ def admissions_auc_scores(detectability, label_prefix):
 
                 # Record intervals between two discharges
                 if i == 0:
-                    intervals.append(0)
+                    intervals.append(time[-1])
                 else:
-                    intervals.append(info['time'] - time[-1])
+                    intervals.append(info['time'] - time[-2])
 
             if 'nfe' in info:
                 nfe.append(info['nfe'])

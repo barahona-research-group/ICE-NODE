@@ -9,7 +9,8 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (l2_squared, l1_absolute, softmax_logits_bce)
+from .metrics import (l2_squared, l1_absolute, softmax_logits_bce,
+                      admissions_auc_scores)
 from .utils import wrap_module, tree_map
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
@@ -321,6 +322,10 @@ class ICENODE(AbstractModel):
             'diag_detectability': res['diag_detectability']
         }
 
+    def admissions_auc_scores(self, model_state: Any, batch: List[int]):
+        params = self.get_params(model_state)
+        res = self(params, batch, count_nfe=True, interval_norm=False)
+        return admissions_auc_scores(res['diag_detectability'], 'pre')
 
     @staticmethod
     def create_patient_interface(mimic_dir, data_tag: str):
