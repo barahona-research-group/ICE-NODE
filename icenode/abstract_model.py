@@ -17,7 +17,6 @@ class ImplementationException(Exception):
 
 
 class AbstractModel:
-
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise ImplementationException('Should be overriden')
 
@@ -61,17 +60,16 @@ class AbstractModel:
             return optimizers.adamax
 
     @staticmethod
-    def lr_schedule(lr, n_epochs, halving_epochs):
-        if halving_epochs is None:
+    def lr_schedule(lr, decay_rate):
+        if decay_rate is None:
             return lr
-        decay_steps = 100 * halving_epochs / n_epochs
         return optimizers.exponential_decay(lr,
-                                            decay_steps=decay_steps,
-                                            decay_rate=0.5)
+                                            decay_steps=50,
+                                            decay_rate=decay_rate)
 
     def init_optimizer(self, config, params):
         c = config['training']
-        lr = self.lr_schedule(c['lr'], c['epochs'], c['lr_halving_epochs'])
+        lr = self.lr_schedule(c['lr'], c['decay_rate'])
         opt_cls = self.optimizer_class(c['optimizer'])
         opt_init, opt_update, get_params = opt_cls(step_size=lr)
         opt_state = opt_init(params)
@@ -176,7 +174,7 @@ class AbstractModel:
             'batch_size': trial.suggest_int('B', 2, 27, 5),
             'optimizer': 'adam',
             'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
-            'lr_halving_epochs': None,
+            'decay_rate': None,
             'loss_mixing': l_mixing
         }
 

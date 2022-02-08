@@ -61,8 +61,8 @@ class ICENODE(ICENODE_TL):
             trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
             'lr':
             trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'lr_halving_epochs':
-            5,
+            'decay_rate':
+            trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),

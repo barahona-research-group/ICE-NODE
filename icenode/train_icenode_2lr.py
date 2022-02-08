@@ -28,8 +28,8 @@ class ICENODE(ICENODE_TL):
     def init_optimizer(self, config, params):
         c = config['training']
         opt_cls = self.optimizer_class(c['optimizer'])
-        lr1 = self.lr_schedule(c['lr1'], c['epochs'], c['lr_halving_epochs'])
-        lr2 = self.lr_schedule(c['lr2'], c['epochs'], c['lr_halving_epochs'])
+        lr1 = self.lr_schedule(c['lr1'], c['decay_rate1'])
+        lr2 = self.lr_schedule(c['lr2'], c['decay_rate2'])
 
         opt_init, opt_update, get_params = opt_cls(step_size=lr1)
         opt_state = opt_init({'f_n_ode': params['f_n_ode']})
@@ -100,8 +100,10 @@ class ICENODE(ICENODE_TL):
             trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2':
             trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
-            'lr_halving_epochs':
-            5,
+            'decay_rate1':
+            trial.suggest_float('dr1', 1e-1, 9e-1),
+            'decay_rate2':
+            trial.suggest_float('dr2', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
