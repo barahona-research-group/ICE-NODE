@@ -16,7 +16,8 @@ from .abstract_model import AbstractModel
 
 from .train_gram import GRAM
 from .train_retain import RETAIN
-from .train_snonet_diag import SNONETDiag
+from .train_icenode_2lr import ICENODE as ICENODE_2LR
+from .train_icenode_tl import ICENODE as ICENODE_TL
 
 
 def run(model_cls: AbstractModel, config, patient_interface, tag: str,
@@ -111,7 +112,10 @@ if __name__ == '__main__':
                         required=True,
                         help='Absolute path to MIMIC-III processed tables')
 
-    parser.add_argument('-t', '--config-tag', required=True, help='Experiment tag')
+    parser.add_argument('-t',
+                        '--config-tag',
+                        required=True,
+                        help='Experiment tag')
     parser.add_argument('-d', '--data-tag', required=True, help='Data tag')
 
     parser.add_argument('-o',
@@ -123,7 +127,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
-    model_class = {'gram': GRAM, 'retain': RETAIN, 'snonet_diag': SNONETDiag}
+    model_class = {
+        'gram': GRAM,
+        'retain': RETAIN,
+        'icenode_2lr': ICENODE_2LR,
+        'icenode_tl': ICENODE_TL
+    }
     model_cls = model_class[args.model]
 
     logging.set_verbosity(logging.INFO)

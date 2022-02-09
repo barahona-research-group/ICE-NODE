@@ -55,7 +55,7 @@ class ICENODE(ICENODE_TL):
         return {
             'epochs': 20,
             'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'optimizer': 'opt',
+            'optimizer': 'adam',
             'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
             'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {

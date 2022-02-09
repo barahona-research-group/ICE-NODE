@@ -248,7 +248,7 @@ class RETAIN(AbstractModel):
 
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
-        return AbstractModel._sample_training_config(trial, epochs=10)
+        return AbstractModel.sample_training_config(trial)
 
 
 if __name__ == '__main__':
