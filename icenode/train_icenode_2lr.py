@@ -94,8 +94,7 @@ class ICENODE(ICENODE_TL):
             20,
             'batch_size':
             trial.suggest_int('B', 2, 27, 5),
-            'optimizer':
-            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
+            'optimizer': 'adam',
             'lr1':
             trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2':
