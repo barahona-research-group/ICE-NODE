@@ -104,7 +104,7 @@ class RETAIN(AbstractModel):
         }
         return list(map(index2code.get, range(len(index2code))))
 
-    def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
+    def __call__(self, params: Any, subjects_batch: List[int]):
 
         G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
         emb = partial(self.diag_emb.encode, G)

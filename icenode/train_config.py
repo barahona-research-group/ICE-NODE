@@ -2,16 +2,14 @@ import os
 import argparse
 import random
 from pathlib import Path
-from typing import Iterable, Dict, Any, Optional, Tuple
-from functools import partial
+from typing import Iterable, Dict, Any
 from absl import logging
 from tqdm import tqdm
 
 import jax
-from jax.experimental import optimizers
 
 from .metrics import evaluation_table
-from .utils import (load_config, tree_hasnan, write_config, write_params)
+from .utils import (load_config, write_config)
 from .abstract_model import AbstractModel
 
 from .train_gram import GRAM
@@ -37,55 +35,31 @@ def run(model_cls: AbstractModel, config, patient_interface, tag: str,
 
     code_partitions = model.code_partitions(patient_interface, train_ids)
 
-    params = model.init_params(prng_key)
+    m_state = model.init(config)
     logging.info('[DONE] Sampling & Initializing Models')
-
-    loss_mixing = config['training']['loss_mixing']
-    lr = config['training']['lr']
-    if config['training']['optimizer'] == 'adam':
-        optimizer = optimizers.adam
-    else:
-        optimizer = optimizers.sgd
-
-    opt_init, opt_update, get_params = optimizer(step_size=lr)
-    opt_state = opt_init(params)
-
-    loss_ = partial(model.loss, loss_mixing)
-    eval_ = partial(model.eval, loss_mixing)
-
-    def update(
-            step: int, batch: Iterable[int],
-            opt_state: optimizers.OptimizerState) -> optimizers.OptimizerState:
-        params = get_params(opt_state)
-        grads = jax.grad(loss_)(params, batch)
-        return opt_update(step, grads, opt_state)
 
     batch_size = config['training']['batch_size']
     batch_size = min(batch_size, len(train_ids))
-
     epochs = config['training']['epochs']
     iters = round(epochs * len(train_ids) / batch_size)
     for i in tqdm(range(iters)):
+        eval_step = round((i + 1) * 100 / iters)
+        last_step = round(i * 100 / iters)
+
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
-        opt_state = update(i, train_batch, opt_state)
-        if tree_hasnan(get_params(opt_state)):
+        m_state = model.step_optimizer(eval_step, m_state, train_batch)
+        if model.hasnan(m_state):
             raise ValueError('NaN params')
 
-        eval_step = round((i + 1) * 100 / iters)
-
-        last_step = round(i * 100 / iters)
-
-        if eval_step == last_step:
+        if eval_step == last_step and i < iters - 1:
             continue
 
-        params = get_params(opt_state)
-
         raw_res = {
-            'TRN': eval_(params, train_batch),
-            'VAL': eval_(params, valid_ids),
-            'TST': eval_(params, test_ids)
+            'TRN': model.eval(m_state, train_batch),
+            'VAL': model.eval(m_state, valid_ids),
+            'TST': model.eval(m_state, test_ids)
         }
 
         eval_df, _ = evaluation_table(raw_res, code_partitions)
@@ -94,7 +68,7 @@ def run(model_cls: AbstractModel, config, patient_interface, tag: str,
 
         fname = os.path.join(experiment_dir,
                              f'step{eval_step:04d}_params.pickle')
-        write_params(get_params(opt_state), fname)
+        model.write_params(m_state, fname)
         logging.info(eval_df)
 
 

@@ -166,11 +166,11 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     code_partitions = model.code_partitions(patient_interface, train_ids)
 
-    opt_obj = model.init(config)
+    m_state = model.init(config)
     logging.info('[DONE] Sampling & Initializing Models')
 
-    trial.set_user_attr('parameters_size', model.parameters_size(opt_obj))
-    mlflow_set_tag('parameters_size', model.parameters_size(opt_obj), frozen)
+    trial.set_user_attr('parameters_size', model.parameters_size(m_state))
+    mlflow_set_tag('parameters_size', model.parameters_size(m_state), frozen)
     batch_size = config['training']['batch_size']
     batch_size = min(batch_size, len(train_ids))
 
@@ -191,8 +191,8 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         rng.shuffle(train_ids)
         train_batch = train_ids[:batch_size]
 
-        opt_obj = model.step_optimizer(eval_step, opt_obj, train_batch)
-        if model.hasnan(opt_obj):
+        m_state = model.step_optimizer(eval_step, m_state, train_batch)
+        if model.hasnan(m_state):
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
             raise optuna.TrialPruned()
@@ -211,14 +211,14 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
         if frozen or i == iters - 1:
             raw_res = {
-                'TRN': model.eval(opt_obj, train_batch),
-                'VAL': model.eval(opt_obj, valid_ids),
-                'TST': model.eval(opt_obj, test_ids)
+                'TRN': model.eval(m_state, train_batch),
+                'VAL': model.eval(m_state, valid_ids),
+                'TST': model.eval(m_state, test_ids)
             }
         else:
             raw_res = {
-                'TRN': model.eval(opt_obj, train_batch),
-                'VAL': model.eval(opt_obj, valid_ids)
+                'TRN': model.eval(m_state, train_batch),
+                'VAL': model.eval(m_state, valid_ids)
             }
 
         eval_df, eval_flat = evaluation_table(raw_res, code_partitions)
@@ -234,7 +234,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
         if frozen or i == iters - 1:
             fname = os.path.join(trial_dir,
                                  f'step{eval_step:04d}_params.pickle')
-            model.write_params(opt_obj, fname)
+            model.write_params(m_state, fname)
 
         logging.info(eval_df)
 
