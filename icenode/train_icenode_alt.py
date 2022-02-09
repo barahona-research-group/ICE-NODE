@@ -78,8 +78,8 @@ class ICENODE(ICENODE_2LR):
             'epochs': 20,
             'batch_size': trial.suggest_int('B', 2, 27, 5),
             'optimizer': 'adam',
-            'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
-            'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
+            'lr1': trial.suggest_float('lr1', 1e-4, 1e-3, log=True),
+            'lr2': trial.suggest_float('lr2', 1e-3, 1e-2, log=True),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
