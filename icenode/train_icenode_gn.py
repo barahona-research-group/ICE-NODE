@@ -53,21 +53,27 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs':
-            20,
-            'batch_size':
-            trial.suggest_int('B', 2, 27, 5),
-            'optimizer':
-            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
-            'lr':
-            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate':
-            trial.suggest_float('dr', 1e-1, 9e-1),
+            'epochs': 20,
+            'batch_size': trial.suggest_int('B', 2, 27, 5),
+            'optimizer': 'opt',
+            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
                 'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
             }
+        }
+
+    @classmethod
+    def sample_model_config(cls, trial: optuna.Trial):
+        return {
+            'ode_dyn': 'mlp',
+            'ode_with_bias': False,
+            'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
+                                                log=True),
+            'state_size': trial.suggest_int('s', 10, 100, 10),
+            'timescale': 60
         }
 
 
