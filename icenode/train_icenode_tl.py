@@ -1,9 +1,11 @@
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
+import math
 
 from absl import logging
 import haiku as hk
 import jax
+from jax import lax
 from jax.example_libraries import optimizers
 import jax.numpy as jnp
 
@@ -288,6 +290,108 @@ class ICENODE(AbstractModel):
         }
 
         return ret
+
+    def _f_n_ode_trajectory(self, params, sampling_rate, state_e, t_offset, t):
+
+        nn_decode = partial(self._f_dec, params)
+
+        def timesamples(tf, dt):
+            return jnp.linspace(0, tf - tf % dt,
+                                round((tf - tf % dt) / dt + 1))
+
+        def odeint_samples(current_state, t_ij):
+            h, _, _ = self.f_n_ode(params['f_n_ode'], 2, False, current_state,
+                                   sampling_rate)[-1]
+            next_state = h[-1, :]
+            return next_state, next_state
+
+        trajectory_samples = {}
+        new_se = {}
+        for i, ti in t.items():
+            t_samples = timesamples(ti, sampling_rate) + t_offset[i]
+            current_se, se_samples = lax.scan(odeint_samples, state_e[i],
+                                              t_samples[1:])
+            new_se[i] = current_se
+            s, e = self.split_state_emb(state_e[i])
+            s_samples = [s]
+            e_samples = [e]
+            for i in range(len(se_samples)):
+                s_samples.append(s_samples[i])
+                e_samples.append(e_samples[i])
+
+            # state samples
+            s_samples = jnp.vstack(s_samples)
+            # embedding samples
+            e_samples = jnp.vstack(e_samples)
+            # diagnostic samples
+            d_samples = jax.vmap(partial(self._f_dec, params))(e_samples)
+            trajectory_samples[i] = {
+                't': t_samples,
+                's': s_samples,
+                'e': e_samples,
+                'd': d_samples
+            }
+
+        return new_se, trajectory_samples
+
+    def sample_trajectory(self, model_state, batch: List[int],
+                          sample_rate: float):
+        params = self.get_params(model_state)
+        nth_adm = partial(self._extract_nth_admission, params, batch)
+        nn_ode = partial(self._f_n_ode_trajectory, params, sample_rate)
+        nn_update = partial(self._f_update, params)
+
+        adm0 = nth_adm(0)
+        subject_state = {
+            i: {
+                'state_e': self.join_state_emb(None, adm0['diag_emb'][i]),
+                'time': adm0['time'][i] + adm0['los'][i]
+            }
+            for i in adm0['admission_id']
+        }
+
+        trajectory = {i: {'t': [], 'e': [], 'd': [], 's': []} for i in batch}
+
+        for n in self.subject_interface.n_support[1:]:
+            adm_n = nth_adm(n)
+            if adm_n is None:
+                break
+            adm_id = adm_n['admission_id']
+            adm_los = adm_n['los']  # length of stay
+            adm_time = adm_n['time']
+            emb = adm_n['diag_emb']
+
+            state_e = {i: subject_state[i]['state_e'] for i in adm_id}
+
+            d2d_time = {
+                i: adm_time[i] + adm_los[i] - subject_state[i]['time']
+                for i in adm_id
+            }
+
+            offset = {i: subject_state[i]['time'] for i in adm_id}
+
+            # Integrate until next discharge
+            state_e, traj_n = nn_ode(state_e, offset, d2d_time)
+
+            for subject_id, traj_ni in traj_n.items():
+                for symbol in ('t', 's', 'e', 'd'):
+                    trajectory[subject_id][symbol].append(traj_ni[symbol])
+
+            # Update state at discharge
+            state_e = nn_update(state_e, emb)
+
+            # Update the states:
+            for subject_id, new_state in state_e.items():
+                subject_state[subject_id] = {
+                    'time': adm_time[subject_id] + adm_los[subject_id],
+                    'state_e': new_state
+                }
+
+        for i, traj_i in trajectory.items():
+            for symbol in ('t', 's', 'e', 'd'):
+                traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
+
+        return trajectory
 
     def detailed_loss(self, loss_mixing, params, res):
         prediction_loss = res['prediction_loss']
