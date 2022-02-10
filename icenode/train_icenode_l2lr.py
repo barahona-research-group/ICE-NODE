@@ -41,6 +41,14 @@ class ICENODE(ICENODE_2LR):
             "f_dec": [emb],
         }
 
+    def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
+                  emb: jnp.ndarray) -> jnp.ndarray:
+        new_state = {}
+        for i in emb:
+            state, _ = self.split_state_emb(state_e[i])
+            new_state[i] = self.join_state_emb(state, emb[i])
+        return new_state
+
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials

@@ -39,7 +39,7 @@ class ICENODE(ICENODE_TL):
         opt_state = opt_init({
             'f_dec': params['f_dec'],
             'diag_emb': params['diag_emb'],
-            'f_update': params['f_update']
+            'f_update': params.get('f_update')
         })
         opt2 = (opt_state, opt_update, get_params)
         return opt1, opt2
@@ -76,7 +76,7 @@ class ICENODE(ICENODE_TL):
         grads1 = {'f_n_ode': grads['f_n_ode']}
         grads2 = {
             'f_dec': grads['f_dec'],
-            'f_update': grads['f_update'],
+            'f_update': grads.get('f_update'),
             'diag_emb': grads['diag_emb']
         }
 
