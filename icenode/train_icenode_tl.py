@@ -292,7 +292,6 @@ class ICENODE(AbstractModel):
         return ret
 
     def _f_n_ode_trajectory(self, params, sampling_rate, state_e, t_offset, t):
-
         nn_decode = partial(self._f_dec, params)
 
         def timesamples(tf, dt):
@@ -301,7 +300,7 @@ class ICENODE(AbstractModel):
 
         def odeint_samples(current_state, t_ij):
             h, _, _ = self.f_n_ode(params['f_n_ode'], 2, False, current_state,
-                                   sampling_rate)[-1]
+                                   sampling_rate)
             next_state = h[-1, :]
             return next_state, next_state
 
@@ -315,21 +314,35 @@ class ICENODE(AbstractModel):
             s, e = self.split_state_emb(state_e[i])
             s_samples = [s]
             e_samples = [e]
-            for i in range(len(se_samples)):
-                s_samples.append(s_samples[i])
-                e_samples.append(e_samples[i])
+            for se_sample in se_samples:
+                s, e = self.split_state_emb(se_sample)
+                s_samples.append(s)
+                e_samples.append(e)
 
             # state samples
             s_samples = jnp.vstack(s_samples)
             # embedding samples
             e_samples = jnp.vstack(e_samples)
             # diagnostic samples
-            d_samples = jax.vmap(partial(self._f_dec, params))(e_samples)
+            d_samples = jax.vmap(partial(self.f_dec,
+                                         params['f_dec']))(e_samples)
+            # convert from logits to probs.
+            d_samples = jax.vmap(jax.nn.softmax)(d_samples)
+
+            # 1st-order derivative of d_samples
+            grad = jax.vmap(lambda v: jnp.gradient(v, sampling_rate))
+            d1d_samples = grad(d_samples)
+
+            # 2nd-order derivative of d_samples
+            d2d_samples = grad(d1d_samples)
+
             trajectory_samples[i] = {
                 't': t_samples,
                 's': s_samples,
                 'e': e_samples,
-                'd': d_samples
+                'd': d_samples,
+                'd1d': d1d_samples,
+                'd2d': d2d_samples
             }
 
         return new_se, trajectory_samples
@@ -374,7 +387,7 @@ class ICENODE(AbstractModel):
             state_e, traj_n = nn_ode(state_e, offset, d2d_time)
 
             for subject_id, traj_ni in traj_n.items():
-                for symbol in ('t', 's', 'e', 'd'):
+                for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):
                     trajectory[subject_id][symbol].append(traj_ni[symbol])
 
             # Update state at discharge
@@ -388,7 +401,7 @@ class ICENODE(AbstractModel):
                 }
 
         for i, traj_i in trajectory.items():
-            for symbol in ('t', 's', 'e', 'd'):
+            for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):
                 traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
 
         return trajectory
