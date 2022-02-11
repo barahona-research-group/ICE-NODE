@@ -98,8 +98,8 @@ class GRAM(AbstractModel):
                 logits = self.out(params['out'], output)
                 diag_detectability[subject_id][i] = {
                     'admission_id': admission_id[i],
-                    'diag_true': y_i,
-                    'pre_logits': logits
+                    'true_diag': y_i,
+                    'pred_logits': logits
                 }
                 loss[subject_id].append(diag_loss(y_i, logits))
 

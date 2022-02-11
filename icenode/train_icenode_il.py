@@ -178,7 +178,7 @@ class ICENODE(ICENODE_TL):
                     'nfe': nfe[subject_id],
                     'time': adm_time[subject_id],
                     'diag_true': diag[subject_id],
-                    'pre_logits': dec_diag[subject_id]
+                    'pred_logits': dec_diag[subject_id]
                 }
 
             odeint_time.append(sum(d2d_time.values()))

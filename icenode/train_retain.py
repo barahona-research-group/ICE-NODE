@@ -171,8 +171,8 @@ class RETAIN(AbstractModel):
                 logits = self.decode(params['decode'], c_context)
                 diag_detectability[subject_id][i] = {
                     'admission_id': admission_id[i],
-                    'diag_true': diag_ccs[i],
-                    'pre_logits': logits
+                    'true_diag': diag_ccs[i],
+                    'pred_logits': logits
                 }
                 loss[subject_id].append(diag_loss(diag_ccs[i], logits))
 
