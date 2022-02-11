@@ -37,9 +37,11 @@ class CCSDAG:
          self.proc_flatccs2icd) = self.make_proc_icd2ccs_dict()
 
         (self.diag_ccs_pt2ch, self.diag_icd2ccs, self.diag_ccs2icd,
-         self.diag_ccs_codes) = self.make_diag_multi_dictionaries()
+         self.diag_ccs_codes,
+         self.diag_ccs_labels) = self.make_diag_multi_dictionaries()
         (self.proc_ccs_pt2ch, self.proc_icd2ccs, self.proc_ccs2icd,
-         self.proc_ccs_codes) = self.make_proc_multi_dictionaries()
+         self.proc_ccs_codes,
+         self.proc_ccs_labels) = self.make_proc_multi_dictionaries()
 
         self.diag_flatccs_codes = list(sorted(self.diag_flatccs2icd.keys()))
 
@@ -105,6 +107,7 @@ class CCSDAG:
             lambda l: l.strip('\'').strip())
 
         df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4', 'ICD']]
+
         diag_multi_ccs_pt2ch = defaultdict(set)
         diag_multi_icd2ccs = {}
         diag_multi_ccs2icd = defaultdict(list)
@@ -112,7 +115,6 @@ class CCSDAG:
         for row in df.itertuples():
             code = row.ICD
             i1, i2, i3, i4 = row.I1, row.I2, row.I3, row.I4
-
             last_index = i1
 
             if i2:
@@ -136,8 +138,16 @@ class CCSDAG:
 
         diag_multi_ccs_codes = list(sorted(diag_multi_ccs_codes))
 
+        # Make a dictionary for CCS labels
+        diag_multi_ccs_labels = {}
+        for idx_col, label_col in zip(('I1', 'I2', 'I3', 'I4'),
+                                      ('L1', 'L2', 'L3', 'L4')):
+            df_ = df[[idx_col, label_col]].drop_duplicates()
+            idx_label = dict(zip(df_[idx_col], df_[label_col]))
+            diag_multi_ccs_labels.update(idx_label)
+
         return (diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd,
-                diag_multi_ccs_codes)
+                diag_multi_ccs_codes, diag_multi_ccs_labels)
 
     def make_proc_multi_dictionaries(self):
         df = self.proc_ccs_df.copy()
@@ -183,8 +193,15 @@ class CCSDAG:
 
         proc_multi_ccs_codes = list(sorted(proc_multi_ccs_codes))
 
+        # Make a dictionary for CCS labels
+        proc_multi_ccs_labels = {}
+        for idx_col, label_col in zip(('I1', 'I2', 'I3'), ('L1', 'L2', 'L3')):
+            df_ = df[[idx_col, label_col]].drop_duplicates()
+            idx_label = dict(zip(df_[idx_col], df_[label_col]))
+            proc_multi_ccs_labels.update(idx_label)
+
         return (proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd,
-                proc_multi_ccs_codes)
+                proc_multi_ccs_codes, proc_multi_ccs_labels)
 
     def find_diag_icd_name(self, code):
         return self.diag_icd_label[code]

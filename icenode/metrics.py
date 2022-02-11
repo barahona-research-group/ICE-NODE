@@ -219,6 +219,7 @@ def admissions_auc_scores(detectability, label_prefix):
     adm_auc = []
     nfe = []
     intervals = []
+    r = []
 
     for subject_id, admissions in detectability.items():
         for i, admission_index in enumerate(sorted(admissions.keys())):
@@ -242,6 +243,9 @@ def admissions_auc_scores(detectability, label_prefix):
             if 'los' in info:
                 los.append(info['los'])
 
+            if 'R/T' in info:
+                r.append(info['R/T'])
+
             admission_indexes.append(i)
             admission_ids.append(info['admission_id'])
             subject_ids.append(subject_id)
@@ -259,12 +263,12 @@ def admissions_auc_scores(detectability, label_prefix):
         'AUC': adm_auc,
         'N_CODES': n_codes
     }
-    if len(time) > 0 and len(intervals) > 0 and len(los) > 0:
+    if (len(time) > 0 and len(intervals) > 0 and len(los) > 0 and len(r) > 0
+            and len(nfe) > 0):
         data['TIME'] = time
         data['INTERVALS'] = intervals
         data['LOS'] = los
-
-    if len(nfe) > 0:
+        data['R/T'] = r
         data['NFE'] = nfe
 
     return pd.DataFrame(data)

@@ -8,6 +8,7 @@ import jax
 from jax import lax
 from jax.example_libraries import optimizers
 import jax.numpy as jnp
+import numpy as onp
 
 import optuna
 
@@ -253,6 +254,7 @@ class ICENODE(AbstractModel):
                     'nfe': nfe[subject_id],
                     'time': adm_time[subject_id] + adm_los[subject_id],
                     'los': adm_los[subject_id],
+                    'R/T': r[subject_id] / d2d_time[subject_id],
                     'diag_true': diag[subject_id],
                     'pre_logits': dec_diag[subject_id]
                 }
@@ -363,7 +365,19 @@ class ICENODE(AbstractModel):
             for i in adm0['admission_id']
         }
 
-        trajectory = {i: {'t': [], 'e': [], 'd': [], 's': []} for i in batch}
+        trajectory = {
+            i: {
+                't': [],
+                'e': [],
+                'd': [],
+                'tp10': [],
+                'fp10': [],
+                's': [],
+                'd1d': [],
+                'd2d': []
+            }
+            for i in batch
+        }
 
         for n in self.subject_interface.n_support[1:]:
             adm_n = nth_adm(n)
@@ -373,6 +387,7 @@ class ICENODE(AbstractModel):
             adm_los = adm_n['los']  # length of stay
             adm_time = adm_n['time']
             emb = adm_n['diag_emb']
+            diag = adm_n['diag_out']
 
             state_e = {i: subject_state[i]['state_e'] for i in adm_id}
 
@@ -390,6 +405,15 @@ class ICENODE(AbstractModel):
                 for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):
                     trajectory[subject_id][symbol].append(traj_ni[symbol])
 
+                # For the last timestamp, get sorted indices for the predictions
+                top10_idx = jnp.argsort(-traj_ni['d'][-1, :])[:10]
+                pos = onp.zeros_like(diag[subject_id])
+                pos[[top10_idx]] = 1
+                tp = (pos == diag[subject_id]) * 1
+                fp = (pos != diag[subject_id]) * 1
+                trajectory[subject_id]['tp10'].append(tp)
+                trajectory[subject_id]['fp10'].append(fp)
+
             # Update state at discharge
             state_e = nn_update(state_e, emb)
 
@@ -401,7 +425,7 @@ class ICENODE(AbstractModel):
                 }
 
         for i, traj_i in trajectory.items():
-            for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):
+            for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d', 'tp10', 'fp10'):
                 traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
 
         return trajectory
@@ -464,16 +488,11 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs':
-            20,
-            'batch_size':
-            trial.suggest_int('B', 2, 27, 5),
-            'optimizer':
-            trial.suggest_categorical('opt', ['adam', 'sgd', 'adamax']),
-            'lr':
-            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate':
-            trial.suggest_float('dr', 1e-1, 9e-1),
+            'epochs': 25,
+            'batch_size': trial.suggest_int('B', 2, 27, 5),
+            'optimizer': trial.suggest_categorical('opt', ['adam', 'adamax']),
+            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
@@ -486,10 +505,9 @@ class ICENODE(AbstractModel):
         return {
             'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
             'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-10, 1e-1,
-                                                log=True),
+            'ode_init_var': trial.suggest_float('ode_i', 1e-9, 1, log=True),
             'state_size': trial.suggest_int('s', 10, 100, 10),
-            'timescale': 60
+            'timescale': 7
         }
 
 
