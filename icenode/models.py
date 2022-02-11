@@ -55,12 +55,14 @@ class MLPDynamics(hk.Module):
                       name=f'lin_{i}') for i in range(depth)
         ]
 
-    def __call__(self, h):
-        out = h
+    def __call__(self, h, c):
+        out = jnp.hstack((h, c))
 
         for lin in self.lin[:-1]:
             out = lin(out)
             out = leaky_relu(out, negative_slope=2e-1)
+            out = jnp.hstack((out, c))
+
         out = self.lin[-1](out)
         return jnp.tanh(out)
 
@@ -86,13 +88,15 @@ class ResDynamics(hk.Module):
                       name=f'lin_{i}') for i in range(depth)
         ]
 
-    def __call__(self, h):
-        out = h
+    def __call__(self, h, c):
+        out = jnp.hstack((h, c))
         res = jnp.zeros_like(h)
         for lin in self.lin[:-1]:
             out = lin(out)
             out = leaky_relu(out, negative_slope=2e-1) + res
             res = out
+            out = jnp.hstack((out, c))
+
         out = self.lin[-1](out)
         return jnp.tanh(out)
 
@@ -134,7 +138,7 @@ class GRUDynamics(hk.Module):
                       name='rhc_g'), jnp.tanh
         ])
 
-    def __call__(self, h: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, h: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
         """
         Returns a change due to one step of using GRU-ODE for all h.
         Args:
@@ -143,9 +147,10 @@ class GRUDynamics(hk.Module):
         Returns:
             dh/dt
         """
-        r = self.h_r(h)
-        z = self.h_z(h)
-        g = self.rh_g(r * h)
+        hc = jnp.hstack((h, c))
+        r = self.h_r(hc)
+        z = self.h_z(hc)
+        g = self.rh_g(r * hc)
         return (1 - z) * (g - h)
 
 
@@ -156,7 +161,7 @@ class TaylorAugmented(hk.Module):
         self.order = order or 0
         self.f = dynamics_cls(**dynamics_kwargs)
 
-    def sol_recursive(self, h: jnp.ndarray, t: float):
+    def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
         """
         https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
         By Jacob Kelly
@@ -184,7 +189,7 @@ class TaylorAugmented(hk.Module):
         # SOFTWARE.
         """
         if self.order < 2:
-            return self.f(h), jnp.zeros_like(h)
+            return self.f(h, c), jnp.zeros_like(h)
 
         h_shape = h.shape
 
@@ -193,7 +198,7 @@ class TaylorAugmented(hk.Module):
             Closure to expand z.
             """
             _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
-            dh = jnp.ravel(self.f(_h))
+            dh = jnp.ravel(self.f(_h, c))
             dt = jnp.array([1.])
             dh_t = jnp.concatenate((dh, dt))
             return dh_t
@@ -207,10 +212,11 @@ class TaylorAugmented(hk.Module):
         return (jnp.reshape(y0[:-1],
                             h_shape), jnp.reshape(yns[-2][:-1], h_shape))
 
-    def __call__(self, h_r: Tuple[jnp.ndarray, jnp.ndarray], t: float):
+    def __call__(self, h_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
+                 c: jnp.ndarray):
         h, _ = h_r
 
-        dydt, drdt = self.sol_recursive(h, t)
+        dydt, drdt = self.sol_recursive(h, t, c)
 
         return dydt, jnp.mean(drdt**2)
 
@@ -237,16 +243,16 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, n_samples, count_nfe, h, t):
+    def __call__(self, n_samples, count_nfe, h, t, c):
         t = jnp.linspace(0.0, t / self.timescale, n_samples)
         if hk.running_init():
-            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0])
+            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0], c)
             h = jnp.broadcast_to(h, (len(t), len(h)))
             return h, jnp.zeros(1), 0
         if count_nfe:
-            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t)
+            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t, c)
         else:
-            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t)
+            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t, c)
             nfe = 0
         return h, r[-1], nfe
 
@@ -344,21 +350,12 @@ class StateUpdate(hk.Module):
 
     def __init__(self,
                  state_size: int,
-                 embeddings_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
-        self.__project = hk.Sequential([
-            hk.Linear(embeddings_size, with_bias=True, name=f'{name}_prep'),
-            jnp.tanh
-        ])
-
         self.__gru = hk.GRU(state_size)
 
-    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray,
-                 nominal_emb: jnp.ndarray) -> jnp.ndarray:
-
-        gru_input = self.__project(jnp.hstack((emb, nominal_emb)))
-        _, updated_state = self.__gru(gru_input, state)
+    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray) -> jnp.ndarray:
+        _, updated_state = self.__gru(emb, state)
         return updated_state
 
 

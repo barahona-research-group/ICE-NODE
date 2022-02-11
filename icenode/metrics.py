@@ -174,7 +174,7 @@ def confusion_matrix_scores(cm: jnp.ndarray):
     }
 
 
-def auc_scores(detectability, label_prefix):
+def auc_scores(detectability):
 
     def compute_auc(v_truth, v_preds):
         fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
@@ -186,9 +186,9 @@ def auc_scores(detectability, label_prefix):
         for inference in points.values():
             # In some cases the ground truth is all negative, avoid them.
             # Note: in Python {0.0, 1.0} == {0, 1} => True
-            if set(onp.unique(inference['diag_true'])) == {0, 1}:
-                gtruth.append(inference['diag_true'])
-                preds.append(jit_sigmoid(inference[f'{label_prefix}_logits']))
+            if set(onp.unique(inference['true_diag'])) == {0, 1}:
+                gtruth.append(inference['true_diag'])
+                preds.append(jit_sigmoid(inference['pred_logits']))
 
     if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
         logging.warning('no detections or nan probs')
@@ -201,7 +201,7 @@ def auc_scores(detectability, label_prefix):
     return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
 
 
-def admissions_auc_scores(detectability, label_prefix):
+def admissions_auc_scores(detectability):
 
     def compute_auc(v_truth, v_preds):
         fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
@@ -225,7 +225,7 @@ def admissions_auc_scores(detectability, label_prefix):
         for i, admission_index in enumerate(sorted(admissions.keys())):
             info = admissions[admission_index]
             # If ground truth has no clinical codes, skip.
-            if set(onp.unique(info['diag_true'])) != {0, 1}:
+            if set(onp.unique(info['true_diag'])) != {0, 1}:
                 continue
 
             if 'time' in info:
@@ -250,11 +250,11 @@ def admissions_auc_scores(detectability, label_prefix):
             admission_ids.append(info['admission_id'])
             subject_ids.append(subject_id)
 
-            diag_true = info['diag_true']
-            diag_score = jit_sigmoid(info[f'{label_prefix}_logits'])
-            auc_score = compute_auc(diag_true, diag_score)
+            true_diag = info['true_diag']
+            diag_score = jit_sigmoid(info['pred_logits'])
+            auc_score = compute_auc(true_diag, diag_score)
             adm_auc.append(auc_score)
-            n_codes.append(diag_true.sum())
+            n_codes.append(true_diag.sum())
 
     data = {
         'SUBJECT_ID': subject_ids,
@@ -274,13 +274,12 @@ def admissions_auc_scores(detectability, label_prefix):
     return pd.DataFrame(data)
 
 
-def top_k_detectability_scores(codes_by_percentiles, detections_df,
-                               label_prefix):
+def top_k_detectability_scores(codes_by_percentiles, detections_df):
     rate = {}
     for i, codes in enumerate(codes_by_percentiles):
         codes_detections_df = detections_df[detections_df.code.isin(codes)]
-        detection_rate = codes_detections_df[f'{label_prefix}_detected'].mean()
-        rate[f'{label_prefix}_ACC-P{i}'] = detection_rate
+        detection_rate = codes_detections_df['detected'].mean()
+        rate[f'ACC-P{i}'] = detection_rate
 
     percentiles = {}
     for i, codes in enumerate(codes_by_percentiles):
@@ -292,13 +291,12 @@ def top_k_detectability_scores(codes_by_percentiles, detections_df,
     return rate, percentiles
 
 
-def compute_confusion_matrix(detectability, label_prefix):
+def compute_confusion_matrix(detectability):
     cm = []
-    label = f'{label_prefix}_logits'
     for points in detectability.values():
         for inference in points.values():
-            ground_truth = inference['diag_true']
-            logits = inference[label]
+            ground_truth = inference['true_diag']
+            logits = inference['pred_logits']
             cm.append(confusion_matrix(ground_truth, jit_sigmoid(logits)))
     if cm:
         return sum(cm)
@@ -306,25 +304,21 @@ def compute_confusion_matrix(detectability, label_prefix):
         return onp.zeros((2, 2)) + onp.nan
 
 
-def top_k_detectability_df(top_k: int, res, prefixes):
-    cols = ['subject_id', 'point_n', 'code']
-    for prefix in prefixes:
-        cols.append(f'{prefix}_detected')
+def top_k_detectability_df(top_k: int, res):
+    cols = ['subject_id', 'point_n', 'code', 'detected']
 
     def top_k_detectability(point):
-        ground_truth = jnp.argwhere(point['diag_true']).squeeze()
+        ground_truth = jnp.argwhere(point['true_diag']).squeeze()
         if ground_truth.ndim > 0:
             ground_truth = set(onp.array(ground_truth))
         else:
             ground_truth = {ground_truth.item()}
 
         detections = defaultdict(list)
-
-        for prefix in prefixes:
-            predictions = set(
-                onp.array(onp.argsort(point[f'{prefix}_logits'])[-top_k:]))
-            for code_i in ground_truth:
-                detections[code_i].append(code_i in predictions)
+        predictions = set(onp.array(
+            onp.argsort(point['pred_logits'])[-top_k:]))
+        for code_i in ground_truth:
+            detections[code_i].append(code_i in predictions)
         return detections
 
     df_list = []
@@ -356,17 +350,17 @@ def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
             evals[colname][rowname] = val
 
         det = res['diag_detectability']
-        cm = compute_confusion_matrix(det, 'pre')
+        cm = compute_confusion_matrix(det)
         cm_scores = confusion_matrix_scores(cm)
         for rowname, val in cm_scores.items():
             evals[colname][rowname] = val
 
-        for rowname, val in auc_scores(det, 'pre').items():
+        for rowname, val in auc_scores(det).items():
             evals[colname][rowname] = val
 
-        det_topk = top_k_detectability_df(top_k, det, ['pre'])
+        det_topk = top_k_detectability_df(top_k, det)
         det_topk_scores = top_k_detectability_scores(codes_by_percentiles,
-                                                     det_topk, 'pre')[0]
+                                                     det_topk)[0]
         for rowname, val in det_topk_scores.items():
             evals[colname][rowname] = val
 
