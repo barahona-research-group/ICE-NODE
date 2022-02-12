@@ -9,7 +9,7 @@ import numpy as onp
 
 import optuna
 
-from .metrics import (softmax_logits_bce, admissions_auc_scores)
+from .metrics import (balanced_focal_bce, admissions_auc_scores)
 from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
@@ -188,7 +188,7 @@ class ICENODE(AbstractModel):
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag: Dict[int, jnp.ndarray]):
         l = [
-            softmax_logits_bce(diag[i], dec_diag[i])
+            balanced_focal_bce(diag[i], dec_diag[i])
             for i in sorted(diag.keys())
         ]
         return sum(l) / len(l)
@@ -322,7 +322,7 @@ class ICENODE(AbstractModel):
             d_samples = jax.vmap(partial(self.f_dec,
                                          params['f_dec']))(e_samples)
             # convert from logits to probs.
-            d_samples = jax.vmap(jax.nn.softmax)(d_samples)
+            d_samples = jax.vmap(jax.nn.sigmoid)(d_samples)
 
             # 1st-order derivative of d_samples
             grad = jax.vmap(lambda v: jnp.gradient(v, sampling_rate))
@@ -481,11 +481,16 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': 25,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'optimizer': trial.suggest_categorical('opt', ['adam', 'adamax']),
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
+            'epochs':
+            25,
+            'batch_size': 2**trial.suggest_int('Bexp', 1, 7),
+            #trial.suggest_int('B', 2, 27, 5),
+            'optimizer':
+            'adam',  #trial.suggest_categorical('opt', ['adam', 'adamax']),
+            'lr':
+            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'decay_rate':
+            trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),

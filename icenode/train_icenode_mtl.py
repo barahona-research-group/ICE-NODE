@@ -10,7 +10,7 @@ import numpy as onp
 import optuna
 
 from .jax_interface import DiagnosisJAXInterface
-from .metrics import (softmax_logits_bce)
+from .metrics import (balanced_focal_bce)
 from .utils import wrap_module
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      EmbeddingsDecoder_Logits)
@@ -56,7 +56,7 @@ class ICENODE(ICENODE_TL):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.LSTM, hidden_size=memory_size,
+                wrap_module(hk.GRU, hidden_size=memory_size,
                             name='f_update')))
         self.f_update = jax.jit(f_update)
 
@@ -93,23 +93,23 @@ class ICENODE(ICENODE_TL):
         """
         emb = jnp.zeros(self.dimensions['diag_emb'])
         memory = jnp.zeros(self.dimensions['memory'])
-        lstm_state = hk.LSTMState(hidden=memory, cell=memory)
+        rnn_state = memory #hk.LSTMState(hidden=memory, cell=memory)
         return {
             "f_n_ode": [2, True, emb, 0.1, memory],
-            "f_update": [emb, lstm_state],
+            "f_update": [emb, rnn_state],
             "f_dec": [emb],
         }
 
     def _f_update(self,
                   params: Any,
                   emb: jnp.ndarray,
-                  lstm_state: Dict[int, jnp.ndarray] = None) -> jnp.ndarray:
-        if lstm_state is None:
+                  rnn_state: Dict[int, jnp.ndarray] = None) -> jnp.ndarray:
+        if rnn_state is None:
             mem0 = jnp.zeros(self.dimensions['memory'])
-            state0 = hk.LSTMState(mem0, mem0)
-            lstm_state = {i: state0 for i in emb}
+            state0 = mem0 #hk.LSTMState(mem0, mem0)
+            rnn_state = {i: state0 for i in emb}
         return {
-            i: self.f_update(params['f_update'], emb[i], lstm_state[i])
+            i: self.f_update(params['f_update'], emb[i], rnn_state[i])
             for i in emb
         }
 
@@ -119,7 +119,7 @@ class ICENODE(ICENODE_TL):
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
                    dec_diag: Dict[int, jnp.ndarray]):
         l = [
-            softmax_logits_bce(diag[i], dec_diag[i])
+            balanced_focal_bce(diag[i], dec_diag[i])
             for i in sorted(diag.keys())
         ]
         return sum(l) / len(l)
@@ -135,11 +135,11 @@ class ICENODE(ICENODE_TL):
         diag_loss = self._diag_loss
 
         adm0 = nth_adm(0)
-        lstm0 = nn_update(adm0['diag_emb'])
+        rnn0 = nn_update(adm0['diag_emb'])
         subject_state = {
             i: {
-                'lstm': lstm0[i][1],
-                'mem': lstm0[i][0],
+                'rnn': rnn0[i][1],
+                'mem': rnn0[i][0],
                 'emb': adm0['diag_emb'][i],
                 'time': adm0['time'][i] + adm0['los'][i]
             }
@@ -167,7 +167,7 @@ class ICENODE(ICENODE_TL):
 
             emb = {i: subject_state[i]['emb'] for i in adm_id}
             mem = {i: subject_state[i]['mem'] for i in adm_id}
-            lstm = {i: subject_state[i]['lstm'] for i in adm_id}
+            rnn = {i: subject_state[i]['rnn'] for i in adm_id}
 
             d2d_time = {
                 i: adm_time[i] + adm_los[i] - subject_state[i]['time']
@@ -187,7 +187,7 @@ class ICENODE(ICENODE_TL):
 
             # Update memory at discharge
             true_emb = adm_n['diag_emb']
-            lstm = nn_update(true_emb, lstm)
+            rnn = nn_update(true_emb, rnn)
 
             for subject_id in emb.keys():
                 diag_detectability[subject_id][n] = {
@@ -205,8 +205,8 @@ class ICENODE(ICENODE_TL):
                 subject_state[subject_id] = {
                     'time': adm_time[subject_id] + adm_los[subject_id],
                     'emb': emb[subject_id],
-                    'mem': lstm[subject_id][0],
-                    'lstm': lstm[subject_id][1]
+                    'mem': rnn[subject_id][0],
+                    'rnn': rnn[subject_id][1]
                 }
 
         prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
@@ -248,7 +248,7 @@ class ICENODE(ICENODE_TL):
             d_samples = jax.vmap(partial(self.f_dec,
                                          params['f_dec']))(e_samples)
             # convert from logits to probs.
-            d_samples = jax.vmap(jax.nn.softmax)(d_samples)
+            d_samples = jax.vmap(jax.nn.sigmoid)(d_samples)
             trajectory_samples[i] = {
                 't': t_samples,
                 'e': e_samples,

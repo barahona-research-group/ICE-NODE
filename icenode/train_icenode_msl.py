@@ -8,7 +8,7 @@ import haiku as hk
 
 import optuna
 
-from .metrics import (softmax_logits_bce)
+from .metrics import (balanced_focal_bce)
 from .jax_interface import (DiagnosisJAXInterface)
 from .gram import AbstractEmbeddingsLayer
 from .train_icenode_mtl import ICENODE as ICENODE_MTL
@@ -56,7 +56,7 @@ class ICENODE(ICENODE_MTL):
             t_seq = jnp.linspace(0.0, ti, self.trajectory_samples + 1)[1:]
             t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - ti))
             loss_seq = [
-                softmax_logits_bce(diag[i], dec_diag_seq[i][j])
+                balanced_focal_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
             ]
             loss_vals.append(
@@ -74,11 +74,11 @@ class ICENODE(ICENODE_MTL):
         diag_loss = self._diag_loss
 
         adm0 = nth_adm(0)
-        lstm0 = nn_update(adm0['diag_emb'])
+        rnn0 = nn_update(adm0['diag_emb'])
         subject_state = {
             i: {
-                'lstm': lstm0[i][1],
-                'mem': lstm0[i][0],
+                'rnn': rnn0[i][1],
+                'mem': rnn0[i][0],
                 'emb': adm0['diag_emb'][i],
                 'time': adm0['time'][i] + adm0['los'][i]
             }
@@ -111,7 +111,7 @@ class ICENODE(ICENODE_MTL):
 
             emb = {i: subject_state[i]['emb'] for i in adm_id}
             mem = {i: subject_state[i]['mem'] for i in adm_id}
-            lstm = {i: subject_state[i]['lstm'] for i in adm_id}
+            rnn = {i: subject_state[i]['rnn'] for i in adm_id}
 
             # Integrate until next discharge
             emb_seq, r, nfe = nn_ode(emb, d2d_time, mem)
@@ -137,15 +137,15 @@ class ICENODE(ICENODE_MTL):
 
             # Update state at discharge
             true_emb = adm_n['diag_emb']
-            lstm = nn_update(true_emb, lstm)
+            rnn = nn_update(true_emb, rnn)
 
             # Update the states:
             for subject_id in emb:
                 subject_state[subject_id] = {
                     'time': adm_time[subject_id] + adm_los[subject_id],
                     'emb': emb_seq[subject_id][-1, :],
-                    'mem': lstm[subject_id][0],
-                    'lstm': lstm[subject_id][1]
+                    'mem': rnn[subject_id][0],
+                    'rnn': rnn[subject_id][1]
                 }
 
         prediction_loss = jnp.average(prediction_losses, weights=adm_counts)

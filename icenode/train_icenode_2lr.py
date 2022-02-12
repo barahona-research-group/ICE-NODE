@@ -72,8 +72,8 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': 20,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
+            'epochs': 25,
+            'batch_size': 2**trial.suggest_int('Bexp', 1, 7),
             'optimizer': 'adam',
             'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
