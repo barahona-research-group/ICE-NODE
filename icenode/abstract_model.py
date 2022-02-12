@@ -17,6 +17,7 @@ class ImplementationException(Exception):
 
 
 class AbstractModel:
+
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise ImplementationException('Should be overriden')
 
@@ -40,7 +41,7 @@ class AbstractModel:
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch)
-        return admissions_auc_scores(res['diag_detectability'], 'pre')
+        return admissions_auc_scores(res['diag_detectability'])
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int], **kwargs) -> float:
@@ -67,15 +68,17 @@ class AbstractModel:
                                             decay_steps=50,
                                             decay_rate=decay_rate)
 
-    def init_optimizer(self, config, params):
+    @classmethod
+    def init_optimizer(cls, config, params):
         c = config['training']
-        lr = self.lr_schedule(c['lr'], c['decay_rate'])
-        opt_cls = self.optimizer_class(c['optimizer'])
+        lr = cls.lr_schedule(c['lr'], c['decay_rate'])
+        opt_cls = cls.optimizer_class(c['optimizer'])
         opt_init, opt_update, get_params = opt_cls(step_size=lr)
         opt_state = opt_init(params)
         return opt_state, opt_update, get_params
 
-    def step_optimizer(self, step, model_state, batch):
+    @classmethod
+    def step_optimizer(cls, step, model_state, batch):
         opt_state, opt_update, get_params, loss_, loss_mixing = model_state
         params = get_params(opt_state)
         grads = jax.grad(loss_)(params, batch)
@@ -92,20 +95,24 @@ class AbstractModel:
         params = self.init_params(prng_seed)
         return self.init_with_params(config, params)
 
-    def get_params(self, opt_object):
+    @classmethod
+    def get_params(cls, opt_object):
         opt_state, _, get_params, _, _ = opt_object
         return get_params(opt_state)
 
-    def parameters_size(self, opt_object):
-        params = self.get_params(opt_object)
+    @classmethod
+    def parameters_size(cls, opt_object):
+        params = cls.get_params(opt_object)
         return parameters_size(params)
 
-    def hasnan(self, opt_obj):
-        params = self.get_params(opt_obj)
+    @classmethod
+    def hasnan(cls, opt_obj):
+        params = cls.get_params(opt_obj)
         return tree_hasnan(params)
 
-    def write_params(self, opt_obj, fname):
-        params = self.get_params(opt_obj)
+    @classmethod
+    def write_params(cls, opt_obj, fname):
+        params = cls.get_params(opt_obj)
         write_params(params, fname)
 
     @classmethod

@@ -1,20 +1,16 @@
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple, Set)
-import math
+from typing import (Any, Dict, Iterable, List, Optional, Tuple, Set)
 
-from absl import logging
 import haiku as hk
 import jax
 from jax import lax
-from jax.example_libraries import optimizers
 import jax.numpy as jnp
 import numpy as onp
 
 import optuna
 
-from .metrics import (l2_squared, l1_absolute, softmax_logits_bce,
-                      admissions_auc_scores)
-from .utils import wrap_module, tree_map
+from .metrics import (softmax_logits_bce, admissions_auc_scores)
+from .utils import wrap_module
 from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                      EmbeddingsDecoder_Logits, StateUpdate)
@@ -153,22 +149,26 @@ class ICENODE(AbstractModel):
             'admission_id': adm_id
         }
 
-    def _f_n_ode(self, params, count_nfe, state_e, t):
-        h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], 2, False, state_e[i], t[i])
-            for i in t
-        }
+    def _f_n_ode_nfe(self, params, count_nfe, emb, t, c):
         if count_nfe:
-            n = {
-                i: self.f_n_ode(params['f_n_ode'], 2, True, state_e[i],
-                                t[i])[-1]
+            return {
+                i: self.f_n_ode(params['f_n_ode'], 2, True, emb[i], t[i],
+                                c.get(i))[-1]
                 for i in t
             }
         else:
-            n = {i: 0 for i in t}
-        r = {i: r.squeeze() for i, (_, r, _) in h_r_nfe.items()}
-        state_e = {i: h[-1, :] for i, (h, _, _) in h_r_nfe.items()}
-        return state_e, r, n
+            return {i: 0 for i in t}
+
+    def _f_n_ode(self, params, count_nfe, state, t, c={}):
+        s_r_nfe = {
+            i: self.f_n_ode(params['f_n_ode'], 2, False, state[i], t[i],
+                            c.get(i))
+            for i in t
+        }
+        n = self._f_n_ode_nfe(params, count_nfe, state, t, c)
+        r = {i: r.squeeze() for i, (_, r, _) in s_r_nfe.items()}
+        s = {i: s[-1, :] for i, (s, _, _) in s_r_nfe.items()}
+        return s, r, n
 
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
@@ -186,21 +186,17 @@ class ICENODE(AbstractModel):
         return {i: self.f_dec(params['f_dec'], emb[i]) for i in emb}
 
     def _diag_loss(self, diag: Dict[int, jnp.ndarray],
-                   dec_diag: Dict[int, jnp.ndarray], t: Dict[int,
-                                                             jnp.ndarray]):
-        T = [1 / ti for ti in sorted(t.keys())]
+                   dec_diag: Dict[int, jnp.ndarray]):
         l = [
             softmax_logits_bce(diag[i], dec_diag[i])
             for i in sorted(diag.keys())
         ]
-        l_norm = jnp.average(l, weights=T)
-        return l_norm, sum(l) / len(l)
+        return sum(l) / len(l)
 
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
-                 count_nfe: bool = False,
-                 interval_norm: bool = False):
+                 count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -262,11 +258,8 @@ class ICENODE(AbstractModel):
             odeint_time.append(sum(d2d_time.values()))
             dyn_loss += sum(r.values())
 
-            pred_loss_norm, pred_loss_avg = diag_loss(diag, dec_diag, d2d_time)
-            if interval_norm:
-                prediction_losses.append(pred_loss_norm)
-            else:
-                prediction_losses.append(pred_loss_avg)
+            pred_loss = diag_loss(diag, dec_diag)
+            prediction_losses.append(pred_loss)
 
             total_nfe += sum(nfe.values())
 
@@ -455,7 +448,7 @@ class ICENODE(AbstractModel):
     def eval(self, model_state: Any, batch: List[int]) -> Dict[str, float]:
         loss_mixing = model_state[-1]
         params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True, interval_norm=False)
+        res = self(params, batch, count_nfe=True)
 
         return {
             'loss': self.detailed_loss(loss_mixing, params, res),
@@ -465,8 +458,8 @@ class ICENODE(AbstractModel):
 
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True, interval_norm=False)
-        return admissions_auc_scores(res['diag_detectability'], 'pre')
+        res = self(params, batch, count_nfe=True)
+        return admissions_auc_scores(res['diag_detectability'])
 
     @staticmethod
     def create_patient_interface(mimic_dir, data_tag: str):

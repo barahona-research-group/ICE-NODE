@@ -150,7 +150,7 @@ class GRUDynamics(hk.Module):
         hc = jnp.hstack((h, c))
         r = self.h_r(hc)
         z = self.h_z(hc)
-        g = self.rh_g(r * hc)
+        g = self.rh_g(r * h)
         return (1 - z) * (g - h)
 
 
@@ -243,7 +243,10 @@ class NeuralODE(hk.Module):
                                        name='ode_dyn',
                                        **init_kwargs)
 
-    def __call__(self, n_samples, count_nfe, h, t, c):
+    def __call__(self, n_samples, count_nfe, h, t, c=None):
+        if c is None:
+            c = jnp.array([])
+
         t = jnp.linspace(0.0, t / self.timescale, n_samples)
         if hk.running_init():
             h, r = self.ode_dyn((h, jnp.zeros(1)), t[0], c)
@@ -266,7 +269,7 @@ class TaylorAndLossAugmentedDynamics(hk.Module):
         self.f = dynamics_cls(**dynamics_kwargs)
         self.loss_f = loss_f
 
-    def sol_recursive(self, h: jnp.ndarray, t: float):
+    def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
         """
         https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
         By Jacob Kelly
@@ -282,7 +285,7 @@ class TaylorAndLossAugmentedDynamics(hk.Module):
             Closure to expand z.
             """
             _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
-            dh = jnp.ravel(self.f(_h))
+            dh = jnp.ravel(self.f(_h, c))
             dt = jnp.array([1.])
             dh_t = jnp.concatenate((dh, dt))
             return dh_t
@@ -297,10 +300,10 @@ class TaylorAndLossAugmentedDynamics(hk.Module):
                             h_shape), jnp.reshape(hns[-2][:-1], h_shape))
 
     def __call__(self, h_l_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
-                 *loss_args):
+                 c: jnp.ndarray, *loss_args):
         h, _, _ = h_l_r
 
-        dhdt, _drdt = self.sol_recursive(h, t)
+        dhdt, _drdt = self.sol_recursive(h, t, c)
 
         dLdt = self.loss_f(h, dhdt, t, *loss_args)
         return dhdt, dLdt, jnp.mean(_drdt**2)
@@ -330,17 +333,20 @@ class NeuralODE_IL(hk.Module):
                                                       **init_kwargs)
         self.timescale = timescale
 
-    def __call__(self, count_nfe: bool, h: jnp.ndarray, tf, *loss_args):
+    def __call__(self, count_nfe: bool, h: jnp.ndarray, tf, c, *loss_args):
+        if c is None:
+            c = jnp.array([])
+
         t = jnp.array([0.0, tf / self.timescale])
 
         if hk.running_init():
-            h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], *loss_args)
+            h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], c, *loss_args)
             return h, 0.0, 0.0, 0
         if count_nfe:
-            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, 0.0, 0.0), t,
+            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, 0.0, 0.0), t, c,
                                         *loss_args)
         else:
-            h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, *loss_args)
+            h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, c, *loss_args)
             nfe = 0
         return h[-1, :], l[-1], r[-1], nfe
 
@@ -350,12 +356,21 @@ class StateUpdate(hk.Module):
 
     def __init__(self,
                  state_size: int,
+                 embeddings_size: int,
                  name: Optional[str] = None):
         super().__init__(name=name)
+        self.__project = hk.Sequential([
+            hk.Linear(embeddings_size, with_bias=True, name=f'{name}_prep'),
+            jnp.tanh
+        ])
+
         self.__gru = hk.GRU(state_size)
 
-    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray) -> jnp.ndarray:
-        _, updated_state = self.__gru(emb, state)
+    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray,
+                 nominal_emb: jnp.ndarray) -> jnp.ndarray:
+
+        gru_input = self.__project(jnp.hstack((emb, nominal_emb)))
+        _, updated_state = self.__gru(gru_input, state)
         return updated_state
 
 

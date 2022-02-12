@@ -1,7 +1,6 @@
 from functools import partial
-from typing import (Any, Dict, Iterable, List, Optional)
+from typing import (Any, Dict, Iterable, List)
 
-from absl import logging
 import haiku as hk
 import jax
 from jax import lax
@@ -10,16 +9,16 @@ import numpy as onp
 
 import optuna
 
-from .metrics import (softmax_logits_bce, admissions_auc_scores)
+from .jax_interface import DiagnosisJAXInterface
+from .metrics import (softmax_logits_bce)
 from .utils import wrap_module
-from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
 from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     EmbeddingsDecoder_Logits, StateUpdate)
-from .abstract_model import AbstractModel
+                     EmbeddingsDecoder_Logits)
 from .gram import AbstractEmbeddingsLayer
+from .train_icenode_tl import ICENODE as ICENODE_TL
 
 
-class ICENODE(AbstractModel):
+class ICENODE(ICENODE_TL):
 
     def __init__(self, subject_interface: DiagnosisJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
@@ -57,8 +56,7 @@ class ICENODE(AbstractModel):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(StateUpdate,
-                            state_size=memory_size,
+                wrap_module(hk.LSTM, hidden_size=memory_size,
                             name='f_update')))
         self.f_update = jax.jit(f_update)
 
@@ -88,16 +86,6 @@ class ICENODE(AbstractModel):
             }
         }
 
-    def state_size(self):
-        return self.dimensions['state']
-
-    def diag_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.diag_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
-
     def _initialization_data(self):
         """
         Creates data for initializing each of the
@@ -105,63 +93,23 @@ class ICENODE(AbstractModel):
         """
         emb = jnp.zeros(self.dimensions['diag_emb'])
         memory = jnp.zeros(self.dimensions['memory'])
+        lstm_state = hk.LSTMState(hidden=memory, cell=memory)
         return {
             "f_n_ode": [2, True, emb, 0.1, memory],
-            "f_update": [memory, emb],
+            "f_update": [emb, lstm_state],
             "f_dec": [emb],
         }
 
-    def _extract_nth_admission(self, params: Any, subjects_batch: List[int],
-                               n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
-        diag_G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
-
-        adms = self.subject_interface.nth_admission_batch(n, subjects_batch)
-        if len(adms) == 0:
-            return None
-
-        diag_emb = {
-            i: self.diag_emb.encode(diag_G, v['diag_ccs_vec'])
-            for i, v in adms.items() if v['diag_ccs_vec'] is not None
-        }
-        diag_out = {
-            i: v['diag_ccs_vec']
-            for i, v in adms.items() if v['diag_ccs_vec'] is not None
-        }
-        los = {i: v['los'] for i, v in adms.items()}
-        adm_id = {i: v['admission_id'] for i, v in adms.items()}
-        adm_time = {i: v['time'] for i, v in adms.items()}
-
+    def _f_update(self,
+                  params: Any,
+                  emb: jnp.ndarray,
+                  lstm_state: Dict[int, jnp.ndarray] = None) -> jnp.ndarray:
+        if lstm_state is None:
+            mem0 = jnp.zeros(self.dimensions['memory'])
+            state0 = hk.LSTMState(mem0, mem0)
+            lstm_state = {i: state0 for i in emb}
         return {
-            'time': adm_time,
-            'los': los,
-            'diag_emb': diag_emb,
-            'diag_out': diag_out,
-            'admission_id': adm_id
-        }
-
-    def _f_n_ode(self, params, count_nfe, emb, t, mem):
-        h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], 2, False, emb[i], t[i], mem[i])
-            for i in t
-        }
-        if count_nfe:
-            n = {
-                i: self.f_n_ode(params['f_n_ode'], 2, True, emb[i], t[i],
-                                mem[i])[-1]
-                for i in t
-            }
-        else:
-            n = {i: 0 for i in t}
-        r = {i: r.squeeze() for i, (_, r, _) in h_r_nfe.items()}
-        state_e = {i: h[-1, :] for i, (h, _, _) in h_r_nfe.items()}
-        return state_e, r, n
-
-    def _f_update(self, params: Any, memory: Dict[int, jnp.ndarray],
-                  emb: jnp.ndarray) -> jnp.ndarray:
-        if memory is None:
-            memory = {i: jnp.zeros(self.dimensions['memory']) for i in emb}
-        return {
-            i: self.f_update(params['f_update'], memory[i], emb[i])
+            i: self.f_update(params['f_update'], emb[i], lstm_state[i])
             for i in emb
         }
 
@@ -179,8 +127,7 @@ class ICENODE(AbstractModel):
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
-                 count_nfe: bool = False,
-                 interval_norm: bool = False):
+                 count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
@@ -188,10 +135,11 @@ class ICENODE(AbstractModel):
         diag_loss = self._diag_loss
 
         adm0 = nth_adm(0)
-        mem0 = nn_update(None, adm0['diag_emb'])
+        lstm0 = nn_update(adm0['diag_emb'])
         subject_state = {
             i: {
-                'mem': mem0[i],
+                'lstm': lstm0[i][1],
+                'mem': lstm0[i][0],
                 'emb': adm0['diag_emb'][i],
                 'time': adm0['time'][i] + adm0['los'][i]
             }
@@ -219,6 +167,7 @@ class ICENODE(AbstractModel):
 
             emb = {i: subject_state[i]['emb'] for i in adm_id}
             mem = {i: subject_state[i]['mem'] for i in adm_id}
+            lstm = {i: subject_state[i]['lstm'] for i in adm_id}
 
             d2d_time = {
                 i: adm_time[i] + adm_los[i] - subject_state[i]['time']
@@ -238,7 +187,7 @@ class ICENODE(AbstractModel):
 
             # Update memory at discharge
             true_emb = adm_n['diag_emb']
-            mem = nn_update(mem, true_emb)
+            lstm = nn_update(true_emb, lstm)
 
             for subject_id in emb.keys():
                 diag_detectability[subject_id][n] = {
@@ -256,7 +205,8 @@ class ICENODE(AbstractModel):
                 subject_state[subject_id] = {
                     'time': adm_time[subject_id] + adm_los[subject_id],
                     'emb': emb[subject_id],
-                    'mem': mem[subject_id]
+                    'mem': lstm[subject_id][0],
+                    'lstm': lstm[subject_id][1]
                 }
 
         prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
@@ -299,14 +249,6 @@ class ICENODE(AbstractModel):
                                          params['f_dec']))(e_samples)
             # convert from logits to probs.
             d_samples = jax.vmap(jax.nn.softmax)(d_samples)
-
-            # 1st-order derivative of d_samples
-            # grad = jax.vmap(lambda v: jnp.gradient(v, sampling_rate))
-            # d1d_samples = grad(d_samples)
-
-            # 2nd-order derivative of d_samples
-            # d2d_samples = grad(d1d_samples)
-
             trajectory_samples[i] = {
                 't': t_samples,
                 'e': e_samples,
@@ -396,76 +338,6 @@ class ICENODE(AbstractModel):
                 traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
 
         return trajectory
-
-    def detailed_loss(self, loss_mixing, params, res):
-        prediction_loss = res['prediction_loss']
-        dyn_loss = res['dyn_loss']
-        dyn_alpha = loss_mixing['L_dyn']
-
-        loss = prediction_loss + (dyn_alpha * dyn_loss) / res['odeint_weeks']
-        return {
-            'loss': loss,
-            'prediction_loss': res['prediction_loss'],
-            'dyn_loss': dyn_loss,
-            'admissions_count': res['admissions_count'],
-            'odeint_weeks': res['odeint_weeks']
-        }
-
-    def eval_stats(self, res):
-        nfe = res['nfe']
-        return {
-            'admissions_count': res['admissions_count'],
-            'nfe_per_week': nfe / res['odeint_weeks'],
-            'Kfe': nfe / 1000
-        }
-
-    def eval(self, model_state: Any, batch: List[int]) -> Dict[str, float]:
-        loss_mixing = model_state[-1]
-        params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True, interval_norm=False)
-
-        return {
-            'loss': self.detailed_loss(loss_mixing, params, res),
-            'stats': self.eval_stats(res),
-            'diag_detectability': res['diag_detectability']
-        }
-
-    def admissions_auc_scores(self, model_state: Any, batch: List[int]):
-        params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True, interval_norm=False)
-        return admissions_auc_scores(res['diag_detectability'], 'pre')
-
-    @staticmethod
-    def create_patient_interface(mimic_dir, data_tag: str):
-        return create_patient_interface(mimic_dir, data_tag=data_tag)
-
-    @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
-        diag_emb = cls.create_embedding(
-            emb_config=config['emb']['diag'],
-            emb_kind=config['emb']['kind'],
-            patient_interface=patient_interface,
-            train_ids=train_ids,
-            pretrained_components=pretrained_components)
-        return cls(subject_interface=patient_interface,
-                   diag_emb=diag_emb,
-                   **config['model'])
-
-    @classmethod
-    def sample_training_config(cls, trial: optuna.Trial):
-        return {
-            'epochs': 25,
-            'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'optimizer': trial.suggest_categorical('opt', ['adam', 'adamax']),
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
-            'loss_mixing': {
-                'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-                'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-                'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-            }
-        }
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):

@@ -13,23 +13,12 @@ from .gram import AbstractEmbeddingsLayer
 
 class ICENODE(ICENODE_TL):
 
-    def __init__(self, subject_interface: DiagnosisJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_with_bias: bool, ode_init_var: float, state_size: int,
-                 timescale: float):
-        super().__init__(subject_interface=subject_interface,
-                         diag_emb=diag_emb,
-                         ode_dyn=ode_dyn,
-                         ode_with_bias=ode_with_bias,
-                         ode_init_var=ode_init_var,
-                         state_size=state_size,
-                         timescale=timescale)
-
-    def init_optimizer(self, config, params):
+    @classmethod
+    def init_optimizer(cls, config, params):
         c = config['training']
-        opt_cls = self.optimizer_class(c['optimizer'])
-        lr1 = self.lr_schedule(c['lr1'], c['decay_rate1'])
-        lr2 = self.lr_schedule(c['lr2'], c['decay_rate2'])
+        opt_cls = cls.optimizer_class(c['optimizer'])
+        lr1 = cls.lr_schedule(c['lr1'], c['decay_rate1'])
+        lr2 = cls.lr_schedule(c['lr2'], c['decay_rate2'])
 
         opt_init, opt_update, get_params = opt_cls(step_size=lr1)
         opt_state = opt_init({'f_n_ode': params['f_n_ode']})
@@ -50,28 +39,21 @@ class ICENODE(ICENODE_TL):
         loss_ = partial(self.loss, loss_mixing)
         return opt1, opt2, loss_, loss_mixing
 
-    def get_params(self, model_state):
+    @classmethod
+    def get_params(cls, model_state):
         opt1, opt2, _, _ = model_state
         opt1_state, _, get_params1 = opt1
         opt2_state, _, get_params2 = opt2
         return {**get_params1(opt1_state), **get_params2(opt2_state)}
 
-    def loss(self, loss_mixing: Dict[str, float], params: Any,
-             batch: List[int], **kwargs) -> float:
-        res = self(params, batch, **kwargs)
-        detailed = self.detailed_loss(loss_mixing, params, res)
-        return detailed['loss'], detailed
-
-    def step_optimizer(self, step, model_state, batch):
+    @classmethod
+    def step_optimizer(cls, step, model_state, batch):
         opt1, opt2, loss_, loss_mixing = model_state
         opt1_state, opt1_update, get_params1 = opt1
         opt2_state, opt2_update, get_params2 = opt2
 
-        params = self.get_params(model_state)
-        grads, detailed = jax.grad(loss_, has_aux=True)(params,
-                                                        batch,
-                                                        count_nfe=False,
-                                                        interval_norm=False)
+        params = cls.get_params(model_state)
+        grads = jax.grad(loss_)(params, batch)
 
         grads1 = {'f_n_ode': grads['f_n_ode']}
         grads2 = {
@@ -90,19 +72,13 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs':
-            20,
-            'batch_size':
-            trial.suggest_int('B', 2, 27, 5),
+            'epochs': 20,
+            'batch_size': trial.suggest_int('B', 2, 27, 5),
             'optimizer': 'adam',
-            'lr1':
-            trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
-            'lr2':
-            trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
-            'decay_rate1':
-            trial.suggest_float('dr1', 1e-1, 9e-1),
-            'decay_rate2':
-            trial.suggest_float('dr2', 1e-1, 9e-1),
+            'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
+            'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
+            'decay_rate1': trial.suggest_float('dr1', 1e-1, 9e-1),
+            'decay_rate2': trial.suggest_float('dr2', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),

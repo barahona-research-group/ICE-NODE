@@ -69,7 +69,7 @@ class ICENODE(ICENODE_TL):
 
         loss_args = (0.1, diag, dec_params)
         ode_params = self.initializers['f_n_ode'](rng_key, True, state_emb,
-                                                  0.1, *loss_args)
+                                                  0.1, None, *loss_args)
         update_params = self.initializers['f_update'](rng_key, state, emb, emb)
 
         return {
@@ -94,7 +94,7 @@ class ICENODE(ICENODE_TL):
         # r: Integrated dynamics penalty
         # n: Number of dynamics function calls
         s_l_r_n = {
-            i: self.f_n_ode(params['f_n_ode'], False, state_e[i], t[i],
+            i: self.f_n_ode(params['f_n_ode'], False, state_e[i], t[i], None,
                             t[i] / self.timescale, diag[i], params['f_dec'])
             for i in t
         }
@@ -102,7 +102,7 @@ class ICENODE(ICENODE_TL):
         if count_nfe:
             n = {
                 i: self.f_n_ode(params['f_n_ode'], True, state_e[i], t[i],
-                                t[i] / self.timescale, diag[i],
+                                None, t[i] / self.timescale, diag[i],
                                 params['f_dec'])[-1]
                 for i in t
             }
@@ -177,16 +177,12 @@ class ICENODE(ICENODE_TL):
                     'admission_id': adm_id[subject_id],
                     'nfe': nfe[subject_id],
                     'time': adm_time[subject_id],
-                    'diag_true': diag[subject_id],
+                    'true_diag': diag[subject_id],
                     'pred_logits': dec_diag[subject_id]
                 }
 
             odeint_time.append(sum(d2d_time.values()))
-
-            if interval_norm:
-                prediction_losses.append(l_norm)
-            else:
-                prediction_losses.append(l_avg)
+            prediction_losses.append(l_avg)
 
             dyn_loss += r
             total_nfe += nfe_sum
@@ -217,7 +213,7 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {
-            'loss_half_life': trial.suggest_int('lt0.5', 7, 1e2, log=True),
+            'loss_half_life': trial.suggest_int('lt0.5', 7, 7 * 1e2, log=True),
             **ICENODE_TL.sample_model_config(trial)
         }
 
