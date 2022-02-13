@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (softmax_logits_bce)
+from .metrics import (balanced_focal_bce)
 from .jax_interface import (DiagnosisJAXInterface)
 from .gram import AbstractEmbeddingsLayer
 from .train_icenode_tl import ICENODE as ICENODE_TL
@@ -86,7 +86,7 @@ class ICENODE(ICENODE_TL):
             t_seq = jnp.linspace(0.0, ti, self.trajectory_samples + 1)[1:]
             t_diff = jax.lax.stop_gradient(self.lambd * (t_seq - ti))
             loss_seq = [
-                softmax_logits_bce(diag[i], dec_diag_seq[i][j])
+                balanced_focal_bce(diag[i], dec_diag_seq[i][j])
                 for j in range(self.trajectory_samples)
             ]
             loss_vals.append(

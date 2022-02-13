@@ -1,5 +1,5 @@
 from functools import partial
-from typing import (Any, Dict, Iterable, List)
+from typing import (Any, Dict, List)
 
 import haiku as hk
 import jax
@@ -46,7 +46,7 @@ class ICENODE(ICENODE_TL):
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=self.dimensions['diag_emb'],
-                            depth=1,
+                            depth=2,
                             timescale=timescale,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,

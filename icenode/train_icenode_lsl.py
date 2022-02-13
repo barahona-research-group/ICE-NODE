@@ -1,31 +1,15 @@
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
+from typing import (Any, Dict)
 
-from absl import logging
-import jax
 import jax.numpy as jnp
 
-import optuna
-
-from .jax_interface import (DiagnosisJAXInterface)
-from .gram import AbstractEmbeddingsLayer
 from .train_icenode_sl import ICENODE as ICENODE_SL
 
 
 class ICENODE(ICENODE_SL):
 
-    def __init__(self, subject_interface: DiagnosisJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_with_bias: bool, ode_init_var: float, loss_half_life: int,
-                 state_size: int, timescale: float):
-        super().__init__(subject_interface=subject_interface,
-                         diag_emb=diag_emb,
-                         ode_dyn=ode_dyn,
-                         ode_with_bias=ode_with_bias,
-                         ode_init_var=ode_init_var,
-                         loss_half_life=loss_half_life,
-                         state_size=state_size,
-                         timescale=timescale)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         del (self.initializers['f_update'], self.f_update)
 
@@ -49,6 +33,7 @@ class ICENODE(ICENODE_SL):
             state, _ = self.split_state_emb_seq(state_seq[i])
             new_state[i] = self.join_state_emb(state[-1], emb[i])
         return new_state
+
 
 if __name__ == '__main__':
     from .hpo_utils import capture_args, run_trials

@@ -1,5 +1,5 @@
 from functools import partial
-from typing import (Any, Dict, Iterable, List, Optional, Tuple, Set)
+from typing import (Any, Dict, Iterable, List, Optional, Set)
 
 import haiku as hk
 import jax
@@ -47,7 +47,7 @@ class ICENODE(AbstractModel):
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_emb_size,
-                            depth=1,
+                            depth=2,
                             timescale=timescale,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
@@ -481,16 +481,13 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs':
-            25,
-            'batch_size': 2**trial.suggest_int('Bexp', 1, 7),
+            'epochs': 60,
+            'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
             #trial.suggest_int('B', 2, 27, 5),
-            'optimizer':
-            'adam',  #trial.suggest_categorical('opt', ['adam', 'adamax']),
-            'lr':
-            trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate':
-            trial.suggest_float('dr', 1e-1, 9e-1),
+            'optimizer': 'adam',
+            #trial.suggest_categorical('opt', ['adam', 'adamax']),
+            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
+            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),

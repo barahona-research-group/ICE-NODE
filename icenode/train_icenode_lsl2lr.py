@@ -1,11 +1,11 @@
-from .train_icenode_mtl import ICENODE as ICENODE_MTL
+from .train_icenode_lsl import ICENODE as ICENODE_LSL
 from .train_icenode_2lr import ICENODE_2LR_MIXIN
 
 
-class ICENODE(ICENODE_2LR_MIXIN, ICENODE_MTL):
+class ICENODE(ICENODE_2LR_MIXIN, ICENODE_LSL):
 
     def __init__(self, **kwargs):
-        ICENODE_MTL.__init__(self, **kwargs)
+        ICENODE_LSL.__init__(self, **kwargs)
 
 
 if __name__ == '__main__':

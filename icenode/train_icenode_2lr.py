@@ -1,5 +1,6 @@
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
+from absl import logging
 
 import jax
 from jax.experimental import optimizers
@@ -11,7 +12,7 @@ from .train_icenode_tl import ICENODE as ICENODE_TL
 from .gram import AbstractEmbeddingsLayer
 
 
-class ICENODE(ICENODE_TL):
+class ICENODE_2LR_MIXIN:
 
     @classmethod
     def init_optimizer(cls, config, params):
@@ -72,8 +73,8 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': 25,
-            'batch_size': 2**trial.suggest_int('Bexp', 1, 7),
+            'epochs': 60,
+            'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
             'optimizer': 'adam',
             'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
@@ -85,6 +86,12 @@ class ICENODE(ICENODE_TL):
                 'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
             }
         }
+
+
+class ICENODE(ICENODE_2LR_MIXIN, ICENODE_TL):
+
+    def __init__(self, **kwargs):
+        ICENODE_TL.__init__(self, **kwargs)
 
 
 if __name__ == '__main__':
