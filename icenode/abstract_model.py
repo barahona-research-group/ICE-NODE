@@ -1,11 +1,11 @@
 from typing import Dict, List, Any, Optional, Iterable
 from functools import partial
-
+from absl import logging
 import jax
 from jax.example_libraries import optimizers
 import optuna
 from .utils import (load_config, load_params, parameters_size, tree_hasnan,
-                    write_params)
+                    tree_lognan, write_params)
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    MatrixEmbeddings, OrthogonalGRAM)
 from .metrics import (bce, softmax_logits_bce, balanced_focal_bce,
@@ -108,7 +108,10 @@ class AbstractModel:
     @classmethod
     def hasnan(cls, opt_obj):
         params = cls.get_params(opt_obj)
-        return tree_hasnan(params)
+        if tree_hasnan(params):
+            logging.warning(f'params with NaN: {tree_lognan(params)}')
+            return True
+        return False
 
     @classmethod
     def write_params(cls, opt_obj, fname):

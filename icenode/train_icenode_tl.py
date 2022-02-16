@@ -505,11 +505,11 @@ class ICENODE(AbstractModel):
     def sample_model_config(cls, trial: optuna.Trial):
         return {
             'ode_dyn':
-            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3', 'gru']),
+            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3']),
             'ode_with_bias':
             False,
             'ode_init_var':
-            trial.suggest_float('ode_i', 1e-9, 1e1, log=True),
+            trial.suggest_float('ode_i', 1e-9, 1e-1, log=True),
             'state_size':
             trial.suggest_int('s', 10, 100, 10),
             'timescale':

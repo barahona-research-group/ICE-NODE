@@ -1,27 +1,30 @@
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
 
-from absl import logging
 import jax
 import jax.numpy as jnp
 
 import optuna
 
-from .metrics import (balanced_focal_bce)
-from .jax_interface import (DiagnosisJAXInterface)
-from .gram import AbstractEmbeddingsLayer
+from .metrics import (SoftDTW, distance_matrix_bce, distance_matrix_euc)
 from .train_icenode_tl import ICENODE as ICENODE_TL
-from .softdtw_jax import SoftDTW, distance_matrix_bce
 
 
 class ICENODE(ICENODE_TL):
 
-    def __init__(self, sdtw_gamma, **kwargs):
+    def __init__(self, sdtw_gamma, distance, trajectory_samples, **kwargs):
         super().__init__(**kwargs)
         del (self.initializers['f_update'], self.f_update)
-        self.trajectory_samples = 5
-        self.soft_dtw_loss = SoftDTW(pairwise_distance_f=distance_matrix_bce,
-                                     gamma=sdtw_gamma)
+        self.trajectory_samples = trajectory_samples
+        if distance == 'bce':
+            distance = distance_matrix_bce
+        elif distance == 'euc':
+            distance = distance_matrix_euc
+        else:
+            raise ValueError('Unrecognized distance')
+
+        soft_dtw_loss = SoftDTW(pairwise_distance_f=distance, gamma=sdtw_gamma)
+        self.soft_dtw_loss = jax.jit(lambda a, b: soft_dtw_loss(a, b))
 
     @staticmethod
     def diag_first_order_prior(diag_i,
@@ -56,8 +59,8 @@ class ICENODE(ICENODE_TL):
 
     def _f_n_ode(self, params, count_nfe, state_e, t):
         h_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], self.trajectory_samples + 1,
-                            False, state_e[i], t[i])
+            i: self.f_n_ode(params['f_n_ode'], self.trajectory_samples, False,
+                            state_e[i], t[i])
             for i in t
         }
         if count_nfe:
@@ -206,7 +209,9 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {
-            'sdtw_gamma': 10**trial.suggest_int('gamma_sdtw', -10, 0),
+            'trajectory_samples': trial.suggest_int('traj_s', 3, 6),
+            'sdtw_gamma': 10**trial.suggest_int('gamma_sdtw', -5, 1),
+            'distance': trial.suggest_categorical('dist', ['euc', 'bce']),
             **ICENODE_TL.sample_model_config(trial)
         }
 

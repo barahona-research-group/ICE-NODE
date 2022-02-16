@@ -22,7 +22,6 @@ from .metrics import evaluation_table
 from .utils import (write_config)
 from .abstract_model import AbstractModel
 
-
 class ResourceTimeout(Exception):
     pass
 
@@ -194,6 +193,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
         m_state = model.step_optimizer(eval_step, m_state, train_batch)
         if model.hasnan(m_state):
+            logging.warning('NaN detected')
             trial.set_user_attr('nan', 1)
             mlflow_set_tag('nan', 1, frozen)
             raise optuna.TrialPruned()
