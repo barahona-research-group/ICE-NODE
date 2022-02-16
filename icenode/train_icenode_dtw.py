@@ -206,7 +206,7 @@ class ICENODE(ICENODE_TL):
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {
-            'sdtw_gamma': 10**trial.suggest_int('gamma_sdtw', -3, 0),
+            'sdtw_gamma': 10**trial.suggest_int('gamma_sdtw', -10, 0),
             **ICENODE_TL.sample_model_config(trial)
         }
 

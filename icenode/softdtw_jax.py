@@ -54,7 +54,6 @@ class AbstractDTW:
             rows.append(pad_inf(D[row], row, H - row - 1))
 
         model_matrix = jnp.stack(rows, axis=1)
-
         init = (pad_inf(model_matrix[0], 1,
                         0), pad_inf(model_matrix[1] + model_matrix[0, 0], 1,
                                     0))
@@ -66,7 +65,6 @@ class AbstractDTW:
             right = one_ago[:-1]
             down = one_ago[1:]
             best = self.minimum(jnp.stack([diagonal, right, down], axis=-1))
-
             next_row = best + current_antidiagonal
             next_row = pad_inf(next_row, 1, 0)
 
@@ -113,7 +111,7 @@ class SoftDTW(AbstractDTW):
         self.__name__ = f'SoftDTW({self.gamma})'
         self.minimum_impl = self.make_softmin(gamma)
 
-    def make_softmin(self, gamma, custom_grad=True):
+    def make_softmin(self, gamma, custom_grad=False):
         """
         We need to manually define the gradient of softmin
         to ensure (1) numerical stability and (2) prevent nans from
