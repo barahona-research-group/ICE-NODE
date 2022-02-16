@@ -509,7 +509,7 @@ class ICENODE(AbstractModel):
             'ode_with_bias':
             False,
             'ode_init_var':
-            trial.suggest_float('ode_i', 1e-9, 1e-1, log=True),
+            trial.suggest_float('ode_i', 1e-9, 1e1, log=True),
             'state_size':
             trial.suggest_int('s', 10, 100, 10),
             'timescale':
