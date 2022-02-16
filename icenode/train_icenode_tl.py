@@ -27,17 +27,23 @@ class ICENODE(AbstractModel):
 
         self.subject_interface = subject_interface
         self.diag_emb = diag_emb
+        self.timescale = timescale
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
             'diag_out': len(subject_interface.diag_ccs_idx),
             'state': state_size
         }
+        depth = 2
         if ode_dyn == 'gru':
             ode_dyn_cls = GRUDynamics
         elif ode_dyn == 'res':
             ode_dyn_cls = ResDynamics
-        elif ode_dyn == 'mlp':
+        elif ode_dyn == 'mlp2':
             ode_dyn_cls = MLPDynamics
+            depth = 2
+        elif ode_dyn == 'mlp3':
+            ode_dyn_cls = MLPDynamics
+            depth = 3
         else:
             raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
         state_emb_size = self.dimensions['diag_emb'] + state_size
@@ -47,12 +53,12 @@ class ICENODE(AbstractModel):
                 wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_emb_size,
-                            depth=2,
+                            depth=depth,
                             timescale=timescale,
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
                             name='f_n_ode',
-                            tay_reg=3)))
+                            tay_reg=0)))
         self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
 
         f_update_init, f_update = hk.without_apply_rng(
@@ -498,11 +504,16 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {
-            'ode_dyn': trial.suggest_categorical('ode_dyn', ['mlp', 'gru']),
-            'ode_with_bias': False,
-            'ode_init_var': trial.suggest_float('ode_i', 1e-9, 1, log=True),
-            'state_size': trial.suggest_int('s', 10, 100, 10),
-            'timescale': 7
+            'ode_dyn':
+            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3', 'gru']),
+            'ode_with_bias':
+            False,
+            'ode_init_var':
+            trial.suggest_float('ode_i', 1e-9, 1e1, log=True),
+            'state_size':
+            trial.suggest_int('s', 10, 100, 10),
+            'timescale':
+            7
         }
 
 

@@ -178,10 +178,11 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     iters = round(epochs * len(train_ids) / batch_size)
     trial.set_user_attr('steps', iters)
     mlflow_set_tag('steps', iters, frozen)
+
+    best_score = 0.0
     for i in tqdm(range(iters)):
         eval_step = round((i + 1) * 100 / iters)
         last_step = round(i * 100 / iters)
-
 
         if datetime.now() > trial_stop_time:
             trial.set_user_attr('timeout', 1)
@@ -222,6 +223,9 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
             }
 
         eval_df, eval_flat = evaluation_table(raw_res, code_partitions)
+        logging.info(eval_df)
+        auc = eval_df.loc['MICRO-AUC', 'VAL']
+
         try:
             mlflow_log_metrics(eval_flat, eval_step, frozen)
         except Exception as e:
@@ -231,14 +235,12 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
                                     f'step{eval_step:04d}_eval.csv'))
 
         # Only dump parameters for frozen trials.
-        if frozen or i == iters - 1:
+        if frozen or i == iters - 1 or auc > best_score:
             fname = os.path.join(trial_dir,
                                  f'step{eval_step:04d}_params.pickle')
             model.write_params(m_state, fname)
+            best_score = auc
 
-        logging.info(eval_df)
-
-        auc = eval_df.loc['MICRO-AUC', 'VAL']
         trial.report(auc, eval_step)
         if study_attrs['enable_prune'] and trial.should_prune():
             raise optuna.TrialPruned()
