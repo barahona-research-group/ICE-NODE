@@ -16,6 +16,8 @@ from .train_gram import GRAM
 from .train_retain import RETAIN
 from .train_icenode_2lr import ICENODE as ICENODE_2LR
 from .train_icenode_tl import ICENODE as ICENODE_TL
+from .train_icenode_dtw2lr import ICENODE as ICENODE_DTW2LR
+from .train_icenode_dtw import ICENODE as ICENODE_DTW
 
 
 def run(model_cls: AbstractModel, config, patient_interface, tag: str,
@@ -105,7 +107,9 @@ if __name__ == '__main__':
         'gram': GRAM,
         'retain': RETAIN,
         'icenode_2lr': ICENODE_2LR,
-        'icenode_tl': ICENODE_TL
+        'icenode_tl': ICENODE_TL,
+        'icenode_dtw': ICENODE_DTW,
+        'icenode_dtw2lr': ICENODE_DTW2LR
     }
     model_cls = model_class[args.model]
 

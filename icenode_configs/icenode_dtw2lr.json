@@ -1,0 +1,32 @@
+{
+    "emb": {
+        "diag": {
+            "embeddings_dim": 150
+        },
+        "kind": "matrix"
+    },
+    "model": {
+        "distance": "bce",
+        "ode_dyn": "mlp2",
+        "ode_init_var": 1.1209976088140297e-07,
+        "ode_with_bias": false,
+        "sdtw_gamma": 0.001,
+        "state_size": 30,
+        "timescale": 7,
+        "trajectory_samples": 7
+    },
+    "training": {
+        "batch_size": 32,
+        "decay_rate1": 0.7,
+        "decay_rate2": 0.3,
+        "epochs": 60,
+        "loss_mixing": {
+            "L_dyn": 0,
+            "L_l1": 0,
+            "L_l2": 0
+        },
+        "lr1": 1e-4,
+        "lr2": 2e-4,
+        "optimizer": "adam"
+    }
+}

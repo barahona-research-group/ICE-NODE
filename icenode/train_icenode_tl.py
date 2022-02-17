@@ -58,7 +58,7 @@ class ICENODE(AbstractModel):
                             with_bias=ode_with_bias,
                             init_var=ode_init_var,
                             name='f_n_ode',
-                            tay_reg=0)))
+                            tay_reg=3)))
         self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
 
         f_update_init, f_update = hk.without_apply_rng(

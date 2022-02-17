@@ -10,11 +10,35 @@ from .metrics import (SoftDTW, distance_matrix_bce, distance_matrix_euc)
 from .train_icenode_tl import ICENODE as ICENODE_TL
 
 
+@jax.jit
+def diag_first_order_prior(diag_i, diag_j, t_samples, settlement_error=0.05):
+    """
+    Construct t_samples of exponential decay function between the points
+    diag_i and diag_j.
+    Args:
+        diag_i: initial point with shape (p,)
+        diag_j: final point with shape (p,)
+        t_samples: time samples along the trajectory with shape (T,)
+        settlement_error: the error at the final trajectory point computed as
+                            |\frac{last_point-diag_j}{diag_j-diag_i}|.
+    Returns:
+        Sampled trajectory with shape (T, p)
+    """
+    ti = t_samples[0]
+    tj = t_samples[-1]
+    decay = jnp.exp((t_samples - ti) * jnp.log(0.05) / (tj - ti))
+
+    diag_i = jnp.expand_dims(diag_i, 0)
+    diag_j = jnp.expand_dims(diag_j, 0)
+    decay = jnp.expand_dims(decay, 1)
+
+    return diag_j + (diag_i - diag_j) * decay
+
+
 class ICENODE(ICENODE_TL):
 
     def __init__(self, sdtw_gamma, distance, trajectory_samples, **kwargs):
         super().__init__(**kwargs)
-        del (self.initializers['f_update'], self.f_update)
         self.trajectory_samples = trajectory_samples
         if distance == 'bce':
             distance = distance_matrix_bce
@@ -25,33 +49,6 @@ class ICENODE(ICENODE_TL):
 
         soft_dtw_loss = SoftDTW(pairwise_distance_f=distance, gamma=sdtw_gamma)
         self.soft_dtw_loss = jax.jit(lambda a, b: soft_dtw_loss(a, b))
-
-    @staticmethod
-    def diag_first_order_prior(diag_i,
-                               diag_j,
-                               t_samples,
-                               settlement_error=0.05):
-        """
-        Construct t_samples of exponential decay function between the points
-        diag_i and diag_j.
-        Args:
-            diag_i: initial point with shape (p,)
-            diag_j: final point with shape (p,)
-            t_samples: time samples along the trajectory with shape (T,)
-            settlement_error: the error at the final trajectory point computed as
-                                |\frac{last_point-diag_j}{diag_j-diag_i}|.
-        Returns:
-            Sampled trajectory with shape (T, p)
-        """
-        ti = t_samples[0]
-        tj = t_samples[-1]
-        decay = jnp.exp((t_samples - ti) * jnp.log(0.05) / (tj - ti))
-
-        diag_i = jnp.expand_dims(diag_i, 0)
-        diag_j = jnp.expand_dims(diag_j, 0)
-        decay = jnp.expand_dims(decay, 1)
-
-        return diag_j + (diag_i - diag_j) * decay
 
     def split_state_emb_seq(self, seq):
         # seq.shape: (time_samples, state_size + embeddings_size)
@@ -76,12 +73,17 @@ class ICENODE(ICENODE_TL):
         state_emb_seq = {i: h for i, (h, _, _) in h_r_nfe.items()}
         return state_emb_seq, r, n
 
-    def _f_update(self, state_seq: Dict[int, jnp.ndarray],
+    def _f_update(self, params: Any, state_seq: Dict[int, jnp.ndarray],
                   emb: jnp.ndarray) -> jnp.ndarray:
         new_state = {}
         for i in emb:
-            state, _ = self.split_state_emb_seq(state_seq[i])
-            new_state[i] = self.join_state_emb(state[-1], emb[i])
+            emb_nominal = emb[i]
+            state, emb_pred = self.split_state_emb_seq(state_seq[i])
+            # state.shape: (timesamples, state_size)
+            # emb_pred.shape: (timesamples, embeddings_size)
+            state = self.f_update(params['f_update'], state[-1], emb_pred[-1],
+                                  emb_nominal)
+            new_state[i] = self.join_state_emb(state, emb_nominal)
         return new_state
 
     def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
@@ -101,10 +103,10 @@ class ICENODE(ICENODE_TL):
         loss_vals = []
         for subject_id in t:
             dt = t[subject_id] / self.timescale
-            t_samples = jnp.linspace(0.0, dt, self.trajectory_samples)
-            diag_prior = self.diag_first_order_prior(diag_i[subject_id],
-                                                     diag_j[subject_id],
-                                                     t_samples=t_samples)
+            t_samples = jnp.linspace(0.0, dt, self.trajectory_samples * 3)
+            diag_prior = diag_first_order_prior(diag_i[subject_id],
+                                                diag_j[subject_id],
+                                                t_samples=t_samples)
             diag_pred = dec_diag_seq[subject_id]
             loss_vals.append(self.soft_dtw_loss(diag_prior, diag_pred))
 
@@ -116,7 +118,7 @@ class ICENODE(ICENODE_TL):
                  count_nfe: bool = False):
         nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
-        nn_update = self._f_update
+        nn_update = partial(self._f_update, params)
         nn_decode = partial(self._f_dec, params)
         diag_loss = self._diag_dtw_loss
 
