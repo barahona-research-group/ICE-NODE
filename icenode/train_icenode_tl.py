@@ -487,7 +487,7 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': 60,
+            'epochs': 100,
             'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
             #trial.suggest_int('B', 2, 27, 5),
             'optimizer': 'adam',
@@ -505,11 +505,11 @@ class ICENODE(AbstractModel):
     def sample_model_config(cls, trial: optuna.Trial):
         return {
             'ode_dyn':
-            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3']),
+            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3', 'gru']),
             'ode_with_bias':
             False,
             'ode_init_var':
-            trial.suggest_float('ode_i', 1e-9, 1e1, log=True),
+            trial.suggest_float('ode_i', 1e-8, 1e1, log=True),
             'state_size':
             trial.suggest_int('s', 10, 100, 10),
             'timescale':
