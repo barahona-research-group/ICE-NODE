@@ -59,8 +59,7 @@ class MLPDynamics(hk.Module):
         out = jnp.hstack((h, c))
 
         for lin in self.lin[:-1]:
-            out = lin(out)
-            out = leaky_relu(out, negative_slope=2e-1)
+            out = jnp.tanh(lin(out))
             out = jnp.hstack((out, c))
 
         out = self.lin[-1](out)
@@ -93,12 +92,12 @@ class ResDynamics(hk.Module):
         res = jnp.zeros_like(h)
         for lin in self.lin[:-1]:
             out = lin(out)
-            out = leaky_relu(out, negative_slope=2e-1) + res
+            out = jnp.tanh(out) + res
             res = out
             out = jnp.hstack((out, c))
 
         out = self.lin[-1](out)
-        return jnp.tanh(out)
+        return out
 
 
 class GRUDynamics(hk.Module):
