@@ -9,7 +9,7 @@ from .utils import (load_config, load_params, parameters_size, tree_hasnan,
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    MatrixEmbeddings, OrthogonalGRAM)
 from .metrics import (bce, softmax_logits_bce, balanced_focal_bce,
-                      weighted_bce, admissions_auc_scores)
+                      weighted_bce, admissions_auc_scores, codes_auc_scores)
 
 
 class ImplementationException(Exception):
@@ -42,6 +42,11 @@ class AbstractModel:
         params = self.get_params(model_state)
         res = self(params, batch)
         return admissions_auc_scores(res['diag_detectability'])
+
+    def codes_auc_scores(self, model_state: Any, batch: List[int]):
+        params = self.get_params(model_state)
+        res = self(params, batch)
+        return codes_auc_scores(res['diag_detectability'])
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int], **kwargs) -> float:
@@ -166,7 +171,8 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_flatccs_frequency_vec(train_ids)
+            codes_dist = patient_interface.diag_flatccs_frequency_vec(
+                train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:

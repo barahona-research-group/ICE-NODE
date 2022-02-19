@@ -179,12 +179,12 @@ def confusion_matrix_scores(cm: jnp.ndarray):
     }
 
 
+def compute_auc(v_truth, v_preds):
+    fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
+    return metrics.auc(fpr, tpr)
+
+
 def auc_scores(detectability):
-
-    def compute_auc(v_truth, v_preds):
-        fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
-        return metrics.auc(fpr, tpr)
-
     gtruth = []
     preds = []
     for points in detectability.values():
@@ -206,12 +206,34 @@ def auc_scores(detectability):
     return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
 
 
+def codes_auc_scores(detectability):
+    ground_truth = []
+    predictions = []
+
+    for subject_id, admissions in detectability.items():
+        for i, admission_index in enumerate(sorted(admissions.keys())):
+            info = admissions[admission_index]
+            ground_truth.append(info['true_diag'])
+            predictions.append(jit_sigmoid(info['pred_logits']))
+
+    ground_truth_mat = onp.vstack(ground_truth)
+    predictions_mat = onp.vstack(predictions)
+
+    n_codes = []
+    auc = []
+    for code_index in range(ground_truth_mat.shape[1]):
+        code_ground_truth = ground_truth_mat[:, i]
+        code_predictions = predictions_mat[:, i]
+
+        n_codes.append(code_ground_truth.sum())
+        auc.append(compute_auc(code_ground_truth, code_predictions))
+
+    data = {'CODE_INDEX': range(len(auc)), 'N_CODES': n_codes, 'AUC': auc}
+
+    return pd.DataFrame(data)
+
+
 def admissions_auc_scores(detectability):
-
-    def compute_auc(v_truth, v_preds):
-        fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
-        return metrics.auc(fpr, tpr)
-
     subject_ids = []
     # HADM_ID in MIMIC-III
     admission_ids = []
@@ -275,7 +297,6 @@ def admissions_auc_scores(detectability):
         data['LOS'] = los
         data['R/T'] = r
         data['NFE'] = nfe
-
     return pd.DataFrame(data)
 
 
