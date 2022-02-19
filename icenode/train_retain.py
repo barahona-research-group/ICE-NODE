@@ -25,6 +25,7 @@ def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
 
 
 class RETAIN(AbstractModel):
+
     def __init__(self, subject_interface: SubjectDiagSequenceJAXInterface,
                  diag_emb: AbstractEmbeddingsLayer, state_a_size: int,
                  state_b_size: int):
@@ -35,7 +36,7 @@ class RETAIN(AbstractModel):
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
-            'diag_out': len(subject_interface.diag_ccs_idx),
+            'diag_out': len(subject_interface.diag_flatccs_idx),
             'state_a': state_a_size,
             'state_b': state_b_size
         }
@@ -107,7 +108,7 @@ class RETAIN(AbstractModel):
     def __call__(self, params: Any, subjects_batch: List[int]):
 
         G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
-        emb = partial(self.diag_emb.encode, G)
+        emb = jax.vmap(partial(self.diag_emb.encode, G))
         diag_seqs = self.subject_interface.diag_sequences_batch(subjects_batch)
 
         loss = {}
@@ -117,7 +118,9 @@ class RETAIN(AbstractModel):
 
         for subject_id, _diag_seqs in diag_seqs.items():
             # Exclude first one, we need to predict them for a future step.
-            diag_ccs = _diag_seqs['diag_ccs_vec']
+            diag_ccs = jnp.vstack(_diag_seqs['diag_ccs_vec'])
+
+            diag_ccs_out = _diag_seqs['diag_flatccs_vec']
             admission_id = _diag_seqs['admission_id']
 
             logging.debug(len(diag_ccs))
@@ -125,7 +128,7 @@ class RETAIN(AbstractModel):
             # step 1 @RETAIN paper
 
             # v1, v2, ..., vT
-            v_seq = jnp.vstack(map(emb, diag_ccs))
+            v_seq = emb(diag_ccs)
 
             diag_detectability[subject_id] = {}
             loss[subject_id] = []
@@ -171,10 +174,10 @@ class RETAIN(AbstractModel):
                 logits = self.decode(params['decode'], c_context)
                 diag_detectability[subject_id][i] = {
                     'admission_id': admission_id[i],
-                    'true_diag': diag_ccs[i],
+                    'true_diag': diag_ccs_out[i],
                     'pred_logits': logits
                 }
-                loss[subject_id].append(diag_loss(diag_ccs[i], logits))
+                loss[subject_id].append(diag_loss(diag_ccs_out[i], logits))
 
         # Loss of all visits 2, ..., T, normalized by T
         loss = [sum(l) / len(l) for l in loss.values()]

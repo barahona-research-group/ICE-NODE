@@ -30,7 +30,7 @@ class ICENODE(AbstractModel):
         self.timescale = timescale
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
-            'diag_out': len(subject_interface.diag_ccs_idx),
+            'diag_out': len(subject_interface.diag_flatccs_idx),
             'state': state_size
         }
         depth = 2
@@ -137,12 +137,9 @@ class ICENODE(AbstractModel):
 
         diag_emb = {
             i: self.diag_emb.encode(diag_G, v['diag_ccs_vec'])
-            for i, v in adms.items() if v['diag_ccs_vec'] is not None
+            for i, v in adms.items()
         }
-        diag_out = {
-            i: v['diag_ccs_vec']
-            for i, v in adms.items() if v['diag_ccs_vec'] is not None
-        }
+        diag_out = {i: v['diag_flatccs_vec'] for i, v in adms.items()}
         los = {i: v['los'] for i, v in adms.items()}
         adm_id = {i: v['admission_id'] for i, v in adms.items()}
         adm_time = {i: v['time'] for i, v in adms.items()}

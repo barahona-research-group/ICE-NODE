@@ -37,12 +37,12 @@ def diag_first_order_prior(diag_i, diag_j, t_samples, settlement_error=0.05):
 
 class ICENODE(ICENODE_TL):
 
-    def __init__(self, sdtw_gamma, distance, trajectory_samples, **kwargs):
+    def __init__(self, sdtw_gamma, dtw_distance, trajectory_samples, **kwargs):
         super().__init__(**kwargs)
         self.trajectory_samples = trajectory_samples
-        if distance == 'bce':
+        if dtw_distance == 'bce':
             distance = distance_matrix_bce
-        elif distance == 'euc':
+        elif dtw_distance == 'euc':
             distance = distance_matrix_euc
         else:
             raise ValueError('Unrecognized distance')
@@ -213,7 +213,8 @@ class ICENODE(ICENODE_TL):
         return {
             'trajectory_samples': trial.suggest_int('traj_s', 3, 6),
             'sdtw_gamma': 10**trial.suggest_int('gamma_sdtw', -5, 1),
-            'distance': trial.suggest_categorical('dist', ['euc', 'bce']),
+            'dtw_distance': trial.suggest_categorical('dtw_dist',
+                                                      ['euc', 'bce']),
             **ICENODE_TL.sample_model_config(trial)
         }
 

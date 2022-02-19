@@ -11,7 +11,7 @@ class CCSDAG:
     """
     DIR = os.path.dirname(__file__)
     CCS_DIR = os.path.join(DIR, 'resources', 'CCS')
-    DIAG_SINGLE_CCS_FILE = os.path.join(CCS_DIR, '$dxref 2015.csv')
+    DIAG_SINGLE_CCS_FILE = os.path.join(CCS_DIR, '$dxref 2015 filtered.csv')
     PROC_SINGLE_CCS_FILE = os.path.join(CCS_DIR, '$prref 2015.csv')
     DIAG_MULTI_CCS_FILE = os.path.join(CCS_DIR, 'ccs_multi_dx_tool_2015.csv')
     PROC_MULTI_CCS_FILE = os.path.join(CCS_DIR, 'ccs_multi_pr_tool_2015.csv')
@@ -108,44 +108,43 @@ class CCSDAG:
 
         df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4', 'ICD']]
 
-        diag_multi_ccs_pt2ch = defaultdict(set)
-        diag_multi_icd2ccs = {}
+        diag_multi_icd2ccs = {'root': 'root'}
         diag_multi_ccs2icd = defaultdict(list)
-
+        diag_multi_ccs2icd['root'] = ['root']
         for row in df.itertuples():
             code = row.ICD
             i1, i2, i3, i4 = row.I1, row.I2, row.I3, row.I4
-            last_index = i1
-
-            if i2:
-                diag_multi_ccs_pt2ch[i1].add(i2)
+            last_index = None
+            if i1 != '':
+                last_index = i1
+            if i2 != '':
                 last_index = i2
-
-            if i3:
-                diag_multi_ccs_pt2ch[i2].add(i3)
+            if i3 != '':
                 last_index = i3
-            if i4:
-                diag_multi_ccs_pt2ch[i3].add(i4)
+            if i4 != '':
                 last_index = i4
+            if last_index != None:
+                diag_multi_icd2ccs[code] = last_index
+                diag_multi_ccs2icd[last_index].append(code)
 
-            diag_multi_icd2ccs[code] = last_index
-            diag_multi_ccs2icd[last_index].append(code)
-
-        diag_multi_ccs_codes = set(df.I1)
-        for ccs_code, ccs_ch in diag_multi_ccs_pt2ch.items():
-            diag_multi_ccs_codes.add(ccs_code)
-            diag_multi_ccs_codes.update(ccs_ch)
-
-        diag_multi_ccs_codes = list(sorted(diag_multi_ccs_codes))
+        # Make dictionary for parent-child connections
+        diag_multi_ccs_pt2ch = {'root': set(df['I1'])}
+        for pt_col, ch_col in zip(('I1', 'I2', 'I3'), ('I2', 'I3', 'I4')):
+            df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
+            df_ = df_[[pt_col, ch_col]].drop_duplicates()
+            for parent_ccs_code, ch_ccs_df in df_.groupby(pt_col):
+                diag_multi_ccs_pt2ch[parent_ccs_code] = set(ch_ccs_df[ch_col])
 
         # Make a dictionary for CCS labels
-        diag_multi_ccs_labels = {}
+        diag_multi_ccs_labels = {'root': 'root'}
         for idx_col, label_col in zip(('I1', 'I2', 'I3', 'I4'),
                                       ('L1', 'L2', 'L3', 'L4')):
-            df_ = df[[idx_col, label_col]].drop_duplicates()
+            df_ = df[df[idx_col] != '']
+            df_ = df_[[idx_col, label_col]].drop_duplicates()
             idx_label = dict(zip(df_[idx_col], df_[label_col]))
             diag_multi_ccs_labels.update(idx_label)
 
+        diag_multi_ccs_codes = list(sorted(diag_multi_ccs_labels.keys()))
         return (diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd,
                 diag_multi_ccs_codes, diag_multi_ccs_labels)
 
@@ -165,41 +164,39 @@ class CCSDAG:
 
         df = df[['I1', 'I2', 'I3', 'L1', 'L2', 'L3', 'ICD']]
 
-        proc_multi_ccs_pt2ch = defaultdict(set)
-        proc_multi_icd2ccs = {}
-        proc_multi_ccs2icd = defaultdict(list)
 
+        proc_multi_icd2ccs = {'root': 'root'}
+        proc_multi_ccs2icd = defaultdict(list)
+        proc_multi_ccs2icd['root'] = ['root']
         for row in df.itertuples():
             code = row.ICD
-            i1, i2, i3 = row.I1, row.I2, row.I3
-
+            i1, i2, i3= row.I1, row.I2, row.I3
             last_index = i1
-
-            if i2:
-                proc_multi_ccs_pt2ch[i1].add(i2)
+            if i2 != '':
                 last_index = i2
-
-            if i3:
-                proc_multi_ccs_pt2ch[i2].add(i3)
+            if i3 != '':
                 last_index = i3
-
             proc_multi_icd2ccs[code] = last_index
             proc_multi_ccs2icd[last_index].append(code)
 
-        proc_multi_ccs_codes = set(df.I1)
-        for ccs_code, ccs_ch in proc_multi_ccs_pt2ch.items():
-            proc_multi_ccs_codes.add(ccs_code)
-            proc_multi_ccs_codes.update(ccs_ch)
-
-        proc_multi_ccs_codes = list(sorted(proc_multi_ccs_codes))
+        # Make dictionary for parent-child connections
+        proc_multi_ccs_pt2ch = {'root': set(df['I1'])}
+        for pt_col, ch_col in zip(('I1', 'I2'), ('I2', 'I3')):
+            df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
+            df_ = df_[[pt_col, ch_col]].drop_duplicates()
+            for parent_ccs_code, ch_ccs_df in df_.groupby(pt_col):
+                proc_multi_ccs_pt2ch[parent_ccs_code] = set(ch_ccs_df[ch_col])
 
         # Make a dictionary for CCS labels
-        proc_multi_ccs_labels = {}
-        for idx_col, label_col in zip(('I1', 'I2', 'I3'), ('L1', 'L2', 'L3')):
-            df_ = df[[idx_col, label_col]].drop_duplicates()
+        proc_multi_ccs_labels = {'root': 'root'}
+        for idx_col, label_col in zip(('I1', 'I2', 'I3'),
+                                      ('L1', 'L2', 'L3')):
+            df_ = df[df[idx_col] != '']
+            df_ = df_[[idx_col, label_col]].drop_duplicates()
             idx_label = dict(zip(df_[idx_col], df_[label_col]))
             proc_multi_ccs_labels.update(idx_label)
 
+        proc_multi_ccs_codes = list(sorted(proc_multi_ccs_labels.keys()))
         return (proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd,
                 proc_multi_ccs_codes, proc_multi_ccs_labels)
 
@@ -217,8 +214,11 @@ class CCSDAG:
 
     # Get parents of CCS code
     def get_ccs_parents(self, ccs_code):
+        if ccs_code == 'root':
+            return []
+
         indices = ccs_code.split('.')
-        parents = []
+        parents = ['root']
         for i in reversed(range(1, len(indices))):
             parent = '.'.join(indices[0:i])
             parents.append(parent)

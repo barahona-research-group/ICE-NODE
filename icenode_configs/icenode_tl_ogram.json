@@ -1,7 +1,8 @@
 {
     "emb": {
         "diag": {
-            "embeddings_dim": 500
+            "attention_method": "tanh",
+	    "attention_dim": 300
         },
         "kind": "matrix"
     },

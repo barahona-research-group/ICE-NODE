@@ -17,6 +17,7 @@ class AbstractSubjectJAXInterface:
     are merged. Hence, in case patients end up with one admission, they
     are discarded.
     """
+
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
 
         # Filter subjects with admissions less than two.
@@ -37,23 +38,21 @@ class AbstractSubjectJAXInterface:
     def diag_ccs_history(self, subject_id):
         history = set()
         for adm in self.subjects[subject_id].admissions:
-            ccs_codes = set(map(self.dag.diag_icd2ccs.get, adm.icd9_diag_codes))
+            ccs_codes = set(map(self.dag.diag_icd2ccs.get,
+                                adm.icd9_diag_codes))
             history.update(ccs_codes)
         history = list(history)
         return history, list(map(self.diag_ccs_idx.get, history))
 
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
-        ancestors_mat = []
+        ancestors_mat = np.zeros((len(code2index), len(code2index)),
+                                 dtype=bool)
+        for code_i, i in code2index.items():
+            for ancestor_j in self.dag.get_ccs_parents(code_i):
+                j = code2index[ancestor_j]
+                ancestors_mat[i, j] = 1
 
-        for code in sorted(code2index.keys()):
-            ancestors_npvec = np.zeros(len(code2index), dtype=bool)
-            ancestors = [
-                a for a in self.dag.get_ccs_parents(code) if a in code2index
-            ]
-            for ancestor_j in map(code2index.get, ancestors):
-                ancestors_npvec[ancestor_j] = 1
-            ancestors_mat.append(jnp.array(ancestors_npvec))
-        return jnp.vstack(ancestors_mat)
+        return jnp.array(ancestors_mat)
 
     def diag_ccs_to_vec(self, diag_ccs_codes):
         n_cols = len(self.diag_ccs_idx)
@@ -63,12 +62,9 @@ class AbstractSubjectJAXInterface:
         return jnp.array(mask)
 
     def diag_flatccs_to_vec(self, diag_flatccs_codes):
-        if len(diag_flatccs_codes) == 0:
-            return None
-
         n_cols = len(self.diag_flatccs_idx)
         mask = np.zeros(n_cols)
-        for c in diag_flatccs_codes:
+        for c in diag_flatccs_codes - {None}:
             mask[self.diag_flatccs_idx[c]] = 1
 
         return jnp.array(mask)
@@ -80,7 +76,7 @@ class AbstractSubjectJAXInterface:
             for adm in self.subjects[subject_id].admissions:
                 ccs_codes = set(
                     map(self.dag.diag_icd2flatccs.get, adm.icd9_diag_codes))
-                for code in ccs_codes:
+                for code in ccs_codes - {None}:
                     counter[self.diag_flatccs_idx[code]] += 1
         return counter
 
@@ -171,24 +167,10 @@ class AbstractSubjectJAXInterface:
 
 
 class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
+
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.diag_sequences = self.make_diag_sequences()
-
-    def diag_ccs_to_vec(self, diag_ccs_codes):
-        n_cols = len(self.diag_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_ccs_codes:
-            mask[self.diag_ccs_idx[c]] = 1
-        return jnp.array(mask)
-
-    def diag_flatccs_to_vec(self, diag_flatccs_codes):
-        n_cols = len(self.diag_flatccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_flatccs_codes:
-            mask[self.diag_flatccs_idx[c]] = 1
-
-        return jnp.array(mask)
 
     def make_diag_sequences(self):
         _diag_sequences = {}
@@ -220,6 +202,7 @@ class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
 
 
 class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
+
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.nth_admission = self.make_nth_admission()

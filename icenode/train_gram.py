@@ -5,7 +5,6 @@ import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import optuna
 
 from .jax_interface import SubjectDiagSequenceJAXInterface
 from .gram import AbstractEmbeddingsLayer
@@ -33,7 +32,7 @@ class GRAM(AbstractModel):
         self.dimensions = {
             'diag_emb': diag_emb.embeddings_dim,
             'diag_in': len(subject_interface.diag_ccs_idx),
-            'diag_out': len(subject_interface.diag_ccs_idx),
+            'diag_out': len(subject_interface.diag_flatccs_idx),
             'state': state_size
         }
 
@@ -64,13 +63,6 @@ class GRAM(AbstractModel):
     def state_size(self):
         return self.dimensions['state']
 
-    def diag_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.diag_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
-
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
 
         G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
@@ -84,7 +76,7 @@ class GRAM(AbstractModel):
             # Exclude last one for irrelevance
             hierarchical_diag = _diag_seqs['diag_ccs_vec'][:-1]
             # Exclude first one, we need to predict them for a future step.
-            diag_ccs = _diag_seqs['diag_ccs_vec'][1:]
+            diag_flatccs = _diag_seqs['diag_flatccs_vec'][1:]
             admission_id = _diag_seqs['admission_id'][1:]
 
             emb_seqs = map(emb, hierarchical_diag)
@@ -93,7 +85,7 @@ class GRAM(AbstractModel):
             loss[subject_id] = []
             state = state0
             for i, diag_emb in enumerate(emb_seqs):
-                y_i = diag_ccs[i]
+                y_i = diag_flatccs[i]
                 output, state = self.gru(params['gru'], diag_emb, state)
                 logits = self.out(params['out'], output)
                 diag_detectability[subject_id][i] = {

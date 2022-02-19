@@ -100,7 +100,9 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
             raise RuntimeError('Unrecognized attention method.'
                                f'Got {attention_method}. Expected either of'
                                f'{", ".join(["tanh", "l2"])}.')
-        self.A = self._augment_ancestors_mat(ancestors_mat)
+
+        self.code_branch = self._code_branch_mat(ancestors_mat)
+        self.index = jnp.arange(len(ancestors_mat))
 
         self.init_att, fwd_att = hk.without_apply_rng(
             hk.transform(
@@ -110,27 +112,41 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
         self.fwd_att = jax.jit(fwd_att)
 
     @staticmethod
-    def _augment_ancestors_mat(ancestors_mat: jnp.ndarray):
-        '''Include the code itself in the set of its Ancestors'''
-        A = onp.array(ancestors_mat)
-        onp.fill_diagonal(A, 1)
+    def _code_branch_mat(ancestors_mat: jnp.ndarray):
+        """
+        This function returns an array, where each row correspond to one code.
+        Each row includes the ancestor indices of the corresponding code,
+        in addition to the index of the code itself.
+        As codes have different number of ancestors, each row has length of
+        (self.max_ancestors + 1), so if the branch elements doesn't fill the
+        entire row, the row is padded with the code index repetitions.
+        """
+        max_ancestors = ancestors_mat.sum(axis=1).max()
+        code_branch = []
+        for i, ancestors_i in enumerate(ancestors_mat):
+            ancestors_i = onp.nonzero(ancestors_i)[0]
+            fill_size = max_ancestors + 1 - len(ancestors_i)
+            fill = onp.zeros(fill_size, dtype=int) + i
+            code_branch.append(onp.hstack((ancestors_i, fill)))
 
-        return [jnp.nonzero(ancestors_v) for ancestors_v in A]
+        return jnp.vstack(code_branch)
 
     def init_params(self, rng_key):
         raise RuntimeError(f'Should be overriden')
 
     @partial(jax.jit, static_argnums=(0, ))
-    def _self_attention(self, params: Any, E: jnp.ndarray, e_i: jnp.ndarray,
-                        ancestors_mask: Tuple[jnp.ndarray]):
-        E = E[ancestors_mask]
+    def _self_attention(self, params: Any, E: jnp.ndarray, branch: jnp.ndarray,
+                        e_i: jnp.ndarray):
+        # E: basic embeddings of ancestors
+        E = E.at[branch].get()
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
+    @partial(jax.jit, static_argnums=(0, ))
     def _compute_embeddings_mat(self, params):
         E, att_params = params
-        G = map(partial(self._self_attention, att_params, E), E, self.A)
-        return jnp.vstack(list(G))
+        return jax.vmap(partial(self._self_attention, att_params,
+                                E))(self.code_branch, E)
 
     # This can be overriden.
     def compute_embeddings_mat(self, params):

@@ -150,7 +150,7 @@ class AbstractModel:
 
     @staticmethod
     def code_partitions(patient_interface, train_ids):
-        return patient_interface.diag_ccs_by_percentiles(20, train_ids)
+        return patient_interface.diag_flatccs_by_percentiles(20, train_ids)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
@@ -166,7 +166,7 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_ccs_frequency_vec(train_ids)
+            codes_dist = patient_interface.diag_flatccs_frequency_vec(train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:

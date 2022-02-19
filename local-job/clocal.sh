@@ -27,4 +27,4 @@ python -m icenode.train_config \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --data-tag $DATA_TAG \
---model $MODEL \
+--model $MODEL

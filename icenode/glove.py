@@ -1,15 +1,10 @@
-import concurrent.futures
 import logging
 import math
 from collections import defaultdict
-from copy import deepcopy
-from datetime import date
-from itertools import chain
 from random import shuffle
-from typing import AbstractSet, Any, List, Dict, Mapping, Tuple, Optional, Sequence, Union, Callable, Set
+from typing import List, Dict, Mapping, Tuple, Callable, Set
 
 import numpy as np
-import pandas as pd
 
 from .mimic3.dag import CCSDAG
 from .mimic3.concept import DiagSubject, DiagnosisAdmission
@@ -244,7 +239,7 @@ def glove_representation(category: str,
     if category == 'diag':
         code2idx = patient_interface.diag_ccs_idx
         adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.diag_icd2ccs.get, adm.icd9_diag_codes))
+            map(ccs_dag.diag_icd2ccs.get, adm.icd9_diag_codes)) - {None}
     else:
         raise ValueError(f'Category {category} is not supported')
 
