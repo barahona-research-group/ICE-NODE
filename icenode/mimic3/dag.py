@@ -31,8 +31,8 @@ class CCSDAG:
         self.diag_icd_codes = list(sorted(self.diag_icd_label.keys()))
         self.proc_icd_codes = list(sorted(self.proc_icd_label.keys()))
 
-        (self.diag_icd2flatccs,
-         self.diag_flatccs2icd) = self.make_diag_icd2ccs_dict()
+        (self.diag_icd2flatccs, self.diag_flatccs2icd,
+         self.diag_flatccs_desc) = self.make_diag_icd2ccs_dict()
         (self.proc_icd2flatccs,
          self.proc_flatccs2icd) = self.make_proc_icd2ccs_dict()
 
@@ -67,13 +67,19 @@ class CCSDAG:
         diag_ccs_icd_list = self.diag_flatccs_df['\'ICD-9-CM CODE\''].apply(
             lambda c: c.strip('\'').strip()).tolist()
 
+        diag_ccs_cat_desc = self.diag_flatccs_df[
+            '\'CCS CATEGORY DESCRIPTION\''].apply(
+                lambda desc: desc.strip('\'').strip()).tolist()
+
+        diag_ccs_desc = dict(zip(diag_ccs_cat_list, diag_ccs_cat_desc))
+
         diag_icd2ccs_dict = dict(zip(diag_ccs_icd_list, diag_ccs_cat_list))
 
         diag_ccs2icd_dict = defaultdict(list)
         for code, cat in zip(diag_ccs_icd_list, diag_ccs_cat_list):
             diag_ccs2icd_dict[cat].append(code)
 
-        return diag_icd2ccs_dict, diag_ccs2icd_dict
+        return diag_icd2ccs_dict, diag_ccs2icd_dict, diag_ccs_desc
 
     def make_proc_icd2ccs_dict(self):
         proc_ccs_cat_list = self.proc_flatccs_df['\'CCS CATEGORY\''].apply(
@@ -164,13 +170,12 @@ class CCSDAG:
 
         df = df[['I1', 'I2', 'I3', 'L1', 'L2', 'L3', 'ICD']]
 
-
         proc_multi_icd2ccs = {'root': 'root'}
         proc_multi_ccs2icd = defaultdict(list)
         proc_multi_ccs2icd['root'] = ['root']
         for row in df.itertuples():
             code = row.ICD
-            i1, i2, i3= row.I1, row.I2, row.I3
+            i1, i2, i3 = row.I1, row.I2, row.I3
             last_index = i1
             if i2 != '':
                 last_index = i2
@@ -189,8 +194,7 @@ class CCSDAG:
 
         # Make a dictionary for CCS labels
         proc_multi_ccs_labels = {'root': 'root'}
-        for idx_col, label_col in zip(('I1', 'I2', 'I3'),
-                                      ('L1', 'L2', 'L3')):
+        for idx_col, label_col in zip(('I1', 'I2', 'I3'), ('L1', 'L2', 'L3')):
             df_ = df[df[idx_col] != '']
             df_ = df_[[idx_col, label_col]].drop_duplicates()
             idx_label = dict(zip(df_[idx_col], df_[label_col]))

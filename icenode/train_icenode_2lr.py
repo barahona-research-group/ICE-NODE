@@ -83,7 +83,7 @@ class ICENODE_2LR_MIXIN:
             'loss_mixing': {
                 'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
                 'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-                'L_dyn': 0  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+                'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
             }
         }
 
