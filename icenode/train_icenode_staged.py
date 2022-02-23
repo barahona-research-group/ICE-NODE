@@ -16,7 +16,7 @@ class ICENODE_STAGED_MIXIN:
             }
             return loss_({'f_n_ode': ode_params, **other_params}, batch)
 
-        if step < 1:
+        if step < 50:
             grads = jax.grad(loss_)(params, batch)
         else:
             loss_mixing['L_dyn'] = 0
