@@ -1,15 +1,5 @@
-from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
-from absl import logging
-
 import jax
-from jax.experimental import optimizers
-
-import optuna
-
-from .jax_interface import (DiagnosisJAXInterface)
 from .train_icenode_tl import ICENODE as ICENODE_TL
-from .gram import AbstractEmbeddingsLayer
 
 
 class ICENODE_STAGED_MIXIN:
@@ -19,11 +9,21 @@ class ICENODE_STAGED_MIXIN:
         opt_state, opt_update, get_params, loss_, loss_mixing = model_state
         params = get_params(opt_state)
 
-        if step < 50:
+        def ode_dependent_loss(ode_params, batch):
+            other_params = {
+                label: params[label]
+                for label in params if label != 'f_n_ode'
+            }
+            return loss_({'f_n_ode': ode_params, **other_params}, batch)
+
+        if step < 1:
             grads = jax.grad(loss_)(params, batch)
         else:
             loss_mixing['L_dyn'] = 0
-            grads = jax.grad(loss_)(params['f_n_ode'], batch)
+            grads = {
+                'f_n_ode': jax.grad(ode_dependent_loss)(params['f_n_ode'],
+                                                        batch)
+            }
 
         opt_state = opt_update(step, grads, opt_state)
         return opt_state, opt_update, get_params, loss_, loss_mixing
