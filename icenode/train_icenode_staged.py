@@ -1,6 +1,8 @@
+from functools import partial
+from typing import Dict, Any
 import jax
 from .train_icenode_tl import ICENODE as ICENODE_TL
-
+from .utils import tree_map
 
 class ICENODE_STAGED_MIXIN:
 
@@ -8,22 +10,12 @@ class ICENODE_STAGED_MIXIN:
     def step_optimizer(cls, step, model_state, batch):
         opt_state, opt_update, get_params, loss_, loss_mixing = model_state
         params = get_params(opt_state)
-
-        def ode_dependent_loss(ode_params, batch):
-            other_params = {
-                label: params[label]
-                for label in params if label != 'f_n_ode'
-            }
-            return loss_({'f_n_ode': ode_params, **other_params}, batch)
-
-        if step < 50:
-            grads = jax.grad(loss_)(params, batch)
-        else:
+        grads = jax.grad(loss_)(params, batch)
+        if step > 50:
             loss_mixing['L_dyn'] = 0
-            grads = {
-                'f_n_ode': jax.grad(ode_dependent_loss)(params['f_n_ode'],
-                                                        batch)
-            }
+            for label in grads:
+                if label != 'f_n_ode':
+                    grads[label] = tree_map(lambda g: g * 0, grads[label])
 
         opt_state = opt_update(step, grads, opt_state)
         return opt_state, opt_update, get_params, loss_, loss_mixing
