@@ -485,7 +485,7 @@ class ICENODE(AbstractModel):
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
         return {
-            'epochs': 100,
+            'epochs': 60,
             'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
             #trial.suggest_int('B', 2, 27, 5),
             'optimizer': 'adam',

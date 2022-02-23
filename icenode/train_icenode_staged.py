@@ -22,6 +22,7 @@ class ICENODE_STAGED_MIXIN:
         if step < 50:
             grads = jax.grad(loss_)(params, batch)
         else:
+            loss_mixing['L_dyn'] = 0
             grads = jax.grad(loss_)(params['f_n_ode'], batch)
 
         opt_state = opt_update(step, grads, opt_state)
