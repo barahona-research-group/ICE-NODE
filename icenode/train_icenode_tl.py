@@ -1,6 +1,7 @@
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set)
 
+from tqdm import tqdm
 import haiku as hk
 import jax
 from jax import lax
@@ -375,7 +376,7 @@ class ICENODE(AbstractModel):
             for i in batch
         }
 
-        for n in self.subject_interface.n_support[1:]:
+        for n in tqdm(self.subject_interface.n_support[1:]):
             adm_n = nth_adm(n)
             if adm_n is None:
                 break
@@ -392,10 +393,10 @@ class ICENODE(AbstractModel):
                 for i in adm_id
             }
 
-            offset = {i: subject_state[i]['time'] for i in adm_id}
+            time_offset = {i: subject_state[i]['time'] for i in adm_id}
 
             # Integrate until next discharge
-            state_e, traj_n = nn_ode(state_e, offset, d2d_time)
+            state_e, traj_n = nn_ode(state_e, time_offset, d2d_time)
 
             for subject_id, traj_ni in traj_n.items():
                 for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):

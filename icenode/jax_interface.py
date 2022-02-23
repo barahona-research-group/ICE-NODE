@@ -44,6 +44,15 @@ class AbstractSubjectJAXInterface:
         history = list(history)
         return history, list(map(self.diag_ccs_idx.get, history))
 
+    def diag_flatccs_history(self, subject_id):
+        history = set()
+        for adm in self.subjects[subject_id].admissions:
+            flatccs_codes = set(
+                map(self.dag.diag_icd2flatccs.get, adm.icd9_diag_codes)) - {None}
+            history.update(flatccs_codes)
+        history = list(history)
+        return history, list(map(self.diag_flatccs_idx.get, history))
+
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = np.zeros((len(code2index), len(code2index)),
                                  dtype=bool)
