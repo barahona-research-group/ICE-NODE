@@ -16,6 +16,7 @@ from .train_gram import GRAM
 from .train_retain import RETAIN
 from .train_icenode_2lr import ICENODE as ICENODE_2LR
 from .train_icenode_tl import ICENODE as ICENODE_TL
+from .train_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM2LR
 from .train_icenode_dtw2lr import ICENODE as ICENODE_DTW2LR
 from .train_icenode_dtw import ICENODE as ICENODE_DTW
 
@@ -109,7 +110,8 @@ if __name__ == '__main__':
         'icenode_2lr': ICENODE_2LR,
         'icenode_tl': ICENODE_TL,
         'icenode_dtw': ICENODE_DTW,
-        'icenode_dtw2lr': ICENODE_DTW2LR
+        'icenode_dtw2lr': ICENODE_DTW2LR,
+        'icenode_uniform2lr': ICENODE_UNIFORM2LR
     }
     model_cls = model_class[args.model]
 
