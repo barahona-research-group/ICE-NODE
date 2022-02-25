@@ -12,7 +12,7 @@
     "training": {
         "batch_size": 27,
         "decay_rate": null,
-        "epochs": 10,
+        "epochs": 60,
         "loss_mixing": {
             "L_l1": 0,
             "L_l2": 0

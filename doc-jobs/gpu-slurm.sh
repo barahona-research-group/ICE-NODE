@@ -13,7 +13,7 @@ WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch
+git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1
 
 cd $WORKDIR/ICENODE
 

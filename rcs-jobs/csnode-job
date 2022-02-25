@@ -7,7 +7,7 @@ source $HOME/.bashrc
 $HOME/anaconda3/condabin/conda activate icenode
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $TMPDIR/ICENODE --branch $STUDY_TAG --single-branch 
+git clone git@github.com:A-Alaa/ICENODE.git $TMPDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1 
 
 cd $TMPDIR/ICENODE
 
