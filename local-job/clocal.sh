@@ -6,7 +6,7 @@ if [[ -v STUDY_TAG ]]; then
   git clone git@github.com:A-Alaa/ICENODE.git --branch $STUDY_TAG --single-branch
   cd ICENODE
 else
-  cp ../icenode ../icenode_configs . -r
+  cp ../icenode . -r
 fi
 
 OUTPUT_DIR=""

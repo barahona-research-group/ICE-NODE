@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
+import random
 from typing import Any, List, Optional
 
 import numpy as np
@@ -35,6 +36,22 @@ class AbstractSubjectJAXInterface:
         self.diag_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
             self.diag_ccs_idx)
 
+    def random_splits(self,
+                      split1: float,
+                      split2: float,
+                      random_seed: int = 42):
+        rng = random.Random(random_seed)
+        subject_ids = list(sorted(self.subjects.keys()))
+        rng.shuffle(subject_ids)
+
+        split1 = int(split1 * len(subject_ids))
+        split2 = int(split2 * len(subject_ids))
+
+        train_ids = subject_ids[:split1]
+        valid_ids = subject_ids[split1:split2]
+        test_ids = subject_ids[split2:]
+        return train_ids, valid_ids, test_ids
+
     def diag_ccs_history(self, subject_id):
         history = set()
         for adm in self.subjects[subject_id].admissions:
@@ -48,7 +65,8 @@ class AbstractSubjectJAXInterface:
         history = set()
         for adm in self.subjects[subject_id].admissions:
             flatccs_codes = set(
-                map(self.dag.diag_icd2flatccs.get, adm.icd9_diag_codes)) - {None}
+                map(self.dag.diag_icd2flatccs.get,
+                    adm.icd9_diag_codes)) - {None}
             history.update(flatccs_codes)
         history = list(history)
         return history, list(map(self.diag_flatccs_idx.get, history))
