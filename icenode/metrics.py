@@ -623,7 +623,8 @@ class DeLongTest:
 
     @staticmethod
     def z_score(var_A, var_B, covar_AB, auc_A, auc_B):
-        return (auc_A - auc_B) / ((var_A + var_B - 2 * covar_AB)**(.5))
+        eps = sys.float_info.epsilon
+        return (auc_A - auc_B) / ((var_A + var_B - 2 * covar_AB + eps)**(.5))
 
     @staticmethod
     def group_preds_by_label(actual, preds):
