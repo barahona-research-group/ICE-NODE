@@ -22,6 +22,7 @@ from .metrics import evaluation_table
 from .utils import (write_config)
 from .abstract_model import AbstractModel
 
+
 class ResourceTimeout(Exception):
     pass
 
@@ -299,16 +300,9 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    rng = random.Random(42)
-    subjects_id = list(patient_interface.subjects.keys())
-    rng.shuffle(subjects_id)
-
     # splits = train:val:test = 0.7:.15:.15
-    splits = int(.7 * len(subjects_id)), int(.85 * len(subjects_id))
-
-    train_ids = subjects_id[:splits[0]]
-    valid_ids = subjects_id[splits[0]:splits[1]]
-    test_ids = subjects_id[splits[1]:]
+    train_ids, valid_ids, test_ids = patient_interface.random_splits(
+        split1=0.7, split2=0.85, random_seed=42)
 
     def objective_f(trial: optuna.Trial):
         study_attrs = study.user_attrs
@@ -328,7 +322,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                          train_ids=train_ids,
                          test_ids=test_ids,
                          valid_ids=valid_ids,
-                         rng=rng,
+                         rng=random.Random(42),
                          job_id=job_id,
                          output_dir=output_dir,
                          trial_stop_time=trial_stop_time,

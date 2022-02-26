@@ -16,12 +16,16 @@ from .train_gram import GRAM
 from .train_retain import RETAIN
 from .train_icenode_2lr import ICENODE as ICENODE_2LR
 from .train_icenode_tl import ICENODE as ICENODE_TL
+from .train_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM2LR
 from .train_icenode_dtw2lr import ICENODE as ICENODE_DTW2LR
 from .train_icenode_dtw import ICENODE as ICENODE_DTW
 
 
 def run(model_cls: AbstractModel, config, patient_interface, tag: str,
-        train_ids, test_ids, valid_ids, prng_key, output_dir):
+        train_ids, test_ids, valid_ids, rng_seed, output_dir):
+
+    prng_key = jax.random.PRNGKey(rng_seed)
+    rng = random.Random(rng_seed)
 
     experiment_dir = os.path.join(output_dir, f'config_exp_{tag}')
 
@@ -109,7 +113,8 @@ if __name__ == '__main__':
         'icenode_2lr': ICENODE_2LR,
         'icenode_tl': ICENODE_TL,
         'icenode_dtw': ICENODE_DTW,
-        'icenode_dtw2lr': ICENODE_DTW2LR
+        'icenode_dtw2lr': ICENODE_DTW2LR,
+        'icenode_uniform2lr': ICENODE_UNIFORM2LR
     }
     model_cls = model_class[args.model]
 
@@ -126,19 +131,9 @@ if __name__ == '__main__':
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    rng = random.Random(42)
-
-    subjects_id = list(patient_interface.subjects.keys())
-    rng.shuffle(subjects_id)
-
     # splits = train:val:test = 0.7:.15:.15
-    splits = int(.7 * len(subjects_id)), int(.85 * len(subjects_id))
-
-    train_ids = subjects_id[:splits[0]]
-    valid_ids = subjects_id[splits[0]:splits[1]]
-    test_ids = subjects_id[splits[1]:]
-
-    prng_key = jax.random.PRNGKey(rng.randint(0, 100))
+    train_ids, valid_ids, test_ids = patient_interface.random_splits(
+        split1=0.7, split2=0.85, random_seed=42)
 
     config = load_config(args.config)
     run(model_cls,
@@ -148,5 +143,5 @@ if __name__ == '__main__':
         train_ids=train_ids,
         valid_ids=valid_ids,
         test_ids=test_ids,
-        prng_key=prng_key,
+        rng_seed=42,
         output_dir=args.output_dir)

@@ -1,7 +1,7 @@
 drop table if exists discarded_study_trials;
 select trial_id
 into temporary table discarded_study_trials
-from trials where study_id = 27799;
+from trials where state = 'RUNNING';
 
 delete from trial_values tv where tv.trial_id in (select trial_id from discarded_study_trials);
 delete from trial_intermediate_values tiv where tiv.trial_id in (select trial_id from discarded_study_trials);

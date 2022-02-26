@@ -1,10 +1,10 @@
 #!/bin/bash
 
 if [[ -v STUDY_TAG ]]; then 
-  git clone git@github.com:A-Alaa/ICENODE.git --branch $STUDY_TAG --single-branch
+  git clone git@github.com:A-Alaa/ICENODE.git --branch $STUDY_TAG --single-branch  --depth 1
   cd ICENODE
 else
-  cp ../icenode ../icenode_configs . -r
+  cp ../icenode . -r
   export STUDY_TAG="debug"
 fi
 
