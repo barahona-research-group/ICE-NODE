@@ -666,7 +666,7 @@ class DeLongTest:
         except ZeroDivisionError:
             logging.debug('Division by zero')
             p = float('nan')
-        return auc_a, auc_b, p
+        return auc_a, auc_b, var_a, var_b, p
 
 
 def codes_auc_pairwise_tests(results):
@@ -720,6 +720,8 @@ def codes_auc_pairwise_tests(results):
 
     n_positive_codes = []
     auc = {clf: [] for clf in clf_labels}
+    auc_var = {clf: [] for clf in clf_labels}
+
     pairwise_tests = {pair: [] for pair in clf_pairs}
 
     for code_index in tqdm(range(ground_truth_mat.shape[1])):
@@ -736,26 +738,35 @@ def codes_auc_pairwise_tests(results):
         # Update this dictionary for each AUC computed, then append the results
         # to the big list of auc.
         _auc = {}
+        _auc_var = {}
         for (clf1, clf2) in clf_pairs:
             scores1 = scores[clf1][:, code_index]
             scores2 = scores[clf2][:, code_index]
-            auc1, auc2, p = DeLongTest.difference_test(code_ground_truth,
-                                                       scores1, scores2)
+            auc1, auc2, auc1_v, auc2_v, p = DeLongTest.difference_test(
+                code_ground_truth, scores1, scores2)
             pairwise_tests[(clf1, clf2)].append(p)
             _auc[clf1] = auc1
             _auc[clf2] = auc2
+            _auc_var[clf1] = auc1_v
+            _auc_var[clf2] = auc2_v
 
         for clf, a in _auc.items():
             auc[clf].append(a)
+        for clf, v in _auc_var.items():
+            auc_var[clf].append(v)
 
     data = {
         'CODE_INDEX': range(len(n_positive_codes)),
         'N_POSITIVE_CODES': n_positive_codes,
         **{f'AUC({clf})': auc_vals
-           for clf, auc_vals in auc.items()},
+           for clf, auc_vals in sorted(auc.items())},
+        **{
+            f'VAR[AUC({clf})]': auc_v
+            for clf, auc_v in sorted(auc_var.items())
+        },
         **{
             f'P0(AUC_{clf1}==AUC_{clf2})': p_vals
-            for (clf1, clf2), p_vals in pairwise_tests.items()
+            for (clf1, clf2), p_vals in sorted(pairwise_tests.items())
         }
     }
 
