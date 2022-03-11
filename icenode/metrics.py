@@ -18,6 +18,8 @@ from jax.tree_util import tree_flatten
 from sklearn import metrics
 import scipy.stats as st
 
+from .delong import DeLongTest, FastDeLongTest
+
 
 class OOPError(Exception):
     pass
@@ -575,101 +577,7 @@ def pad_inf(inp, before, after):
     return jnp.pad(inp, (before, after), constant_values=jnp.inf)
 
 
-class DeLongTest:
-    """
-    This class implements the statistical test of the difference of two AUCs
-    from two different classifiers, starting from the ground truth
-    and the predicted scores from each classifier. This class just serves
-    as a namespace for the classmethod, no point to create instance objects
-    from it.
-    Thanks to Laksan Nathan for providing implementation to it in Python at:
-        - https://biasedml.com/roc-comparison/
-    Other resources:
-        - Elizabeth DeLong et al. “Comparing the Areas under Two or
-        More Correlated Receiver Operating
-        Characteristic Curves: A Nonparametric Approach.” Biometrics 1988.
-    """
-
-    @classmethod
-    def auc(cls, X, Y):
-        """
-        Compute the AUC using Mann-Whitney U statistic from the predicted scores
-        of positve cases and negative cases given by X and Y, respectively.
-        Args:
-            X: the predicted scores for the positive cases, with shape (m,).
-            Y: the predicted scores for the negative cases, with shape (n,).
-
-        Returns:
-            The AUC value estimated by Mann-Whitney U statistic.
-        """
-        m, n = len(X), len(Y)
-        return sum([cls.kernel(x, y) for x in X for y in Y]) / (m * n)
-
-    @staticmethod
-    def kernel(X, Y):
-        return .5 if Y == X else int(Y < X)
-
-    @classmethod
-    def structural_components(cls, X, Y):
-        m, n = len(X), len(Y)
-        V10 = [(1 / n) * sum([cls.kernel(x, y) for y in Y]) for x in X]
-        V01 = [(1 / m) * sum([cls.kernel(x, y) for x in X]) for y in Y]
-        return V10, V01
-
-    @staticmethod
-    def get_S_entry(V_A, V_B, auc_A, auc_B):
-        return 1 / (len(V_A) - 1) * sum([(a - auc_A) * (b - auc_B)
-                                         for a, b in zip(V_A, V_B)])
-
-    @staticmethod
-    def z_score(var_A, var_B, covar_AB, auc_A, auc_B):
-        eps = sys.float_info.epsilon
-        return (auc_A - auc_B) / ((var_A + var_B - 2 * covar_AB + eps)**(.5))
-
-    @staticmethod
-    def group_preds_by_label(actual, preds):
-        X = [p for (a, p) in zip(actual, preds) if a == 1]
-        Y = [p for (a, p) in zip(actual, preds) if a == 0]
-        return X, Y
-
-    @classmethod
-    def difference_test(cls, ground_truth, pred_scores_a, pred_scores_b):
-        X_a, Y_a = cls.group_preds_by_label(ground_truth, pred_scores_a)
-        X_b, Y_b = cls.group_preds_by_label(ground_truth, pred_scores_b)
-
-        assert len(X_a) == len(X_b) and len(Y_a) == len(Y_b), "Unexpected!"
-        m, n = len(X_a), len(Y_a)
-
-        V_a10, V_a01 = cls.structural_components(X_a, Y_a)
-        V_b10, V_b01 = cls.structural_components(X_b, Y_b)
-
-        auc_a = cls.auc(X_a, Y_a)
-        auc_b = cls.auc(X_b, Y_b)
-
-        S_aa10 = cls.get_S_entry(V_a10, V_a10, auc_a, auc_a)
-        S_aa01 = cls.get_S_entry(V_a01, V_a01, auc_a, auc_a)
-
-        S_bb10 = cls.get_S_entry(V_b10, V_b10, auc_b, auc_b)
-        S_bb01 = cls.get_S_entry(V_b01, V_b01, auc_b, auc_b)
-
-        S_ab10 = cls.get_S_entry(V_a10, V_b10, auc_a, auc_b)
-        S_ab01 = cls.get_S_entry(V_a01, V_b01, auc_a, auc_b)
-
-        var_a = S_aa10 / m + S_aa01 / n
-        var_b = S_bb10 / m + S_bb01 / n
-        cov_ab = S_ab10 / m + S_ab01 / n
-
-        # Two sided-test
-        try:
-            z = cls.z_score(var_a, var_b, cov_ab, auc_a, auc_b)
-            p = st.norm.sf(abs(z)) * 2
-        except ZeroDivisionError:
-            logging.debug('Division by zero')
-            p = float('nan')
-        return auc_a, auc_b, var_a, var_b, p
-
-
-def codes_auc_pairwise_tests(results):
+def codes_auc_pairwise_tests(results, fast=False):
     """
     Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
     conduct a pairwise test on the difference of AUC scores between each
@@ -742,8 +650,13 @@ def codes_auc_pairwise_tests(results):
         for (clf1, clf2) in clf_pairs:
             scores1 = scores[clf1][:, code_index]
             scores2 = scores[clf2][:, code_index]
-            auc1, auc2, auc1_v, auc2_v, p = DeLongTest.difference_test(
-                code_ground_truth, scores1, scores2)
+            if fast:
+                auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
+                    code_ground_truth, scores1, scores2)
+            else:
+                auc1, auc2, auc1_v, auc2_v, p = DeLongTest.difference_test(
+                    code_ground_truth, scores1, scores2)
+
             pairwise_tests[(clf1, clf2)].append(p)
             _auc[clf1] = auc1
             _auc[clf2] = auc2
