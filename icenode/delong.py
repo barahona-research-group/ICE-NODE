@@ -93,8 +93,6 @@ class DeLongTest:
         var_b = S_bb10 / m + S_bb01 / n
         cov_ab = S_ab10 / m + S_ab01 / n
 
-        logging.warning(f'var_a: {var_a}, var_b: {var_b}, cov: {cov_ab}')
-
         # Two sided-test
         try:
             z = cls.z_score(var_a, var_b, cov_ab, auc_a, auc_b)
@@ -190,12 +188,11 @@ class FastDeLongTest:
         sx = np.cov(v01)
         sy = np.cov(v10)
         delongcov = sx / m + sy / n
-        logging.warning(f'sx: {sx}, sy: {sy}, cov: {delongcov}')
         return aucs, delongcov
 
     @staticmethod
     def calc_pvalue(aucs, sigma):
-        """Computes log(10) of p-values.
+        """Compute p-value of DeLong Test.
         Args:
         aucs: 1D array of AUCs
         sigma: AUC DeLong covariances
@@ -204,7 +201,13 @@ class FastDeLongTest:
         """
         l = np.array([[1, -1]])
         z = np.abs(np.diff(aucs)) / np.sqrt(np.dot(np.dot(l, sigma), l.T))
-        return np.log10(2) + st.norm.logsf(z, loc=0, scale=1) / np.log(10)
+
+        # Two sided-test
+        try:
+            return st.norm.sf(abs(z.item())) * 2
+        except ZeroDivisionError:
+            logging.debug('Division by zero')
+            return float('nan')
 
     @staticmethod
     def compute_ground_truth_statistics(ground_truth):
