@@ -421,9 +421,9 @@ class ICENODE(AbstractModel):
                     'state_e': new_state
                 }
 
-        for i, traj_i in trajectory.items():
-            for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d', 'tp10', 'fp10'):
-                traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
+        # for i, traj_i in trajectory.items():
+        #     for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d', 'tp10', 'fp10'):
+        #         traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
 
         return trajectory
 
