@@ -658,6 +658,7 @@ def codes_auc_pairwise_tests(results, fast=False):
                     code_ground_truth, scores1, scores2)
 
             pairwise_tests[(clf1, clf2)].append(p)
+
             _auc[clf1] = auc1
             _auc[clf2] = auc2
             _auc_var[clf1] = auc1_v
@@ -667,7 +668,6 @@ def codes_auc_pairwise_tests(results, fast=False):
             auc[clf].append(a)
         for clf, v in _auc_var.items():
             auc_var[clf].append(v)
-
     data = {
         'CODE_INDEX': range(len(n_positive_codes)),
         'N_POSITIVE_CODES': n_positive_codes,
