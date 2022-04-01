@@ -18,7 +18,6 @@ class AbstractSubjectJAXInterface:
     are merged. Hence, in case patients end up with one admission, they
     are discarded.
     """
-
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
 
         # Filter subjects with admissions less than two.
@@ -62,19 +61,21 @@ class AbstractSubjectJAXInterface:
         return history, list(map(self.diag_ccs_idx.get, history))
 
     def diag_flatccs_history(self, subject_id):
-        history = set()
-        for adm in self.subjects[subject_id].admissions:
+        history = defaultdict(list)
+        adms = AdmissionInfo.subject_to_admissions(self.subjects[subject_id])
+        for adm in adms:
             flatccs_codes = set(
                 map(self.dag.diag_icd2flatccs.get,
                     adm.icd9_diag_codes)) - {None}
-            history.update(flatccs_codes)
-        history = list(history)
-        return history, list(map(self.diag_flatccs_idx.get, history))
+            for code in flatccs_codes:
+                history[code].append((adm.admission_time, adm.admission_time + adm.los))
+        return history
 
-    def diag_times(self, subject_id):
+    def adm_times(self, subject_id):
         subject = self.subjects[subject_id]
         adms_info = AdmissionInfo.subject_to_admissions(subject)
-        return [adm.admission_time + adm.los for adm in adms_info]
+        return [(adm.admission_time, adm.admission_time + adm.los)
+                for adm in adms_info]
 
     def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = np.zeros((len(code2index), len(code2index)),
@@ -199,7 +200,6 @@ class AbstractSubjectJAXInterface:
 
 
 class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
-
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.diag_sequences = self.make_diag_sequences()
@@ -234,7 +234,6 @@ class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
 
 
 class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
-
     def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
         super().__init__(subjects, dag)
         self.nth_admission = self.make_nth_admission()
