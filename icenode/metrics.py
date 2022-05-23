@@ -1,7 +1,6 @@
 """Performance metrics and loss functions."""
 
 from collections import defaultdict
-from typing import Any, Callable, Dict
 from enum import Flag, auto
 
 from absl import logging
