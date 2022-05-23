@@ -5,27 +5,23 @@ import jax
 from jax.example_libraries import optimizers
 import optuna
 from .utils import (load_config, load_params, parameters_size, tree_hasnan,
-                    tree_lognan, write_params)
+                    tree_lognan, write_params, OOPError)
 from .gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM, GloVeGRAM,
                    MatrixEmbeddings, OrthogonalGRAM)
 from .metrics import (bce, softmax_logits_bce, balanced_focal_bce,
                       weighted_bce, admissions_auc_scores, codes_auc_scores)
 
 
-class ImplementationException(Exception):
-    pass
-
-
 class AbstractModel:
 
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        raise ImplementationException('Should be overriden')
+        raise OOPError('Should be overriden')
 
     def detailed_loss(self, loss_mixing, params, res):
-        raise ImplementationException('Should be overriden')
+        raise OOPError('Should be overriden')
 
     def eval_stats(self, res):
-        raise ImplementationException('Should be overriden')
+        raise OOPError('Should be overriden')
 
     def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
         loss_mixing = opt_obj[-1]
@@ -54,7 +50,7 @@ class AbstractModel:
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
     def init_params(self, prng_seed: int = 0):
-        raise ImplementationException('Should be ovreriden')
+        raise OOPError('Should be ovreriden')
 
     @staticmethod
     def optimizer_class(label: str):
@@ -160,7 +156,7 @@ class AbstractModel:
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        raise ImplementationException('Should be overriden')
+        raise OOPError('Should be overriden')
 
     @classmethod
     def select_loss(cls, loss_label: str, patient_interface, train_ids):

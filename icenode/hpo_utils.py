@@ -1,3 +1,5 @@
+"""Hyperparameter optimization of EHR predictive models"""
+
 import os
 import argparse
 import random
@@ -8,7 +10,6 @@ from absl import logging
 from tqdm import tqdm
 
 import jax
-import jax.numpy as jnp
 
 import optuna
 from optuna.storages import RDBStorage
@@ -24,16 +25,18 @@ from .abstract_model import AbstractModel
 
 
 class ResourceTimeout(Exception):
-    pass
+    """Raised when a trial is anticipated to be exceeding the timelimit of the compute."""
 
 
 class StudyHalted(Exception):
-    pass
+    """Raised when a trial is spawned from a retired study."""
 
 
 def mlflow_callback_noexcept(callback):
+    """MLFlow callback with supressed exceptions."""
 
     def apply(study, trial):
+        """wrapping."""
         try:
             return callback(study, trial)
         except Exception as e:

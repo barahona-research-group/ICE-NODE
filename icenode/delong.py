@@ -1,12 +1,8 @@
-import sys
+"""Two implementations for DeLong statistical test."""
+
 from absl import logging
-import pandas as pd
 import numpy as np
 import scipy.stats as st
-
-
-class AbstractMethodCalled(Exception):
-    pass
 
 
 class DeLongTest:
@@ -41,6 +37,7 @@ class DeLongTest:
 
     @staticmethod
     def kernel(X, Y):
+        """https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test"""
         return .5 if Y == X else int(Y < X)
 
     @classmethod
