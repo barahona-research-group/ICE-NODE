@@ -1,8 +1,7 @@
-from functools import partial
-import sys
+"""Performance metrics and loss functions."""
+
 from collections import defaultdict
-from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
-                    Optional)
+from typing import Any, Callable, Dict
 from enum import Flag, auto
 
 from absl import logging
@@ -13,36 +12,48 @@ import numpy as onp
 import jax
 import jax.numpy as jnp
 from jax.nn import softplus, sigmoid
-from jax.scipy.special import logsumexp
 from jax.tree_util import tree_flatten
 from sklearn import metrics
-import scipy.stats as st
 
 from .delong import DeLongTest, FastDeLongTest
 
 
-class OOPError(Exception):
-    pass
-
-
 @jax.jit
 def jit_sigmoid(x):
+    """JAX-compiled Sigmoid activation."""
     return sigmoid(x)
 
 
 @jax.jit
 def bce(y: jnp.ndarray, logits: jnp.ndarray):
+    """Binary cross-entropy loss, averaged,
+    vectorized (multi-label classification).
+    The function takes two inputs:
+      - The ground-truth `y` is a vector, where each
+        element is an integer in :math:`\{0, 1\}`.
+      - The predictions `logits`, before applying the Sigmoid function, where
+      each element is a float in :math:`(-\infty, \infty)`.
+    """
     return jnp.mean(y * softplus(-logits) + (1 - y) * softplus(logits))
 
 
 @jax.jit
 def softmax_logits_bce(y: jnp.ndarray, logits: jnp.ndarray):
+    """Categorical cross-entropy, averaged.
+
+    The function takes two inputs:
+      - The ground-truth `y` is a vector, where each
+      element is an integer in :math:`\{0, 1\}`.
+      - The predictions `logits`, before applying the Softmax function,
+      where each element is a float in :math:`(-\infty, \infty)`.
+    """
     return -jnp.mean(y * jax.nn.log_softmax(logits) +
                      (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
 
 
 @jax.jit
 def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, weights: jnp.ndarray):
+    """Weighted version of ``bce``."""
     return jnp.mean(weights * (y * softplus(-logits) +
                                (1 - y) * softplus(logits)))
 
@@ -50,20 +61,34 @@ def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, weights: jnp.ndarray):
 @jax.jit
 def softmax_logits_weighted_bce(y: jnp.ndarray, logits: jnp.ndarray,
                                 weights: jnp.ndarray):
+    """Weighted version of ``softmax_logits_bce``."""
     return -jnp.mean(weights * (y * jax.nn.log_softmax(logits) +
                                 (1 - y) * jnp.log(1 - jax.nn.softmax(logits))))
 
 
-# The following loss function employs two concepts:
-# A) Effective number of sample, to mitigate class imbalance:
-# Paper: Class-Balanced Loss Based on Effective Number of Samples (Cui et al)
-# B) Focal loss, to underweight the easy to classify samples:
-# Paper: Focal Loss for Dense Object Detection (Lin et al)
 @jax.jit
 def balanced_focal_bce(y: jnp.ndarray,
                        logits: jnp.ndarray,
                        gamma=2,
                        beta=0.999):
+    """
+    This loss function employs two concepts:
+      - Effective number of sample, to mitigate class imbalance [1].
+      - Focal loss, to underweight the easy to classify samples [2].
+
+    The function takes four inputs:
+      - The ground-truth `y` is a vector, where each
+        element is an integer in :math:`\{0, 1\}`.
+      - The predictions `logits`, before applying the Sigmoid function, where
+      each element is a float in :math:`(-\infty, \infty)`.
+      - `gamma` is the :math:`\gamma` parameter in [1].
+      - `beta` is the :math:`\beta` parameter in [2].
+
+    References:
+      [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
+      [2] _Lin et al., Focal Loss for Dense Object Detection.
+    """
+
     n1 = jnp.sum(y)
     n0 = jnp.size(y) - n1
     # Effective number of samples.
@@ -85,6 +110,9 @@ def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
                                       logits: jnp.ndarray,
                                       gamma=2,
                                       beta=0.999):
+    """Same as ``balanced_focal_bce``, but with
+    applying Softmax activation on the `logits`."""
+
     n1 = jnp.sum(y)
     n0 = jnp.size(y) - n1
     # Effective number of samples.
@@ -101,24 +129,22 @@ def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
 
 @jax.jit
 def l2_squared(pytree):
+    """L2-norm of the parameters in `pytree`."""
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.vdot(x, x) for x in leaves)
 
 
 @jax.jit
 def l1_absolute(pytree):
+    """L1-norm of the parameters in `pytree`."""
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.sum(jnp.fabs(x)) for x in leaves)
-
-
-def parameters_size(pytree):
-    leaves, _ = tree_flatten(pytree)
-    return sum(jnp.size(x) for x in leaves)
 
 
 @jax.jit
 def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
                   logvar: jnp.ndarray) -> jnp.ndarray:
+    """Return the exponent of the normal-distribution liklihood function."""
     sigma = jnp.exp(0.5 * logvar)
     return (mean_true - mean_predicted) / sigma
 
@@ -126,6 +152,7 @@ def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
 @jax.jit
 def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
                    logvar: jnp.ndarray) -> float:
+    """Return the negative log-liklihood, masked and vectorized."""
     log_lik_c = jnp.log(jnp.sqrt(2 * jnp.pi))
     return 0.5 * ((jnp.power(error, 2) + logvar + 2 * log_lik_c) *
                   mask).sum() / (mask.sum() + 1e-10)
@@ -133,6 +160,7 @@ def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
 
 def gaussian_KL(mu_1: jnp.ndarray, mu_2: jnp.ndarray, sigma_1: jnp.ndarray,
                 sigma_2: float) -> jnp.ndarray:
+    """Return the Guassian Kullback-Leibler."""
     return (jnp.log(sigma_2) - jnp.log(sigma_1) +
             (jnp.power(sigma_1, 2) + jnp.power(
                 (mu_1 - mu_2), 2)) / (2 * sigma_2**2) - 0.5)
@@ -144,6 +172,7 @@ def compute_KL_loss(mean_true: jnp.ndarray,
                     mean_predicted: jnp.ndarray,
                     logvar_predicted: jnp.ndarray,
                     obs_noise_std: float = 1e-1) -> float:
+    """Return the Gaussian Kullback-Leibler divergence, masked."""
     std = jnp.exp(0.5 * logvar_predicted)
     return (gaussian_KL(mu_1=mean_predicted,
                         mu_2=mean_true,
@@ -154,6 +183,8 @@ def compute_KL_loss(mean_true: jnp.ndarray,
 
 @jax.jit
 def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
+    """Return the confusion matrix given the ground-truth `y_true`
+    and the predictions `y_hat (rounded to :math:`\{0, 1\})`."""
     y_hat = (jnp.round(y_hat) == 1)
     y_true = (y_true == 1)
 
@@ -166,6 +197,8 @@ def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
 
 
 def confusion_matrix_scores(cm: jnp.ndarray):
+    """From the confusion matrix, compute: accuracy, recall, NPV, specificity,
+    precision, F1-Score, TP, TN, FP, and FN."""
     cm = cm / (cm.sum() + 1e-10)
     tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
     p = tp + fn
@@ -185,6 +218,8 @@ def confusion_matrix_scores(cm: jnp.ndarray):
 
 
 def compute_auc(v_truth, v_preds):
+    """Compute the area under the ROC from the ground-truth `v_truth` and
+     the predictions `v_preds`."""
     fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
     return metrics.auc(fpr, tpr)
 
@@ -404,179 +439,6 @@ def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
         })
     return pd.DataFrame(evals), flat_evals
 
-
-# MIT License
-
-# Copyright (c) 2021 Konrad Heidler
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-class AbstractDTW:
-    """https://github.com/khdlr/softdtw_jax/blob/main/softdtw_jax/softdtw_jax.py"""
-
-    def __init__(self, pairwise_distance_f):
-        self.pairwise_distance_f = pairwise_distance_f
-
-    def minimum(self, *args):
-        raise OOPError('This should be implemented')
-
-    def __call__(self, target, prediction):
-        """
-        Compute the DTW distance.
-
-        """
-        D = self.pairwise_distance_f(target, prediction)
-
-        # wlog: H >= W
-        if D.shape[0] < D.shape[1]:
-            D = D.T
-        H, W = D.shape
-
-        rows = []
-        for row in range(H):
-            rows.append(pad_inf(D[row], row, H - row - 1))
-
-        model_matrix = jnp.stack(rows, axis=1)
-        init = (pad_inf(model_matrix[0], 1,
-                        0), pad_inf(model_matrix[1] + model_matrix[0, 0], 1,
-                                    0))
-
-        def scan_step(carry, current_antidiagonal):
-            two_ago, one_ago = carry
-
-            diagonal = two_ago[:-1]
-            right = one_ago[:-1]
-            down = one_ago[1:]
-            best = self.minimum(jnp.stack([diagonal, right, down], axis=-1))
-            next_row = best + current_antidiagonal
-            next_row = pad_inf(next_row, 1, 0)
-
-            return (one_ago, next_row), next_row
-
-        # Manual unrolling:
-        # carry = init
-        # for i, row in enumerate(model_matrix[2:]):
-        #     carry, y = scan_step(carry, row)
-
-        carry, ys = jax.lax.scan(scan_step, init, model_matrix[2:], unroll=4)
-        return carry[1][-1]
-
-
-class DTW(AbstractDTW):
-    """
-    SoftDTW as proposed in the paper "Dynamic programming algorithm optimization for spoken word recognition"
-    by Hiroaki Sakoe and Seibi Chiba (https://arxiv.org/abs/1703.01541)
-
-    Expects inputs of the shape [T, D], where T is the time dimension
-    and D is the feature dimension.
-    """
-    __name__ = 'DTW'
-
-    def minimum(self, args):
-        return jnp.min(args, axis=-1)
-
-
-class SoftDTW(AbstractDTW):
-    """
-    SoftDTW as proposed in the paper "Soft-DTW: a Differentiable Loss Function for Time-Series"
-    by Marco Cuturi and Mathieu Blondel (https://arxiv.org/abs/1703.01541)
-
-    Expects inputs of the shape [T, D], where T is the time dimension
-    and D is the feature dimension.
-    """
-    __name__ = 'SoftDTW'
-
-    def __init__(self, pairwise_distance_f, gamma=1.0):
-        super().__init__(pairwise_distance_f=pairwise_distance_f)
-
-        assert gamma > 0, "Gamma needs to be positive."
-        self.gamma = gamma
-        self.__name__ = f'SoftDTW({self.gamma})'
-        self.minimum_impl = self.make_softmin(gamma)
-
-    def make_softmin(self, gamma):
-        """
-        We need to manually define the gradient of softmin
-        to ensure (1) numerical stability and (2) prevent nans from
-        propagating over valid values.
-        """
-
-        def softmin_raw(array):
-            return -gamma * logsumexp(array / -gamma, axis=-1)
-
-        softmin = jax.custom_vjp(softmin_raw)
-
-        def softmin_fwd(array):
-            return softmin(array), (array / -gamma, )
-
-        def softmin_bwd(res, g):
-            scaled_array, = res
-            grad = jnp.where(
-                jnp.isinf(scaled_array), jnp.zeros(scaled_array.shape),
-                jax.nn.softmax(scaled_array) * jnp.expand_dims(g, 1))
-            return grad,
-
-        softmin.defvjp(softmin_fwd, softmin_bwd)
-        return softmin
-
-    def minimum(self, args):
-        return self.minimum_impl(args)
-
-
-@jax.jit
-def distance_matrix_bce(a, b_logits):
-    """
-    Return pairwise crossentropy between two timeseries.
-    Args:
-        a: First time series (m, p).
-        b: Second time series (n, p).
-    Returns:
-        An (m, n) distance matrix computed by a pairwise distance function.
-            on the elements of a and b.
-    """
-    m, p = a.shape
-    n, p = b_logits.shape
-    assert a.shape[1] == b_logits.shape[1], "Dimensions mismatch."
-
-    b_logits = jnp.broadcast_to(b_logits, (m, n, p))
-    a = jnp.expand_dims(a, 1)
-    a = jnp.broadcast_to(a, (m, n, p))
-
-    D = a * jax.nn.softplus(-b_logits) + (1 - a) * jax.nn.softplus(b_logits)
-
-    return jnp.mean(D, axis=-1)
-
-
-# Utility functions
-@jax.jit
-def distance_matrix_euc(a, b_logits):
-    b = sigmoid(b_logits)
-    a = jnp.expand_dims(a, axis=1)
-    b = jnp.expand_dims(b, axis=0)
-    D = jnp.square(a - b)
-    return jnp.mean(D, axis=-1)
-
-
-def pad_inf(inp, before, after):
-    return jnp.pad(inp, (before, after), constant_values=jnp.inf)
-
-
 def codes_auc_pairwise_tests(results, fast=False):
     """
     Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
@@ -658,6 +520,7 @@ def codes_auc_pairwise_tests(results, fast=False):
                     code_ground_truth, scores1, scores2)
 
             pairwise_tests[(clf1, clf2)].append(p)
+
             _auc[clf1] = auc1
             _auc[clf2] = auc2
             _auc_var[clf1] = auc1_v
@@ -667,7 +530,6 @@ def codes_auc_pairwise_tests(results, fast=False):
             auc[clf].append(a)
         for clf, v in _auc_var.items():
             auc_var[clf].append(v)
-
     data = {
         'CODE_INDEX': range(len(n_positive_codes)),
         'N_POSITIVE_CODES': n_positive_codes,

@@ -1,12 +1,8 @@
-import sys
+"""Two implementations for DeLong statistical test."""
+
 from absl import logging
-import pandas as pd
 import numpy as np
 import scipy.stats as st
-
-
-class AbstractMethodCalled(Exception):
-    pass
 
 
 class DeLongTest:
@@ -41,6 +37,7 @@ class DeLongTest:
 
     @staticmethod
     def kernel(X, Y):
+        """https://en.wikipedia.org/wiki/Mann%E2%80%93Whitney_U_test"""
         return .5 if Y == X else int(Y < X)
 
     @classmethod
@@ -57,8 +54,7 @@ class DeLongTest:
 
     @staticmethod
     def z_score(var_A, var_B, covar_AB, auc_A, auc_B):
-        eps = sys.float_info.epsilon
-        return (auc_A - auc_B) / ((var_A + var_B - 2 * covar_AB + eps)**(.5))
+        return (auc_A - auc_B) / ((var_A + var_B - 2 * covar_AB)**(.5))
 
     @staticmethod
     def group_preds_by_label(actual, preds):
@@ -98,7 +94,7 @@ class DeLongTest:
             z = cls.z_score(var_a, var_b, cov_ab, auc_a, auc_b)
             p = st.norm.sf(abs(z)) * 2
         except ZeroDivisionError:
-            logging.debug('Division by zero')
+            logging.warning('Division by zero')
             p = float('nan')
         return auc_a, auc_b, var_a, var_b, p
 
@@ -200,14 +196,14 @@ class FastDeLongTest:
         log10(pvalue)
         """
         l = np.array([[1, -1]])
-        z = np.abs(np.diff(aucs)) / np.sqrt(np.dot(np.dot(l, sigma), l.T))
-
-        # Two sided-test
-        try:
-            return st.norm.sf(abs(z.item())) * 2
-        except ZeroDivisionError:
-            logging.debug('Division by zero')
+        z_num = np.abs(np.diff(aucs))
+        z_den = np.sqrt(np.dot(np.dot(l, sigma), l.T))
+        if (z_den == 0).any():
+            logging.warning('Indeterminate test')
             return float('nan')
+        # Two sided-test
+        z = z_num / z_den
+        return st.norm.sf(abs(z.item())) * 2
 
     @staticmethod
     def compute_ground_truth_statistics(ground_truth):
