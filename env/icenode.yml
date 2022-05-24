@@ -28,6 +28,7 @@ dependencies:
   - debugpy=1.5.1=py38h295c915_0
   - decorator=5.1.0=pyhd3eb1b0_0
   - defusedxml=0.7.1=pyhd3eb1b0_0
+  - entrypoints=0.3=pyhd8ed1ab_1003
   - expat=2.4.1=h2531618_2
   - fontconfig=2.13.1=h6c09931_0
   - fonttools=4.25.0=pyhd3eb1b0_0
@@ -46,6 +47,7 @@ dependencies:
   - ipython_genutils=0.2.0=pyhd3eb1b0_1
   - ipywidgets=7.6.5=pyhd3eb1b0_1
   - jedi=0.18.0=py38h06a4308_1
+  - jinja2=3.0.3=pyhd8ed1ab_0
   - joblib=1.1.0=pyhd3eb1b0_0
   - jpeg=9d=h7f8727e_0
   - jsonschema=3.2.0=pyhd3eb1b0_2
@@ -95,7 +97,6 @@ dependencies:
   - networkx=2.6.3=pyhd3eb1b0_0
   - notebook=6.4.6=py38h06a4308_0
   - numexpr=2.8.1=py38h6abb31d_0
-  - numpy-base=1.21.2=py38h79a1101_0
   - olefile=0.46=pyhd3eb1b0_0
   - openssl=1.1.1m=h7f8727e_0
   - optuna=2.10.0=pyhd8ed1ab_0
@@ -108,7 +109,6 @@ dependencies:
   - pexpect=4.8.0=pyhd3eb1b0_3
   - pickleshare=0.7.5=pyhd3eb1b0_1003
   - pillow=8.4.0=py38h5aabda8_0
-  - pip=21.2.4=py38h06a4308_0
   - prettytable=3.0.0=pyhd8ed1ab_0
   - prometheus_client=0.12.0=pyhd3eb1b0_0
   - prompt-toolkit=3.0.20=pyhd3eb1b0_0
@@ -159,24 +159,49 @@ dependencies:
   - zstd=1.4.9=haebb681_0
   - pip:
     - absl-py==1.0.0
+    - astroid==2.9.3
     - charset-normalizer==2.0.10
     - click==8.0.3
     - cloudpickle==2.0.0
+    - databricks-cli==0.16.2
     - dm-haiku==0.0.5
-    - entrypoints==0.3
+    - docker==5.0.3
     - flask==2.0.2
     - flatbuffers==2.0
     - gitdb==4.0.9
     - gitpython==3.1.26
+    - greenlet==1.1.2
+    - gunicorn==20.1.0
     - idna==3.3
+    - isort==5.10.1
     - itsdangerous==2.0.1
-    - jinja2==3.0.3
+    - jax==0.3.13
+    - jaxlib==0.3.10+cuda11.cudnn82
+    - jmp==0.0.2
+    - lazy-object-proxy==1.7.1
+    - mccabe==0.6.1
     - mlflow==1.23.0
+    - msgpack==1.0.3
     - numpy==1.22.1
+    - opt-einsum==3.3.0
+    - pip==22.1.1
+    - platformdirs==2.4.1
+    - prometheus-flask-exporter==0.18.7
     - protobuf==3.19.3
+    - pylint==2.12.2
+    - pynvim==0.4.3
+    - querystring-parser==1.2.4
     - requests==2.27.1
+    - seaborn==0.11.2
     - smmap==5.0.0
+    - sqlparse==0.4.2
+    - tabulate==0.8.9
+    - toml==0.10.2
     - typing-extensions==4.0.1
+    - upsetplot==0.6.0
     - urllib3==1.26.8
+    - websocket-client==1.2.3
     - werkzeug==2.0.2
-prefix: /home/asem/.conda/envs/icenode
+    - wrapt==1.13.3
+    - yapf==0.32.0
+prefix: /home/asem/anaconda3/envs/icenode

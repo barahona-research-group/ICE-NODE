@@ -112,7 +112,7 @@ class ICENODE(ICENODE_TL):
         state_e = {i: s for i, (s, _, _, _) in s_l_r_n.items()}
         l = [s_l_r_n[i][1] for i in sorted(t.keys())]
         w = [1 / t[i] for i in sorted(t.keys())]
-        l_norm = jnp.average(l, weights=w)
+        l_norm = jnp.average(jnp.array(l), weights=jnp.array(w))
         l_avg = sum(l) / len(l)
 
         r = jnp.sum(sum(r for (_, _, r, _) in s_l_r_n.values()))
@@ -197,7 +197,8 @@ class ICENODE(ICENODE_TL):
                     'state_e': new_state
                 }
 
-        prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
+        prediction_loss = jnp.average(jnp.array(prediction_losses),
+                                      weights=jnp.array(adm_counts))
 
         ret = {
             'prediction_loss': prediction_loss,

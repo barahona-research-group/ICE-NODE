@@ -56,8 +56,7 @@ class ICENODE(ICENODE_TL):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU, hidden_size=memory_size,
-                            name='f_update')))
+                wrap_module(hk.GRU, hidden_size=memory_size, name='f_update')))
         self.f_update = jax.jit(f_update)
 
         f_dec_init, f_dec = hk.without_apply_rng(
@@ -93,7 +92,7 @@ class ICENODE(ICENODE_TL):
         """
         emb = jnp.zeros(self.dimensions['diag_emb'])
         memory = jnp.zeros(self.dimensions['memory'])
-        rnn_state = memory #hk.LSTMState(hidden=memory, cell=memory)
+        rnn_state = memory  #hk.LSTMState(hidden=memory, cell=memory)
         return {
             "f_n_ode": [2, True, emb, 0.1, memory],
             "f_update": [emb, rnn_state],
@@ -106,7 +105,7 @@ class ICENODE(ICENODE_TL):
                   rnn_state: Dict[int, jnp.ndarray] = None) -> jnp.ndarray:
         if rnn_state is None:
             mem0 = jnp.zeros(self.dimensions['memory'])
-            state0 = mem0 #hk.LSTMState(mem0, mem0)
+            state0 = mem0  #hk.LSTMState(mem0, mem0)
             rnn_state = {i: state0 for i in emb}
         return {
             i: self.f_update(params['f_update'], emb[i], rnn_state[i])
@@ -209,7 +208,8 @@ class ICENODE(ICENODE_TL):
                     'rnn': rnn[subject_id][1]
                 }
 
-        prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
+        prediction_loss = jnp.average(jnp.array(prediction_losses),
+                                      weights=jnp.array(adm_counts))
 
         ret = {
             'prediction_loss': prediction_loss,

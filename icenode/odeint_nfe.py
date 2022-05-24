@@ -29,7 +29,6 @@ import operator as op
 import jax
 import jax.numpy as np
 from jax import lax
-from jax import ops
 from jax.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
 from jax.experimental.jet import jet
@@ -112,9 +111,9 @@ def runge_kutta_step(func, y0, f0, t0, dt):
         ti = t0 + dt * alpha[i - 1]
         yi = y0 + dt * np.dot(beta[i - 1, :], k)
         ft = func(yi, ti)
-        return ops.index_update(k, jax.ops.index[i, :], ft)
+        return k.at[i, :].set(ft)
 
-    k = ops.index_update(np.zeros((7, f0.shape[0])), ops.index[0, :], f0)
+    k = np.zeros((7, f0.shape[0])).at[0, :].set(f0)
     k = lax.fori_loop(1, 7, body_fun, k)
 
     y1 = dt * np.dot(c_sol, k) + y0

@@ -277,7 +277,8 @@ class ICENODE(AbstractModel):
                     'state_e': new_state
                 }
 
-        prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
+        prediction_loss = jnp.average(jnp.array(prediction_losses),
+                                      weights=jnp.array(adm_counts))
 
         ret = {
             'prediction_loss': prediction_loss,

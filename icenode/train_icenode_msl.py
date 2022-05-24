@@ -148,7 +148,8 @@ class ICENODE(ICENODE_MTL):
                     'rnn': rnn[subject_id][1]
                 }
 
-        prediction_loss = jnp.average(prediction_losses, weights=adm_counts)
+        prediction_loss = jnp.average(jnp.average(prediction_losses),
+                                      weights=jnp.array(adm_counts))
 
         ret = {
             'prediction_loss': prediction_loss,
