@@ -69,7 +69,7 @@ To use one of the notebooks provided, please ensure that the newly installed env
 - Notebook 4 (`fine_analysis.ipynb`): Performance Analysis and Trajectory Reconstruction.
 
 
-Note: We provide pretrained models in this repository since some training experiments (such as RETAIN on MIMIC-IV) takes more than two weeks. Skip to the following section where you can use pretrained models.
+Note: We provide pretrained models in this repository since some training experiments (such as RETAIN on MIMIC-IV) takes more than two weeks. You may use our pretrained models in the performance analysis as instructed in `fine_analysis.ipynb`.
 <!-- #endregion -->
 
 ```python
