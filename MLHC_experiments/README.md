@@ -21,7 +21,7 @@ Having `git` installed and the main repository cloned, change the command line d
 
 <!-- #region -->
 ```bash
-$ git clone git@github.com:XXX/ICENODE.git repo --branch XXX --single-branch  --depth 1
+$ git clone git@github.com:MLHC22-Anonymous/ICE-NODE.git repo --branch mlhc --single-branch  --depth 1
 ```
 <!-- #endregion -->
 
