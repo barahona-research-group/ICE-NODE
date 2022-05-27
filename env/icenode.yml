@@ -175,8 +175,6 @@ dependencies:
     - idna==3.3
     - isort==5.10.1
     - itsdangerous==2.0.1
-    - jax==0.3.13
-    - jaxlib==0.3.10+cuda11.cudnn82
     - jmp==0.0.2
     - lazy-object-proxy==1.7.1
     - mccabe==0.6.1
@@ -204,4 +202,3 @@ dependencies:
     - werkzeug==2.0.2
     - wrapt==1.13.3
     - yapf==0.32.0
-prefix: /home/asem/anaconda3/envs/icenode
