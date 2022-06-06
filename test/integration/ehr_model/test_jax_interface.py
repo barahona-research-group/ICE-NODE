@@ -17,8 +17,8 @@ class TestDxGRAM(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         test_subjects = load_mimic_files(
-            'test/integration/fixtures/mimic3/adm_df.csv.gz',
-            'test/integration/fixtures/mimic3/diag_df.csv.gz')
+            'test/integration/fixtures/synthetic_mimic/adm_df.csv.gz',
+            'test/integration/fixtures/synthetic_mimic/diag_df.csv.gz')
         cls.interface_seq = SubjectDiagSequenceJAXInterface(
             test_subjects, CCSDAG())
         cls.interface_ts = DiagnosisJAXInterface(test_subjects, CCSDAG())
