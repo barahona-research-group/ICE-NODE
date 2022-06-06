@@ -4,10 +4,6 @@ import json
 import pickle
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_leaves
-from jax.experimental.optimizers import (pack_optimizer_state,
-                                         unpack_optimizer_state)
-from .metrics import (top_k_detectability_scores, auc_scores,
-                      confusion_matrix_scores)
 
 
 class OOPError(Exception):
