@@ -10,13 +10,14 @@ import numpy as onp
 
 import optuna
 
-from .metrics import (balanced_focal_bce, admissions_auc_scores)
-from .utils import wrap_module
-from .jax_interface import (DiagnosisJAXInterface, create_patient_interface)
-from .models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                     EmbeddingsDecoder_Logits, StateUpdate)
-from .abstract_model import AbstractModel
-from .gram import AbstractEmbeddingsLayer
+from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
+from ..utils import wrap_module
+from ..ehr_model.jax_interface import (DiagnosisJAXInterface,
+                                       create_patient_interface)
+from ..embeddings.gram import AbstractEmbeddingsLayer
+from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
+                          EmbeddingsDecoder_Logits, StateUpdate)
+from .abstract import AbstractModel
 
 
 class ICENODE(AbstractModel):
@@ -517,5 +518,5 @@ class ICENODE(AbstractModel):
 
 
 if __name__ == '__main__':
-    from .hpo_utils import capture_args, run_trials
+    from ..hyperopt.hpo_utils import capture_args, run_trials
     run_trials(model_cls=ICENODE, **capture_args())

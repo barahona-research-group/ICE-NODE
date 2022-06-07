@@ -4,7 +4,7 @@ from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
 import jax
 import jax.numpy as jnp
 
-from .train_icenode_tl import ICENODE as ICENODE_TL
+from .dx_icenode_tl import ICENODE as ICENODE_TL
 
 
 class ICENODE(ICENODE_TL):
@@ -102,5 +102,5 @@ class ICENODE(ICENODE_TL):
 
 
 if __name__ == '__main__':
-    from .hpo_utils import capture_args, run_trials
+    from ..hyperopt.hpo_utils import capture_args, run_trials
     run_trials(model_cls=ICENODE, **capture_args())

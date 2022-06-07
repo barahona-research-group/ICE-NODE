@@ -7,9 +7,9 @@ from jax.experimental import optimizers
 
 import optuna
 
-from .jax_interface import (DiagnosisJAXInterface)
-from .train_icenode_tl import ICENODE as ICENODE_TL
-from .gram import AbstractEmbeddingsLayer
+from ..ehr_model.jax_interface import (DiagnosisJAXInterface)
+from ..embeddings.gram import AbstractEmbeddingsLayer
+from .dx_icenode_tl import ICENODE as ICENODE_TL
 
 
 class ICENODE_2LR_MIXIN:
@@ -95,5 +95,5 @@ class ICENODE(ICENODE_2LR_MIXIN, ICENODE_TL):
 
 
 if __name__ == '__main__':
-    from .hpo_utils import capture_args, run_trials
+    from ..hyperopt.hpo_utils import capture_args, run_trials
     run_trials(model_cls=ICENODE, **capture_args())

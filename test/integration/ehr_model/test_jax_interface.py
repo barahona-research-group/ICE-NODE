@@ -12,7 +12,7 @@ def setUpModule():
     global mimic3_interface
 
 
-class TestDxGRAM(unittest.TestCase):
+class TestDxInterface(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
