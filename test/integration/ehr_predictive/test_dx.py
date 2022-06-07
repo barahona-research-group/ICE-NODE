@@ -4,8 +4,10 @@ To execute this test from the root directory:
 """
 
 import unittest
+import random
 
 import pandas as pd
+from tqdm import tqdm
 
 from test.integration.common import load_mimic_files
 
@@ -36,6 +38,44 @@ def setUpModule():
     code_groups = subject_interface_ts.diag_flatccs_by_percentiles(20)
 
 
+def train_model_minibatches(model, m_state, config, train_ids, valid_ids,
+                            code_groups):
+    step_evaluation = {}
+    # because it is mutable, and random.Random shuffles in-place.
+    train_ids = train_ids.copy()
+    rng = random.Random(42)
+    batch_size = config['training']['batch_size']
+    batch_size = min(batch_size, len(train_ids))
+
+    epochs = config['training']['epochs']
+    iters = round(epochs * len(train_ids) / batch_size)
+
+    for i in tqdm(range(iters)):
+        rng.shuffle(train_ids)
+        train_batch = train_ids[:batch_size]
+
+        # Step = 1% progress
+        current_step = round((i + 1) * 100 / iters)
+        previous_step = round(i * 100 / iters)
+
+        m_state = model.step_optimizer(current_step, m_state, train_batch)
+        if model.hasnan(m_state):
+            raise RuntimeError('NaN detected')
+
+        if current_step == previous_step and i < iters - 1:
+            continue
+
+        raw_res = {
+            'TRN': model.eval(m_state, train_batch),
+            'VAL': model.eval(m_state, valid_ids)
+        }
+
+        eval_df, _ = evaluation_table(raw_res, code_groups)
+        step_evaluation[current_step] = eval_df
+
+    return m_state, step_evaluation
+
+
 def tearDownModule():
     pass
 
@@ -57,6 +97,14 @@ class DxCommonTests(object):
 
         self.assertTrue(callable(model))
         self.assertTrue(state is not None)
+
+    def test_train(self):
+        model = self.model_cls.create_model(self.config, self.interface, [],
+                                            None)
+        state = model.init(self.config)
+        train_ids, val_ids, tst_ids = splits
+        state, step_evaluation = train_model_minibatches(
+            model, state, self.config, train_ids, val_ids, code_groups)
 
 
 class TestDxGRAM(DxCommonTests, unittest.TestCase):
