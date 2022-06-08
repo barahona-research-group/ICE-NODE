@@ -19,9 +19,10 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from .metrics import evaluation_table
-from .utils import (write_config)
-from .abstract_model import AbstractModel
+from ..metric.common_metrics import evaluation_table
+from ..utils import (write_config)
+from ..ehr_predictive.abstract import (AbstractModel, MinibatchTrainReporter,
+                                       minibatch_trainer)
 
 
 class ResourceTimeout(Exception):
@@ -30,6 +31,92 @@ class ResourceTimeout(Exception):
 
 class StudyHalted(Exception):
     """Raised when a trial is spawned from a retired study."""
+
+
+class OptunaReporter(MinibatchTrainReporter):
+
+    def __init__(self, trial):
+        self.trial = trial
+
+    def report_steps(self, steps):
+        self.trial.set_user_attr('steps', steps)
+
+    def report_timeout(self):
+        self.trial.set_user_attr('timeout', 1)
+
+    def report_progress(self, eval_step):
+        self.trial.set_user_attr("progress", eval_step)
+        study_attrs = self.trial.study.user_attrs
+
+        if study_attrs['halt']:
+            self.trial.set_user_attr('halted', 1)
+            raise StudyHalted('Study is halted')
+
+        if study_attrs['enable_prune'] and self.trial.should_prune():
+            raise optuna.TrialPruned()
+
+    def report_nan_detected(self):
+        self.trial.set_user_attr('nan', 1)
+        raise optuna.TrialPruned()
+
+    def report_evaluation(self, eval_step, objective_v, *args):
+        self.trial.report(objective_v, eval_step)
+
+
+class MLFlowReporter(MinibatchTrainReporter):
+
+    def report_steps(self, steps):
+        mlflow.set_tag('steps', steps)
+
+    def report_timeout(self):
+        mlflow.set_tag('timeout', 1)
+
+    def report_nan_detected(self):
+        mlflow.set_tag('nan', 1)
+
+    def report_progress(self, eval_step):
+        mlflow.set_tag("progress", eval_step)
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        try:
+            mlflow.log_metrics(flat_evals_df, eval_step)
+        except Exception as e:
+            logging.warning(f'Exception when logging metrics to mlflow: {e}')
+
+
+class MinibatchLogger(MinibatchTrainReporter):
+
+    def report_nan_detected(self):
+        logging.warning('NaN detected')
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        logging.info(evals_df)
+
+
+class EvaluationDiskWriter(MinibatchTrainReporter):
+
+    def __init__(self, trial_dir):
+        self.trial_dir = trial_dir
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        evals_df.to_csv(
+            os.path.join(self.trial_dir, f'step{eval_step:04d}_eval.csv'))
+
+
+class ParamsDiskWriter(MinibatchTrainReporter):
+
+    def __init__(self, trial_dir, write_every_iter=False):
+        self.trial_dir = trial_dir
+        self.write_every_iter = write_every_iter
+
+    def report_params(self, eval_step, model, state, last_iter, current_best):
+        if self.write_every_iter or last_iter or current_best:
+            fname = os.path.join(self.trial_dir,
+                                 f'step{eval_step:04d}_params.pickle')
+            model.write_params(state, fname)
 
 
 def mlflow_callback_noexcept(callback):
@@ -43,6 +130,16 @@ def mlflow_callback_noexcept(callback):
             logging.warning(f'MLFlow Exception supressed: {e}')
 
     return apply
+
+
+def mlflow_set_tag(key, value, frozen):
+    if not frozen:
+        mlflow.set_tag(key, value)
+
+
+def mlflow_log_metrics(eval_dict, step, frozen):
+    if not frozen:
+        mlflow.log_metrics(eval_dict, step=step)
 
 
 def capture_args():
@@ -121,16 +218,6 @@ def capture_args():
     }
 
 
-def mlflow_set_tag(key, value, frozen):
-    if not frozen:
-        mlflow.set_tag(key, value)
-
-
-def mlflow_log_metrics(eval_dict, step, frozen):
-    if not frozen:
-        mlflow.log_metrics(eval_dict, step=step)
-
-
 def objective(model_cls: AbstractModel, emb: str, pretrained_components,
               patient_interface, train_ids, test_ids, valid_ids, rng, job_id,
               output_dir, trial_stop_time: datetime, frozen: bool,
@@ -167,88 +254,38 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
                                                   train_ids,
                                                   pretrained_components)
 
-    code_partitions = model.code_partitions(patient_interface, train_ids)
+    code_frequency_groups = model.code_partitions(patient_interface, train_ids)
 
     m_state = model.init(config)
     logging.info('[DONE] Sampling & Initializing Models')
 
     trial.set_user_attr('parameters_size', model.parameters_size(m_state))
     mlflow_set_tag('parameters_size', model.parameters_size(m_state), frozen)
-    batch_size = config['training']['batch_size']
-    batch_size = min(batch_size, len(train_ids))
 
-    epochs = config['training']['epochs']
-    iters = round(epochs * len(train_ids) / batch_size)
-    trial.set_user_attr('steps', iters)
-    mlflow_set_tag('steps', iters, frozen)
+    reporters = [
+        MinibatchLogger(),
+        EvaluationDiskWriter(trial_dir=trial_dir),
+        ParamsDiskWriter(trial_dir=trial_dir)
+    ]
 
-    best_score = 0.0
-    for i in tqdm(range(iters)):
-        eval_step = round((i + 1) * 100 / iters)
-        last_step = round(i * 100 / iters)
+    if frozen == False:
+        reporters.append(MLFlowReporter())
 
-        if datetime.now() > trial_stop_time:
-            trial.set_user_attr('timeout', 1)
-            mlflow_set_tag('timeout', 1, frozen)
-            break
+    # Optuna reporter added last because it is the only one that may raise
+    # Exceptions.
+    reporters.append(OptunaReporter(trial=trial))
 
-        rng.shuffle(train_ids)
-        train_batch = train_ids[:batch_size]
-
-        m_state = model.step_optimizer(eval_step, m_state, train_batch)
-        if model.hasnan(m_state):
-            logging.warning('NaN detected')
-            trial.set_user_attr('nan', 1)
-            mlflow_set_tag('nan', 1, frozen)
-            raise optuna.TrialPruned()
-            # return float('nan')
-
-        if eval_step == last_step and i < iters - 1:
-            continue
-
-        study_attrs = trial.study.user_attrs
-        if study_attrs['halt']:
-            trial.set_user_attr('halted', 1)
-            raise StudyHalted('Study is halted')
-
-        trial.set_user_attr("progress", eval_step)
-        mlflow_set_tag("progress", eval_step, frozen)
-
-        if frozen or i == iters - 1:
-            raw_res = {
-                'TRN': model.eval(m_state, train_batch),
-                'VAL': model.eval(m_state, valid_ids),
-                'TST': model.eval(m_state, test_ids)
-            }
-        else:
-            raw_res = {
-                'TRN': model.eval(m_state, train_batch),
-                'VAL': model.eval(m_state, valid_ids)
-            }
-
-        eval_df, eval_flat = evaluation_table(raw_res, code_partitions)
-        logging.info(eval_df)
-        auc = eval_df.loc['MICRO-AUC', 'VAL']
-
-        try:
-            mlflow_log_metrics(eval_flat, eval_step, frozen)
-        except Exception as e:
-            logging.warning(f'Exception when logging metrics to mlflow: {e}')
-
-        eval_df.to_csv(os.path.join(trial_dir,
-                                    f'step{eval_step:04d}_eval.csv'))
-
-        # Only dump parameters for frozen trials.
-        if frozen or i == iters - 1 or auc > best_score:
-            fname = os.path.join(trial_dir,
-                                 f'step{eval_step:04d}_params.pickle')
-            model.write_params(m_state, fname)
-            best_score = auc
-
-        trial.report(auc, eval_step)
-        if study_attrs['enable_prune'] and trial.should_prune():
-            raise optuna.TrialPruned()
-    return auc
+    return minibatch_trainer(model,
+                             m_state,
+                             config,
+                             patient_interface,
+                             train_ids,
+                             valid_ids,
+                             test_ids,
+                             rng,
+                             code_frequency_groups,
+                             trial_terminate_time=trial_stop_time,
+                             reporters=reporters)
 
 
 def run_trials(model_cls: AbstractModel, pretrained_components: str,

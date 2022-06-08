@@ -404,7 +404,7 @@ class EvalFlag(Flag):
         return (flag & attr).value != 0
 
 
-def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
+def evaluation_table(raw_results, code_frequency_groups=None, top_k=20):
     evals = {colname: {} for colname in raw_results}
     flat_evals = {}
     for colname, res in raw_results.items():
@@ -422,11 +422,12 @@ def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
         for rowname, val in auc_scores(det).items():
             evals[colname][rowname] = val
 
-        det_topk = top_k_detectability_df(top_k, det)
-        det_topk_scores = top_k_detectability_scores(codes_by_percentiles,
-                                                     det_topk)[0]
-        for rowname, val in det_topk_scores.items():
-            evals[colname][rowname] = val
+        if code_frequency_groups is not None:
+            det_topk = top_k_detectability_df(top_k, det)
+            det_topk_scores = top_k_detectability_scores(
+                code_frequency_groups, det_topk)[0]
+            for rowname, val in det_topk_scores.items():
+                evals[colname][rowname] = val
 
         evals[colname] = {
             rowname: float(val)
@@ -437,6 +438,7 @@ def evaluation_table(raw_results, codes_by_percentiles, top_k=20):
             for rowname, val in evals[colname].items()
         })
     return pd.DataFrame(evals), flat_evals
+
 
 def codes_auc_pairwise_tests(results, fast=False):
     """

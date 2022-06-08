@@ -1,11 +1,14 @@
 """Abstract class for predictive EHR models."""
 
 from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+import copy
 from functools import partial
 from absl import logging
 import jax
 from jax.example_libraries import optimizers
 import optuna
+from tqdm import tqdm
 
 from ..utils import (load_config, load_params, parameters_size, tree_hasnan,
                      tree_lognan, write_params, OOPError)
@@ -13,7 +16,119 @@ from ..embeddings.gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM,
                                GloVeGRAM, MatrixEmbeddings, OrthogonalGRAM)
 from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
-                                     admissions_auc_scores, codes_auc_scores)
+                                     admissions_auc_scores, codes_auc_scores,
+                                     evaluation_table)
+
+
+class MinibatchTrainReporter:
+    """
+    Different loggers and reporters:
+        1. Optuna reporter
+        2. MLFlow reporter
+        3. logging
+        4. evaluation disk writer
+        5. parameters disk writer
+    """
+
+    def report_params_size(self, params):
+        pass
+
+    def report_steps(self, steps):
+        pass
+
+    def report_progress(self, eval_step):
+        pass
+
+    def report_timeout(self):
+        pass
+
+    def report_nan_detected(self):
+        pass
+
+    def report_one_interation(self):
+        pass
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        pass
+
+    def report_params(self, eval_step, model, state, last_iter, current_best):
+        pass
+
+
+def minibatch_trainer(model,
+                      m_state,
+                      config,
+                      subject_interface,
+                      train_ids,
+                      valid_ids,
+                      test_ids,
+                      rng,
+                      code_frequency_groups=None,
+                      trial_terminate_time=float('inf'),
+                      reporters: List[MinibatchTrainReporter] = []):
+    # Because shuffling is done in-place.
+    train_ids = copy.deepcopy(train_ids)
+
+    batch_size = config['training']['batch_size']
+    batch_size = min(batch_size, len(train_ids))
+
+    epochs = config['training']['epochs']
+    iters = round(epochs * len(train_ids) / batch_size)
+
+    [r.report_steps(iters) for r in reporters]
+
+    auc = 0.0
+    best_score = 0.0
+    for i in tqdm(range(iters)):
+        eval_step = round((i + 1) * 100 / iters)
+        last_step = round(i * 100 / iters)
+
+        if datetime.now() > trial_terminate_time:
+            [r.report_timeout() for r in reporters]
+            break
+
+        rng.shuffle(train_ids)
+        train_batch = train_ids[:batch_size]
+
+        m_state = model.step_optimizer(eval_step, m_state, train_batch)
+        if model.hasnan(m_state):
+            [r.report_nan_detected() for r in reporters]
+
+        if eval_step == last_step and i < iters - 1:
+            continue
+
+        [r.report_progress(eval_step) for r in reporters]
+
+        if i == iters - 1:
+            raw_res = {
+                'TRN': model.eval(m_state, train_batch),
+                'VAL': model.eval(m_state, valid_ids),
+                'TST': model.eval(m_state, test_ids)
+            }
+        else:
+            raw_res = {
+                'TRN': model.eval(m_state, train_batch),
+                'VAL': model.eval(m_state, valid_ids)
+            }
+
+        eval_df, eval_flat = evaluation_table(raw_res, code_frequency_groups)
+
+        auc = eval_df.loc['MICRO-AUC', 'VAL']
+
+        for r in reporters:
+            r.report_evaluation(eval_step, auc, eval_df, eval_flat)
+            r.report_params(eval_step,
+                            model,
+                            m_state,
+                            last_iter=i == iters - 1,
+                            current_best=auc > best_score)
+
+        if auc > best_score:
+            best_score = auc
+
+    return auc
+
 
 class AbstractModel:
 
