@@ -7,7 +7,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import copy
 from absl import logging
-from tqdm import tqdm
 
 import jax
 
@@ -19,10 +18,10 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from ..metric.common_metrics import evaluation_table
 from ..utils import (write_config)
 from ..ehr_predictive.abstract import (AbstractModel, MinibatchTrainReporter,
-                                       minibatch_trainer)
+                                       minibatch_trainer, MinibatchLogger,
+                                       EvaluationDiskWriter, ParamsDiskWriter)
 
 
 class ResourceTimeout(Exception):
@@ -83,40 +82,6 @@ class MLFlowReporter(MinibatchTrainReporter):
             mlflow.log_metrics(flat_evals_df, eval_step)
         except Exception as e:
             logging.warning(f'Exception when logging metrics to mlflow: {e}')
-
-
-class MinibatchLogger(MinibatchTrainReporter):
-
-    def report_nan_detected(self):
-        logging.warning('NaN detected')
-
-    def report_evaluation(self, eval_step, objective_v, evals_df,
-                          flat_evals_df):
-        logging.info(evals_df)
-
-
-class EvaluationDiskWriter(MinibatchTrainReporter):
-
-    def __init__(self, trial_dir):
-        self.trial_dir = trial_dir
-
-    def report_evaluation(self, eval_step, objective_v, evals_df,
-                          flat_evals_df):
-        evals_df.to_csv(
-            os.path.join(self.trial_dir, f'step{eval_step:04d}_eval.csv'))
-
-
-class ParamsDiskWriter(MinibatchTrainReporter):
-
-    def __init__(self, trial_dir, write_every_iter=False):
-        self.trial_dir = trial_dir
-        self.write_every_iter = write_every_iter
-
-    def report_params(self, eval_step, model, state, last_iter, current_best):
-        if self.write_every_iter or last_iter or current_best:
-            fname = os.path.join(self.trial_dir,
-                                 f'step{eval_step:04d}_params.pickle')
-            model.write_params(state, fname)
 
 
 def mlflow_callback_noexcept(callback):
@@ -250,9 +215,8 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model: AbstractModel = model_cls.create_model(config, patient_interface,
-                                                  train_ids,
-                                                  pretrained_components)
+    model = model_cls.create_model(config, patient_interface, train_ids,
+                                   pretrained_components)
 
     code_frequency_groups = model.code_partitions(patient_interface, train_ids)
 
@@ -278,7 +242,6 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     return minibatch_trainer(model,
                              m_state,
                              config,
-                             patient_interface,
                              train_ids,
                              valid_ids,
                              test_ids,

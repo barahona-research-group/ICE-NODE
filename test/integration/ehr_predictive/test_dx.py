@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from test.integration.common import load_mimic_files
 
+from icenode.ehr_predictive.abstract import minibatch_trainer, MinibatchLogger
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
 from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
@@ -36,44 +37,6 @@ def setUpModule():
                                                 split2=0.85,
                                                 random_seed=42)
     code_groups = subject_interface_ts.diag_flatccs_by_percentiles(20)
-
-
-def train_model_minibatches(model, m_state, config, train_ids, valid_ids,
-                            code_groups):
-    step_evaluation = {}
-    # because it is mutable, and random.Random shuffles in-place.
-    train_ids = train_ids.copy()
-    rng = random.Random(42)
-    batch_size = config['training']['batch_size']
-    batch_size = min(batch_size, len(train_ids))
-
-    epochs = config['training']['epochs']
-    iters = round(epochs * len(train_ids) / batch_size)
-
-    for i in tqdm(range(iters)):
-        rng.shuffle(train_ids)
-        train_batch = train_ids[:batch_size]
-
-        # Step = 1% progress
-        current_step = round((i + 1) * 100 / iters)
-        previous_step = round(i * 100 / iters)
-
-        m_state = model.step_optimizer(current_step, m_state, train_batch)
-        if model.hasnan(m_state):
-            raise RuntimeError('NaN detected')
-
-        if current_step == previous_step and i < iters - 1:
-            continue
-
-        raw_res = {
-            'TRN': model.eval(m_state, train_batch),
-            'VAL': model.eval(m_state, valid_ids)
-        }
-
-        eval_df, _ = evaluation_table(raw_res, code_groups)
-        step_evaluation[current_step] = eval_df
-
-    return m_state, step_evaluation
 
 
 def tearDownModule():
@@ -103,8 +66,13 @@ class DxCommonTests(object):
                                             None)
         state = model.init(self.config)
         train_ids, val_ids, tst_ids = splits
-        state, step_evaluation = train_model_minibatches(
-            model, state, self.config, train_ids, val_ids, code_groups)
+
+        minibatch_trainer(model,
+                          state,
+                          self.config,
+                          *splits,
+                          rng=random.Random(42),
+                          reporters=[MinibatchLogger()])
 
 
 class TestDxGRAM(DxCommonTests, unittest.TestCase):

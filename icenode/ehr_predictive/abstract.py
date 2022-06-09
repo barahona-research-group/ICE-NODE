@@ -1,7 +1,8 @@
 """Abstract class for predictive EHR models."""
 
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
+import os
 import copy
 from functools import partial
 from absl import logging
@@ -56,16 +57,49 @@ class MinibatchTrainReporter:
         pass
 
 
+class MinibatchLogger(MinibatchTrainReporter):
+
+    def report_nan_detected(self):
+        logging.warning('NaN detected')
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        logging.info(evals_df)
+
+
+class EvaluationDiskWriter(MinibatchTrainReporter):
+
+    def __init__(self, trial_dir):
+        self.trial_dir = trial_dir
+
+    def report_evaluation(self, eval_step, objective_v, evals_df,
+                          flat_evals_df):
+        evals_df.to_csv(
+            os.path.join(self.trial_dir, f'step{eval_step:04d}_eval.csv'))
+
+
+class ParamsDiskWriter(MinibatchTrainReporter):
+
+    def __init__(self, trial_dir, write_every_iter=False):
+        self.trial_dir = trial_dir
+        self.write_every_iter = write_every_iter
+
+    def report_params(self, eval_step, model, state, last_iter, current_best):
+        if self.write_every_iter or last_iter or current_best:
+            fname = os.path.join(self.trial_dir,
+                                 f'step{eval_step:04d}_params.pickle')
+            model.write_params(state, fname)
+
+
 def minibatch_trainer(model,
                       m_state,
                       config,
-                      subject_interface,
                       train_ids,
                       valid_ids,
                       test_ids,
                       rng,
                       code_frequency_groups=None,
-                      trial_terminate_time=float('inf'),
+                      trial_terminate_time=datetime.max,
                       reporters: List[MinibatchTrainReporter] = []):
     # Because shuffling is done in-place.
     train_ids = copy.deepcopy(train_ids)
