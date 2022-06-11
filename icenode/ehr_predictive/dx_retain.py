@@ -8,35 +8,37 @@ import jax.numpy as jnp
 import optuna
 from absl import logging
 
-from ..ehr_model.jax_interface import SubjectDiagSequenceJAXInterface
+from ..ehr_model.jax_interface import DxInterface_JAX
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
 from ..ehr_predictive.abstract import AbstractModel
 
-from ..ehr_model.mimic.concept import DiagSubject
-from ..ehr_model.ccs_dag import CCSDAG
+from ..ehr_model.mimic.concept import DxSubject
+from ..ehr_model.ccs_dag import ccs_dag
+
+from .risk import BatchPredictedRisks
 
 
 @jax.jit
-def diag_loss(y: jnp.ndarray, diag_logits: jnp.ndarray):
-    return -jnp.sum(y * jax.nn.log_softmax(diag_logits) +
-                    (1 - y) * jnp.log(1 - jax.nn.softmax(diag_logits)))
+def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
+    return -jnp.sum(y * jax.nn.log_softmax(dx_logits) +
+                    (1 - y) * jnp.log(1 - jax.nn.softmax(dx_logits)))
 
 
 class RETAIN(AbstractModel):
 
-    def __init__(self, subject_interface: SubjectDiagSequenceJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, state_a_size: int,
+    def __init__(self, subject_interface: DxInterface_JAX,
+                 dx_emb: AbstractEmbeddingsLayer, state_a_size: int,
                  state_b_size: int):
 
         self.subject_interface = subject_interface
-        self.diag_emb = diag_emb
+        self.dx_emb = dx_emb
 
         self.dimensions = {
-            'diag_emb': diag_emb.embeddings_dim,
-            'diag_in': len(subject_interface.diag_ccs_idx),
-            'diag_out': len(subject_interface.diag_flatccs_idx),
+            'dx_emb': dx_emb.embeddings_dim,
+            'dx_in': len(ccs_dag.dx_ccs_idx),
+            'dx_out': len(ccs_dag.dx_flatccs_idx),
             'state_a': state_a_size,
             'state_b': state_b_size
         }
@@ -61,14 +63,14 @@ class RETAIN(AbstractModel):
         att_layer_b_init, att_layer_b = hk.without_apply_rng(
             hk.transform(
                 wrap_module(hk.Linear,
-                            output_size=self.dimensions['diag_emb'],
+                            output_size=self.dimensions['dx_emb'],
                             name='att_layer_b')))
         self.att_layer_b = jax.jit(att_layer_b)
 
         decode_init, decode = hk.without_apply_rng(
             hk.transform(
                 wrap_module(hk.Linear,
-                            output_size=self.dimensions['diag_out'],
+                            output_size=self.dimensions['dx_out'],
                             name='decoder')))
         self.decode = jax.jit(decode)
 
@@ -84,54 +86,52 @@ class RETAIN(AbstractModel):
         state_a = jnp.zeros(self.dimensions['state_a'])
         state_b = jnp.zeros(self.dimensions['state_b'])
 
-        diag_emb = jnp.zeros(self.dimensions['diag_emb'])
+        dx_emb = jnp.zeros(self.dimensions['dx_emb'])
 
         return {
-            "diag_emb": self.diag_emb.init_params(prng_key),
-            "gru_a": self.initializers['gru_a'](prng_key, diag_emb, state_a),
-            "gru_b": self.initializers['gru_b'](prng_key, diag_emb, state_b),
+            "dx_emb": self.dx_emb.init_params(prng_key),
+            "gru_a": self.initializers['gru_a'](prng_key, dx_emb, state_a),
+            "gru_b": self.initializers['gru_b'](prng_key, dx_emb, state_b),
             "att_layer_a": self.initializers['att_layer_a'](prng_key, state_a),
             "att_layer_b": self.initializers['att_layer_b'](prng_key, state_b),
-            "decode": self.initializers["decode"](prng_key, diag_emb)
+            "decode": self.initializers["decode"](prng_key, dx_emb)
         }
 
     def state_size(self):
         return self.dimensions['state']
 
-    def diag_out_index(self) -> List[str]:
+    def dx_out_index(self) -> List[str]:
         index2code = {
             i: c
-            for c, i in self.subject_interface.diag_ccs_idx.items()
+            for c, i in self.subject_interface.dx_ccs_idx.items()
         }
         return list(map(index2code.get, range(len(index2code))))
 
     def __call__(self, params: Any, subjects_batch: List[int]):
-
-        G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
-        emb = jax.vmap(partial(self.diag_emb.encode, G))
-        diag_seqs = self.subject_interface.diag_sequences_batch(subjects_batch)
+        G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
+        emb = jax.vmap(partial(self.dx_emb.encode, G))
 
         loss = {}
-        diag_detectability = {}
+        risk_prediction = BatchPredictedRisks()
         state_a0 = jnp.zeros(self.dimensions['state_a'])
         state_b0 = jnp.zeros(self.dimensions['state_b'])
 
-        for subject_id, _diag_seqs in diag_seqs.items():
-            # Exclude first one, we need to predict them for a future step.
-            diag_ccs = jnp.vstack(_diag_seqs['diag_ccs_vec'])
+        for subj_id in subjects_batch:
+            adms = self.subject_interface.subject_admission_sequence(subj_id)
 
-            diag_ccs_out = _diag_seqs['diag_flatccs_vec']
-            admission_id = _diag_seqs['admission_id']
+            dx_ccs = jnp.vstack([adm.dx_ccs_codes for adm in adms])
+            dx_flatccs = [adm.dx_flatccs_codes for adm in adms]
+            admission_id = [adm.admission_id for adm in adms]
 
-            logging.debug(len(diag_ccs))
+            logging.debug(len(dx_ccs))
 
             # step 1 @RETAIN paper
 
             # v1, v2, ..., vT
-            v_seq = emb(diag_ccs)
+            v_seq = emb(dx_ccs)
 
-            diag_detectability[subject_id] = {}
-            loss[subject_id] = []
+            loss[subj_id] = []
+
             for i in range(1, len(v_seq)):
                 # e: i, ..., 1
                 e_seq = []
@@ -172,33 +172,34 @@ class RETAIN(AbstractModel):
 
                 # step 5 @RETAIN paper
                 logits = self.decode(params['decode'], c_context)
-                diag_detectability[subject_id][i] = {
-                    'admission_id': admission_id[i],
-                    'true_diag': diag_ccs_out[i],
-                    'pred_logits': logits
-                }
-                loss[subject_id].append(diag_loss(diag_ccs_out[i], logits))
+                risk_prediction.add(subject_id=subj_id,
+                                    admission_id=admission_id,
+                                    index=i,
+                                    prediction=logits,
+                                    ground_truth=dx_flatccs[i])
+
+                loss[subj_id].append(dx_loss(dx_flatccs[i], logits))
 
         # Loss of all visits 2, ..., T, normalized by T
         loss = [sum(l) / len(l) for l in loss.values()]
 
         return {
             'loss': sum(loss) / len(loss),
-            'diag_detectability': diag_detectability
+            'risk_prediction': risk_prediction
         }
 
     def detailed_loss(self, loss_mixing, params, res):
 
-        diag_loss_ = res['loss']
+        dx_loss_ = res['loss']
         l1_loss = l1_absolute(params)
         l2_loss = l2_squared(params)
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
 
-        loss = diag_loss_ + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
+        loss = dx_loss_ + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
 
         return {
-            'diag_loss': diag_loss_,
+            'dx_loss': dx_loss_,
             'loss': loss,
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
@@ -207,39 +208,18 @@ class RETAIN(AbstractModel):
     def eval_stats(self, res):
         return {}
 
-    @staticmethod
-    def create_patient_interface(processed_mimic_tables_dir: str,
-                                 data_tag: str):
-        static_df = pd.read_csv(
-            f'{processed_mimic_tables_dir}/static_df.csv.gz')
-        adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
-        diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
-                              dtype={'ICD9_CODE': str})
-        # Cast columns of dates to datetime64
-        adm_df['ADMITTIME'] = pd.to_datetime(
-            adm_df['ADMITTIME'], infer_datetime_format=True).dt.normalize()
-        adm_df['DISCHTIME'] = pd.to_datetime(
-            adm_df['DISCHTIME'], infer_datetime_format=True).dt.normalize()
-
-        patients = DiagSubject.to_list(adm_df, diag_df)
-
-        # CCS Knowledge Graph
-        k_graph = CCSDAG()
-
-        return SubjectDiagSequenceJAXInterface(patients, k_graph)
-
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        diag_emb = cls.create_embedding(
-            emb_config=config['emb']['diag'],
+        dx_emb = cls.create_embedding(
+            emb_config=config['emb']['dx'],
             emb_kind=config['emb']['kind'],
             patient_interface=patient_interface,
             train_ids=train_ids,
             pretrained_components=pretrained_components)
 
         return cls(subject_interface=patient_interface,
-                   diag_emb=diag_emb,
+                   dx_emb=dx_emb,
                    **config['model'])
 
     @staticmethod

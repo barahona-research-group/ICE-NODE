@@ -1,6 +1,6 @@
 {
     "emb": {
-        "diag": {
+        "dx": {
             "attention_dim": 200,
             "attention_method": "tanh",
             "embeddings_dim": 300,

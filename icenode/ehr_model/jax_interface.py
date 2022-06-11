@@ -3,17 +3,77 @@
 from __future__ import annotations
 from collections import defaultdict
 import random
-from typing import List, Optional
+from typing import List, Optional, Dict, Set
 
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 
-from .mimic.concept import (DiagSubject, AdmissionInfo)
-from .ccs_dag import CCSDAG
+from .mimic.concept import DxSubject
+from .ccs_dag import ccs_dag
 
 
-class AbstractSubjectJAXInterface:
+class AdmissionInfo:
+
+    def __init__(self, subject_id: int, admission_time: int, los: int,
+                 admission_id: int, dx_icd9_codes: Set[str]):
+        self.subject_id = subject_id
+        # Time as days since the first admission
+        self.admission_time = admission_time
+        # Length of Stay
+        self.los = los
+        self.admission_id = admission_id
+        self.dx_icd9_codes = dx_icd9_codes
+        self.dx_ccs_codes = self.dx_ccs_jax(dx_icd9_codes)
+        self.dx_flatccs_codes = self.dx_flatccs_jax(dx_icd9_codes)
+
+    @classmethod
+    def dx_ccs_jax(cls, dx_icd9_codes):
+        dx_ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, dx_icd9_codes))
+        n_cols = len(ccs_dag.dx_ccs_idx)
+        mask = np.zeros(n_cols)
+        for c in dx_ccs_codes:
+            mask[ccs_dag.dx_ccs_idx[c]] = 1
+        return jnp.array(mask)
+
+    @classmethod
+    def dx_flatccs_jax(self, dx_icd9_codes):
+        dx_flatccs_codes = set(map(ccs_dag.dx_icd2flatccs.get, dx_icd9_codes))
+        n_cols = len(ccs_dag.dx_flatccs_idx)
+        mask = np.zeros(n_cols)
+        for c in dx_flatccs_codes - {None}:
+            mask[ccs_dag.dx_flatccs_idx[c]] = 1
+
+        return jnp.array(mask)
+
+    @classmethod
+    def subject_to_admissions(cls,
+                              subject: DxSubject) -> Dict[int, AdmissionInfo]:
+        first_day_date = subject.admissions[0].admission_dates[0]
+        adms = []
+        for adm in subject.admissions:
+            # days since first admission
+            time = DxSubject.days(adm.admission_dates[0],
+                                  subject.admissions[0].admission_dates[0])
+
+            los = DxSubject.days(adm.admission_dates[1],
+                                 adm.admission_dates[0]) + 0.5
+
+            # This 0.5 means if a patient is admitted and discharged at
+            # the same day, then we assume 0.5 day as length of stay (12 hours)
+            # In general, this would generalize the assumption to:
+            # Admissions during a day happen at the midnight 00:01
+            # While discharges during a day happen at the afternoon 12:00
+            adms.append(
+                AdmissionInfo(subject_id=subject.subject_id,
+                              admission_time=time,
+                              los=los,
+                              admission_id=adm.admission_id,
+                              dx_icd9_codes=adm.dx_icd9_codes))
+        return adms
+
+
+class DxInterface_JAX:
     """
     Class to prepare EHRs information to predictive models.
     NOTE: admissions with overlapping admission dates for the same patietn
@@ -21,22 +81,13 @@ class AbstractSubjectJAXInterface:
     are discarded.
     """
 
-    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
+    def __init__(self, subjects: List[DxSubject]):
+        self.dx_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
+            ccs_dag.dx_ccs_idx)
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
-
-        self.subjects = dict(
-            zip(map(lambda s: s.subject_id, subjects), subjects))
-        self.dag: CCSDAG = dag
-
-        self.diag_ccs_idx = dict(
-            zip(dag.diag_ccs_codes, range(len(dag.diag_ccs_codes))))
-        self.diag_flatccs_idx = dict(
-            zip(dag.diag_flatccs_codes, range(len(dag.diag_flatccs_codes))))
-
-        self.diag_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
-            self.diag_ccs_idx)
+        self.subjects = self.jaxify_subject_admissions(subjects)
 
     def random_splits(self,
                       split1: float,
@@ -54,22 +105,20 @@ class AbstractSubjectJAXInterface:
         test_ids = subject_ids[split2:]
         return train_ids, valid_ids, test_ids
 
-    def diag_ccs_history(self, subject_id):
+    def dx_ccs_history(self, subject_id):
         history = set()
-        for adm in self.subjects[subject_id].admissions:
-            ccs_codes = set(map(self.dag.diag_icd2ccs.get,
-                                adm.icd9_diag_codes))
+        for adm in self.subjects[subject_id]:
+            ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes))
             history.update(ccs_codes)
         history = list(history)
-        return history, list(map(self.diag_ccs_idx.get, history))
+        return history, list(map(ccs_dag.dx_ccs_idx.get, history))
 
-    def diag_flatccs_history(self, subject_id):
+    def dx_flatccs_history(self, subject_id):
         history = defaultdict(list)
         adms = AdmissionInfo.subject_to_admissions(self.subjects[subject_id])
         for adm in adms:
             flatccs_codes = set(
-                map(self.dag.diag_icd2flatccs.get,
-                    adm.icd9_diag_codes)) - {None}
+                map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes)) - {None}
             for code in flatccs_codes:
                 history[code].append(
                     (adm.admission_time, adm.admission_time + adm.los))
@@ -85,76 +134,60 @@ class AbstractSubjectJAXInterface:
         ancestors_mat = np.zeros((len(code2index), len(code2index)),
                                  dtype=bool)
         for code_i, i in code2index.items():
-            for ancestor_j in self.dag.get_ccs_parents(code_i):
+            for ancestor_j in ccs_dag.get_ccs_parents(code_i):
                 j = code2index[ancestor_j]
                 ancestors_mat[i, j] = 1
 
         return jnp.array(ancestors_mat)
 
-    def diag_ccs_to_vec(self, diag_ccs_codes):
-        n_cols = len(self.diag_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_ccs_codes:
-            mask[self.diag_ccs_idx[c]] = 1
-        return jnp.array(mask)
-
-    def diag_flatccs_to_vec(self, diag_flatccs_codes):
-        n_cols = len(self.diag_flatccs_idx)
-        mask = np.zeros(n_cols)
-        for c in diag_flatccs_codes - {None}:
-            mask[self.diag_flatccs_idx[c]] = 1
-
-        return jnp.array(mask)
-
-    def diag_flatccs_frequency(self, subjects: Optional[List[int]] = None):
+    def dx_flatccs_frequency(self, subjects: Optional[List[int]] = None):
         subjects = subjects or self.subjects.keys()
         counter = defaultdict(int)
         for subject_id in subjects:
-            for adm in self.subjects[subject_id].admissions:
+            for adm in self.subjects[subject_id]:
                 ccs_codes = set(
-                    map(self.dag.diag_icd2flatccs.get, adm.icd9_diag_codes))
+                    map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes))
                 for code in ccs_codes - {None}:
-                    counter[self.diag_flatccs_idx[code]] += 1
+                    counter[ccs_dag.dx_flatccs_idx[code]] += 1
         return counter
 
-    def diag_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        counts = self.diag_flatccs_frequency(subjects)
-        n_cols = len(self.diag_flatccs_idx)
+    def dx_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
+        counts = self.dx_flatccs_frequency(subjects)
+        n_cols = len(ccs_dag.dx_flatccs_idx)
 
         counts_vec = np.zeros(n_cols)
         for i, c in counts.items():
             counts_vec[i] = c
         return jnp.array(counts_vec)
 
-    def diag_ccs_frequency(self, subjects: Optional[List[int]] = None):
+    def dx_ccs_frequency(self, subjects: Optional[List[int]] = None):
         subjects = subjects or self.subjects.keys()
         counter = defaultdict(int)
         for subject_id in subjects:
-            for adm in self.subjects[subject_id].admissions:
-                ccs_codes = set(
-                    map(self.dag.diag_icd2ccs.get, adm.icd9_diag_codes))
+            for adm in self.subjects[subject_id]:
+                ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes))
                 for code in ccs_codes:
-                    counter[self.diag_ccs_idx[code]] += 1
+                    counter[ccs_dag.dx_ccs_idx[code]] += 1
         return counter
 
-    def diag_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        counts = self.diag_ccs_frequency(subjects)
-        n_cols = len(self.diag_ccs_idx)
+    def dx_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
+        counts = self.dx_ccs_frequency(subjects)
+        n_cols = len(ccs_dag.dx_ccs_idx)
 
         counts_vec = np.zeros(n_cols)
         for i, c in counts.items():
             counts_vec[i] = c
         return jnp.array(counts_vec)
 
-    def diag_flatccs_by_percentiles(self,
-                                    section_percentage: float = 20,
-                                    subjects: Optional[List[int]] = None):
+    def dx_flatccs_by_percentiles(self,
+                                  section_percentage: float = 20,
+                                  subjects: Optional[List[int]] = None):
         n_sections = int(100 / section_percentage)
         sections = list(
             zip(range(0, 100, section_percentage),
                 range(section_percentage, 101, section_percentage)))
 
-        frequency = self.diag_flatccs_frequency(subjects)
+        frequency = self.dx_flatccs_frequency(subjects)
 
         frequency_df = pd.DataFrame({
             'code': frequency.keys(),
@@ -174,15 +207,15 @@ class AbstractSubjectJAXInterface:
 
         return codes_by_percentiles
 
-    def diag_ccs_by_percentiles(self,
-                                section_percentage: float = 20,
-                                subjects: Optional[List[int]] = None):
+    def dx_ccs_by_percentiles(self,
+                              section_percentage: float = 20,
+                              subjects: Optional[List[int]] = None):
         n_sections = int(100 / section_percentage)
         sections = list(
             zip(range(0, 100, section_percentage),
                 range(section_percentage, 101, section_percentage)))
 
-        frequency = self.diag_ccs_frequency(subjects)
+        frequency = self.dx_ccs_frequency(subjects)
 
         frequency_df = pd.DataFrame({
             'code': frequency.keys(),
@@ -202,94 +235,35 @@ class AbstractSubjectJAXInterface:
 
         return codes_by_percentiles
 
-
-class SubjectDiagSequenceJAXInterface(AbstractSubjectJAXInterface):
-
-    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
-        super().__init__(subjects, dag)
-        self.diag_sequences = self.make_diag_sequences()
-
-    def make_diag_sequences(self):
-        _diag_sequences = {}
-        for subject_id, subject in self.subjects.items():
-            _diag_sequences[subject_id] = {
-                'diag_ccs_vec': [],
-                'diag_flatccs_vec': [],
-                'admission_id': []
-            }
-
-            for adm in subject.admissions:
-                codes = adm.icd9_diag_codes
-                diag_flatccs_codes = set(
-                    map(self.dag.diag_icd2flatccs.get, codes))
-                _s = self.diag_flatccs_to_vec(diag_flatccs_codes)
-
-                diag_ccs_codes = set(map(self.dag.diag_icd2ccs.get, codes))
-                _m = self.diag_ccs_to_vec(diag_ccs_codes)
-
-                _diag_sequences[subject_id]['diag_ccs_vec'].append(_m)
-                _diag_sequences[subject_id]['diag_flatccs_vec'].append(_s)
-                _diag_sequences[subject_id]['admission_id'].append(
-                    adm.admission_id)
-
-        return _diag_sequences
-
-    def diag_sequences_batch(self, subjects_batch):
-        return {i: self.diag_sequences[i] for i in subjects_batch}
-
-
-class DiagnosisJAXInterface(AbstractSubjectJAXInterface):
-
-    def __init__(self, subjects: List[DiagSubject], dag: CCSDAG):
-        super().__init__(subjects, dag)
-        self.nth_admission = self.make_nth_admission()
-        self.n_support = sorted(list(self.nth_admission.keys()))
-
-    def make_nth_admission(self):
+    def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
-
-        for subject_id, subject in self.subjects.items():
-            admissions = AdmissionInfo.subject_to_admissions(subject)
-            for n, adm in enumerate(admissions):
-                nth_admission[n][subject_id] = self.jaxify_subject_admission(
-                    adm)
-
+        for subject_id in batch:
+            adms = self.subjects[subject_id]
+            for n, adm in enumerate(adms):
+                nth_admission[n][subject_id] = adm
         return nth_admission
 
-    def jaxify_subject_admission(self, admission: AdmissionInfo):
-        diag_flatccs_codes = set(
-            map(self.dag.diag_icd2flatccs.get, admission.icd9_diag_codes))
+    def subject_admission_sequence(self, subject_id):
+        return self.subjects[subject_id]
 
-        diag_ccs_codes = set(
-            map(self.dag.diag_icd2ccs.get, admission.icd9_diag_codes))
-
+    def jaxify_subject_admissions(self, subjects):
         return {
-            'time': admission.admission_time,
-            'los': admission.los,
-            'diag_ccs_vec': self.diag_ccs_to_vec(diag_ccs_codes),
-            'diag_flatccs_vec': self.diag_flatccs_to_vec(diag_flatccs_codes),
-            'admission_id': admission.admission_id
+            subject.subject_id: AdmissionInfo.subject_to_admissions(subject)
+            for subject in subjects
         }
 
-    def nth_admission_batch(self, n: int, batch: List[int]):
-        if n not in self.nth_admission:
-            return {}
-        return {k: v for k, v in self.nth_admission[n].items() if k in batch}
 
-
-def create_patient_interface(processed_mimic_tables_dir: str, data_tag=None):
+def create_patient_interface(processed_mimic_tables_dir: str,
+                             data_tag: str = None):
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
     # Cast columns of dates to datetime64
     adm_df['ADMITTIME'] = pd.to_datetime(
         adm_df['ADMITTIME'], infer_datetime_format=True).dt.normalize()
     adm_df['DISCHTIME'] = pd.to_datetime(
         adm_df['DISCHTIME'], infer_datetime_format=True).dt.normalize()
-    diag_df = pd.read_csv(f'{processed_mimic_tables_dir}/diag_df.csv.gz',
-                          dtype={'ICD9_CODE': str})
+    dx_df = pd.read_csv(f'{processed_mimic_tables_dir}/dx_df.csv.gz',
+                        dtype={'ICD9_CODE': str})
 
-    patients = DiagSubject.to_list(adm_df=adm_df, diag_df=diag_df)
+    patients = DxSubject.to_list(adm_df=adm_df, dx_df=dx_df)
 
-    # CCS Knowledge Graph
-    k_graph = CCSDAG()
-
-    return DiagnosisJAXInterface(patients, k_graph)
+    return DxInterface_JAX(patients)

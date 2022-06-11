@@ -7,7 +7,7 @@ from jax.experimental import optimizers
 
 import optuna
 
-from ..ehr_model.jax_interface import (DiagnosisJAXInterface)
+from ..ehr_model.jax_interface import (DxInterface_JAX)
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from .dx_icenode_tl import ICENODE as ICENODE_TL
 
@@ -28,7 +28,7 @@ class ICENODE_2LR_MIXIN:
         opt_init, opt_update, get_params = opt_cls(step_size=lr2)
         opt_state = opt_init({
             'f_dec': params['f_dec'],
-            'diag_emb': params['diag_emb'],
+            'dx_emb': params['dx_emb'],
             'f_update': params.get('f_update')
         })
         opt2 = (opt_state, opt_update, get_params)
@@ -60,7 +60,7 @@ class ICENODE_2LR_MIXIN:
         grads2 = {
             'f_dec': grads['f_dec'],
             'f_update': grads.get('f_update'),
-            'diag_emb': grads['diag_emb']
+            'dx_emb': grads['dx_emb']
         }
 
         opt1_state = opt1_update(step, grads1, opt1_state)

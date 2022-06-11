@@ -21,7 +21,8 @@ import haiku as hk
 import optuna
 
 from ..utils import wrap_module
-from ..ehr_model.jax_interface import AbstractSubjectJAXInterface
+from ..ehr_model.jax_interface import DxInterface_JAX
+from ..ehr_model.ccs_dag import ccs_dag
 
 from .glove import glove_representation
 
@@ -31,7 +32,6 @@ def unnormalized_softmax(x, axis=-1):
 
 
 class DAGAttention(hk.Module):
-
     def __init__(self,
                  attention_dim,
                  name: Optional[str] = None,
@@ -51,7 +51,6 @@ class DAGL2Attention(hk.Module):
     The Lipschitz Constant of Self-Attention:
     https://arxiv.org/abs/2006.04710
     """
-
     def __init__(self,
                  attention_dim,
                  name: Optional[str] = None,
@@ -67,7 +66,6 @@ class DAGL2Attention(hk.Module):
 
 
 class AbstractEmbeddingsLayer:
-
     def __init__(self, embeddings_dim):
         self.embeddings_dim = embeddings_dim
 
@@ -86,7 +84,6 @@ class AbstractEmbeddingsLayer:
 
 
 class AbstractGRAM(AbstractEmbeddingsLayer):
-
     def __init__(self,
                  attention_dim: int,
                  attention_method: str,
@@ -166,7 +163,6 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
 
 
 class SemiFrozenGRAM(AbstractGRAM):
-
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -194,7 +190,6 @@ class SemiFrozenGRAM(AbstractGRAM):
 
 
 class FrozenGRAM(AbstractGRAM):
-
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -224,7 +219,6 @@ class FrozenGRAM(AbstractGRAM):
 
 
 class TunableGRAM(AbstractGRAM):
-
     def __init__(self,
                  initial_params: Tuple[jnp.ndarray, jnp.ndarray],
                  attention_dim: int,
@@ -249,10 +243,9 @@ class TunableGRAM(AbstractGRAM):
 
 
 class GloVeGRAM(AbstractGRAM):
-
     def __init__(self,
                  category: str,
-                 patient_interface: AbstractSubjectJAXInterface,
+                 patient_interface: DxInterface_JAX,
                  train_ids: Iterable[int],
                  glove_config: Dict[str, int],
                  attention_dim: int,
@@ -261,8 +254,8 @@ class GloVeGRAM(AbstractGRAM):
                  name: Optional[str] = None,
                  **init_kwargs):
 
-        if category == 'diag':
-            ancestors_mat = patient_interface.diag_ccs_ancestors_mat
+        if category == 'dx':
+            ancestors_mat = patient_interface.dx_ccs_ancestors_mat
         else:
             ancestors_mat = patient_interface.proc_ccs_ancestors_mat
 
@@ -285,8 +278,8 @@ class GloVeGRAM(AbstractGRAM):
             vector_size=self.embeddings_dim,
             **self.glove_config)
 
-        if self.category == 'diag':
-            code2index = self.patient_interface.diag_ccs_idx
+        if self.category == 'dx':
+            code2index = ccs_dag.dx_ccs_idx
         else:
             code2index = self.patient_interface.proc_ccs_idx
 
@@ -314,19 +307,18 @@ class GloVeGRAM(AbstractGRAM):
 
 
 class OrthogonalGRAM(AbstractGRAM):
-
     def __init__(self,
                  category: str,
-                 patient_interface: AbstractSubjectJAXInterface,
+                 patient_interface: DxInterface_JAX,
                  attention_dim: int,
                  attention_method: str,
                  name: Optional[str] = None,
                  **init_kwargs):
         dag = patient_interface.dag
 
-        if category == 'diag':
-            size = len(patient_interface.diag_ccs_idx)
-            ancestors_mat = patient_interface.diag_ccs_ancestors_mat
+        if category == 'dx':
+            size = len(ccs_dag.dx_ccs_idx)
+            ancestors_mat = patient_interface.dx_ccs_ancestors_mat
         else:
             size = len(patient_interface.proc_ccs_idx)
             ancestors_mat = patient_interface.proc_ccs_ancestors_mat
@@ -356,7 +348,6 @@ class OrthogonalGRAM(AbstractGRAM):
 
 
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
-
     def __init__(self,
                  embeddings_dim: int,
                  input_dim: int,

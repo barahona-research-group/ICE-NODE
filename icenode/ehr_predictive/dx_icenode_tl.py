@@ -12,27 +12,27 @@ import optuna
 
 from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
 from ..utils import wrap_module
-from ..ehr_model.jax_interface import (DiagnosisJAXInterface,
+from ..ehr_model.jax_interface import (DxInterface_JAX, AdmissionInfo,
                                        create_patient_interface)
+from ..ehr_model.ccs_dag import ccs_dag
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract import AbstractModel
+from .risk import BatchPredictedRisks
 
 
 class ICENODE(AbstractModel):
-
-    def __init__(self, subject_interface: DiagnosisJAXInterface,
-                 diag_emb: AbstractEmbeddingsLayer, ode_dyn: str,
+    def __init__(self, subject_interface: DxInterface_JAX,
+                 dx_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, state_size: int,
                  timescale: float):
-
         self.subject_interface = subject_interface
-        self.diag_emb = diag_emb
+        self.dx_emb = dx_emb
         self.timescale = timescale
         self.dimensions = {
-            'diag_emb': diag_emb.embeddings_dim,
-            'diag_out': len(subject_interface.diag_flatccs_idx),
+            'dx_emb': dx_emb.embeddings_dim,
+            'dx_out': len(ccs_dag.dx_flatccs_idx),
             'state': state_size
         }
         depth = 2
@@ -48,7 +48,7 @@ class ICENODE(AbstractModel):
             depth = 3
         else:
             raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
-        state_emb_size = self.dimensions['diag_emb'] + state_size
+        state_emb_size = self.dimensions['dx_emb'] + state_size
 
         f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
@@ -67,7 +67,7 @@ class ICENODE(AbstractModel):
             hk.transform(
                 wrap_module(StateUpdate,
                             state_size=state_size,
-                            embeddings_size=self.dimensions['diag_emb'],
+                            embeddings_size=self.dimensions['dx_emb'],
                             name='f_update')))
         self.f_update = jax.jit(f_update)
 
@@ -75,8 +75,8 @@ class ICENODE(AbstractModel):
             hk.transform(
                 wrap_module(EmbeddingsDecoder_Logits,
                             n_layers=2,
-                            embeddings_size=self.dimensions['diag_emb'],
-                            diag_size=self.dimensions['diag_out'],
+                            embeddings_size=self.dimensions['dx_emb'],
+                            diag_size=self.dimensions['dx_out'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
@@ -98,7 +98,7 @@ class ICENODE(AbstractModel):
     def init_params(self, prng_seed=0):
         rng_key = jax.random.PRNGKey(prng_seed)
         return {
-            "diag_emb": self.diag_emb.init_params(rng_key),
+            "dx_emb": self.dx_emb.init_params(rng_key),
             **{
                 label: init(rng_key, *self.init_data[label])
                 for label, init in self.initializers.items()
@@ -108,19 +108,12 @@ class ICENODE(AbstractModel):
     def state_size(self):
         return self.dimensions['state']
 
-    def diag_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.diag_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
-
     def _initialization_data(self):
         """
         Creates data for initializing each of the
         modules based on the shapes of init_data.
         """
-        emb = jnp.zeros(self.dimensions['diag_emb'])
+        emb = jnp.zeros(self.dimensions['dx_emb'])
         state = jnp.zeros(self.dimensions['state'])
         state_emb = jnp.hstack((state, emb))
         return {
@@ -129,28 +122,28 @@ class ICENODE(AbstractModel):
             "f_dec": [emb],
         }
 
-    def _extract_nth_admission(self, params: Any, subjects_batch: List[int],
+    def _extract_nth_admission(self, params: Any,
+                               batch: Dict[int, Dict[int, AdmissionInfo]],
                                n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
-        diag_G = self.diag_emb.compute_embeddings_mat(params["diag_emb"])
-
-        adms = self.subject_interface.nth_admission_batch(n, subjects_batch)
+        adms = batch[n]
         if len(adms) == 0:
             return None
 
-        diag_emb = {
-            i: self.diag_emb.encode(diag_G, v['diag_ccs_vec'])
-            for i, v in adms.items()
+        dx_G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
+        dx_emb = {
+            i: self.dx_emb.encode(dx_G, adm.dx_ccs_codes)
+            for i, adm in adms.items()
         }
-        diag_out = {i: v['diag_flatccs_vec'] for i, v in adms.items()}
-        los = {i: v['los'] for i, v in adms.items()}
-        adm_id = {i: v['admission_id'] for i, v in adms.items()}
-        adm_time = {i: v['time'] for i, v in adms.items()}
+        dx_out = {i: adm.dx_flatccs_codes for i, adm in adms.items()}
+        los = {i: adm.los for i, adm in adms.items()}
+        adm_id = {i: adm.admission_id for i, adm in adms.items()}
+        adm_time = {i: adm.admission_time for i, adm in adms.items()}
 
         return {
-            'time': adm_time,
+            'admission_time': adm_time,
             'los': los,
-            'diag_emb': diag_emb,
-            'diag_out': diag_out,
+            'dx_emb': dx_emb,
+            'dx_out': dx_out,
             'admission_id': adm_id
         }
 
@@ -190,29 +183,27 @@ class ICENODE(AbstractModel):
         emb = {i: self.split_state_emb(state_e[i])[1] for i in state_e}
         return {i: self.f_dec(params['f_dec'], emb[i]) for i in emb}
 
-    def _diag_loss(self, diag: Dict[int, jnp.ndarray],
-                   dec_diag: Dict[int, jnp.ndarray]):
-        l = [
-            balanced_focal_bce(diag[i], dec_diag[i])
-            for i in sorted(diag.keys())
-        ]
+    def _dx_loss(self, dx: Dict[int, jnp.ndarray], dec_dx: Dict[int,
+                                                                jnp.ndarray]):
+        l = [balanced_focal_bce(dx[i], dec_dx[i]) for i in sorted(dx.keys())]
         return sum(l) / len(l)
 
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
                  count_nfe: bool = False):
-        nth_adm = partial(self._extract_nth_admission, params, subjects_batch)
+        batch = self.subject_interface.batch_nth_admission(subjects_batch)
+        nth_adm = partial(self._extract_nth_admission, params, batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
         nn_update = partial(self._f_update, params)
         nn_decode = partial(self._f_dec, params)
-        diag_loss = self._diag_loss
+        dx_loss = self._dx_loss
 
         adm0 = nth_adm(0)
         subject_state = {
             i: {
-                'state_e': self.join_state_emb(None, adm0['diag_emb'][i]),
-                'time': adm0['time'][i] + adm0['los'][i]
+                'state_e': self.join_state_emb(None, adm0['dx_emb'][i]),
+                'time': adm0['admission_time'][i] + adm0['los'][i]
             }
             for i in adm0['admission_id']
         }
@@ -220,21 +211,20 @@ class ICENODE(AbstractModel):
         total_nfe = 0
 
         prediction_losses = []
-
+        risk_prediction = BatchPredictedRisks()
         adm_counts = []
-        diag_detectability = {i: {} for i in subjects_batch}
         odeint_time = []
         dyn_loss = 0
 
-        for n in self.subject_interface.n_support[1:]:
+        for n in sorted(batch)[1:]:
             adm_n = nth_adm(n)
             if adm_n is None:
                 break
             adm_id = adm_n['admission_id']
             adm_los = adm_n['los']  # length of stay
-            adm_time = adm_n['time']
-            emb = adm_n['diag_emb']
-            diag = adm_n['diag_out']
+            adm_time = adm_n['admission_time']
+            emb = adm_n['dx_emb']
+            dx = adm_n['dx_out']
 
             adm_counts.append(len(adm_id))
 
@@ -247,23 +237,22 @@ class ICENODE(AbstractModel):
 
             # Integrate until next discharge
             state_e, r, nfe = nn_ode(state_e, d2d_time)
-            dec_diag = nn_decode(state_e)
+            dec_dx = nn_decode(state_e)
 
             for subject_id in state_e.keys():
-                diag_detectability[subject_id][n] = {
-                    'admission_id': adm_id[subject_id],
-                    'nfe': nfe[subject_id],
-                    'time': adm_time[subject_id] + adm_los[subject_id],
-                    'los': adm_los[subject_id],
-                    'R/T': r[subject_id] / d2d_time[subject_id],
-                    'true_diag': diag[subject_id],
-                    'pred_logits': dec_diag[subject_id]
-                }
-
+                risk_prediction.add(subject_id=subject_id,
+                                    admission_id=adm_id[subject_id],
+                                    ground_truth=dx[subject_id],
+                                    prediction=dec_dx[subject_id],
+                                    index=n,
+                                    time=adm_time[subject_id] +
+                                    adm_los[subject_id],
+                                    los=adm_los[subject_id],
+                                    nfe=nfe[subject_id])
             odeint_time.append(sum(d2d_time.values()))
             dyn_loss += sum(r.values())
 
-            pred_loss = diag_loss(diag, dec_diag)
+            pred_loss = dx_loss(dx, dec_dx)
             prediction_losses.append(pred_loss)
 
             total_nfe += sum(nfe.values())
@@ -287,7 +276,7 @@ class ICENODE(AbstractModel):
             'odeint_weeks': sum(odeint_time) / 7.0,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
-            'diag_detectability': diag_detectability
+            'risk_prediction': risk_prediction
         }
 
         return ret
@@ -358,8 +347,8 @@ class ICENODE(AbstractModel):
         adm0 = nth_adm(0)
         subject_state = {
             i: {
-                'state_e': self.join_state_emb(None, adm0['diag_emb'][i]),
-                'time': adm0['time'][i] + adm0['los'][i]
+                'state_e': self.join_state_emb(None, adm0['dx_emb'][i]),
+                'time': adm0['admission_time'][i] + adm0['los'][i]
             }
             for i in adm0['admission_id']
         }
@@ -384,9 +373,9 @@ class ICENODE(AbstractModel):
                 break
             adm_id = adm_n['admission_id']
             adm_los = adm_n['los']  # length of stay
-            adm_time = adm_n['time']
-            emb = adm_n['diag_emb']
-            diag = adm_n['diag_out']
+            adm_time = adm_n['admission_time']
+            emb = adm_n['dx_emb']
+            dx = adm_n['dx_out']
 
             state_e = {i: subject_state[i]['state_e'] for i in adm_id}
 
@@ -406,10 +395,10 @@ class ICENODE(AbstractModel):
 
                 # For the last timestamp, get sorted indices for the predictions
                 top10_idx = jnp.argsort(-traj_ni['d'][-1, :])[:10]
-                pos = onp.zeros_like(diag[subject_id])
+                pos = onp.zeros_like(dx[subject_id])
                 pos[[top10_idx]] = 1
-                tp = (pos == diag[subject_id]) * 1
-                fp = (pos != diag[subject_id]) * 1
+                tp = (pos == dx[subject_id]) * 1
+                fp = (pos != dx[subject_id]) * 1
                 trajectory[subject_id]['tp10'].append(tp)
                 trajectory[subject_id]['fp10'].append(fp)
 
@@ -459,29 +448,25 @@ class ICENODE(AbstractModel):
         return {
             'loss': self.detailed_loss(loss_mixing, params, res),
             'stats': self.eval_stats(res),
-            'diag_detectability': res['diag_detectability']
+            'risk_prediction': res['risk_prediction']
         }
 
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch, count_nfe=True)
-        return admissions_auc_scores(res['diag_detectability'])
-
-    @staticmethod
-    def create_patient_interface(mimic_dir, data_tag: str):
-        return create_patient_interface(mimic_dir, data_tag=data_tag)
+        return admissions_auc_scores(res['risk_prediction'])
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
                      pretrained_components):
-        diag_emb = cls.create_embedding(
-            emb_config=config['emb']['diag'],
+        dx_emb = cls.create_embedding(
+            emb_config=config['emb']['dx'],
             emb_kind=config['emb']['kind'],
             patient_interface=patient_interface,
             train_ids=train_ids,
             pretrained_components=pretrained_components)
         return cls(subject_interface=patient_interface,
-                   diag_emb=diag_emb,
+                   dx_emb=dx_emb,
                    **config['model'])
 
     @classmethod

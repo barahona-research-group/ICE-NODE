@@ -1,3 +1,6 @@
+"""Extract diagnostic/procedure information of CCS files into new
+data structures to support conversion between CCS and ICD9."""
+
 from collections import defaultdict
 import os
 import pandas as pd
@@ -18,40 +21,44 @@ class CCSDAG:
 
     def __init__(self):
 
-        self.diag_flatccs_df = pd.read_csv(self.DIAG_SINGLE_CCS_FILE,
-                                           skiprows=1)
+        self.dx_flatccs_df = pd.read_csv(self.DIAG_SINGLE_CCS_FILE, skiprows=1)
         self.proc_flatccs_df = pd.read_csv(self.PROC_SINGLE_CCS_FILE,
                                            skiprows=1)
-        self.diag_ccs_df = pd.read_csv(self.DIAG_MULTI_CCS_FILE)
+        self.dx_ccs_df = pd.read_csv(self.DIAG_MULTI_CCS_FILE)
         self.proc_ccs_df = pd.read_csv(self.PROC_MULTI_CCS_FILE)
 
-        self.diag_icd_label = self.make_diag_icd_dict()
+        self.dx_icd_label = self.make_dx_icd_dict()
         self.proc_icd_label = self.make_proc_icd_dict()
 
-        self.diag_icd_codes = list(sorted(self.diag_icd_label.keys()))
+        self.dx_icd_codes = list(sorted(self.dx_icd_label.keys()))
         self.proc_icd_codes = list(sorted(self.proc_icd_label.keys()))
 
-        (self.diag_icd2flatccs, self.diag_flatccs2icd,
-         self.diag_flatccs_desc) = self.make_diag_icd2ccs_dict()
+        (self.dx_icd2flatccs, self.dx_flatccs2icd,
+         self.dx_flatccs_desc) = self.make_dx_icd2ccs_dict()
         (self.proc_icd2flatccs,
          self.proc_flatccs2icd) = self.make_proc_icd2ccs_dict()
 
-        (self.diag_ccs_pt2ch, self.diag_icd2ccs, self.diag_ccs2icd,
-         self.diag_ccs_codes,
-         self.diag_ccs_labels) = self.make_diag_multi_dictionaries()
+        (self.dx_ccs_pt2ch, self.dx_icd2ccs, self.dx_ccs2icd,
+         self.dx_ccs_codes,
+         self.dx_ccs_labels) = self.make_dx_multi_dictionaries()
         (self.proc_ccs_pt2ch, self.proc_icd2ccs, self.proc_ccs2icd,
          self.proc_ccs_codes,
          self.proc_ccs_labels) = self.make_proc_multi_dictionaries()
 
-        self.diag_flatccs_codes = list(sorted(self.diag_flatccs2icd.keys()))
+        self.dx_flatccs_codes = list(sorted(self.dx_flatccs2icd.keys()))
 
-    def make_diag_icd_dict(self):
-        diag_ccs_label_list = self.diag_flatccs_df[
+        self.dx_ccs_idx = dict(
+            zip(self.dx_ccs_codes, range(len(self.dx_ccs_codes))))
+        self.dx_flatccs_idx = dict(
+            zip(self.dx_flatccs_codes, range(len(self.dx_flatccs_codes))))
+
+    def make_dx_icd_dict(self):
+        dx_ccs_label_list = self.dx_flatccs_df[
             '\'ICD-9-CM CODE DESCRIPTION\''].apply(
                 lambda cat: cat.strip('\'').strip()).tolist()
-        diag_ccs_icd_list = self.diag_flatccs_df['\'ICD-9-CM CODE\''].apply(
+        dx_ccs_icd_list = self.dx_flatccs_df['\'ICD-9-CM CODE\''].apply(
             lambda c: c.strip('\'').strip()).tolist()
-        return dict(zip(diag_ccs_icd_list, diag_ccs_label_list))
+        return dict(zip(dx_ccs_icd_list, dx_ccs_label_list))
 
     def make_proc_icd_dict(self):
         proc_ccs_label_list = self.proc_flatccs_df[
@@ -61,25 +68,25 @@ class CCSDAG:
             lambda c: c.strip('\'').strip()).tolist()
         return dict(zip(proc_ccs_icd_list, proc_ccs_label_list))
 
-    def make_diag_icd2ccs_dict(self):
-        diag_ccs_cat_list = self.diag_flatccs_df['\'CCS CATEGORY\''].apply(
+    def make_dx_icd2ccs_dict(self):
+        dx_ccs_cat_list = self.dx_flatccs_df['\'CCS CATEGORY\''].apply(
             lambda cat: cat.strip('\'').strip()).tolist()
-        diag_ccs_icd_list = self.diag_flatccs_df['\'ICD-9-CM CODE\''].apply(
+        dx_ccs_icd_list = self.dx_flatccs_df['\'ICD-9-CM CODE\''].apply(
             lambda c: c.strip('\'').strip()).tolist()
 
-        diag_ccs_cat_desc = self.diag_flatccs_df[
+        dx_ccs_cat_desc = self.dx_flatccs_df[
             '\'CCS CATEGORY DESCRIPTION\''].apply(
                 lambda desc: desc.strip('\'').strip()).tolist()
 
-        diag_ccs_desc = dict(zip(diag_ccs_cat_list, diag_ccs_cat_desc))
+        dx_ccs_desc = dict(zip(dx_ccs_cat_list, dx_ccs_cat_desc))
 
-        diag_icd2ccs_dict = dict(zip(diag_ccs_icd_list, diag_ccs_cat_list))
+        dx_icd2ccs_dict = dict(zip(dx_ccs_icd_list, dx_ccs_cat_list))
 
-        diag_ccs2icd_dict = defaultdict(list)
-        for code, cat in zip(diag_ccs_icd_list, diag_ccs_cat_list):
-            diag_ccs2icd_dict[cat].append(code)
+        dx_ccs2icd_dict = defaultdict(list)
+        for code, cat in zip(dx_ccs_icd_list, dx_ccs_cat_list):
+            dx_ccs2icd_dict[cat].append(code)
 
-        return diag_icd2ccs_dict, diag_ccs2icd_dict, diag_ccs_desc
+        return dx_icd2ccs_dict, dx_ccs2icd_dict, dx_ccs_desc
 
     def make_proc_icd2ccs_dict(self):
         proc_ccs_cat_list = self.proc_flatccs_df['\'CCS CATEGORY\''].apply(
@@ -95,8 +102,8 @@ class CCSDAG:
 
         return proc_icd2ccs_dict, proc_ccs2icd_dict
 
-    def make_diag_multi_dictionaries(self):
-        df = self.diag_ccs_df.copy()
+    def make_dx_multi_dictionaries(self):
+        df = self.dx_ccs_df.copy()
         df['I1'] = df['\'CCS LVL 1\''].apply(lambda l: l.strip('\'').strip())
         df['I2'] = df['\'CCS LVL 2\''].apply(lambda l: l.strip('\'').strip())
         df['I3'] = df['\'CCS LVL 3\''].apply(lambda l: l.strip('\'').strip())
@@ -114,9 +121,9 @@ class CCSDAG:
 
         df = df[['I1', 'I2', 'I3', 'I4', 'L1', 'L2', 'L3', 'L4', 'ICD']]
 
-        diag_multi_icd2ccs = {'root': 'root'}
-        diag_multi_ccs2icd = defaultdict(list)
-        diag_multi_ccs2icd['root'] = ['root']
+        dx_multi_icd2ccs = {'root': 'root'}
+        dx_multi_ccs2icd = defaultdict(list)
+        dx_multi_ccs2icd['root'] = ['root']
         for row in df.itertuples():
             code = row.ICD
             i1, i2, i3, i4 = row.I1, row.I2, row.I3, row.I4
@@ -130,29 +137,29 @@ class CCSDAG:
             if i4 != '':
                 last_index = i4
             if last_index != None:
-                diag_multi_icd2ccs[code] = last_index
-                diag_multi_ccs2icd[last_index].append(code)
+                dx_multi_icd2ccs[code] = last_index
+                dx_multi_ccs2icd[last_index].append(code)
 
         # Make dictionary for parent-child connections
-        diag_multi_ccs_pt2ch = {'root': set(df['I1'])}
+        dx_multi_ccs_pt2ch = {'root': set(df['I1'])}
         for pt_col, ch_col in zip(('I1', 'I2', 'I3'), ('I2', 'I3', 'I4')):
             df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
             df_ = df_[[pt_col, ch_col]].drop_duplicates()
             for parent_ccs_code, ch_ccs_df in df_.groupby(pt_col):
-                diag_multi_ccs_pt2ch[parent_ccs_code] = set(ch_ccs_df[ch_col])
+                dx_multi_ccs_pt2ch[parent_ccs_code] = set(ch_ccs_df[ch_col])
 
         # Make a dictionary for CCS labels
-        diag_multi_ccs_labels = {'root': 'root'}
+        dx_multi_ccs_labels = {'root': 'root'}
         for idx_col, label_col in zip(('I1', 'I2', 'I3', 'I4'),
                                       ('L1', 'L2', 'L3', 'L4')):
             df_ = df[df[idx_col] != '']
             df_ = df_[[idx_col, label_col]].drop_duplicates()
             idx_label = dict(zip(df_[idx_col], df_[label_col]))
-            diag_multi_ccs_labels.update(idx_label)
+            dx_multi_ccs_labels.update(idx_label)
 
-        diag_multi_ccs_codes = list(sorted(diag_multi_ccs_labels.keys()))
-        return (diag_multi_ccs_pt2ch, diag_multi_icd2ccs, diag_multi_ccs2icd,
-                diag_multi_ccs_codes, diag_multi_ccs_labels)
+        dx_multi_ccs_codes = list(sorted(dx_multi_ccs_labels.keys()))
+        return (dx_multi_ccs_pt2ch, dx_multi_icd2ccs, dx_multi_ccs2icd,
+                dx_multi_ccs_codes, dx_multi_ccs_labels)
 
     def make_proc_multi_dictionaries(self):
         df = self.proc_ccs_df.copy()
@@ -204,14 +211,14 @@ class CCSDAG:
         return (proc_multi_ccs_pt2ch, proc_multi_icd2ccs, proc_multi_ccs2icd,
                 proc_multi_ccs_codes, proc_multi_ccs_labels)
 
-    def find_diag_icd_name(self, code):
-        return self.diag_icd_label[code]
+    def find_dx_icd_name(self, code):
+        return self.dx_icd_label[code]
 
     def find_proc_icd_name(self, code):
         return self.proc_icd_label[code]
 
-    def get_diag_ccs(self, icd_diag_code):
-        return self.diag_icd2ccs[icd_diag_code]
+    def get_dx_ccs(self, icd_dx_code):
+        return self.dx_icd2ccs[icd_dx_code]
 
     def get_proc_ccs(self, icd_proc_code):
         return self.proc_icd2ccs[icd_proc_code]
@@ -229,14 +236,14 @@ class CCSDAG:
         return parents
 
     # Get all children of CCS code
-    def get_diag_ccs_children(self, ccs_code):
+    def get_dx_ccs_children(self, ccs_code):
         result = []
         q = [ccs_code]
 
         while len(q) != 0:
             # remove the first element from the stack
             current_ccs = q.pop(0)
-            expanded_ccs = self.diag_ccs_pt2ch.get(current_ccs, [])
+            expanded_ccs = self.dx_ccs_pt2ch.get(current_ccs, [])
             q.extend([c for c in expanded_ccs if c not in result])
             if current_ccs not in result:
                 result.append(current_ccs)
@@ -258,11 +265,11 @@ class CCSDAG:
         result.remove(ccs_code)
         return result
 
-    def diag_ccs_children_traversal(self, ccs_code):
+    def dx_ccs_children_traversal(self, ccs_code):
         children_set = set()
 
         def _children_traversal(_node):
-            for ch in self.diag_ccs_pt2ch.get(_node, []):
+            for ch in self.dx_ccs_pt2ch.get(_node, []):
                 children_set.add(ch)
                 _children_traversal(ch)
 
@@ -295,3 +302,7 @@ class CCSDAG:
         for parent in self.get_ccs_parents(ccs1):
             if parent in self.get_ccs_parents(ccs2):
                 return parent
+
+
+# Singleton instance.
+ccs_dag = CCSDAG()

@@ -1,6 +1,6 @@
 {
     "emb": {
-        "diag": {
+        "dx": {
             "embeddings_dim": 270
         },
         "kind": "matrix"

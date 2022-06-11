@@ -19,6 +19,8 @@ from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
                                      admissions_auc_scores, codes_auc_scores,
                                      evaluation_table)
+from ..ehr_model.jax_interface import create_patient_interface, DxInterface_JAX
+from ..ehr_model.ccs_dag import ccs_dag
 
 
 class MinibatchTrainReporter:
@@ -30,7 +32,6 @@ class MinibatchTrainReporter:
         4. evaluation disk writer
         5. parameters disk writer
     """
-
     def report_params_size(self, params):
         pass
 
@@ -58,7 +59,6 @@ class MinibatchTrainReporter:
 
 
 class MinibatchLogger(MinibatchTrainReporter):
-
     def report_nan_detected(self):
         logging.warning('NaN detected')
 
@@ -68,7 +68,6 @@ class MinibatchLogger(MinibatchTrainReporter):
 
 
 class EvaluationDiskWriter(MinibatchTrainReporter):
-
     def __init__(self, trial_dir):
         self.trial_dir = trial_dir
 
@@ -79,7 +78,6 @@ class EvaluationDiskWriter(MinibatchTrainReporter):
 
 
 class ParamsDiskWriter(MinibatchTrainReporter):
-
     def __init__(self, trial_dir, write_every_iter=False):
         self.trial_dir = trial_dir
         self.write_every_iter = write_every_iter
@@ -165,7 +163,6 @@ def minibatch_trainer(model,
 
 
 class AbstractModel:
-
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise OOPError('Should be overriden')
 
@@ -183,18 +180,18 @@ class AbstractModel:
         return {
             'loss': self.detailed_loss(loss_mixing, params, res),
             'stats': self.eval_stats(res),
-            'diag_detectability': res['diag_detectability']
+            'risk_prediction': res['risk_prediction']
         }
 
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch)
-        return admissions_auc_scores(res['diag_detectability'])
+        return admissions_auc_scores(res['risk_prediction'])
 
     def codes_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch)
-        return codes_auc_scores(res['diag_detectability'])
+        return codes_auc_scores(res['risk_prediction'])
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int], **kwargs) -> float:
@@ -275,23 +272,23 @@ class AbstractModel:
     def create_embedding(cls, emb_config, emb_kind, patient_interface,
                          train_ids, pretrained_components):
         if emb_kind == 'matrix':
-            input_dim = len(patient_interface.diag_ccs_idx)
+            input_dim = len(ccs_dag.dx_ccs_idx)
             return MatrixEmbeddings(input_dim=input_dim, **emb_config)
 
         if emb_kind == 'orthogonal_gram':
-            return OrthogonalGRAM('diag',
+            return OrthogonalGRAM('dx',
                                   patient_interface=patient_interface,
                                   **emb_config)
         if emb_kind == 'glove_gram':
-            return GloVeGRAM(category='diag',
+            return GloVeGRAM(category='dx',
                              patient_interface=patient_interface,
                              train_ids=train_ids,
                              **emb_config)
 
         if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
             pretrained_components = load_config(pretrained_components)
-            emb_component = pretrained_components['emb']['diag']['params_file']
-            emb_params = load_params(emb_component)['diag_emb']
+            emb_component = pretrained_components['emb']['dx']['params_file']
+            emb_params = load_params(emb_component)['dx_emb']
             if emb_kind == 'semi_frozen_gram':
                 return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
             elif emb_kind == 'frozen_gram':
@@ -303,7 +300,7 @@ class AbstractModel:
 
     @staticmethod
     def code_partitions(patient_interface, train_ids):
-        return patient_interface.diag_flatccs_by_percentiles(20, train_ids)
+        return patient_interface.dx_flatccs_by_percentiles(20, train_ids)
 
     @classmethod
     def create_model(cls, config, patient_interface, train_ids,
@@ -319,12 +316,11 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.diag_flatccs_frequency_vec(
-                train_ids)
+            codes_dist = patient_interface.dx_flatccs_frequency_vec(train_ids)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:
-            raise ValueError(f'Unrecognized diag_loss: {loss_label}')
+            raise ValueError(f'Unrecognized dx_loss: {loss_label}')
 
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
@@ -355,15 +351,14 @@ class AbstractModel:
             emb_config = GloVeGRAM.sample_model_config('dx', trial)
         elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
             pretrained_components = load_config(pretrained_components)
-            gram_component = pretrained_components['emb']['diag'][
-                'config_file']
+            gram_component = pretrained_components['emb']['dx']['config_file']
             gram_component = load_config(gram_component)
 
-            emb_config = gram_component['emb']['diag']
+            emb_config = gram_component['emb']['dx']
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
-        return {'diag': emb_config, 'kind': emb_kind}
+        return {'dx': emb_config, 'kind': emb_kind}
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
@@ -381,3 +376,7 @@ class AbstractModel:
             'training':
             cls.sample_training_config(trial)
         }
+
+    @staticmethod
+    def create_patient_interface(mimic_dir, data_tag: str):
+        return create_patient_interface(mimic_dir, data_tag=data_tag)

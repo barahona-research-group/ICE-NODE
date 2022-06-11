@@ -9,8 +9,6 @@ import random
 import pandas as pd
 from tqdm import tqdm
 
-from test.integration.common import load_mimic_files
-
 from icenode.ehr_predictive.abstract import minibatch_trainer, MinibatchLogger
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
@@ -19,24 +17,19 @@ from icenode.ehr_predictive.dx_icenode_uniform2lr import ICENODE as ICENODE_UNIF
 
 from icenode.metric.common_metrics import evaluation_table
 from icenode.utils import load_config, load_params
-from icenode.ehr_model.ccs_dag import CCSDAG
-from icenode.ehr_model.jax_interface import (SubjectDiagSequenceJAXInterface,
-                                             DiagnosisJAXInterface)
+from icenode.ehr_model.jax_interface import (DxInterface_JAX,
+                                             create_patient_interface)
 
 
 def setUpModule():
-    global subject_interface_ts, subject_interface_seq, splits, code_groups
+    global dx_interface, splits, code_groups
 
-    test_subjects = load_mimic_files(
-        'test/integration/fixtures/synthetic_mimic/adm_df.csv.gz',
-        'test/integration/fixtures/synthetic_mimic/diag_df.csv.gz')
-    subject_interface_seq = SubjectDiagSequenceJAXInterface(
-        test_subjects, CCSDAG())
-    subject_interface_ts = DiagnosisJAXInterface(test_subjects, CCSDAG())
-    splits = subject_interface_ts.random_splits(split1=0.7,
-                                                split2=0.85,
-                                                random_seed=42)
-    code_groups = subject_interface_ts.diag_flatccs_by_percentiles(20)
+    dx_interface = create_patient_interface(
+        'test/integration/fixtures/synthetic_mimic')
+    splits = dx_interface.random_splits(split1=0.7,
+                                        split2=0.85,
+                                        random_seed=42)
+    code_groups = dx_interface.dx_flatccs_by_percentiles(20)
 
 
 def tearDownModule():
@@ -54,7 +47,7 @@ class DxCommonTests(object):
         self.assertTrue(len(self.config) > 0)
 
     def test_create(self):
-        model = self.model_cls.create_model(self.config, self.interface, [],
+        model = self.model_cls.create_model(self.config, dx_interface, [],
                                             None)
         state = model.init(self.config)
 
@@ -62,7 +55,7 @@ class DxCommonTests(object):
         self.assertTrue(state is not None)
 
     def test_train(self):
-        model = self.model_cls.create_model(self.config, self.interface, [],
+        model = self.model_cls.create_model(self.config, dx_interface, [],
                                             None)
         state = model.init(self.config)
         train_ids, val_ids, tst_ids = splits
@@ -82,7 +75,6 @@ class TestDxGRAM(DxCommonTests, unittest.TestCase):
         cls.config = load_config(
             'test/integration/fixtures/model_configs/dx_gram_m.json')
         cls.model_cls = GRAM
-        cls.interface = subject_interface_seq
 
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):
@@ -92,7 +84,6 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
         cls.config = load_config(
             'test/integration/fixtures/model_configs/dx_retain_m.json')
         cls.model_cls = RETAIN
-        cls.interface = subject_interface_seq
 
 
 class TestDxICENODE(DxCommonTests, unittest.TestCase):
@@ -102,7 +93,6 @@ class TestDxICENODE(DxCommonTests, unittest.TestCase):
         cls.config = load_config(
             'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json')
         cls.model_cls = ICENODE
-        cls.interface = subject_interface_ts
 
 
 class TestDxICENODE_UNIFORM(DxCommonTests, unittest.TestCase):
@@ -112,7 +102,6 @@ class TestDxICENODE_UNIFORM(DxCommonTests, unittest.TestCase):
         cls.config = load_config(
             'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json')
         cls.model_cls = ICENODE_UNIFORM
-        cls.interface = subject_interface_ts
 
 
 if __name__ == '__main__':

@@ -8,9 +8,9 @@ from typing import List, Dict, Mapping, Tuple, Callable, Set
 
 import numpy as np
 
-from ..ehr_model.mimic.concept import DiagSubject, DiagnosisAdmission
-from ..ehr_model.ccs_dag import CCSDAG
-from ..ehr_model.jax_interface import AbstractSubjectJAXInterface
+from ..ehr_model.mimic.concept import DxSubject, DxAdmission
+from ..ehr_model.ccs_dag import ccs_dag
+from ..ehr_model.jax_interface import DxInterface_JAX
 
 glove_logger = logging.getLogger("glove")
 """
@@ -21,17 +21,16 @@ http://www.foldl.me/2014/glove-python/
 CooccurrencesType = Dict[Tuple[int, int], int]
 
 
-def build_coocur(subjects: List[DiagSubject],
+def build_coocur(subjects: List[DxSubject],
                  code2idx: Mapping[str, int],
-                 adm_ccs_codes: Callable[[DiagnosisAdmission], Set[str]],
-                 ccs_dag: CCSDAG,
+                 adm_ccs_codes: Callable[[DxAdmission], Set[str]],
                  window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
     Build cooccurrence matrix from timestamped CCS codes.
 
     Args:
         subjects: a list of subjects (patients) from which diagnosis codes are extracted for GloVe initialization.
-        diag_idx: a mapping between CCS diagnosis codes as strings to integer indices.
+        dx_idx: a mapping between CCS diagnosis codes as strings to integer indices.
         proc_idx: a mapping between CCS procedure codes as strings to integer indices.
         ccs_dag: CCSDAG object that supports DAG operations on ICD9 codes in their hierarchical organization within CCS.
         window_size_days: the moving time window of the context.
@@ -62,7 +61,7 @@ def build_coocur(subjects: List[DiagSubject],
 
             def is_context(other_adm):
                 _adm_date, _adm = other_adm
-                delta_days = DiagSubject.days(adm_date, _adm_date)
+                delta_days = DxSubject.days(adm_date, _adm_date)
                 glove_logger.debug(f'delta_days: {delta_days}')
                 # Symmetric context (left+right)
                 return abs(delta_days) <= window_size_days
@@ -214,8 +213,8 @@ def train_glove(code2idx: Mapping[str, int],
 
 
 def glove_representation(category: str,
-                         patient_interface: AbstractSubjectJAXInterface,
-                         train_ids: List[DiagSubject],
+                         patient_interface: DxInterface_JAX,
+                         train_ids: List[int],
                          vector_size: int = 80,
                          iterations=25,
                          window_size_days=45,
@@ -238,21 +237,19 @@ def glove_representation(category: str,
         Two dictionaries (tuple) for the GloVe vector representation for diagnoses codes and procedure codes, respectively.
     """
 
-    if category == 'diag':
-        code2idx = patient_interface.diag_ccs_idx
+    if category == 'dx':
+        code2idx = ccs_dag.dx_ccs_idx
         adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.diag_icd2ccs.get, adm.icd9_diag_codes)) - {None}
+            map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes)) - {None}
     else:
         raise ValueError(f'Category {category} is not supported')
 
-    ccs_dag = patient_interface.dag
     glove_logger.setLevel(logging.WARNING)
 
     cooc = build_coocur(
         subjects=[patient_interface.subjects[i] for i in train_ids],
         code2idx=code2idx,
         adm_ccs_codes=adm_ccs_codes,
-        ccs_dag=ccs_dag,
         window_size_days=window_size_days)
     return train_glove(code2idx=code2idx,
                        cooccurrences=cooc,
