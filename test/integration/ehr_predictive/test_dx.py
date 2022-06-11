@@ -6,9 +6,6 @@ To execute this test from the root directory:
 import unittest
 import random
 
-import pandas as pd
-from tqdm import tqdm
-
 from icenode.ehr_predictive.abstract import minibatch_trainer, MinibatchLogger
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
