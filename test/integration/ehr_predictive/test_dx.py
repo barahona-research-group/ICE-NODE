@@ -7,6 +7,7 @@ import unittest
 import random
 
 from icenode.ehr_predictive.abstract import minibatch_trainer, MinibatchLogger
+from icenode.ehr_predictive.dx_window_logreg import WindowLogReg
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
 from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
@@ -63,6 +64,15 @@ class DxCommonTests(object):
                           *splits,
                           rng=random.Random(42),
                           reporters=[MinibatchLogger()])
+
+
+class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = load_config(
+            'test/integration/fixtures/model_configs/dx_winlogreg.json')
+        cls.model_cls = WindowLogReg
 
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):

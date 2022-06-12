@@ -9,6 +9,8 @@ from jax.tree_util import tree_flatten, tree_map, tree_leaves
 class OOPError(Exception):
     """Object Oriented design Exception (e.g. calling abstract method)."""
 
+class Unsupported(Exception):
+    """Unsupported operation."""
 
 def parameters_size(t):
     """Return the parameters count in a PyTree object."""

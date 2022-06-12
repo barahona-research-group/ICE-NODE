@@ -73,6 +73,25 @@ class AdmissionInfo:
         return adms
 
 
+class WindowFeatures:
+
+    def __init__(self, past_admissions: List[AdmissionInfo]):
+        self.dx_ccs_features = self.dx_ccs_jax(past_admissions)
+        self.dx_flatccs_features = self.dx_flatccs_jax(past_admissions)
+
+    @staticmethod
+    def dx_ccs_jax(past_admissions: List[AdmissionInfo]):
+        past_ccs_codes = jnp.vstack(
+            [adm.dx_ccs_jax for adm in past_admissions])
+        return jnp.max(past_ccs_codes, axis=0)
+
+    @staticmethod
+    def dx_flatccs_jax(past_admissions: List[AdmissionInfo]):
+        past_flatccs_codes = jnp.vstack(
+            [adm.dx_flatccs_jax for adm in past_admissions])
+        return jnp.max(past_flatccs_codes, axis=0)
+
+
 class DxInterface_JAX:
     """
     Class to prepare EHRs information to predictive models.
@@ -251,6 +270,45 @@ class DxInterface_JAX:
             subject.subject_id: AdmissionInfo.subject_to_admissions(subject)
             for subject in subjects
         }
+
+
+class DxWindowedInterface_JAX:
+
+    def __init__(self, dx_interface: DxInterface_JAX):
+        self.dx_interface = dx_interface
+        self.dx_win_features = self._compute_window_features(dx_interface)
+
+    @staticmethod
+    def _compute_window_features(dx_interface: DxInterface_JAX):
+        features = {}
+        for subj_id, adms in dx_interface.subjects.items():
+            current_window = []
+            # Windowed features only contain information about the past adms.
+            # First element, corresponding to first admission time, is None.
+            window_features = [None]
+
+            for adm in adms[:-1]:
+                current_window.append(adm)
+                window_features.append(WindowFeatures(current_window))
+            features[subj_id] = window_features
+        return features
+
+    def tabular_features(self, batch: Optional[List[int]] = None):
+        """
+        Features are the past window of CCS codes, and labels
+        are the past window of Flat CCS codes.
+        """
+        batch = batch or sorted(self.dx_win_features.keys())
+        X = []
+        y = []
+        for subj_id in batch:
+            adms = self.dx_interface.subjects[subj_id]
+            features = self.dx_win_features[subj_id]
+            for adm, feats in zip(adms[1:], features[1:]):
+                X.append(feats.dx_ccs_features)
+                y.append(adm.dx_flatccs_jax)
+
+        return np.vstack(X), np.vstack(y)
 
 
 def create_patient_interface(processed_mimic_tables_dir: str,

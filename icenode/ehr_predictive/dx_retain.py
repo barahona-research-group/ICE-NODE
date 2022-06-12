@@ -1,7 +1,8 @@
+"""JAX implementation of RETAIN algorithm."""
+
 from functools import partial
 from typing import Any, List
 
-import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
@@ -13,8 +14,6 @@ from ..embeddings.gram import AbstractEmbeddingsLayer
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
 from ..ehr_predictive.abstract import AbstractModel
-
-from ..ehr_model.mimic.concept import DxSubject
 from ..ehr_model.ccs_dag import ccs_dag
 
 from .risk import BatchPredictedRisks
