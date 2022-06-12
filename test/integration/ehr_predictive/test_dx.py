@@ -65,12 +65,21 @@ class DxCommonTests(object):
                           reporters=[MinibatchLogger()])
 
 
-class TestDxGRAM(DxCommonTests, unittest.TestCase):
+class TestDxGRU_M(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
         cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_gram_m.json')
+            'test/integration/fixtures/model_configs/dx_gru_m.json')
+        cls.model_cls = GRAM
+
+
+class TestDxGRU_G(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = load_config(
+            'test/integration/fixtures/model_configs/dx_gru_g.json')
         cls.model_cls = GRAM
 
 
@@ -83,7 +92,7 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
         cls.model_cls = RETAIN
 
 
-class TestDxICENODE(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -92,7 +101,16 @@ class TestDxICENODE(DxCommonTests, unittest.TestCase):
         cls.model_cls = ICENODE
 
 
-class TestDxICENODE_UNIFORM(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = load_config(
+            'test/integration/fixtures/model_configs/dx_icenode_2lr_g.json')
+        cls.model_cls = ICENODE
+
+
+class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
