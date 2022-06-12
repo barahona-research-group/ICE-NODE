@@ -152,22 +152,18 @@ def minibatch_trainer(model,
     return auc
 
 
-def batch_trainer(model,
-                  m_state,
-                  config,
-                  train_ids,
-                  valid_ids,
-                  test_ids,
-                  rng,
-                  code_frequency_groups=None,
-                  trial_terminate_time=datetime.max,
-                  reporters: List[MinibatchTrainReporter] = []):
+def sklearn_trainer(model,
+                    m_state,
+                    config,
+                    train_ids,
+                    valid_ids,
+                    test_ids,
+                    rng,
+                    code_frequency_groups=None,
+                    trial_terminate_time=datetime.max,
+                    reporters: List[MinibatchTrainReporter] = []):
 
     m_state = model.step_optimizer(100, m_state, train_ids)
-
-    if model.hasnan(m_state):
-        [r.report_nan_detected() for r in reporters]
-
     [r.report_progress(100) for r in reporters]
 
     raw_res = {

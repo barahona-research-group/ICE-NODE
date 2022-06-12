@@ -5,18 +5,18 @@ To execute this test from the root directory:
 
 import unittest
 import random
+from sklearn.exceptions import ConvergenceWarning
 
-from icenode.ehr_predictive.abstract import minibatch_trainer, MinibatchLogger
+from icenode.ehr_predictive.trainer import (minibatch_trainer, MinibatchLogger,
+                                            sklearn_trainer)
 from icenode.ehr_predictive.dx_window_logreg import WindowLogReg
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
 from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
 from icenode.ehr_predictive.dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM
 
-from icenode.metric.common_metrics import evaluation_table
 from icenode.utils import load_config, load_params
-from icenode.ehr_model.jax_interface import (DxInterface_JAX,
-                                             create_patient_interface)
+from icenode.ehr_model.jax_interface import (create_patient_interface)
 
 
 def setUpModule():
@@ -52,21 +52,34 @@ class DxCommonTests(object):
         self.assertTrue(callable(model))
         self.assertTrue(state is not None)
 
-    def test_train(self):
-        model = self.model_cls.create_model(self.config, dx_interface, [],
-                                            None)
-        state = model.init(self.config)
-        train_ids, val_ids, tst_ids = splits
-
+    @staticmethod
+    def _train(model, m_state, m_config):
         minibatch_trainer(model,
-                          state,
-                          self.config,
+                          m_state,
+                          m_config,
                           *splits,
                           rng=random.Random(42),
                           reporters=[MinibatchLogger()])
 
+    def test_train(self):
+        model = self.model_cls.create_model(self.config, dx_interface, [],
+                                            None)
+        state = model.init(self.config)
+
+        self._train(model, state, self.config)
+
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
+
+    @staticmethod
+    def _train(model, m_state, m_config):
+        ConvergenceWarning('ignore')
+        sklearn_trainer(model,
+                        m_state,
+                        m_config,
+                        *splits,
+                        rng=random.Random(42),
+                        reporters=[MinibatchLogger()])
 
     @classmethod
     def setUpClass(cls):

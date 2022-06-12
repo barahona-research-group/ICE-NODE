@@ -2,9 +2,11 @@
 previous visits."""
 
 from typing import Any, List, Dict
+from absl import logging
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.multioutput import MultiOutputClassifier
 import optuna
 
 from ..ehr_model.jax_interface import (DxInterface_JAX,
@@ -13,7 +15,7 @@ from ..ehr_predictive.abstract import AbstractModel
 from ..utils import Unsupported
 
 from .risk import BatchPredictedRisks
-from .trainer import batch_trainer
+from .trainer import sklearn_trainer
 
 
 class WindowLogReg(AbstractModel):
@@ -27,16 +29,17 @@ class WindowLogReg(AbstractModel):
         self.dx_interface = DxWindowedInterface_JAX(subject_interface)
         self.model_config = {
             'penalty': 'elasticnet',
-            'multi_class': 'multinomial',
             'solver': 'saga',
             'C': reg_c,
             'l1_ratio': reg_l1_ratio,
             'class_weight': 'balanced' if balanced else None
         }
+        self.supported_labels = None
+        self.n_labels = None
 
     def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
-        params = self.get_params(opt_obj)
-        res = self(params, batch)
+        skmodel = self.get_params(opt_obj)
+        res = self(skmodel, batch)
         return {
             'loss': {},
             'stats': {},
@@ -44,22 +47,37 @@ class WindowLogReg(AbstractModel):
         }
 
     @classmethod
-    def step_optimizer(self, eval_step, m_state: Any,
+    def step_optimizer(cls, eval_step, m_state: Any,
                        subjects_batch: List[int]):
-        X, y = m_state.dx_interface.tabular_features(subjects_batch)
-        m_state = m_state.fit(X, y)
-        return m_state
+        model, skmodel = m_state
+        X, y = model.dx_interface.tabular_features(subjects_batch)
+        # Training with LR requires at least two classes in the training.
+        y_mask = (y.sum(axis=0) != 0).squeeze()
+        skmodel = skmodel.fit(X, y[:, y_mask])
+        model.n_labels = y.shape[1]
+        model.supported_labels = y_mask
+        return (model, skmodel)
 
-    def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        model = self.init_with_params(self.model_config, params)
+    def __call__(self, skmodel: Any, subjects_batch: List[int], **kwargs):
+        model, skmodel = self.init_with_params(self.model_config, skmodel)
+
+        y_mask = model.supported_labels
+
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = self.dx_interface.dx_interface.subjects[subj_id]
-            features = self.dx_interface.dx_win_features[subj_id]
+            adms = model.dx_interface.dx_interface.subjects[subj_id]
+            features = model.dx_interface.dx_win_features[subj_id]
 
             X = np.vstack([feats.dx_ccs_features for feats in features[1:]])
-            y = np.vstack([adm.dx_flatccs_jax for adm in adms[1:]])
-            risk = model.decision_function(X)
+            y = np.vstack([adm.dx_flatccs_codes for adm in adms[1:]])
+
+            risk = np.zeros_like(y, dtype=float)
+            # .predict_proba function now returns a list of arrays
+            # where the length of the list is n_outputs,
+            # and each array is (n_samples, n_classes)
+            # for that particular output.
+            risk[:, y_mask] = np.vstack(
+                [o[:, 0] for o in skmodel.predict_proba(X)]).T
 
             for i, (r, gt) in enumerate(zip(risk, y)):
                 risk_prediction.add(subject_id=subj_id,
@@ -82,8 +100,9 @@ class WindowLogReg(AbstractModel):
 
     def init_params(self, prng_seed: int = 0):
         self.model_config['random_state'] = prng_seed
-        m_state = LogisticRegression(**self.model_config)
-        return m_state.get_params()
+        skmodel = MultiOutputClassifier(
+            LogisticRegression(**self.model_config))
+        return skmodel
 
     @staticmethod
     def optimizer_class(label: str):
@@ -97,14 +116,13 @@ class WindowLogReg(AbstractModel):
     def init_optimizer(cls, config, params):
         raise Unsupported("Unsupported.")
 
-    def init_with_params(self, config: Dict[str, Any], params: Any):
-        m_state = LogisticRegression(**self.model_config)
-        m_state.set_params(**params)
-        return m_state
+    def init_with_params(self, config: Dict[str, Any], skmodel: Any):
+        return (self, skmodel)
 
     @classmethod
     def get_params(cls, m_state):
-        return m_state.get_params()
+        model, skmodel = m_state
+        return skmodel
 
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
@@ -125,6 +143,11 @@ class WindowLogReg(AbstractModel):
             'model': cls.sample_model_config(trial),
         }
 
+    @classmethod
+    def create_model(cls, config, patient_interface, train_ids,
+                     pretrained_components):
+        return cls(subject_interface=patient_interface, **config['model'])
+
     @staticmethod
     def get_trainer():
-        return batch_trainer
+        return sklearn_trainer

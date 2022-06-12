@@ -1,8 +1,11 @@
 """Integration Test for EHR data model"""
 
 import unittest
+import logging
+import sys
 
 from icenode.ehr_model.jax_interface import (DxInterface_JAX,
+                                             DxWindowedInterface_JAX,
                                              create_patient_interface)
 
 
@@ -23,5 +26,20 @@ class TestDxInterface(unittest.TestCase):
             self.interface.subjects.keys())
 
 
+class TestDxWindowedInterface(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.interface = create_patient_interface(
+            'test/integration/fixtures/synthetic_mimic')
+        cls.win_features = DxWindowedInterface_JAX(cls.interface)
+
+    def test_tabular(self):
+        X, y = self.win_features.tabular_features()
+        self.assertTrue(set(X.flatten()) & set(y.flatten()) == {0, 1})
+
+
 if __name__ == '__main__':
-    unittest.main()
+    logging.basicConfig(level=logging.DEBUG)
+    runner = unittest.TextTestRunner(verbosity=2)
+    unittest.main(testRunner=runner)

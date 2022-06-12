@@ -82,13 +82,13 @@ class WindowFeatures:
     @staticmethod
     def dx_ccs_jax(past_admissions: List[AdmissionInfo]):
         past_ccs_codes = jnp.vstack(
-            [adm.dx_ccs_jax for adm in past_admissions])
+            [adm.dx_ccs_codes for adm in past_admissions])
         return jnp.max(past_ccs_codes, axis=0)
 
     @staticmethod
     def dx_flatccs_jax(past_admissions: List[AdmissionInfo]):
         past_flatccs_codes = jnp.vstack(
-            [adm.dx_flatccs_jax for adm in past_admissions])
+            [adm.dx_flatccs_codes for adm in past_admissions])
         return jnp.max(past_flatccs_codes, axis=0)
 
 
@@ -306,7 +306,7 @@ class DxWindowedInterface_JAX:
             features = self.dx_win_features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
                 X.append(feats.dx_ccs_features)
-                y.append(adm.dx_flatccs_jax)
+                y.append(adm.dx_flatccs_codes)
 
         return np.vstack(X), np.vstack(y)
 
