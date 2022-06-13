@@ -149,7 +149,7 @@ def minibatch_trainer(model,
         if auc > best_score:
             best_score = auc
 
-    return auc
+    return {'objective': auc, 'model': (model, m_state)}
 
 
 def sklearn_trainer(model,
@@ -180,4 +180,4 @@ def sklearn_trainer(model,
         r.report_evaluation(100, auc, eval_df, eval_flat)
         r.report_params(100, model, m_state, last_iter=True, current_best=True)
 
-    return auc
+    return {'objective': auc, 'model': (model, m_state)}

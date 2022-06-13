@@ -12,8 +12,7 @@ import optuna
 
 from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
 from ..utils import wrap_module
-from ..ehr_model.jax_interface import (DxInterface_JAX, AdmissionInfo,
-                                       create_patient_interface)
+from ..ehr_model.jax_interface import (DxInterface_JAX, AdmissionInfo)
 from ..ehr_model.ccs_dag import ccs_dag
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,

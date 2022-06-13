@@ -19,9 +19,10 @@ from sqlalchemy.pool import NullPool
 import mlflow
 
 from ..utils import (write_config)
-from ..ehr_predictive.abstract import (AbstractModel, MinibatchTrainReporter,
-                                       minibatch_trainer, MinibatchLogger,
-                                       EvaluationDiskWriter, ParamsDiskWriter)
+from ..ehr_predictive.trainer import (MinibatchTrainReporter,
+                                      minibatch_trainer, MinibatchLogger,
+                                      EvaluationDiskWriter, ParamsDiskWriter)
+from ..ehr_predictive.abstract import (AbstractModel)
 
 
 class ResourceTimeout(Exception):
@@ -239,16 +240,16 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     # Exceptions.
     reporters.append(OptunaReporter(trial=trial))
 
-    return minibatch_trainer(model,
-                             m_state,
-                             config,
-                             train_ids,
-                             valid_ids,
-                             test_ids,
-                             rng,
-                             code_frequency_groups,
-                             trial_terminate_time=trial_stop_time,
-                             reporters=reporters)
+    return model.get_trainer()(model,
+                               m_state,
+                               config,
+                               train_ids,
+                               valid_ids,
+                               test_ids,
+                               rng,
+                               code_frequency_groups,
+                               trial_terminate_time=trial_stop_time,
+                               reporters=reporters)
 
 
 def run_trials(model_cls: AbstractModel, pretrained_components: str,

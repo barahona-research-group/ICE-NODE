@@ -1,7 +1,6 @@
 from functools import partial
 from typing import Any, List
 
-import pandas as pd
 import haiku as hk
 import jax
 import jax.numpy as jnp
