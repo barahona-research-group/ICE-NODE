@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-sys.path.append(['.', '..'])
+sys.path.append('..')
 from icenode.metric.common_metrics import codes_auc_pairwise_tests
 from icenode.metric.common_metrics import evaluation_table
 
@@ -112,7 +112,6 @@ def relative_performance_upset(auc_tests, selected_clfs, pvalue, min_auc):
     )
 
     test_cols = [col for col in auc_tests.columns if col[:2] == 'P0']
-
     # exclude tests with nans
     accepted_auc_tests = accepted_auc_tests[
         accepted_auc_tests.loc[:, test_cols].isnull().max(axis=1) == 0]
