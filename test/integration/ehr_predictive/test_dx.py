@@ -54,10 +54,10 @@ class DxCommonTests(object):
 
     @staticmethod
     def _train(model, m_state, m_config):
-        minibatch_trainer(model,
-                          m_state,
-                          m_config,
-                          *splits,
+        minibatch_trainer(model=model,
+                          m_state=m_state,
+                          config=m_config,
+                          splits=splits,
                           rng=random.Random(42),
                           reporters=[MinibatchLogger()])
 
@@ -74,11 +74,9 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
     @staticmethod
     def _train(model, m_state, m_config):
         ConvergenceWarning('ignore')
-        sklearn_trainer(model,
-                        m_state,
-                        m_config,
-                        *splits,
-                        rng=random.Random(42),
+        sklearn_trainer(model=model,
+                        m_state=m_state,
+                        splits=splits,
                         reporters=[MinibatchLogger()])
 
     @classmethod

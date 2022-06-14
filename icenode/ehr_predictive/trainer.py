@@ -153,12 +153,10 @@ def minibatch_trainer(model,
 
 def sklearn_trainer(model,
                     m_state,
-                    config,
                     splits,
-                    rng,
                     code_frequency_groups=None,
-                    trial_terminate_time=datetime.max,
-                    reporters: List[MinibatchTrainReporter] = []):
+                    reporters: List[MinibatchTrainReporter] = [],
+                    **kwargs):
     train_ids, valid_ids, test_ids = splits
 
     m_state = model.step_optimizer(100, m_state, train_ids)
