@@ -6,7 +6,7 @@ This folder contains four notebooks to reproduce the results in the `ICE-NODE` p
 **Abstract:**
 > Early diagnosis of disease can result in improved health outcomes, such as higher survival rates and lower treatment costs. With the massive amount of information in electronic health records (EHRs), there is great potential to use machine learning (ML) methods to model disease progression aimed at early prediction of disease onset and other outcomes. In this work, we employ recent innovations in neural ODEs to harness the full temporal information of EHRs. We propose ICE-NODE (Integration of Clinical Embeddings with Neural Ordinary Differential Equations), an architecture that temporally integrates embeddings of clinical codes and neural ODEs to learn and predict patient trajectories in EHRs. We apply our method to the publicly available MIMIC-III and MIMIC-IV datasets, reporting improved prediction results compared to state-of-the-art methods, specifically for clinical codes that are not frequently observed in EHRs. We also show that ICE-NODE is more competent at predicting certain medical conditions, like acute renal failure and pulmonary heart disease, and is also able to produce patient risk trajectories over time that can be exploited for further predictions.
 
-![](figures/figure1.svg)
+![](https://raw.githubusercontent.com/A-Alaa/ICENODE/main/figures/figure1.svg)
 
 ## Cloning ICE-NODE (paper version)
 
@@ -17,7 +17,7 @@ Having `git` installed and the main repository cloned, change the command line d
 
 
 ```bash
-$ git clone git@github.com:MLHC22-Anonymous/ICE-NODE.git repo --branch mlhc --single-branch  --depth 1
+$ git clone git@github.com:A-Alaa/ICE-NODE.git repo --branch main --single-branch  --depth 1
 ```
 
 ## Installing Dependencies
@@ -52,13 +52,13 @@ To use one of the notebooks provided, please ensure that the newly installed env
 
 ### Preparation of MIMIC-III and MIMIC-IV
 
-- Notebook 1 (`mimic3_preparation.ipynb`): Preparation of MIMIC-III dataset
-- Notebook 2 (`mimic4_preparation.ipynb`): Preparation of MIMIV-IV dataset
+- Notebook 1 (`notebooks/dx_mimic3_preparation.ipynb`): Preparation of MIMIC-III dataset
+- Notebook 2 (`notebooks/dx_mimic4_preparation.ipynb`): Preparation of MIMIV-IV dataset
 
 ### Training and Performance Analysis
 
-- Notebook 3 (`training.ipynb`): Training `ICE-NODE` and the baselines.
-- Notebook 4 (`fine_analysis.ipynb`): Performance Analysis and Trajectory Reconstruction.
+- Notebook 3 (`notebooks/dx_training.ipynb`): Training `ICE-NODE` and the baselines.
+- Notebook 4 (`notebooks/dx_fine_analysis.ipynb`): Performance Analysis and Trajectory Reconstruction.
 
 
 Note: We provide pretrained models in this repository since some training experiments (such as RETAIN on MIMIC-IV) takes more than two weeks. You may use our pretrained models in the performance analysis as instructed in `fine_analysis.ipynb`.

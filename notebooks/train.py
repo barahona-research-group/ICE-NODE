@@ -39,14 +39,11 @@ def init_models(clfs, config, interface, train_ids):
 
 def train(model, config, splits, code_groups, reporters):
     model, m_state = model
-    train_ids, valid_ids, test_ids = splits
     trainer = model.get_trainer()
     return trainer(model=model,
                    m_state=m_state,
                    config=config,
-                   train_ids=train_ids,
-                   valid_ids=valid_ids,
-                   test_ids=test_ids,
+                   splits=splits,
                    rng=random.Random(42),
                    code_frequency_groups=code_groups,
                    reporters=reporters)

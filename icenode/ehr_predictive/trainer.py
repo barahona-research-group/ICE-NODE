@@ -82,13 +82,12 @@ class ParamsDiskWriter(MinibatchTrainReporter):
 def minibatch_trainer(model,
                       m_state,
                       config,
-                      train_ids,
-                      valid_ids,
-                      test_ids,
+                      splits,
                       rng,
                       code_frequency_groups=None,
                       trial_terminate_time=datetime.max,
                       reporters: List[MinibatchTrainReporter] = []):
+    train_ids, valid_ids, test_ids = splits
     # Because shuffling is done in-place.
     train_ids = copy.deepcopy(train_ids)
 
@@ -155,13 +154,12 @@ def minibatch_trainer(model,
 def sklearn_trainer(model,
                     m_state,
                     config,
-                    train_ids,
-                    valid_ids,
-                    test_ids,
+                    splits,
                     rng,
                     code_frequency_groups=None,
                     trial_terminate_time=datetime.max,
                     reporters: List[MinibatchTrainReporter] = []):
+    train_ids, valid_ids, test_ids = splits
 
     m_state = model.step_optimizer(100, m_state, train_ids)
     [r.report_progress(100) for r in reporters]

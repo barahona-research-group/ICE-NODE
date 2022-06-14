@@ -19,8 +19,7 @@ from sqlalchemy.pool import NullPool
 import mlflow
 
 from ..utils import (write_config)
-from ..ehr_predictive.trainer import (MinibatchTrainReporter,
-                                      minibatch_trainer, MinibatchLogger,
+from ..ehr_predictive.trainer import (MinibatchTrainReporter, MinibatchLogger,
                                       EvaluationDiskWriter, ParamsDiskWriter)
 from ..ehr_predictive.abstract import (AbstractModel)
 
@@ -185,9 +184,8 @@ def capture_args():
 
 
 def objective(model_cls: AbstractModel, emb: str, pretrained_components,
-              patient_interface, train_ids, test_ids, valid_ids, rng, job_id,
-              output_dir, trial_stop_time: datetime, frozen: bool,
-              trial: optuna.Trial):
+              patient_interface, splits, rng, job_id, output_dir,
+              trial_stop_time: datetime, frozen: bool, trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
 
     mlflow_set_tag('job_id', job_id, frozen)
@@ -216,10 +214,10 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model = model_cls.create_model(config, patient_interface, train_ids,
+    model = model_cls.create_model(config, patient_interface, splits[0],
                                    pretrained_components)
 
-    code_frequency_groups = model.code_partitions(patient_interface, train_ids)
+    code_frequency_groups = model.code_partitions(patient_interface, splits[0])
 
     m_state = model.init(config)
     logging.info('[DONE] Sampling & Initializing Models')
@@ -240,16 +238,14 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     # Exceptions.
     reporters.append(OptunaReporter(trial=trial))
 
-    return model.get_trainer()(model,
-                               m_state,
-                               config,
-                               train_ids,
-                               valid_ids,
-                               test_ids,
-                               rng,
-                               code_frequency_groups,
+    return model.get_trainer()(model=model,
+                               m_state=m_state,
+                               config=config,
+                               splits=splits,
+                               rng=rng,
+                               code_frequency_groups=code_frequency_groups,
                                trial_terminate_time=trial_stop_time,
-                               reporters=reporters)
+                               reporters=reporters)['objective']
 
 
 def run_trials(model_cls: AbstractModel, pretrained_components: str,
@@ -305,8 +301,9 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # splits = train:val:test = 0.7:.15:.15
-    train_ids, valid_ids, test_ids = patient_interface.random_splits(
-        split1=0.7, split2=0.85, random_seed=42)
+    splits = patient_interface.random_splits(split1=0.7,
+                                             split2=0.85,
+                                             random_seed=42)
 
     def objective_f(trial: optuna.Trial):
         study_attrs = study.user_attrs
@@ -323,9 +320,7 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
                          emb=emb,
                          pretrained_components=pretrained_components,
                          patient_interface=patient_interface,
-                         train_ids=train_ids,
-                         test_ids=test_ids,
-                         valid_ids=valid_ids,
+                         splits=splits,
                          rng=random.Random(42),
                          job_id=job_id,
                          output_dir=output_dir,
