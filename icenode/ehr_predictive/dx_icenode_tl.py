@@ -22,6 +22,7 @@ from .risk import BatchPredictedRisks
 
 
 class ICENODE(AbstractModel):
+
     def __init__(self, subject_interface: DxInterface_JAX,
                  dx_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, state_size: int,
@@ -456,14 +457,11 @@ class ICENODE(AbstractModel):
         return admissions_auc_scores(res['risk_prediction'])
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
-        dx_emb = cls.create_embedding(
-            emb_config=config['emb']['dx'],
-            emb_kind=config['emb']['kind'],
-            patient_interface=patient_interface,
-            train_ids=train_ids,
-            pretrained_components=pretrained_components)
+    def create_model(cls, config, patient_interface, train_ids):
+        dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
+                                      emb_kind=config['emb']['kind'],
+                                      patient_interface=patient_interface,
+                                      train_ids=train_ids)
         return cls(subject_interface=patient_interface,
                    dx_emb=dx_emb,
                    **config['model'])
@@ -502,5 +500,5 @@ class ICENODE(AbstractModel):
 
 
 if __name__ == '__main__':
-    from ..hyperopt.hpo_utils import capture_args, run_trials
+    from ..hyperopt.optuna_job import capture_args, run_trials
     run_trials(model_cls=ICENODE, **capture_args())

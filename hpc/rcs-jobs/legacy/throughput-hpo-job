@@ -1,6 +1,8 @@
-#PBS -lselect=1:ncpus=8:mem=96gb
 
-#PBS -lwalltime=0:30:0
+
+#PBS -lwalltime=72:0:0
+
+#PBS -J 1-10
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -14,20 +16,31 @@ cd $TMPDIR/ICENODE
 # Load modules for any applications
 
 # Run program
+OUTPUT_DIR=""
+DATA_DIR=""
+
+if [[ "$DATA_TAG" == "M3" ]]; then
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
+else
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
+fi
+
 $HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
---output-dir $HOME/GP/ehr-data/icenode-experiments \
---mimic-processed-dir ~/GP/ehr-data/mimic3-transforms \
---study-tag debug_$STUDY_TAG \
+--output-dir $OUTPUT_DIR \
+--mimic-processed-dir $DATA_DIR \--data-tag $DATA_TAG \
+--study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials 1 \
--N 5 \
+--num-trials 30 \
+--trials-time-limit 72 \
+--training-time-limit 48 \
+-N 4 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
---trials-time-limit 2 \
---training-time-limit 1 \
 --pretrained-components icenode_configs/pretrained_components_rcs.json \
 --cpu 
 

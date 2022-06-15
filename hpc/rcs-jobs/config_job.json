@@ -1,0 +1,70 @@
+{
+	"singlenode":
+	{
+		"spec": "#PBS -lselect=1:ncpus=48:mem=124gb",
+		"array": "5",
+		"parallel": "4",
+		"hours": "24:0",
+		"cpu": true,
+		"n_trials": "30",
+		"training_time_limit" : "12"
+	},
+	"general":
+	{
+		"spec": "#PBS -lselect=1:ncpus=32:mem=124gb",
+		"array": "10",
+		"parallel": "5",
+		"hours": "72:0",
+		"cpu": true,
+		"n_trials": "30",
+		"training_time_limit" : "48"
+	},
+	"throughput":
+	{
+		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
+		"array": "10",
+		"parallel": "4",
+		"hours": "72:0",
+		"cpu": true,
+		"n_trials": "30",
+		"training_time_limit" : "48"
+	},
+	"large_memory":
+	{
+		"spec": "#PBS -lselect=1:ncpus=30:mem=360gb",
+		"array": "5",
+		"parallel": "15",
+		"hours": "48:0",
+		"cpu": true,
+		"n_trials": "30",
+		"training_time_limit" : "36"
+	},
+	"long":
+	{
+		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
+		"parallel": "4",
+		"hours": "500:0",
+		"cpu": true,
+		"n_trials": "30",
+		"training_time_limit" : "400"
+	},
+	"gpu":
+	{
+		"spec": "#PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=RTX6000",
+		"array": "10",
+		"parallel": "1",
+		"hours": "24:0",
+		"n_trials": "30",
+		"training_time_limit" : "12",
+		"load_modules": ["cudnn/8.2.4", "cuda/11.4.2"]
+	},
+	"debug":
+	{
+		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
+		"parallel": "4",
+		"hours": "0:30",
+		"cpu": true,
+		"n_trials": "1",
+		"training_time_limit" : "1"
+	}
+}

@@ -32,7 +32,8 @@ class WindowLogReg(AbstractModel):
             'solver': 'saga',
             'C': reg_c,
             'l1_ratio': reg_l1_ratio,
-            'class_weight': 'balanced' if balanced else None
+            'class_weight': 'balanced' if balanced else None,
+            'max_iter': 2000
         }
         self.supported_labels = None
         self.n_labels = None
@@ -133,21 +134,24 @@ class WindowLogReg(AbstractModel):
         return {
             'reg_c': trial.suggest_loguniform('C', 1e-3, 1e3),
             'reg_l1_ratio': trial.suggest_float('l1_ratio', 0.0, 1.0),
-            'balanced': trial.suggest_categorical('weight', True, False)
+            'balanced': trial.suggest_categorical('weight', [True, False])
         }
 
     @classmethod
-    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str,
-                                 pretrained_components: str):
+    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str):
         return {
             'model': cls.sample_model_config(trial),
         }
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
+    def create_model(cls, config, patient_interface, train_ids):
         return cls(subject_interface=patient_interface, **config['model'])
 
     @staticmethod
     def get_trainer():
         return sklearn_trainer
+
+
+if __name__ == '__main__':
+    from ..hyperopt.optuna_job import capture_args, run_trials
+    run_trials(model_cls=WindowLogReg, **capture_args())

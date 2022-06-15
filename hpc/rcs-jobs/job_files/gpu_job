@@ -4,20 +4,19 @@
 
 #PBS -J 1-10
 
-# Load GPU modeuls
-module load cuda/11.4.2
-module load cudnn/8.2.4
-
 # Setup environement using .bashrc
 source $HOME/.bashrc
-$HOME/anaconda3/condabin/conda activate icenode
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $TMPDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1 
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
 
-cd $TMPDIR/ICENODE
+cd $TMPDIR/ICE-NODE
 
-# Load modules for any applications
+$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
+
+# Load modules
+module load cudnn/8.2.4
+module load cuda/11.4.2
 
 # Run program
 
@@ -32,7 +31,7 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
+$HOME/anaconda3/envs/icenode/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
@@ -41,12 +40,13 @@ $HOME/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials 30 \
 --trials-time-limit 24 \
---training-time-limit 12 \
 -N 1 \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX"  \
---pretrained-components icenode_configs/pretrained_components_rcs.json
+--num-trials 30 \
+--training-time-limit 12 \
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
+
+
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp ./* $PBS_O_WORKDIR/$PBS_JOBID -r
+cp * $PBS_O_WORKDIR/$PBS_JOBID

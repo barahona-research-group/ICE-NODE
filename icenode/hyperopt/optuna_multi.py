@@ -37,7 +37,7 @@ if __name__ == '__main__':
         '--emb',
         required=True,
         help=
-        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram)'
+        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)'
     )
     short_tags = {
         'matrix': 'M',
@@ -45,7 +45,8 @@ if __name__ == '__main__':
         'glove_gram': 'G',
         'semi_frozen_gram': 'S',
         'frozen_gram': 'F',
-        'tuneble_gram': 'T'
+        'tuneble_gram': 'T',
+        'NA': '-'
     }
 
     parser.add_argument(
@@ -77,8 +78,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--job-id', required=False)
 
-    parser.add_argument('--pretrained-components', required=False)
-
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -92,7 +91,6 @@ if __name__ == '__main__':
     cpu = args.cpu
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
-    pretrained_components = args.pretrained_components
     emb = args.emb
     data_tag = args.data_tag
 
@@ -108,7 +106,7 @@ if __name__ == '__main__':
 
     env = dict(os.environ)
     cmd = [
-        sys.executable, '-m', f'icenode.train_{model}', '--study-name',
+        sys.executable, '-m', f'icenode.ehr_predictive.{model}', '--study-name',
         study_name, '--optuna-store', optuna_store, '--mlflow-store',
         mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
         mimic_processed_dir, '--data-tag', data_tag, '--emb', emb,
@@ -116,8 +114,6 @@ if __name__ == '__main__':
         str(trials_time_limit), '--training-time-limit',
         str(training_time_limit), '--job-id', job_id
     ]
-    if pretrained_components:
-        cmd.extend(['--pretrained-components', pretrained_components])
     if cpu:
         cmd.append('--cpu')
 

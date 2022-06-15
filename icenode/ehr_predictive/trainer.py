@@ -1,6 +1,6 @@
-import logging
 import os
 import copy
+from absl import logging
 from typing import List
 from datetime import datetime
 
@@ -9,7 +9,7 @@ from tqdm import tqdm
 from ..metric.common_metrics import evaluation_table
 
 
-class MinibatchTrainReporter:
+class AbstractReporter:
     """
     Different loggers and reporters:
         1. Optuna reporter
@@ -45,7 +45,7 @@ class MinibatchTrainReporter:
         pass
 
 
-class MinibatchLogger(MinibatchTrainReporter):
+class MinibatchLogger(AbstractReporter):
 
     def report_nan_detected(self):
         logging.warning('NaN detected')
@@ -55,7 +55,7 @@ class MinibatchLogger(MinibatchTrainReporter):
         logging.info(evals_df)
 
 
-class EvaluationDiskWriter(MinibatchTrainReporter):
+class EvaluationDiskWriter(AbstractReporter):
 
     def __init__(self, trial_dir):
         self.trial_dir = trial_dir
@@ -66,7 +66,7 @@ class EvaluationDiskWriter(MinibatchTrainReporter):
             os.path.join(self.trial_dir, f'step{eval_step:04d}_eval.csv'))
 
 
-class ParamsDiskWriter(MinibatchTrainReporter):
+class ParamsDiskWriter(AbstractReporter):
 
     def __init__(self, trial_dir, write_every_iter=False):
         self.trial_dir = trial_dir
@@ -86,7 +86,7 @@ def minibatch_trainer(model,
                       rng,
                       code_frequency_groups=None,
                       trial_terminate_time=datetime.max,
-                      reporters: List[MinibatchTrainReporter] = []):
+                      reporters: List[AbstractReporter] = []):
     train_ids, valid_ids, test_ids = splits
     # Because shuffling is done in-place.
     train_ids = copy.deepcopy(train_ids)
@@ -155,7 +155,7 @@ def sklearn_trainer(model,
                     m_state,
                     splits,
                     code_frequency_groups=None,
-                    reporters: List[MinibatchTrainReporter] = [],
+                    reporters: List[AbstractReporter] = [],
                     **kwargs):
     train_ids, valid_ids, test_ids = splits
 

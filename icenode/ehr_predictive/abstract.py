@@ -129,7 +129,7 @@ class AbstractModel:
 
     @classmethod
     def create_embedding(cls, emb_config, emb_kind, patient_interface,
-                         train_ids, pretrained_components):
+                         train_ids):
         if emb_kind == 'matrix':
             input_dim = len(ccs_dag.dx_ccs_idx)
             return MatrixEmbeddings(input_dim=input_dim, **emb_config)
@@ -144,16 +144,17 @@ class AbstractModel:
                              train_ids=train_ids,
                              **emb_config)
 
-        if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            emb_component = pretrained_components['emb']['dx']['params_file']
-            emb_params = load_params(emb_component)['dx_emb']
-            if emb_kind == 'semi_frozen_gram':
-                return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
-            elif emb_kind == 'frozen_gram':
-                return FrozenGRAM(initial_params=emb_params, **emb_config)
-            else:
-                return TunableGRAM(initial_params=emb_params, **emb_config)
+
+#         if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+#             pretrained_components = load_config(pretrained_components)
+#             emb_component = pretrained_components['emb']['dx']['params_file']
+#             emb_params = load_params(emb_component)['dx_emb']
+#             if emb_kind == 'semi_frozen_gram':
+#                 return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
+#             elif emb_kind == 'frozen_gram':
+#                 return FrozenGRAM(initial_params=emb_params, **emb_config)
+#             else:
+#                 return TunableGRAM(initial_params=emb_params, **emb_config)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
@@ -162,8 +163,7 @@ class AbstractModel:
         return patient_interface.dx_flatccs_by_percentiles(20, train_ids)
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
+    def create_model(cls, config, patient_interface, train_ids):
         raise OOPError('Should be overriden')
 
     @classmethod
@@ -198,22 +198,19 @@ class AbstractModel:
         }
 
     @classmethod
-    def sample_embeddings_config(cls,
-                                 trial: optuna.Trial,
-                                 emb_kind: str,
-                                 pretrained_components: Optional[Any] = None):
+    def sample_embeddings_config(cls, trial: optuna.Trial, emb_kind: str):
         if emb_kind == 'matrix':
             emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
         elif emb_kind == 'orthogonal_gram':
             emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
         elif emb_kind == 'glove_gram':
             emb_config = GloVeGRAM.sample_model_config('dx', trial)
-        elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-            pretrained_components = load_config(pretrained_components)
-            gram_component = pretrained_components['emb']['dx']['config_file']
-            gram_component = load_config(gram_component)
+        # elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
+        #     pretrained_components = load_config(pretrained_components)
+        #     gram_component = pretrained_components['emb']['dx']['config_file']
+        #     gram_component = load_config(gram_component)
 
-            emb_config = gram_component['emb']['dx']
+        #     emb_config = gram_component['emb']['dx']
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
@@ -224,16 +221,11 @@ class AbstractModel:
         return {'state_size': trial.suggest_int('s', 100, 350, 50)}
 
     @classmethod
-    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str,
-                                 pretrained_components: str):
+    def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str):
         return {
-            'emb':
-            cls.sample_embeddings_config(
-                trial, emb_kind, pretrained_components=pretrained_components),
-            'model':
-            cls.sample_model_config(trial),
-            'training':
-            cls.sample_training_config(trial)
+            'emb': cls.sample_embeddings_config(trial, emb_kind),
+            'model': cls.sample_model_config(trial),
+            'training': cls.sample_training_config(trial)
         }
 
     @staticmethod

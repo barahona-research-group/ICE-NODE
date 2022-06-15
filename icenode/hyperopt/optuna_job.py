@@ -1,4 +1,4 @@
-"""Hyperparameter optimization of EHR predictive models"""
+"""Hyperparameter optimization of EHR predictive models."""
 
 import os
 import argparse
@@ -19,7 +19,7 @@ from sqlalchemy.pool import NullPool
 import mlflow
 
 from ..utils import (write_config)
-from ..ehr_predictive.trainer import (MinibatchTrainReporter, MinibatchLogger,
+from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
                                       EvaluationDiskWriter, ParamsDiskWriter)
 from ..ehr_predictive.abstract import (AbstractModel)
 
@@ -32,7 +32,7 @@ class StudyHalted(Exception):
     """Raised when a trial is spawned from a retired study."""
 
 
-class OptunaReporter(MinibatchTrainReporter):
+class OptunaReporter(AbstractReporter):
 
     def __init__(self, trial):
         self.trial = trial
@@ -62,7 +62,7 @@ class OptunaReporter(MinibatchTrainReporter):
         self.trial.report(objective_v, eval_step)
 
 
-class MLFlowReporter(MinibatchTrainReporter):
+class MLFlowReporter(AbstractReporter):
 
     def report_steps(self, steps):
         mlflow.set_tag('steps', steps)
@@ -125,7 +125,7 @@ def capture_args():
         '--emb',
         required=True,
         help=
-        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram)'
+        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)'
     )
 
     parser.add_argument('-o',
@@ -161,8 +161,6 @@ def capture_args():
 
     parser.add_argument('--job-id', required=False)
 
-    parser.add_argument('--pretrained-components', required=False)
-
     parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
@@ -179,13 +177,12 @@ def capture_args():
         'cpu': args.cpu,
         'trials_time_limit': args.trials_time_limit,
         'training_time_limit': args.training_time_limit,
-        'pretrained_components': args.pretrained_components
     }
 
 
-def objective(model_cls: AbstractModel, emb: str, pretrained_components,
-              patient_interface, splits, rng, job_id, output_dir,
-              trial_stop_time: datetime, frozen: bool, trial: optuna.Trial):
+def objective(model_cls: AbstractModel, emb: str, patient_interface, splits,
+              rng, job_id, output_dir, trial_stop_time: datetime, frozen: bool,
+              trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
 
     mlflow_set_tag('job_id', job_id, frozen)
@@ -202,8 +199,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling & Initializing Models')
-    config = model_cls.sample_experiment_config(
-        trial, emb_kind=emb, pretrained_components=pretrained_components)
+    config = model_cls.sample_experiment_config(trial, emb_kind=emb)
 
     try:
         mlflow.log_params(trial.params)
@@ -214,8 +210,7 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
 
     logging.info(f'Trial {trial.number} HPs: {trial.params}')
 
-    model = model_cls.create_model(config, patient_interface, splits[0],
-                                   pretrained_components)
+    model = model_cls.create_model(config, patient_interface, splits[0])
 
     code_frequency_groups = model.code_partitions(patient_interface, splits[0])
 
@@ -248,11 +243,10 @@ def objective(model_cls: AbstractModel, emb: str, pretrained_components,
                                reporters=reporters)['objective']
 
 
-def run_trials(model_cls: AbstractModel, pretrained_components: str,
-               study_name: str, optuna_store: str, mlflow_store: str,
-               num_trials: int, mimic_processed_dir: str, data_tag: str,
-               emb: str, output_dir: str, cpu: bool, job_id: str,
-               trials_time_limit: int, training_time_limit: int):
+def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
+               mlflow_store: str, num_trials: int, mimic_processed_dir: str,
+               data_tag: str, emb: str, output_dir: str, cpu: bool,
+               job_id: str, trials_time_limit: int, training_time_limit: int):
 
     data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
 
@@ -318,7 +312,6 @@ def run_trials(model_cls: AbstractModel, pretrained_components: str,
 
         return objective(model_cls=model_cls,
                          emb=emb,
-                         pretrained_components=pretrained_components,
                          patient_interface=patient_interface,
                          splits=splits,
                          rng=random.Random(42),

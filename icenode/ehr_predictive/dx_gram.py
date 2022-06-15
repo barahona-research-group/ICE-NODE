@@ -22,6 +22,7 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 
 class GRAM(AbstractModel):
+
     def __init__(self, subject_interface: DxInterface_JAX,
                  dx_emb: AbstractEmbeddingsLayer, state_size: int):
 
@@ -126,14 +127,11 @@ class GRAM(AbstractModel):
         return {}
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids,
-                     pretrained_components):
-        dx_emb = cls.create_embedding(
-            emb_config=config['emb']['dx'],
-            emb_kind=config['emb']['kind'],
-            patient_interface=patient_interface,
-            train_ids=train_ids,
-            pretrained_components=pretrained_components)
+    def create_model(cls, config, patient_interface, train_ids):
+        dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
+                                      emb_kind=config['emb']['kind'],
+                                      patient_interface=patient_interface,
+                                      train_ids=train_ids)
 
         return cls(subject_interface=patient_interface,
                    dx_emb=dx_emb,
@@ -141,5 +139,5 @@ class GRAM(AbstractModel):
 
 
 if __name__ == '__main__':
-    from ..hyperopt.hpo_utils import capture_args, run_trials
+    from ..hyperopt.optuna_job import capture_args, run_trials
     run_trials(model_cls=GRAM, **capture_args())
