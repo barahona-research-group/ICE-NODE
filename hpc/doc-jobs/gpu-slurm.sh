@@ -13,7 +13,7 @@ WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1
+git clone git@github.com:A-Alaa/ICE-NODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1
 
 cd $WORKDIR/ICENODE
 
@@ -39,7 +39,6 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 
 
-export OPTUNA_STORE="postgresql://am8520:dirW3?*4<70HSX@db.doc.ic.ac.uk:5432/am8520"
 export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
 # Run program
@@ -54,7 +53,7 @@ else
   DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
+$STORE/GP/env/icenode-env/bin/python -m icenode.hyperopt.multi_optuna \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
@@ -67,6 +66,5 @@ $STORE/opt/anaconda3/envs/icenode/bin/python -m icenode.hpo_multi \
 --trials-time-limit 120 \
 --training-time-limit 72 \
 --job-id doc-${SLURM_JOB_ID} \
--N 1 \
---pretrained-components icenode_configs/pretrained_components_doc.json
+-N 1
 

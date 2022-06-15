@@ -31,7 +31,7 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$HOME/anaconda3/envs/icenode/bin/python -m icenode.hyperopt.optuna_multi \
+$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
