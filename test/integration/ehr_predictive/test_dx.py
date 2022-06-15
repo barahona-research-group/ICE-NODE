@@ -45,8 +45,7 @@ class DxCommonTests(object):
         self.assertTrue(len(self.config) > 0)
 
     def test_create(self):
-        model = self.model_cls.create_model(self.config, dx_interface, [],
-                                            None)
+        model = self.model_cls.create_model(self.config, dx_interface, [])
         state = model.init(self.config)
 
         self.assertTrue(callable(model))
@@ -62,8 +61,7 @@ class DxCommonTests(object):
                           reporters=[MinibatchLogger()])
 
     def test_train(self):
-        model = self.model_cls.create_model(self.config, dx_interface, [],
-                                            None)
+        model = self.model_cls.create_model(self.config, dx_interface, [])
         state = model.init(self.config)
 
         self._train(model, state, self.config)
