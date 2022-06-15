@@ -30,6 +30,8 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
+export JAX_PLATFORM_NAME=cpu
+
 $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
@@ -43,8 +45,9 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 -N 4 \
 --num-trials 1 \
 --training-time-limit 1 \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
---cpu
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
+
+
 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

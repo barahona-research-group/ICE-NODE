@@ -14,7 +14,6 @@ from ..embeddings.gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM,
 from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
                                      admissions_auc_scores, codes_auc_scores)
-from ..ehr_model.jax_interface import create_patient_interface
 from ..ehr_model.ccs_dag import ccs_dag
 
 from .trainer import minibatch_trainer
@@ -227,10 +226,6 @@ class AbstractModel:
             'model': cls.sample_model_config(trial),
             'training': cls.sample_training_config(trial)
         }
-
-    @staticmethod
-    def create_patient_interface(mimic_dir, data_tag: str):
-        return create_patient_interface(mimic_dir, data_tag=data_tag)
 
     @staticmethod
     def get_trainer():

@@ -1,0 +1,6 @@
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.trainer \
+--output-dir $OUTPUT_DIR \
+--mimic-processed-dir $DATA_DIR \
+--data-tag $DATA_TAG \
+--emb $EMB \
+--model $MODEL

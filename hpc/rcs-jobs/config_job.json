@@ -5,7 +5,7 @@
 		"array": "5",
 		"parallel": "4",
 		"hours": "24:0",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "30",
 		"training_time_limit" : "12"
 	},
@@ -15,7 +15,7 @@
 		"array": "10",
 		"parallel": "5",
 		"hours": "72:0",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "30",
 		"training_time_limit" : "48"
 	},
@@ -25,7 +25,7 @@
 		"array": "10",
 		"parallel": "4",
 		"hours": "72:0",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "30",
 		"training_time_limit" : "48"
 	},
@@ -35,7 +35,7 @@
 		"array": "5",
 		"parallel": "15",
 		"hours": "48:0",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "30",
 		"training_time_limit" : "36"
 	},
@@ -44,7 +44,7 @@
 		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
 		"parallel": "4",
 		"hours": "500:0",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "30",
 		"training_time_limit" : "400"
 	},
@@ -54,6 +54,7 @@
 		"array": "10",
 		"parallel": "1",
 		"hours": "24:0",
+		"platform": "gpu",
 		"n_trials": "30",
 		"training_time_limit" : "12",
 		"load_modules": ["cudnn/8.2.4", "cuda/11.4.2"]
@@ -63,7 +64,7 @@
 		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
 		"parallel": "4",
 		"hours": "0:30",
-		"cpu": true,
+		"platform": "cpu",
 		"n_trials": "1",
 		"training_time_limit" : "1"
 	}

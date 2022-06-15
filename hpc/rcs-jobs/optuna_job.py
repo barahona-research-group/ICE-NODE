@@ -16,18 +16,34 @@ def load_template(temp_file):
         return Template(text_file.read())
 
 
-def generate_job(job_class, config):
+MAIN_TEMPLATE = load_template('template-job')
+CMD_TEMPLATE_CONF = load_template('template-job-command-config')
+CMD_TEMPLATE_OPTUNA = load_template('template-job-command-optuna')
+
+
+def generate_cmd_optuna(job_class, config, hours):
+    cls_config = config[job_class]
+    mapping = {
+        'temp_hours': hours,
+        'temp_parallel': cls_config['parallel'],
+        'temp_num_trials': cls_config['n_trials'],
+        'temp_training_time_limit': cls_config['training_time_limit'],
+    }
+
+    return CMD_TEMPLATE_OPTUNA.safe_substitute(**mapping)
+
+
+def generate_cmd_conf():
+    return CMD_TEMPLATE_CONF.safe_substitute()
+
+
+def generate_job(job_class, config, wconfig):
     cls_config = config[job_class]
 
     if 'array' in cls_config:
         job_array_head = f"#PBS -J 1-{cls_config['array']}"
     else:
         job_array_head = ""
-
-    if 'cpu' in cls_config and cls_config['cpu'] == True:
-        temp_cpu = '--cpu'
-    else:
-        temp_cpu = ''
 
     modules = cls_config.get('load_modules', [])
     module_lines = "\n".join(
@@ -36,29 +52,35 @@ def generate_job(job_class, config):
     hours_mins = cls_config['hours']
     hours = hours_mins.split(':')[0]
 
+    if wconfig:
+        temp_command = generate_cmd_conf()
+    else:
+        temp_command = generate_cmd_optuna(job_class, config, hours)
+
     mapping = {
         'temp_spec': cls_config['spec'],
         'temp_hours_mins': hours_mins,
         'temp_array_place': job_array_head,
         'temp_modules_place': module_lines,
-        'temp_hours': hours,
-        'temp_parallel': cls_config['parallel'],
-        'temp_num_trials': cls_config['n_trials'],
-        'temp_training_time_limit': cls_config['training_time_limit'],
-        'temp_cpu': temp_cpu
+        'temp_command': temp_command,
+        'temp_platform': cls_config['platform']
     }
 
-    template = load_template('template-job')
-
-    job_file_text = template.safe_substitute(**mapping)
+    job_file_text = MAIN_TEMPLATE.safe_substitute(**mapping)
 
     Path('job_files').mkdir(parents=True, exist_ok=True)
-    with open(f'job_files/{job_class}_job', "w", encoding="utf-8") as job_file:
+
+    if wconfig:
+        filename = f'job_files/wconf_{job_class}_job'
+    else:
+        filename = f'job_files/{job_class}_job'
+
+    with open(filename, "w", encoding="utf-8") as job_file:
         job_file.write(job_file_text)
 
 
 if __name__ == "__main__":
     config = load_config('config_job.json')
-
     for job_class in config:
-        generate_job(job_class, config)
+        for wconf in [True, False]:
+            generate_job(job_class, config, wconf)

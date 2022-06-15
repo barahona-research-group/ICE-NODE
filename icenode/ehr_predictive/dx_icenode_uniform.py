@@ -9,6 +9,7 @@ from .risk import BatchPredictedRisks
 
 
 class ICENODE(ICENODE_TL):
+
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
@@ -99,8 +100,3 @@ class ICENODE(ICENODE_TL):
         }
 
         return ret
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=ICENODE, **capture_args())

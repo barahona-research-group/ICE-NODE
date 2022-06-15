@@ -497,8 +497,3 @@ class ICENODE(AbstractModel):
             'timescale':
             7
         }
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=ICENODE, **capture_args())

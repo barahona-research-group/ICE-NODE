@@ -30,22 +30,9 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
---output-dir $OUTPUT_DIR \
---mimic-processed-dir $DATA_DIR \
---study-tag $STUDY_TAG \
---data-tag $DATA_TAG \
---emb $EMB \
---model $MODEL \
---optuna-store $OPTUNA_STORE \
---mlflow-store $MLFLOW_STORE \
---trials-time-limit $temp_hours \
--N $temp_parallel \
---num-trials $temp_num_trials \
---training-time-limit $temp_training_time_limit \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX" \
-$temp_cpu
+export JAX_PLATFORM_NAME=$temp_platform
 
+$temp_command
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID

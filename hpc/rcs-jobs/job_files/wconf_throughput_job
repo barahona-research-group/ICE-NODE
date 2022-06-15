@@ -1,6 +1,6 @@
-#PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=RTX6000
+#PBS -lselect=1:ncpus=8:mem=96gb
 
-#PBS -lwalltime=24:0:0
+#PBS -lwalltime=72:0:0
 
 #PBS -J 1-10
 
@@ -15,8 +15,7 @@ cd $TMPDIR/ICE-NODE
 $HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
 
 # Load modules
-module load cudnn/8.2.4
-module load cuda/11.4.2
+
 
 # Run program
 
@@ -31,24 +30,14 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-export JAX_PLATFORM_NAME=gpu
+export JAX_PLATFORM_NAME=cpu
 
-$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.trainer \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
---study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
---model $MODEL \
---optuna-store $OPTUNA_STORE \
---mlflow-store $MLFLOW_STORE \
---trials-time-limit 24 \
--N 1 \
---num-trials 30 \
---training-time-limit 12 \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
-
-
+--model $MODEL
 
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID

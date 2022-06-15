@@ -150,8 +150,3 @@ class WindowLogReg(AbstractModel):
     @staticmethod
     def get_trainer():
         return sklearn_trainer
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=WindowLogReg, **capture_args())

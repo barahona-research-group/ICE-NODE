@@ -8,8 +8,6 @@ from datetime import datetime, timedelta
 import copy
 from absl import logging
 
-import jax
-
 import optuna
 from optuna.storages import RDBStorage
 from optuna.pruners import HyperbandPruner, PatientPruner
@@ -18,9 +16,11 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from ..utils import (write_config)
+from ..ehr_model.jax_interface import create_patient_interface
 from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
-                                      EvaluationDiskWriter, ParamsDiskWriter)
+                                      EvaluationDiskWriter, ParamsDiskWriter,
+                                      ConfigDiskWriter, train_with_config,
+                                      model_cls)
 from ..ehr_predictive.abstract import (AbstractModel)
 
 
@@ -36,6 +36,9 @@ class OptunaReporter(AbstractReporter):
 
     def __init__(self, trial):
         self.trial = trial
+
+    def report_params_size(self, size):
+        self.trial.set_user_attr('parameters_size', size)
 
     def report_steps(self, steps):
         self.trial.set_user_attr('steps', steps)
@@ -63,6 +66,9 @@ class OptunaReporter(AbstractReporter):
 
 
 class MLFlowReporter(AbstractReporter):
+
+    def report_params_size(self, size):
+        mlflow.set_tag('parameters_size', size)
 
     def report_steps(self, steps):
         mlflow.set_tag('steps', steps)
@@ -109,16 +115,12 @@ def mlflow_log_metrics(eval_dict, step, frozen):
 
 def capture_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--model', required=True, help='Model label')
+
     parser.add_argument('-i',
                         '--mimic-processed-dir',
                         required=True,
                         help='Absolute path to MIMIC-III processed tables')
-
-    parser.add_argument(
-        '-d',
-        '--data-tag',
-        required=True,
-        help='Data identifier tag (m3 for MIMIC-III or m4 for MIMIC-IV')
 
     parser.add_argument(
         '-e',
@@ -161,30 +163,15 @@ def capture_args():
 
     parser.add_argument('--job-id', required=False)
 
-    parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
-    return {
-        'study_name': args.study_name,
-        'data_tag': args.data_tag,
-        'emb': args.emb,
-        'optuna_store': args.optuna_store,
-        'mlflow_store': args.mlflow_store,
-        'num_trials': args.num_trials,
-        'mimic_processed_dir': args.mimic_processed_dir,
-        'output_dir': args.output_dir,
-        'job_id': args.job_id or 'unknown',
-        'cpu': args.cpu,
-        'trials_time_limit': args.trials_time_limit,
-        'training_time_limit': args.training_time_limit,
-    }
+    return args
 
 
-def objective(model_cls: AbstractModel, emb: str, patient_interface, splits,
-              rng, job_id, output_dir, trial_stop_time: datetime, frozen: bool,
+def objective(model: str, emb: str, subject_interface, job_id, output_dir,
+              trial_terminate_time: datetime, frozen: bool,
               trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
-
     mlflow_set_tag('job_id', job_id, frozen)
     mlflow_set_tag('trial_number', trial.number, frozen)
 
@@ -194,38 +181,25 @@ def objective(model_cls: AbstractModel, emb: str, patient_interface, splits,
     else:
         trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
 
-    Path(trial_dir).mkdir(parents=True, exist_ok=True)
-
     trial.set_user_attr('dir', trial_dir)
 
-    logging.info('[LOADING] Sampling & Initializing Models')
-    config = model_cls.sample_experiment_config(trial, emb_kind=emb)
+    logging.info('[LOADING] Sampling Hyperparameters')
+    m_cls = model_cls[model]
+    config = m_cls.sample_experiment_config(trial, emb_kind=emb)
+    logging.info('[DONE] Sampling Hyperparameters')
 
+    logging.info(f'Trial {trial.number} HPs: {trial.params}')
     try:
         mlflow.log_params(trial.params)
     except Exception as e:
         logging.warning(f'Supressed error when logging config sample: {e}')
 
-    write_config(config, os.path.join(trial_dir, 'config.json'))
-
-    logging.info(f'Trial {trial.number} HPs: {trial.params}')
-
-    model = model_cls.create_model(config, patient_interface, splits[0])
-
-    code_frequency_groups = model.code_partitions(patient_interface, splits[0])
-
-    m_state = model.init(config)
-    logging.info('[DONE] Sampling & Initializing Models')
-
-    trial.set_user_attr('parameters_size', model.parameters_size(m_state))
-    mlflow_set_tag('parameters_size', model.parameters_size(m_state), frozen)
-
     reporters = [
         MinibatchLogger(),
-        EvaluationDiskWriter(trial_dir=trial_dir),
-        ParamsDiskWriter(trial_dir=trial_dir)
+        EvaluationDiskWriter(output_dir=trial_dir),
+        ParamsDiskWriter(output_dir=trial_dir),
+        ConfigDiskWriter(output_dir=trial_dir)
     ]
-
     if frozen == False:
         reporters.append(MLFlowReporter())
 
@@ -233,33 +207,34 @@ def objective(model_cls: AbstractModel, emb: str, patient_interface, splits,
     # Exceptions.
     reporters.append(OptunaReporter(trial=trial))
 
-    return model.get_trainer()(model=model,
-                               m_state=m_state,
-                               config=config,
-                               splits=splits,
-                               rng=rng,
-                               code_frequency_groups=code_frequency_groups,
-                               trial_terminate_time=trial_stop_time,
-                               reporters=reporters)['objective']
+    # splits = train:val:test = 0.7:.15:.15
+    splits = subject_interface.random_splits(split1=0.7,
+                                             split2=0.85,
+                                             random_seed=42)
+
+    return train_with_config(model=model,
+                             config=config,
+                             subject_interface=subject_interface,
+                             splits=splits,
+                             rng_seed=42,
+                             output_dir=output_dir,
+                             trial_terminate_time=trial_terminate_time,
+                             reporters=reporters)
 
 
-def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
-               mlflow_store: str, num_trials: int, mimic_processed_dir: str,
-               data_tag: str, emb: str, output_dir: str, cpu: bool,
-               job_id: str, trials_time_limit: int, training_time_limit: int):
-
+if __name__ == '__main__':
     data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
+    args = capture_args()
 
-    termination_time = datetime.now() + timedelta(hours=trials_time_limit)
+    terminate_time = datetime.now() + timedelta(hours=args.trials_time_limit)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
-    patient_interface = model_cls.create_patient_interface(mimic_processed_dir,
-                                                           data_tag=data_tag)
+    subject_interface = create_patient_interface(args.mimic_processed_dir)
     logging.info('[DONE] patient interface')
 
-    storage = RDBStorage(url=optuna_store,
+    storage = RDBStorage(url=args.optuna_store,
                          engine_kwargs={'poolclass': NullPool})
-    study = optuna.create_study(study_name=study_name,
+    study = optuna.create_study(study_name=args.study_name,
                                 direction="maximize",
                                 storage=storage,
                                 load_if_exists=True,
@@ -268,8 +243,8 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
                                                      patience=50))
 
     study.set_user_attr('metric', 'MICRO-AUC')
-    study.set_user_attr('data', data_tag_fullname[data_tag])
-    study.set_user_attr('embeddings', emb)
+    study.set_user_attr('data', data_tag_fullname[args.data_tag])
+    study.set_user_attr('embeddings', args.emb)
 
     study_attrs = study.user_attrs
     # A flag that we can control from the DB to halt training on all machines.
@@ -287,17 +262,7 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
     if 'description' not in study_attrs:
         study.set_user_attr('description', "No description")
 
-    if cpu:
-        jax.config.update('jax_platform_name', 'cpu')
-    else:
-        jax.config.update('jax_platform_name', 'gpu')
-
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    # splits = train:val:test = 0.7:.15:.15
-    splits = patient_interface.random_splits(split1=0.7,
-                                             split2=0.85,
-                                             random_seed=42)
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     def objective_f(trial: optuna.Trial):
         study_attrs = study.user_attrs
@@ -305,35 +270,36 @@ def run_trials(model_cls: AbstractModel, study_name: str, optuna_store: str,
             trial.set_user_attr('halted', 1)
             raise StudyHalted('Study is halted')
 
-        trial_stop_time = datetime.now() + timedelta(hours=training_time_limit)
-        if trial_stop_time + timedelta(minutes=20) > termination_time:
+        trial_terminate_time = datetime.now() + timedelta(
+            hours=args.training_time_limit)
+        if trial_terminate_time + timedelta(minutes=20) > terminate_time:
             trial.set_user_attr('timeout', 1)
             raise ResourceTimeout('Time-limit exceeded, abort.')
 
-        return objective(model_cls=model_cls,
-                         emb=emb,
-                         patient_interface=patient_interface,
-                         splits=splits,
-                         rng=random.Random(42),
-                         job_id=job_id,
-                         output_dir=output_dir,
-                         trial_stop_time=trial_stop_time,
+        return objective(model=args.model,
+                         emb=args.emb,
+                         subject_interface=subject_interface,
+                         job_id=args.job_id,
+                         output_dir=args.output_dir,
+                         trial_terminate_time=trial_terminate_time,
                          trial=trial,
-                         frozen=num_trials <= 0)
+                         frozen=args.num_trials <= 0)
 
-    if num_trials > 0:
-        mlflow_uri = f'{mlflow_store}_bystudy/{study_name}'
+    if args.num_trials > 0:
+        mlflow_uri = f"{args.mlflow_store}_bystudy/{args.study_name}"
         mlflc = MLflowCallback(tracking_uri=mlflow_uri, metric_name="VAL-AUC")
         study.optimize(mlflc.track_in_mlflow()(objective_f),
-                       n_trials=num_trials,
+                       n_trials=args.num_trials,
                        callbacks=[mlflow_callback_noexcept(mlflc)],
                        catch=(RuntimeError, ))
     else:
-        number = -num_trials
+        number = -args.num_trials
         trials = study.trials
+        trial_number_found = False
         for trial in trials:
             if trial.number == number:
                 trial = copy.deepcopy(trial)
                 objective_f(trial)
-                return
-        raise RuntimeError(f'Trial number {number} not found')
+                trial_number_found = True
+        if trial_number_found == False:
+            raise RuntimeError(f'Trial number {number} not found')

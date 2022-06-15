@@ -92,8 +92,3 @@ class ICENODE(ICENODE_2LR_MIXIN, ICENODE_TL):
 
     def __init__(self, **kwargs):
         ICENODE_TL.__init__(self, **kwargs)
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=ICENODE, **capture_args())

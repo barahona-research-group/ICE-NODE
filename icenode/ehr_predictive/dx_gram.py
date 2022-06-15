@@ -136,8 +136,3 @@ class GRAM(AbstractModel):
         return cls(subject_interface=patient_interface,
                    dx_emb=dx_emb,
                    **config['model'])
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=GRAM, **capture_args())

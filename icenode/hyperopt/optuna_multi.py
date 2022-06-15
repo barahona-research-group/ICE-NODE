@@ -2,14 +2,10 @@ import sys
 import subprocess
 import argparse
 import os
-from pathlib import Path
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m',
-                        '--model',
-                        required=True,
-                        help='Model label (snonet, snonet_lite, snonet_ds, ..')
+    parser.add_argument('-m', '--model', required=True, help='Model label')
 
     parser.add_argument('-i',
                         '--mimic-processed-dir',
@@ -46,7 +42,7 @@ if __name__ == '__main__':
         'semi_frozen_gram': 'S',
         'frozen_gram': 'F',
         'tuneble_gram': 'T',
-        'NA': '-'
+        'NA': ''
     }
 
     parser.add_argument(
@@ -78,7 +74,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--job-id', required=False)
 
-    parser.add_argument('--cpu', action='store_true')
     args = parser.parse_args()
 
     model = args.model
@@ -88,7 +83,6 @@ if __name__ == '__main__':
     num_trials = args.num_trials
     mimic_processed_dir = args.mimic_processed_dir
     output_dir = args.output_dir
-    cpu = args.cpu
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
     emb = args.emb
@@ -106,16 +100,15 @@ if __name__ == '__main__':
 
     env = dict(os.environ)
     cmd = [
-        sys.executable, '-m', f'icenode.ehr_predictive.{model}', '--study-name',
-        study_name, '--optuna-store', optuna_store, '--mlflow-store',
-        mlflow_store, '--output-dir', output_dir, '--mimic-processed-dir',
-        mimic_processed_dir, '--data-tag', data_tag, '--emb', emb,
-        '--num-trials', str(num_trials), '--trials-time-limit',
+        sys.executable, '-m', 'icenode.hyperopt.optuna_job', '--model', model,
+        '--study-name', study_name, '--optuna-store', optuna_store,
+        '--mlflow-store', mlflow_store, '--output-dir', output_dir,
+        '--mimic-processed-dir', mimic_processed_dir, '--emb', emb,
+        '--num-trials',
+        str(num_trials), '--trials-time-limit',
         str(trials_time_limit), '--training-time-limit',
         str(training_time_limit), '--job-id', job_id
     ]
-    if cpu:
-        cmd.append('--cpu')
 
     procs = [subprocess.Popen(cmd, env=env) for _ in range(N)]
 

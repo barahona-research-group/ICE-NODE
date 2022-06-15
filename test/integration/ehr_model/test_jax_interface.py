@@ -2,7 +2,6 @@
 
 import unittest
 import logging
-import sys
 
 from icenode.ehr_model.jax_interface import (DxInterface_JAX,
                                              DxWindowedInterface_JAX,

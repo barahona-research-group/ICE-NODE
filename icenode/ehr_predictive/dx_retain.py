@@ -228,8 +228,3 @@ class RETAIN(AbstractModel):
     @staticmethod
     def sample_training_config(trial: optuna.Trial):
         return AbstractModel.sample_training_config(trial)
-
-
-if __name__ == '__main__':
-    from ..hyperopt.optuna_job import capture_args, run_trials
-    run_trials(model_cls=RETAIN, **capture_args())

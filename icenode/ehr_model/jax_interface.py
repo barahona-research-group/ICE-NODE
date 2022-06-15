@@ -311,8 +311,7 @@ class DxWindowedInterface_JAX:
         return np.vstack(X), np.vstack(y)
 
 
-def create_patient_interface(processed_mimic_tables_dir: str,
-                             data_tag: str = None):
+def create_patient_interface(processed_mimic_tables_dir: str)
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
     # Cast columns of dates to datetime64
     adm_df['ADMITTIME'] = pd.to_datetime(
