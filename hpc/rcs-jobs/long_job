@@ -52,5 +52,5 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
 
 
-mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp * $PBS_O_WORKDIR/$PBS_JOBID
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID

@@ -26,5 +26,5 @@ export JAX_PLATFORM_NAME=$temp_platform
 
 $temp_command
 
-mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp * $PBS_O_WORKDIR/$PBS_JOBID
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID

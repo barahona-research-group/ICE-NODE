@@ -41,10 +41,9 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
---data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL
 
 
-mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp * $PBS_O_WORKDIR/$PBS_JOBID
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID
