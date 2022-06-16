@@ -36,7 +36,6 @@ short_tags = {
 }
 
 
-
 def train_with_config(model: str,
                       config: Dict[str, Any],
                       subject_interface: str,
@@ -110,8 +109,8 @@ if __name__ == '__main__':
                                                random_seed=42)
 
     expt_dir = f'{args.model}_expt'
-    if args.tag:
-        expt_dir = f'T{args.tag}_{expt_dir}'
+    if args.config_tag:
+        expt_dir = f'T{args.config_tag}_{expt_dir}'
     if args.study_tag:
         expt_dir = f'S{args.study_tag}_expt_dir'
 

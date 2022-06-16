@@ -28,6 +28,8 @@ MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
 $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \
+--study-tag $STUDY_TAG \
+--config-tag $TAG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --emb $EMB \
