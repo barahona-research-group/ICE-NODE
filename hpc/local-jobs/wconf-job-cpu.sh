@@ -32,6 +32,5 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
---emb $EMB \
 --model $MODEL
 

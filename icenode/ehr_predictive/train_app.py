@@ -81,13 +81,6 @@ def capture_args():
                         required=True,
                         help='Absolute path to MIMIC-III processed tables')
 
-    parser.add_argument(
-        '-e',
-        '--emb',
-        required=True,
-        help='Embedding method to use: matrix, orthogonal_gram, glove_gram, \
-        semi_frozen_gram, frozen_gram, tunable_gram, NA.')
-
     parser.add_argument('-o',
                         '--output-dir',
                         required=True,
