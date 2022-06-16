@@ -34,7 +34,7 @@ fi
 
 # Run program
 
-export JAX_PLATFORM_NAME=cpu
+export JAX_PLATFORM_NAME="cpu"
 
 $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \

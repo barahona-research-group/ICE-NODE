@@ -22,7 +22,7 @@ fi
 
 
 
-export JAX_PLATFORM_NAME=gpu
+export JAX_PLATFORM_NAME="gpu"
 
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 

@@ -35,7 +35,7 @@ fi
 
 # Run program
 
-export JAX_PLATFORM_NAME=gpu
+export JAX_PLATFORM_NAME="gpu"
 
 $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \

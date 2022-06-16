@@ -59,7 +59,7 @@ def gen_local_jobs():
                 **{
                     'temp_io_dirs': IO_DIRS,
                     'temp_command': cmd,
-                    'temp_platform': plat
+                    'temp_platform': f'"{plat}"'
                 })
             fname = f'{cmd_l}-job-{plat}'
             with open(f'local-jobs/{fname}.sh', "w",
@@ -122,6 +122,7 @@ def gen_rcs_job(job_class, config, wconfig):
     else:
         temp_command = gen_rcs_cmd_optuna(job_class, config, hours)
 
+    plat = cls_config['platform']
     mapping = {
         'temp_spec': cls_config['spec'],
         'temp_hours_mins': hours_mins,
@@ -129,7 +130,7 @@ def gen_rcs_job(job_class, config, wconfig):
         'temp_modules_place': module_lines,
         'temp_io_dirs': IO_DIRS,
         'temp_command': temp_command,
-        'temp_platform': cls_config['platform']
+        'temp_platform': f'"{plat}"'
     }
 
     job_file_text = RCS_TEMPLATE.safe_substitute(**mapping)

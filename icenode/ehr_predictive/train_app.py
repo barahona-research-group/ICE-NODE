@@ -105,7 +105,7 @@ if __name__ == '__main__':
     if args.config_tag:
         expt_dir = f'T{args.config_tag}_{expt_dir}'
     if args.study_tag:
-        expt_dir = f'S{args.study_tag}_expt_dir'
+        expt_dir = f'S{args.study_tag}_{expt_dir}'
 
     expt_dir = os.path.join(args.output_dir, expt_dir)
     Path(expt_dir).mkdir(parents=True, exist_ok=True)

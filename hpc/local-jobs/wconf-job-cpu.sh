@@ -22,7 +22,7 @@ fi
 
 
 
-export JAX_PLATFORM_NAME=cpu
+export JAX_PLATFORM_NAME="cpu"
 
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 

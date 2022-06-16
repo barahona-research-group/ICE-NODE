@@ -38,7 +38,7 @@ unset __conda_setup
 source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 
-export JAX_PLATFORM_NAME='gpu'
+export JAX_PLATFORM_NAME="gpu"
 export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
 $temp_io_dirs
