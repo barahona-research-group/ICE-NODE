@@ -32,7 +32,8 @@ fi
 
 export JAX_PLATFORM_NAME=cpu
 
-$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.trainer \
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
+--config $CONFIG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --data-tag $DATA_TAG \
