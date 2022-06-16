@@ -57,7 +57,7 @@ class DxCommonTests(object):
                           m_state=m_state,
                           config=m_config,
                           splits=splits,
-                          rng=random.Random(42),
+                          rng_seed=42,
                           reporters=[MinibatchLogger()])
 
     def test_train(self):
