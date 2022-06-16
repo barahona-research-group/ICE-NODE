@@ -74,6 +74,7 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
         ConvergenceWarning('ignore')
         sklearn_trainer(model=model,
                         m_state=m_state,
+                        config=config,
                         splits=splits,
                         reporters=[MinibatchLogger()])
 

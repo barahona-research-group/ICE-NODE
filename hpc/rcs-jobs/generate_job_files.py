@@ -40,7 +40,8 @@ def generate_cmd_conf():
 def generate_job(job_class, config, wconfig):
     cls_config = config[job_class]
 
-    if 'array' in cls_config:
+    if 'array' in cls_config and cls_config['array'] is not None \
+            and cls_config['array'] > 1 and wconfig == False:
         job_array_head = f"#PBS -J 1-{cls_config['array']}"
     else:
         job_array_head = ""
