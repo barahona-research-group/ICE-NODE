@@ -2,7 +2,6 @@
 
 import os
 import argparse
-import random
 from pathlib import Path
 from datetime import datetime, timedelta
 import copy
@@ -19,9 +18,8 @@ import mlflow
 from ..ehr_model.jax_interface import create_patient_interface
 from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
                                       EvaluationDiskWriter, ParamsDiskWriter,
-                                      ConfigDiskWriter, train_with_config,
-                                      model_cls)
-from ..ehr_predictive.abstract import (AbstractModel)
+                                      ConfigDiskWriter)
+from ..ehr_predictive.train_app import train_with_config, model_cls
 
 
 class ResourceTimeout(Exception):
