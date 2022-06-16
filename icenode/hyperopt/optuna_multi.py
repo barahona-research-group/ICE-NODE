@@ -35,16 +35,6 @@ if __name__ == '__main__':
         help=
         'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)'
     )
-    short_tags = {
-        'matrix': 'M',
-        'orthogonal_gram': 'O',
-        'glove_gram': 'G',
-        'semi_frozen_gram': 'S',
-        'frozen_gram': 'F',
-        'tuneble_gram': 'T',
-        'NA': ''
-    }
-
     parser.add_argument(
         '--optuna-store',
         required=True,
@@ -94,14 +84,10 @@ if __name__ == '__main__':
         N = 1
 
     job_id = args.job_id or 'unknown'
-
-    study_name = f'{study_tag}{data_tag}_{model}_{short_tags[emb]}'
-    output_dir = os.path.join(output_dir, study_name)
-
     env = dict(os.environ)
     cmd = [
         sys.executable, '-m', 'icenode.hyperopt.optuna_job', '--model', model,
-        '--study-name', study_name, '--optuna-store', optuna_store,
+        '--study-tag', study_tag, '--optuna-store', optuna_store,
         '--mlflow-store', mlflow_store, '--output-dir', output_dir,
         '--mimic-processed-dir', mimic_processed_dir, '--emb', emb,
         '--num-trials',

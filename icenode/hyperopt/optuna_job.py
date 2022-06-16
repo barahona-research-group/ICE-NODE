@@ -19,7 +19,7 @@ from ..ehr_model.jax_interface import create_patient_interface
 from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
                                       EvaluationDiskWriter, ParamsDiskWriter,
                                       ConfigDiskWriter)
-from ..ehr_predictive.train_app import train_with_config, model_cls
+from ..ehr_predictive.train_app import train_with_config, model_cls, short_tags
 
 
 class ResourceTimeout(Exception):
@@ -157,7 +157,13 @@ def capture_args():
         required=True,
         help='Storage URL for mlflow records, e.g. for PostgresQL database')
 
-    parser.add_argument('--study-name', required=True)
+    parser.add_argument('--study-tag', required=True)
+
+    parser.add_argument(
+        '-d',
+        '--data-tag',
+        required=True,
+        help='Data identifier tag (m3 for MIMIC-III or m4 for MIMIC-IV')
 
     parser.add_argument('--job-id', required=False)
 
@@ -166,7 +172,7 @@ def capture_args():
     return args
 
 
-def objective(model: str, emb: str, subject_interface, job_id, output_dir,
+def objective(model: str, emb: str, subject_interface, job_id, study_dir,
               trial_terminate_time: datetime, frozen: bool,
               trial: optuna.Trial):
     trial.set_user_attr('job_id', job_id)
@@ -174,11 +180,11 @@ def objective(model: str, emb: str, subject_interface, job_id, output_dir,
     mlflow_set_tag('trial_number', trial.number, frozen)
 
     if frozen:
-        trial_dir = os.path.join(output_dir,
-                                 f'frozen_trial_{trial.number:03d}')
+        trial_dir = os.path.join(study_dir, f'frozen_trial_{trial.number:03d}')
     else:
-        trial_dir = os.path.join(output_dir, f'trial_{trial.number:03d}')
+        trial_dir = os.path.join(study_dir, f'trial_{trial.number:03d}')
 
+    Path(trial_dir).mkdir(parents=True, exist_ok=True)
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling Hyperparameters')
@@ -215,14 +221,16 @@ def objective(model: str, emb: str, subject_interface, job_id, output_dir,
                              subject_interface=subject_interface,
                              splits=splits,
                              rng_seed=42,
-                             output_dir=output_dir,
                              trial_terminate_time=trial_terminate_time,
                              reporters=reporters)
 
 
 if __name__ == '__main__':
     data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
+
     args = capture_args()
+    study_name = f'{args.study_tag}{args.data_tag}_{args.model}_{short_tags[args.emb]}'
+    study_dir = os.path.join(args.output_dir, study_name)
 
     terminate_time = datetime.now() + timedelta(hours=args.trials_time_limit)
     logging.set_verbosity(logging.INFO)
@@ -260,8 +268,6 @@ if __name__ == '__main__':
     if 'description' not in study_attrs:
         study.set_user_attr('description', "No description")
 
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-
     def objective_f(trial: optuna.Trial):
         study_attrs = study.user_attrs
         if study_attrs['halt']:
@@ -278,7 +284,7 @@ if __name__ == '__main__':
                          emb=args.emb,
                          subject_interface=subject_interface,
                          job_id=args.job_id,
-                         output_dir=args.output_dir,
+                         study_dir=study_dir,
                          trial_terminate_time=trial_terminate_time,
                          trial=trial,
                          frozen=args.num_trials <= 0)

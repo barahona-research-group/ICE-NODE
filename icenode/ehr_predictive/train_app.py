@@ -1,5 +1,5 @@
 """."""
-
+import os
 import argparse
 from typing import List, Any, Dict, Tuple
 from datetime import datetime
@@ -25,6 +25,16 @@ model_cls = {
     'dx_retain': RETAIN,
     'dx_window_logreg': WLR
 }
+short_tags = {
+    'matrix': 'M',
+    'orthogonal_gram': 'O',
+    'glove_gram': 'G',
+    'semi_frozen_gram': 'S',
+    'frozen_gram': 'F',
+    'tuneble_gram': 'T',
+    'NA': ''
+}
+
 
 
 def train_with_config(model: str,
@@ -32,10 +42,8 @@ def train_with_config(model: str,
                       subject_interface: str,
                       splits: Tuple[List[int]],
                       rng_seed: int,
-                      output_dir: str,
                       trial_terminate_time=datetime.max,
                       reporters: List[AbstractReporter] = []):
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     logging.info('[LOADING] Initialize models')
     model = model_cls[model].create_model(config, subject_interface, splits[0])
@@ -60,6 +68,14 @@ def capture_args():
                         '--config',
                         required=True,
                         help='Path to config JSON file')
+    parser.add_argument('-t',
+                        '--config-tag',
+                        required=False,
+                        help='Tag name for this experiment.')
+    parser.add_argument('-s',
+                        '--study-tag',
+                        required=False,
+                        help='GitHub tag name.')
 
     parser.add_argument('-i',
                         '--mimic-processed-dir',
@@ -92,18 +108,25 @@ if __name__ == '__main__':
     _splits = _subject_interface.random_splits(split1=0.7,
                                                split2=0.85,
                                                random_seed=42)
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    expt_dir = f'{args.model}_expt'
+    if args.tag:
+        expt_dir = f'T{args.tag}_{expt_dir}'
+    if args.study_tag:
+        expt_dir = f'S{args.study_tag}_expt_dir'
+
+    expt_dir = os.join(args.output_dir, expt_dir)
+    Path(expt_dir).mkdir(parents=True, exist_ok=True)
 
     _reporters = [
         MinibatchLogger(),
-        EvaluationDiskWriter(output_dir=args.output_dir),
-        ParamsDiskWriter(output_dir=args.output_dir),
-        ConfigDiskWriter(output_dir=args.output_dir)
+        EvaluationDiskWriter(output_dir=expt_dir),
+        ParamsDiskWriter(output_dir=expt_dir),
+        ConfigDiskWriter(output_dir=expt_dir)
     ]
     train_with_config(model=args.model,
                       config=load_config(args.config),
                       subject_interface=_subject_interface,
                       splits=_splits,
                       rng_seed=42,
-                      output_dir=args.output_dir,
                       reporters=_reporters)
