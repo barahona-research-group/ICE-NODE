@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [[ -v STUDY_TAG ]]; then 
+  git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
+  cd ICE-NODE
+else
+  cp ../icenode . -r
+  export STUDY_TAG="debug"
+fi
+
+$temp_io_dirs
+
+export JAX_PLATFORM_NAME=$temp_platform
+
+MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
+
+$temp_command

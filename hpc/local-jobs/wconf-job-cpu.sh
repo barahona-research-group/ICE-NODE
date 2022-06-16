@@ -1,23 +1,12 @@
-#PBS -lselect=1:ncpus=30:mem=360gb
+#!/bin/bash
 
-#PBS -lwalltime=48:0:0
-
-
-
-# Setup environement using .bashrc
-source $HOME/.bashrc
-
-# Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
-
-cd $TMPDIR/ICE-NODE
-
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
-
-# Load modules
-
-
-# Run program
+if [[ -v STUDY_TAG ]]; then 
+  git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
+  cd ICE-NODE
+else
+  cp ../icenode . -r
+  export STUDY_TAG="debug"
+fi
 
 OUTPUT_DIR=""
 DATA_DIR=""
@@ -30,7 +19,12 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
+
+
+
 export JAX_PLATFORM_NAME=cpu
+
+MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
 $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \
@@ -40,6 +34,3 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --emb $EMB \
 --model $MODEL
 
-
-mkdir $PBS_O_WORKDIR/$PBS_JOBID
-cp * $PBS_O_WORKDIR/$PBS_JOBID

@@ -1,8 +1,8 @@
-$temp_spec
+#PBS -lselect=1:ncpus=8:mem=96gb
 
-#PBS -lwalltime=$temp_hours_mins:0
+#PBS -lwalltime=0:30:0
 
-$temp_array_place
+
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -15,10 +15,9 @@ cd $TMPDIR/ICE-NODE
 $HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
 
 # Load modules
-$temp_modules_place
 
-# Run program
 
+# Input data and output configuration
 OUTPUT_DIR=""
 DATA_DIR=""
 
@@ -30,9 +29,28 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-export JAX_PLATFORM_NAME=$temp_platform
 
-$temp_command
+
+
+# Run program
+
+export JAX_PLATFORM_NAME=cpu
+
+$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
+--output-dir $OUTPUT_DIR \
+--mimic-processed-dir $DATA_DIR \
+--study-tag $STUDY_TAG \
+--data-tag $DATA_TAG \
+--emb $EMB \
+--model $MODEL \
+--optuna-store $OPTUNA_STORE \
+--mlflow-store $MLFLOW_STORE \
+--trials-time-limit 0 \
+-N 4 \
+--num-trials 1 \
+--training-time-limit 1 \
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
+
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID

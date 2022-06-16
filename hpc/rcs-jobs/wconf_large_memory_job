@@ -1,6 +1,6 @@
-#PBS -lselect=1:ncpus=48:mem=124gb
+#PBS -lselect=1:ncpus=30:mem=360gb
 
-#PBS -lwalltime=24:0:0
+#PBS -lwalltime=48:0:0
 
 
 
@@ -17,8 +17,7 @@ $HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
 # Load modules
 
 
-# Run program
-
+# Input data and output configuration
 OUTPUT_DIR=""
 DATA_DIR=""
 
@@ -29,6 +28,11 @@ else
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
+
+
+
+
+# Run program
 
 export JAX_PLATFORM_NAME=cpu
 

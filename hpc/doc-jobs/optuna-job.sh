@@ -7,17 +7,18 @@
 TERM=vt100 # or TERM=xterm
 STORE=/vol/bitbucket/am8520
 
-# Input Environ: STUDY_TAG, DATA_TAG, CONFIG, CONFIG_TAG, MODEL
-
 WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 
 
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1
+git clone git@github.com:A-Alaa/ICE-NODE.git $WORKDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1
 
 cd $WORKDIR/ICENODE
+
+# PostgresQL
+source ~/.pgdb-am8520-am8520
 
 # >>> conda initialize >>>
 # !! Contents within this block are managed by 'conda init' !!
@@ -36,22 +37,37 @@ unset __conda_setup
 
 source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
-# Run program
+
+
+export MLFLOW_STORE="file://${STORE}/mlflow-store"
+
 OUTPUT_DIR=""
 DATA_DIR=""
 
 if [[ "$DATA_TAG" == "M3" ]]; then
-  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m3-exp"
-  DATA_DIR="$STORE/GP/ehr-data/mimic3-transforms"
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
 else
-  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m4-exp"
-  DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/opt/anaconda3/envs/icenode/bin/python -m icenode.train_config \
---config $CONFIG \
---config-tag $CONFIG_TAG \
+
+
+
+$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
+--study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
+--emb $EMB \
 --model $MODEL \
+--optuna-store $OPTUNA_STORE \
+--mlflow-store $MLFLOW_STORE \
+--trials-time-limit 120 \
+-N 1 \
+--num-trials 30 \
+--training-time-limit 72 \
+--job-id "doc-${slurm_job_id}"
+
+

@@ -1,12 +1,11 @@
 #!/bin/bash
 
-
-# Input Environ: STUDY_TAG, DATA_TAG, CONFIG, CONFIG_TAG, MODEL
 if [[ -v STUDY_TAG ]]; then 
-  git clone git@github.com:A-Alaa/ICENODE.git --branch $STUDY_TAG --single-branch  --depth 1
-  cd ICENODE
+  git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
+  cd ICE-NODE
 else
   cp ../icenode . -r
+  export STUDY_TAG="debug"
 fi
 
 OUTPUT_DIR=""
@@ -20,11 +19,18 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-# Run program
-python -m icenode.train_config \
+
+
+
+export JAX_PLATFORM_NAME=gpu
+
+MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
+
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \
---config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --data-tag $DATA_TAG \
+--emb $EMB \
 --model $MODEL
+

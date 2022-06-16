@@ -1,6 +1,6 @@
-#PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=RTX6000
+#PBS -lselect=1:ncpus=8:mem=96gb
 
-#PBS -lwalltime=24:0:0
+#PBS -lwalltime=72:0:0
 
 
 
@@ -15,11 +15,9 @@ cd $TMPDIR/ICE-NODE
 $HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
 
 # Load modules
-module load cudnn/8.2.4
-module load cuda/11.4.2
 
-# Run program
 
+# Input data and output configuration
 OUTPUT_DIR=""
 DATA_DIR=""
 
@@ -31,7 +29,12 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-export JAX_PLATFORM_NAME=gpu
+
+
+
+# Run program
+
+export JAX_PLATFORM_NAME=cpu
 
 $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \

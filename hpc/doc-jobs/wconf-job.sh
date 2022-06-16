@@ -41,30 +41,26 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
 export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
-# Run program
 OUTPUT_DIR=""
 DATA_DIR=""
 
 if [[ "$DATA_TAG" == "M3" ]]; then
-  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m3-exp"
-  DATA_DIR="$STORE/GP/ehr-data/mimic3-transforms"
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
 else
-  OUTPUT_DIR="$STORE/GP/ehr-data/icenode-m4-exp"
-  DATA_DIR="$STORE/GP/ehr-data/mimic4-transforms"
+  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
+  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$STORE/GP/env/icenode-env/bin/python -m icenode.hyperopt.multi_optuna \
+
+
+
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
+--config $CONFIG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
---study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
---model $MODEL \
---optuna-store $OPTUNA_STORE \
---mlflow-store $MLFLOW_STORE \
---num-trials $NUM_TRIALS \
---trials-time-limit 120 \
---training-time-limit 72 \
---job-id doc-${SLURM_JOB_ID} \
--N 1
+--model $MODEL
+
 

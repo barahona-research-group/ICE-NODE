@@ -19,21 +19,25 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
+
+
+
+export JAX_PLATFORM_NAME=gpu
+
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
-# Run program
-python -m icenode.hyperopt.optuna_multi \
+$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL \
---optuna-store ${OPTUNA_STORE} \
+--optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---num-trials $NUM_TRIALS \
 --trials-time-limit 120 \
+-N 1 \
+--num-trials 30 \
 --training-time-limit 72 \
---job-id 0 \
--N 1
+--job-id 0
 

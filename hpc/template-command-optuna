@@ -11,6 +11,4 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 -N $temp_parallel \
 --num-trials $temp_num_trials \
 --training-time-limit $temp_training_time_limit \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
-
-
+--job-id $temp_job_id

@@ -1,20 +1,24 @@
-#PBS -lselect=1:ncpus=32:mem=124gb
+#PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=RTX6000
 
-#PBS -lwalltime=72:0:0
+#PBS -lwalltime=24:0:0
+
+
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
-$HOME/anaconda3/condabin/conda activate icenode
 
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICENODE.git $TMPDIR/ICENODE --branch $STUDY_TAG --single-branch  --depth 1 
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
 
-cd $TMPDIR/ICENODE
+cd $TMPDIR/ICE-NODE
 
-# Load modules for any applications
+$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
 
-# Run program
+# Load modules
+module load cudnn/8.2.4
+module load cuda/11.4.2
 
+# Input data and output configuration
 OUTPUT_DIR=""
 DATA_DIR=""
 
@@ -26,14 +30,21 @@ else
   DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
-$HOME/anaconda3/envs/icenode/bin/python -m icenode.train_config \
+
+
+
+# Run program
+
+export JAX_PLATFORM_NAME=gpu
+
+$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --config $CONFIG \
---config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
 --mimic-processed-dir $DATA_DIR \
 --data-tag $DATA_TAG \
---model $MODEL \
---cpu 
+--emb $EMB \
+--model $MODEL
+
 
 mkdir $PBS_O_WORKDIR/$PBS_JOBID
 cp * $PBS_O_WORKDIR/$PBS_JOBID
