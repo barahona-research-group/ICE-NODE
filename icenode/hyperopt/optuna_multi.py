@@ -89,8 +89,8 @@ if __name__ == '__main__':
         sys.executable, '-m', 'icenode.hyperopt.optuna_job', '--model', model,
         '--study-tag', study_tag, '--optuna-store', optuna_store,
         '--mlflow-store', mlflow_store, '--output-dir', output_dir,
-        '--mimic-processed-dir', mimic_processed_dir, '--emb', emb,
-        '--num-trials',
+        '--mimic-processed-dir', mimic_processed_dir, '--data-tag', data_tag,
+        '--emb', emb, '--num-trials',
         str(num_trials), '--trials-time-limit',
         str(trials_time_limit), '--training-time-limit',
         str(training_time_limit), '--job-id', job_id

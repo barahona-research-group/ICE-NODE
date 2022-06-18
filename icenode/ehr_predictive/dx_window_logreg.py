@@ -142,8 +142,8 @@ class WindowLogReg(AbstractModel):
     def init_optimizer(cls, config, params):
         raise Unsupported("Unsupported.")
 
-    def init_with_params(self, config: Dict[str, Any], skmodel: Any):
-        return (self, skmodel)
+    def init_with_params(self, config: Dict[str, Any], params: Any):
+        return (self, params)
 
     @classmethod
     def get_params(cls, m_state):
