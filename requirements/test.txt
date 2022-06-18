@@ -2,6 +2,7 @@ absl-py==1.0.0
 dm-haiku==0.0.5
 jax==0.3.13
 jaxlib==0.3.10
+jaxopt==0.4.2
 mlflow==1.23.0
 networkx==2.6.3
 numpy==1.22.1

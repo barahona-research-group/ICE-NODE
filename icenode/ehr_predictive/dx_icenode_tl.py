@@ -1,5 +1,7 @@
+"""."""
+
 from functools import partial
-from typing import (Any, Dict, Iterable, List, Optional, Set)
+from typing import (Any, Dict, List)
 
 from tqdm import tqdm
 import haiku as hk
@@ -188,6 +190,15 @@ class ICENODE(AbstractModel):
         l = [balanced_focal_bce(dx[i], dec_dx[i]) for i in sorted(dx.keys())]
         return sum(l) / len(l)
 
+    @staticmethod
+    def _time_diff(t1, t2):
+        """
+        This static method is created to simplify creating a variant of
+        ICE-NODE (i.e. ICE-NODE_UNIFORM) that integrates with a
+        fixed-time interval. So only this method that needs to be overriden.
+        """
+        return t1 - t2
+
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
@@ -231,7 +242,8 @@ class ICENODE(AbstractModel):
             state_e = {i: subject_state[i]['state_e'] for i in adm_id}
 
             d2d_time = {
-                i: adm_time[i] + adm_los[i] - subject_state[i]['time']
+                i: self._time_diff(adm_time[i] + adm_los[i],
+                                   subject_state[i]['time'])
                 for i in adm_id
             }
 
