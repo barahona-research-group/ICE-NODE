@@ -290,7 +290,7 @@ if __name__ == '__main__':
                          frozen=args.num_trials <= 0)
 
     if args.num_trials > 0:
-        mlflow_uri = f"{args.mlflow_store}_bystudy/{args.study_name}"
+        mlflow_uri = f"{args.mlflow_store}_bystudy/{study_name}"
         mlflc = MLflowCallback(tracking_uri=mlflow_uri, metric_name="VAL-AUC")
         study.optimize(mlflc.track_in_mlflow()(objective_f),
                        n_trials=args.num_trials,
