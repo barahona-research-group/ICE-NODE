@@ -310,6 +310,12 @@ class DxWindowedInterface_JAX:
 
         return np.vstack(X), np.vstack(y)
 
+    def n_features(self):
+        return len(ccs_dag.dx_ccs_idx)
+
+    def n_targets(self):
+        return len(ccs_dag.dx_flatccs_idx)
+
 
 def create_patient_interface(processed_mimic_tables_dir: str):
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')

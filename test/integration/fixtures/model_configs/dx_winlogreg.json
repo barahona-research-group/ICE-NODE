@@ -1,7 +1,7 @@
 {
     "model": {
-        "reg_c": 1.0,
-        "reg_l1_ratio": 0.5,
+        "alpha": 0.5,
+        "beta": 0.5,
         "balanced": true
     }
 }

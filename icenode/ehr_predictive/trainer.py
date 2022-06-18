@@ -1,17 +1,14 @@
 import os
 import copy
 import random
-import argparse
-from typing import List, Any, Dict, Tuple
+from typing import List
 from datetime import datetime
-from pathlib import Path
 
 from absl import logging
 from tqdm import tqdm
 
-from ..ehr_model.jax_interface import create_patient_interface
 from ..metric.common_metrics import evaluation_table
-from ..utils import write_config, load_config
+from ..utils import write_config
 
 
 class AbstractReporter:
@@ -175,7 +172,7 @@ def minibatch_trainer(model,
     return {'objective': auc, 'model': (model, m_state)}
 
 
-def sklearn_trainer(model,
+def onestep_trainer(model,
                     m_state,
                     config,
                     splits,

@@ -7,9 +7,9 @@ import unittest
 import random
 from sklearn.exceptions import ConvergenceWarning
 
-from icenode.ehr_predictive.trainer import (minibatch_trainer, MinibatchLogger,
-                                            sklearn_trainer)
-from icenode.ehr_predictive.dx_window_logreg import WindowLogReg
+from icenode.ehr_predictive.trainer import MinibatchLogger
+from icenode.ehr_predictive.dx_window_logreg import (WindowLogReg,
+                                                     WindowLogReg_Sklearn)
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
 from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
@@ -51,38 +51,33 @@ class DxCommonTests(object):
         self.assertTrue(callable(model))
         self.assertTrue(state is not None)
 
-    @staticmethod
-    def _train(model, m_state, m_config):
-        minibatch_trainer(model=model,
-                          m_state=m_state,
-                          config=m_config,
-                          splits=splits,
-                          rng_seed=42,
-                          reporters=[MinibatchLogger()])
-
     def test_train(self):
         model = self.model_cls.create_model(self.config, dx_interface, [])
         state = model.init(self.config)
-
-        self._train(model, state, self.config)
+        model.get_trainer()(model=model,
+                            m_state=state,
+                            config=self.config,
+                            splits=splits,
+                            rng_seed=42,
+                            reporters=[MinibatchLogger()])
 
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
-
-    @staticmethod
-    def _train(model, m_state, m_config):
-        ConvergenceWarning('ignore')
-        sklearn_trainer(model=model,
-                        m_state=m_state,
-                        config=m_config,
-                        splits=splits,
-                        reporters=[MinibatchLogger()])
 
     @classmethod
     def setUpClass(cls):
         cls.config = load_config(
             'test/integration/fixtures/model_configs/dx_winlogreg.json')
         cls.model_cls = WindowLogReg
+
+
+class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = load_config(
+            'test/integration/fixtures/model_configs/dx_winlogreg.json')
+        cls.model_cls = WindowLogReg_Sklearn
 
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):
