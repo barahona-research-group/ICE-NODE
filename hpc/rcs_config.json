@@ -23,7 +23,7 @@
 	{
 		"spec": "#PBS -lselect=1:ncpus=8:mem=96gb",
 		"array": 10,
-		"parallel": 4,
+		"parallel": 3,
 		"hours": "72:0",
 		"platform": "cpu",
 		"n_trials": 30,

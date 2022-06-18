@@ -220,7 +220,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
             'penalty': 'elasticnet',
             'solver': 'saga',
             'class_weight': class_weight,
-            'max_iter': 20000,
+            'max_iter': 2000,
             **self.alpha_beta_config(alpha, beta)
         }
         self.supported_labels = None

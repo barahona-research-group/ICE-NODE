@@ -46,7 +46,7 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --trials-time-limit 72 \
--N 4 \
+-N 3 \
 --num-trials 30 \
 --training-time-limit 48 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
