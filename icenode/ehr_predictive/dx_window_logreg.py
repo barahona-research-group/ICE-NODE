@@ -182,11 +182,11 @@ class WindowLogReg(AbstractModel):
     def sample_model_config(cls, trial: optuna.Trial):
         return {
             'alpha':
-            trial.suggest_loguniform('alpha', 1e-5, 1e3),
+            trial.suggest_loguniform('alpha', 1e-6, 1e3),
             'beta':
-            trial.suggest_float('beta', 1e-5, 1e3),
+            trial.suggest_loguniform('beta', 1e-6, 1e3),
             'class_weight':
-            trial.suggest_categorical('weight', ['none', 'balanced', 'focal'])
+            trial.suggest_categorical('class_weight', ['none', 'balanced', 'focal'])
         }
 
     @classmethod
