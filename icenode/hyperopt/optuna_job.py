@@ -240,7 +240,7 @@ if __name__ == '__main__':
 
     storage = RDBStorage(url=args.optuna_store,
                          engine_kwargs={'poolclass': NullPool})
-    study = optuna.create_study(study_name=args.study_name,
+    study = optuna.create_study(study_name=study_name,
                                 direction="maximize",
                                 storage=storage,
                                 load_if_exists=True,

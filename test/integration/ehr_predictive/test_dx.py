@@ -8,8 +8,8 @@ import random
 from sklearn.exceptions import ConvergenceWarning
 
 from icenode.ehr_predictive.trainer import MinibatchLogger
-from icenode.ehr_predictive.dx_window_logreg import (WindowLogReg,
-                                                     WindowLogReg_Sklearn)
+from icenode.ehr_predictive.dx_window_logreg import (
+    WindowLogReg, logreg_loss_multinomial_mode, WindowLogReg_Sklearn)
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
 from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
@@ -42,32 +42,42 @@ class DxCommonTests(object):
         raise RuntimeError('Unreachable')
 
     def test_config(self):
-        self.assertTrue(len(self.config) > 0)
+        for config in self.configs:
+            self.assertTrue(len(config) > 0)
 
     def test_create(self):
-        model = self.model_cls.create_model(self.config, dx_interface, [])
-        state = model.init(self.config)
+        for config in self.configs:
+            model = self.model_cls.create_model(config, dx_interface, [])
+            state = model.init(config)
 
-        self.assertTrue(callable(model))
-        self.assertTrue(state is not None)
+            self.assertTrue(callable(model))
+            self.assertTrue(state is not None)
 
     def test_train(self):
-        model = self.model_cls.create_model(self.config, dx_interface, [])
-        state = model.init(self.config)
-        model.get_trainer()(model=model,
-                            m_state=state,
-                            config=self.config,
-                            splits=splits,
-                            rng_seed=42,
-                            reporters=[MinibatchLogger()])
+        for config in self.configs:
+            model = self.model_cls.create_model(config, dx_interface, [])
+            state = model.init(config)
+            model.get_trainer()(model=model,
+                                m_state=state,
+                                config=config,
+                                splits=splits,
+                                rng_seed=42,
+                                reporters=[MinibatchLogger()])
 
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
+        c = load_config(
             'test/integration/fixtures/model_configs/dx_winlogreg.json')
+
+        cls.configs = []
+        for class_weight in logreg_loss_multinomial_mode.keys():
+            config = c.copy()
+            config['class_weight'] = class_weight
+            cls.configs.append(config)
+
         cls.model_cls = WindowLogReg
 
 
@@ -75,8 +85,10 @@ class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_winlogreg.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_winlogreg.json')
+        ]
         cls.model_cls = WindowLogReg_Sklearn
 
 
@@ -84,8 +96,10 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_gru_m.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_gru_m.json')
+        ]
         cls.model_cls = GRAM
 
 
@@ -93,8 +107,10 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_gru_g.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_gru_g.json')
+        ]
         cls.model_cls = GRAM
 
 
@@ -102,8 +118,10 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_retain_m.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_retain_m.json')
+        ]
         cls.model_cls = RETAIN
 
 
@@ -111,8 +129,11 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
+            )
+        ]
         cls.model_cls = ICENODE
 
 
@@ -120,8 +141,11 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_icenode_2lr_g.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_g.json'
+            )
+        ]
         cls.model_cls = ICENODE
 
 
@@ -129,8 +153,11 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.config = load_config(
-            'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json')
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
+            )
+        ]
         cls.model_cls = ICENODE_UNIFORM
 
 

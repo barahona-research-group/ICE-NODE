@@ -2,6 +2,6 @@
     "model": {
         "alpha": 0.5,
         "beta": 0.5,
-        "balanced": true
+        "class_weight": "none"
     }
 }

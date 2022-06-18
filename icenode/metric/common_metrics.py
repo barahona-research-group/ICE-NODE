@@ -113,12 +113,12 @@ def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
                                       beta=0.999):
     """Same as ``balanced_focal_bce``, but with
     applying Softmax activation on the `logits`."""
-
-    n1 = jnp.sum(y)
-    n0 = jnp.size(y) - n1
+    #TODO:FIX this for softmax (multinomial case), n1 = np.sum(y, axis=0)
+    n1 = jnp.sum(y, axis=0)
+    n0 = y.shape[0] - n1
     # Effective number of samples.
-    e1 = (1 - beta**n1) / (1 - beta) + 1e-1
-    e0 = (1 - beta**n0) / (1 - beta) + 1e-1
+    e1 = (1 - beta**n1) / (1 - beta) + 1e-5
+    e0 = (1 - beta**n0) / (1 - beta) + 1e-5
 
     # Focal weighting
     p = jax.nn.softmax(logits)

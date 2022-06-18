@@ -2,6 +2,7 @@
 previous visits."""
 
 from typing import Any, List, Dict
+from functools import partial
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -15,7 +16,9 @@ import optuna
 from ..ehr_model.jax_interface import (DxInterface_JAX,
                                        DxWindowedInterface_JAX)
 from ..ehr_predictive.abstract import AbstractModel
-from ..metric.common_metrics import softmax_logits_bce
+from ..metric.common_metrics import (softmax_logits_bce,
+                                     softmax_logits_weighted_bce,
+                                     softmax_logits_balanced_focal_bce)
 from ..utils import Unsupported
 
 from .risk import BatchPredictedRisks
@@ -39,6 +42,26 @@ def logreg_loss_multinomial(p, X, y):
 
 
 @jax.jit
+def logreg_loss_multinomial_balanced_focal(p, X, y):
+    logits = X @ p['W'] + p['b']
+    return softmax_logits_balanced_focal_bce(y, logits)
+
+
+@jax.jit
+def logreg_loss_multinomial_balanced(p, X, y):
+    logits = X @ p['W'] + p['b']
+    weights = y.shape[0] / (y.sum(axis=0) + 1e-10)
+    return softmax_logits_weighted_bce(y, logits, weights)
+
+
+logreg_loss_multinomial_mode = {
+    'none': logreg_loss_multinomial,
+    'focal': logreg_loss_multinomial_balanced_focal,
+    'balanced': logreg_loss_multinomial_balanced
+}
+
+
+@jax.jit
 def prox_elastic_net_with_intercept(p, hyperparams, scaling):
     return {
         'W': prox_elastic_net(p['W'], hyperparams, scaling),
@@ -53,13 +76,14 @@ class WindowLogReg(AbstractModel):
             subject_interface: DxInterface_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
-            balanced: bool):
+            class_weight: str):
         self.dx_interface = DxWindowedInterface_JAX(subject_interface)
+
         self.model_config = {
-            'fun': logreg_loss_multinomial,
-            'maxiter': 2000,
+            'fun': logreg_loss_multinomial_mode[class_weight],
+            'maxiter': 20000,
             'prox': prox_elastic_net_with_intercept,
-            'hyperparams_prox': self.alpha_beta_config(alpha, beta)
+            'hyperparams_prox': self.alpha_beta_config(alpha, beta),
         }
 
     @staticmethod
@@ -157,9 +181,12 @@ class WindowLogReg(AbstractModel):
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {
-            'alpha': trial.suggest_loguniform('alpha', 1e-5, 1e3),
-            'beta': trial.suggest_float('beta', 1e-5, 1e3),
-            'balanced': trial.suggest_categorical('weight', [True, False])
+            'alpha':
+            trial.suggest_loguniform('alpha', 1e-5, 1e3),
+            'beta':
+            trial.suggest_float('beta', 1e-5, 1e3),
+            'class_weight':
+            trial.suggest_categorical('weight', ['none', 'balanced', 'focal'])
         }
 
     @classmethod
@@ -184,13 +211,16 @@ class WindowLogReg_Sklearn(WindowLogReg):
             subject_interface: DxInterface_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
-            balanced: bool):
+            class_weight: str):
+        if class_weight != 'balanced':
+            class_weight = None
+
         self.dx_interface = DxWindowedInterface_JAX(subject_interface)
         self.model_config = {
             'penalty': 'elasticnet',
             'solver': 'saga',
-            'class_weight': 'balanced' if balanced else None,
-            'max_iter': 2000,
+            'class_weight': class_weight,
+            'max_iter': 20000,
             **self.alpha_beta_config(alpha, beta)
         }
         self.supported_labels = None
