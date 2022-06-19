@@ -1,16 +1,15 @@
 """Abstract class for predictive EHR models."""
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from functools import partial
 from absl import logging
 import jax
 from jax.example_libraries import optimizers
 import optuna
 
-from ..utils import (load_config, load_params, parameters_size, tree_hasnan,
-                     tree_lognan, write_params, OOPError)
-from ..embeddings.gram import (FrozenGRAM, SemiFrozenGRAM, TunableGRAM,
-                               GloVeGRAM, MatrixEmbeddings, OrthogonalGRAM)
+from ..utils import (parameters_size, tree_hasnan, tree_lognan, write_params,
+                     OOPError)
+from ..embeddings.gram import (GloVeGRAM, MatrixEmbeddings, OrthogonalGRAM)
 from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
                                      admissions_auc_scores, codes_auc_scores)

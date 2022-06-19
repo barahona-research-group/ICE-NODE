@@ -1,7 +1,10 @@
 """Encapsulation of predicted risk for a dictionary of subjects."""
 
+import jax.numpy as jnp
+
 
 class SubjectPredictedRisk:
+
     def __init__(self,
                  admission_id,
                  index,
@@ -14,10 +17,20 @@ class SubjectPredictedRisk:
         self.ground_truth = ground_truth
         self.other_attrs = other_attrs
 
+    def __eq__(self, other):
+        id_attrs = lambda x: (x.admission_id, x.index)
+        arr_attrs = lambda x: (x.prediction, x.ground_truth)
+        return id_attrs(self) == id_attrs(other) and \
+            all(map(jnp.array_equal, arr_attrs(self), arr_attrs(other)))
+
 
 class BatchPredictedRisks:
+
     def __init__(self):
         self.subject_risks = {}
+
+    def __eq__(self, other):
+        return self.subject_risks == other.subject_risks
 
     def add(self,
             subject_id,

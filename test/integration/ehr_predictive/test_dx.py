@@ -4,8 +4,7 @@ To execute this test from the root directory:
 """
 
 import unittest
-import random
-from sklearn.exceptions import ConvergenceWarning
+import os
 
 from icenode.ehr_predictive.trainer import MinibatchLogger
 from icenode.ehr_predictive.dx_window_logreg import (
@@ -41,28 +40,37 @@ class DxCommonTests(object):
         # Unreachable, should be overriden.
         raise RuntimeError('Unreachable')
 
-    def test_config(self):
-        for config in self.configs:
-            self.assertTrue(len(config) > 0)
-
-    def test_create(self):
+    def setUp(self):
+        self.models = []
         for config in self.configs:
             model = self.model_cls.create_model(config, dx_interface, [])
             state = model.init(config)
 
             self.assertTrue(callable(model))
             self.assertTrue(state is not None)
+            self.models.append((model, state))
 
-    def test_train(self):
-        for config in self.configs:
-            model = self.model_cls.create_model(config, dx_interface, [])
-            state = model.init(config)
-            model.get_trainer()(model=model,
-                                m_state=state,
-                                config=config,
-                                splits=splits,
-                                rng_seed=42,
-                                reporters=[MinibatchLogger()])
+    def test_train_read_write_params(self):
+        for (model, state), config in zip(self.models, self.configs):
+            results = model.get_trainer()(model=model,
+                                          m_state=state,
+                                          config=config,
+                                          splits=splits,
+                                          rng_seed=42,
+                                          reporters=[MinibatchLogger()])
+            model_, state_ = results['model']
+            test_out1 = model_(model_.get_params(state_),
+                               splits[2])['risk_prediction']
+            param_fname = f'test_{hash(str(config))}.pickle'
+            model_.write_params(state_, param_fname)
+            params = load_params(param_fname)
+            os.remove(param_fname)
+
+            state_ = model_.init_with_params(config, params)
+            test_out2 = model_(model_.get_params(state_),
+                               splits[2])['risk_prediction']
+
+            self.assertEqual(test_out1, test_out2)
 
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
