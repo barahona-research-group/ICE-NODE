@@ -10,16 +10,18 @@ from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
 from icenode.ehr_predictive.dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM
 from icenode.ehr_predictive.dx_gram import GRAM
 from icenode.ehr_predictive.dx_retain import RETAIN
+from icenode.ehr_predictive.dx_window_logreg import WindowLogReg
 from icenode.ehr_model.ccs_dag import ccs_dag
 from icenode.ehr_model.jax_interface import create_patient_interface
 
-from icenode.utils import load_config, load_params, write_params
+from icenode.utils import load_config, load_params, write_params, write_config
 
 model_cls = {
     'ICE-NODE': ICENODE,
     'ICE-NODE_UNIFORM': ICENODE_UNIFORM,
     'GRU': GRAM,
-    'RETAIN': RETAIN
+    'RETAIN': RETAIN,
+    'LogReg': WindowLogReg
 }
 
 
@@ -34,7 +36,7 @@ def eval2_(model, ids):
 
 
 def get_model(clf, config, params, interface):
-    model = model_cls[clf].create_model(config, interface, [], None)
+    model = model_cls[clf].create_model(config, interface, [])
     state = model.init_with_params(config, params)
     return model, state
 
