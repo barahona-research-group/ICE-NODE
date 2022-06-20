@@ -7,6 +7,7 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from IPython.display import display
 
 sys.path.append('..')
 from icenode.metric.common_metrics import codes_auc_pairwise_tests
@@ -285,3 +286,37 @@ def make_clf_paris(clfs):
         for j in range(i + 1, len(clfs)):
             clfs_pairs.append((clfs[i], clfs[j]))
     return tuple(sorted(clfs_pairs))
+
+
+def styled_df(df):
+    pd.set_option('precision', 3)
+
+    def highlight_max(s, props=''):
+        return np.where(s == np.nanmax(s.values), props, '')
+
+    s_df = df.style
+    s_df = s_df.apply(highlight_max,
+                      props='bfseries: ;color:white;background-color:darkblue',
+                      axis=0)
+    texttt = [{'selector': 'th', 'props': 'font-family: monospace;'}]
+
+    latex_str = s_df.to_latex(convert_css=True)
+    for clf in df.index.tolist():
+        latex_str = latex_str.replace(clf, f'\\texttt{{{clf}}}', 1)
+    latex_str = latex_str.replace('_', '\\_')
+    return s_df, latex_str
+
+
+def top_k_tables(clfs, eval_table, top_k_list, n_percentiles, out_prefix):
+    output = {}
+    for k in top_k_list:
+        df_topk = eval_table.loc[list(
+            f'ACC-P{i}-k{k}' for i in range(n_percentiles)), :].transpose()
+        df_topk = df_topk.loc[pd.Series(clfs)]
+        df_topk = df_topk.apply(lambda x: round(x, 3))
+        df_topk.to_csv(f'{out_prefix}_top{k}.csv')
+        s_df, ltx_s = styled_df(df_topk)
+        display(s_df)
+        print(ltx_s)
+        output[k] = {'styled': s_df, 'latex': ltx_s, 'df': df_topk}
+    return output

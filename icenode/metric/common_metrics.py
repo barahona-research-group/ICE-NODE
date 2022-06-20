@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from enum import Flag, auto
-from typing import Dict
+from typing import Dict, Iterable
 
 from absl import logging
 from tqdm import tqdm
@@ -340,23 +340,6 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
     return pd.DataFrame(data)
 
 
-def top_k_detectability_scores(codes_by_percentiles, detections_df):
-    rate = {}
-    for i, codes in enumerate(codes_by_percentiles):
-        codes_detections_df = detections_df[detections_df.code.isin(codes)]
-        detection_rate = codes_detections_df['detected'].mean()
-        rate[f'ACC-P{i}'] = detection_rate
-
-    percentiles = {}
-    for i, codes in enumerate(codes_by_percentiles):
-        codes_detections_df = detections_df[detections_df.code.isin(codes)]
-        C = len(codes)
-        N = len(codes_detections_df)
-        percentiles[f'P{i}: N ~ C'] = f'{N} ~ {C}'
-
-    return rate, percentiles
-
-
 def compute_confusion_matrix(risk_prediction: BatchPredictedRisks):
     cm = []
     for subject_risks in risk_prediction.subject_risks.values():
@@ -369,30 +352,46 @@ def compute_confusion_matrix(risk_prediction: BatchPredictedRisks):
         return onp.zeros((2, 2)) + onp.nan
 
 
-def top_k_detectability_df(top_k: int, risk_predictions: BatchPredictedRisks):
-    cols = ['subject_id', 'point_n', 'code', 'detected']
+def top_k_detectability_df(top_k_list: Iterable[int],
+                           risk_predictions: BatchPredictedRisks):
 
     def top_k_detectability(risk: SubjectPredictedRisk):
-        ground_truth = jnp.argwhere(risk.ground_truth).squeeze()
-        if ground_truth.ndim > 0:
-            ground_truth = set(onp.array(ground_truth))
-        else:
-            ground_truth = {ground_truth.item()}
-
-        detections = defaultdict(list)
-        predictions = set(onp.array(onp.argsort(risk.prediction)[-top_k:]))
-        for code_i in ground_truth:
-            detections[code_i].append(code_i in predictions)
+        detections = {}
+        code_idx_sorted = onp.argsort(-risk.prediction).squeeze()
+        for top_k in top_k_list:
+            predictions = onp.zeros(risk.prediction.shape[0], dtype=bool)
+            predictions[(code_idx_sorted[:top_k], )] = 1
+            detections[top_k] = (predictions & risk.ground_truth.astype(int))
         return detections
 
     df_list = []
 
     for subject_id, subject_risks in risk_predictions.subject_risks.items():
         for index, risk in subject_risks.items():
-            for code_i, detected in top_k_detectability(risk).items():
-                df_list.append((subject_id, index, code_i, *detected))
+            ground_truth_idx = jnp.argwhere(risk.ground_truth).flatten()
+            df_index = jnp.arange(jnp.size(ground_truth_idx))
+            top_k_detections = top_k_detectability(risk)
+            detections = {
+                f'detected-k{k}': top_k_detections[k][(ground_truth_idx, )]
+                for k in top_k_list
+            }
+            detections['code_idx'] = ground_truth_idx
 
-    return pd.DataFrame(df_list, columns=cols)
+            df_list.append(pd.DataFrame(detections, index=df_index))
+
+    return pd.concat(df_list, ignore_index=True)
+
+
+def top_k_detectability_scores(codes_by_percentiles, detections_df,
+                               top_k_list):
+    rate = {k: {} for k in top_k_list}
+    for i, code_indices in enumerate(codes_by_percentiles):
+        codes_detections_df = detections_df[detections_df.code_idx.isin(
+            code_indices)]
+        for k in top_k_list:
+            detection_rate = codes_detections_df[f'detected-k{k}'].mean()
+            rate[k][f'ACC-P{i}-k{k}'] = detection_rate
+    return rate
 
 
 class EvalFlag(Flag):
@@ -404,7 +403,7 @@ class EvalFlag(Flag):
         return (flag & attr).value != 0
 
 
-def evaluation_table(raw_results, code_frequency_groups=None, top_k=20):
+def evaluation_table(raw_results, code_frequency_groups=None, top_k_list=[20]):
     evals = {colname: {} for colname in raw_results}
     flat_evals = {}
     for colname, res in raw_results.items():
@@ -422,11 +421,13 @@ def evaluation_table(raw_results, code_frequency_groups=None, top_k=20):
             evals[colname][rowname] = val
 
         if code_frequency_groups is not None:
-            det_topk = top_k_detectability_df(top_k, res['risk_prediction'])
+            det_topk = top_k_detectability_df(top_k_list,
+                                              res['risk_prediction'])
             det_topk_scores = top_k_detectability_scores(
-                code_frequency_groups, det_topk)[0]
-            for rowname, val in det_topk_scores.items():
-                evals[colname][rowname] = val
+                code_frequency_groups, det_topk, top_k_list)
+            for k in top_k_list:
+                for rowname, val in det_topk_scores[k].items():
+                    evals[colname][rowname] = val
 
         evals[colname] = {
             rowname: float(val)
