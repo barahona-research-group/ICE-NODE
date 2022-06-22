@@ -349,9 +349,10 @@ class ICENODE(AbstractModel):
 
         return new_se, trajectory_samples
 
-    def sample_trajectory(self, model_state, batch: List[int],
+    def sample_trajectory(self, model_state, subjects_batch: List[int],
                           sample_rate: float):
         params = self.get_params(model_state)
+        batch = self.subject_interface.batch_nth_admission(subjects_batch)
         nth_adm = partial(self._extract_nth_admission, params, batch)
         nn_ode = partial(self._f_n_ode_trajectory, params, sample_rate)
         nn_update = partial(self._f_update, params)
@@ -376,10 +377,10 @@ class ICENODE(AbstractModel):
                 'd1d': [],
                 'd2d': []
             }
-            for i in batch
+            for i in subject_state
         }
 
-        for n in tqdm(self.subject_interface.n_support[1:]):
+        for n in tqdm(sorted(batch)[1:]):
             adm_n = nth_adm(n)
             if adm_n is None:
                 break

@@ -134,8 +134,7 @@ class DxInterface_JAX:
 
     def dx_flatccs_history(self, subject_id):
         history = defaultdict(list)
-        adms = AdmissionInfo.subject_to_admissions(self.subjects[subject_id])
-        for adm in adms:
+        for adm in self.subjects[subject_id]:
             flatccs_codes = set(
                 map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes)) - {None}
             for code in flatccs_codes:
@@ -144,8 +143,7 @@ class DxInterface_JAX:
         return history
 
     def adm_times(self, subject_id):
-        subject = self.subjects[subject_id]
-        adms_info = AdmissionInfo.subject_to_admissions(subject)
+        adms_info = self.subjects[subject_id]
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 

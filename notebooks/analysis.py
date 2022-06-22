@@ -2,6 +2,7 @@
 
 import glob
 import sys
+import math
 from collections import defaultdict
 
 import numpy as np
@@ -14,6 +15,15 @@ from icenode.metric.common_metrics import codes_auc_pairwise_tests
 from icenode.metric.common_metrics import evaluation_table
 
 import common as C
+
+dx_flatccs_idx2code = {
+    idx: code
+    for code, idx in C.ccs_dag.dx_flatccs_idx.items()
+}
+dx_flatccs_idx2desc = {
+    idx: C.ccs_dag.dx_flatccs_desc[dx_flatccs_idx2code[idx]]
+    for idx in dx_flatccs_idx2code
+}
 
 
 def performance_traces(data_tag, clfs, train_dir, model_dir):
@@ -100,8 +110,7 @@ def relative_performance_upset(auc_tests, selected_clfs, pvalue, min_auc):
     # flatccs_frequency_train = patient_interface.diag_flatccs_frequency(
     # train_ids)
 
-    idx2desc = lambda i: C.ccs_dag.dx_flatccs_desc[flatccs_idx2code[i]]
-    auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(idx2desc)
+    auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(dx_flatccs_idx2desc.get)
 
     # remove codes that no classifier has scored above `min_auc`
     accepted_aucs = auc_tests.loc[:, [f'AUC({clf})'
@@ -320,3 +329,149 @@ def top_k_tables(clfs, eval_table, top_k_list, n_percentiles, out_prefix):
         print(ltx_s)
         output[k] = {'styled': s_df, 'latex': ltx_s, 'df': df_topk}
     return output
+
+
+plt.rcParams['figure.figsize'] = (10, 10)
+
+
+def plot_codes(codes_dict, ccs_color):
+    for ccs_idx in codes_dict:
+        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
+        time, traj_vals = zip(*codes_dict[ccs_idx])
+        plt.scatter(
+            time,
+            traj_vals,
+            s=300,
+            marker='^',
+            color=ccs_color[ccs_idx],
+            linewidths=2,
+            label=
+            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Diagnosis)'
+        )
+
+
+def plot_admission_lines(adms):
+    ystart, yend = plt.gca().get_ylim()
+    adms, dischs = zip(*adms)
+    common_kwrgs = dict(lw=3, alpha=0.5, linestyle=':')
+    for i, (adm_ti, disch_ti) in enumerate(zip(adms, dischs)):
+
+        # plt.axvline(x=adm_ti, color='black', **common_kwrgs)
+        plt.axvline(x=disch_ti, color='black', **common_kwrgs)
+
+        #         plt.axvline(x=adm_ti,
+        #                     color='green',
+        #                     **common_kwrgs,
+        #                     label='Admission' if i == 0 else None)
+        #         plt.axvline(x=disch_ti,
+        #                     color='red',
+        #                     **common_kwrgs,
+        #                     label='Discharge' if i == 0 else None)
+        plt.fill_between([adm_ti, disch_ti], [1.0, 1.0],
+                         alpha=0.1,
+                         color='gray')
+
+
+def plot_risk_traj(trajs, ccs_color):
+    for ccs_idx in trajs:
+        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
+        time, traj_vals = zip(*trajs[ccs_idx])
+        time = np.concatenate(time)
+        traj_vals = np.concatenate(traj_vals)
+
+        plt.plot(
+            time,
+            traj_vals,
+            color=ccs_color[ccs_idx],
+            marker='o',
+            markersize=2,
+            linewidth=1,
+            label=
+            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Risk)')
+
+
+def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
+                    out_dir):
+    flatccs_selection = set(flatccs_selection)
+    for i, traj in list(trajectories.items()):
+
+        adm_times = interface.adm_times(i)
+        history = interface.dx_flatccs_history(i)
+        history_indexes = set(
+            map(lambda code: C.ccs_dag.dx_flatccs_idx[code], history))
+
+        if len(history_indexes & flatccs_selection) == 0:
+            continue
+        t = traj['t']
+        d = traj['d']
+
+        plt_codes = defaultdict(list)
+        plt_trajs = defaultdict(list)
+        max_min = (-np.inf, np.inf)
+        for ccs_idx in (history_indexes & flatccs_selection):
+            code = dx_flatccs_idx2code[ccs_idx]
+            code_history = history[code]
+            code_history_adm, code_history_disch = zip(*code_history)
+
+            # If diagnosis is made at the first discharge, then no point to
+            # render the risk.
+            if code_history_adm[0] == adm_times[0][0]:
+                continue
+
+            for ti, di, (adm_time_i, disch_time_i) in zip(t, d, adm_times[1:]):
+                max_min = max(max_min[0],
+                              di[:,
+                                 ccs_idx].max()), min(max_min[1],
+                                                      di[:, ccs_idx].min())
+                plt_trajs[ccs_idx].append((ti, di[:, ccs_idx]))
+
+                if disch_time_i in code_history_disch:
+                    plt_codes[ccs_idx].append((disch_time_i, di[-1, ccs_idx]))
+
+        if len(plt_codes) == 0: continue
+
+        plt.figure(i)
+        plot_codes(plt_codes, ccs_color)
+        plot_risk_traj(plt_trajs, ccs_color)
+
+        # Make the major grid
+        plt.grid(which='major', linestyle=':', color='gray', linewidth='1')
+        # Turn on the minor ticks on
+        # plt.minorticks_on()
+        # Make the minor grid
+        # plt.grid(which='minor', linestyle=':', color='black', linewidth='0.5')
+
+        ystep = 0.1
+        plt.ylim(
+            math.floor(max_min[1] / ystep) * ystep,
+            math.ceil(max_min[0] / ystep) * ystep)
+
+        ystart, yend = plt.gca().get_ylim()
+        plt.gca().yaxis.set_ticks(np.arange(ystart, yend + 0.01, ystep))
+
+        plot_admission_lines(adm_times)
+        plt.ylabel('Predicted Risk ($\widehat{v}(t)$)',
+                   fontsize=26,
+                   labelpad=26)
+        plt.yticks(fontsize=24)
+        plt.xlabel('Days Since First Admission ($t$)',
+                   fontsize=26,
+                   labelpad=26)
+        plt.xticks(fontsize=20)
+        # plt.title(f'Disease Risk Trajectory for Subject ID: {i}', fontsize=28)
+        if len(plt_trajs) == 1:
+            plt.legend(fontsize=22,
+                       title_fontsize=32,
+                       loc='upper right',
+                       bbox_to_anchor=(1, 1.2),
+                       ncol=2)
+
+        else:
+            plt.legend(fontsize=22,
+                       title_fontsize=32,
+                       loc='upper right',
+                       bbox_to_anchor=(1.2, 1.25),
+                       ncol=3)
+
+        current_figure = plt.gcf()
+        current_figure.savefig(f"{out_dir}/{i}.pdf", bbox_inches='tight')

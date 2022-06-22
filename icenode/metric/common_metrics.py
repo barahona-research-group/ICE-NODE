@@ -286,7 +286,6 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
     adm_auc = []
     nfe = []
     intervals = []
-    r = []
 
     for subject_id, subject_risks in risk_prediction.subject_risks.items():
         for i, admission_index in enumerate(sorted(subject_risks.keys())):
@@ -310,9 +309,6 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
             if 'los' in risk.other_attrs:
                 los.append(risk.other_attrs['los'])
 
-            if 'R/T' in risk.other_attrs:
-                r.append(risk.other_attrs['R/T'])
-
             admission_indexes.append(i)
             admission_ids.append(risk.admission_id)
             subject_ids.append(subject_id)
@@ -330,12 +326,10 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
         'AUC': adm_auc,
         'N_CODES': n_codes
     }
-    if (len(time) > 0 and len(intervals) > 0 and len(los) > 0 and len(r) > 0
-            and len(nfe) > 0):
+    if all(map(len, (time, intervals, los, nfe))):
         data['TIME'] = time
         data['INTERVALS'] = intervals
         data['LOS'] = los
-        data['R/T'] = r
         data['NFE'] = nfe
     return pd.DataFrame(data)
 
