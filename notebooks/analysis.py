@@ -357,7 +357,7 @@ def plot_admission_lines(adms):
     for i, (adm_ti, disch_ti) in enumerate(zip(adms, dischs)):
 
         # plt.axvline(x=adm_ti, color='black', **common_kwrgs)
-        plt.axvline(x=disch_ti, color='black', **common_kwrgs)
+        # plt.axvline(x=disch_ti, color='black', **common_kwrgs)
 
         #         plt.axvline(x=adm_ti,
         #                     color='green',
@@ -368,7 +368,7 @@ def plot_admission_lines(adms):
         #                     **common_kwrgs,
         #                     label='Discharge' if i == 0 else None)
         plt.fill_between([adm_ti, disch_ti], [1.0, 1.0],
-                         alpha=0.2,
+                         alpha=0.3,
                          color='gray',
                          label='Hospital Stay' if i == 0 else None)
 
@@ -388,18 +388,13 @@ def plot_risk_traj(trajs, ccs_color):
             markersize=2,
             linewidth=1,
             label=
-            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Risk)')
+            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Predicted Risk)')
 
 
 def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
                     out_dir):
 
-    style = {
-        'axis_label_fs': 20,
-        'axis_ticks_fs': 18,
-        'legend_fs': 16,
-        'ystep': 0.1
-    }
+    style = {'axis_label_fs': 20, 'axis_ticks_fs': 18, 'legend_fs': 16}
 
     flatccs_selection = set(flatccs_selection)
     for i, traj in list(trajectories.items()):
@@ -416,7 +411,7 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
 
         plt_codes = defaultdict(list)
         plt_trajs = defaultdict(list)
-        max_min = (-np.inf, np.inf)
+        max_min = [-np.inf, np.inf]
         for ccs_idx in (history_indexes & flatccs_selection):
             code = dx_flatccs_idx2code[ccs_idx]
             code_history = history[code]
@@ -428,10 +423,8 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
                 continue
 
             for ti, di, (adm_time_i, disch_time_i) in zip(t, d, adm_times[1:]):
-                max_min = max(max_min[0],
-                              di[:,
-                                 ccs_idx].max()), min(max_min[1],
-                                                      di[:, ccs_idx].min())
+                max_min[0] = max(max_min[0], di[:, ccs_idx].max())
+                max_min[1] = min(max_min[1], di[:, ccs_idx].min())
                 plt_trajs[ccs_idx].append((ti, di[:, ccs_idx]))
 
                 if disch_time_i in code_history_disch:
@@ -450,7 +443,7 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
         # Make the minor grid
         # plt.grid(which='minor', linestyle=':', color='black', linewidth='0.5')
 
-        ystep = style['ystep']
+        ystep = 0.1 if max_min[1] - max_min[0] > 0.2 else 0.05
         plt.ylim(
             math.floor(max_min[1] / ystep) * ystep,
             math.ceil(max_min[0] / ystep) * ystep)
@@ -468,11 +461,10 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
                    labelpad=style['axis_label_fs'])
         plt.xticks(fontsize=style['axis_ticks_fs'])
         # plt.title(f'Disease Risk Trajectory for Subject ID: {i}', fontsize=28)
-        plt.legend(
-            fontsize=style['legend_fs'],
-            loc='upper right',
-            bbox_to_anchor=(1, 1.5),
-            ncol=1)
+        plt.legend(fontsize=style['legend_fs'],
+                   loc='upper right',
+                   bbox_to_anchor=(1, 1.5),
+                   ncol=1)
 
         current_figure = plt.gcf()
         current_figure.savefig(f"{out_dir}/{i}.pdf", bbox_inches='tight')

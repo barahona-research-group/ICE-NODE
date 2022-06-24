@@ -95,7 +95,9 @@ class WindowLogReg(AbstractModel):
         params = self.get_params(opt_obj)
         res = self(params, batch)
         return {
-            'loss': res['loss'],
+            'loss': {
+                'loss': res['loss']
+            },
             'stats': {},
             'risk_prediction': res['risk_prediction']
         }
@@ -276,7 +278,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
                                     prediction=r,
                                     ground_truth=gt)
 
-        return {'risk_prediction': risk_prediction}
+        return {'risk_prediction': risk_prediction, 'loss': 0}
 
     def init_params(self, prng_seed: int = 0):
         self.model_config['random_state'] = prng_seed
