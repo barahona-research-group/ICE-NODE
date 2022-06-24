@@ -368,8 +368,9 @@ def plot_admission_lines(adms):
         #                     **common_kwrgs,
         #                     label='Discharge' if i == 0 else None)
         plt.fill_between([adm_ti, disch_ti], [1.0, 1.0],
-                         alpha=0.1,
-                         color='gray')
+                         alpha=0.2,
+                         color='gray',
+                         label='Hospital Stay' if i == 0 else None)
 
 
 def plot_risk_traj(trajs, ccs_color):
@@ -392,6 +393,14 @@ def plot_risk_traj(trajs, ccs_color):
 
 def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
                     out_dir):
+
+    style = {
+        'axis_label_fs': 20,
+        'axis_ticks_fs': 18,
+        'legend_fs': 16,
+        'ystep': 0.1
+    }
+
     flatccs_selection = set(flatccs_selection)
     for i, traj in list(trajectories.items()):
 
@@ -441,7 +450,7 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
         # Make the minor grid
         # plt.grid(which='minor', linestyle=':', color='black', linewidth='0.5')
 
-        ystep = 0.1
+        ystep = style['ystep']
         plt.ylim(
             math.floor(max_min[1] / ystep) * ystep,
             math.ceil(max_min[0] / ystep) * ystep)
@@ -451,27 +460,19 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
 
         plot_admission_lines(adm_times)
         plt.ylabel('Predicted Risk ($\widehat{v}(t)$)',
-                   fontsize=26,
-                   labelpad=26)
-        plt.yticks(fontsize=24)
+                   fontsize=style['axis_label_fs'],
+                   labelpad=style['axis_label_fs'])
+        plt.yticks(fontsize=style['axis_ticks_fs'])
         plt.xlabel('Days Since First Admission ($t$)',
-                   fontsize=26,
-                   labelpad=26)
-        plt.xticks(fontsize=20)
+                   fontsize=style['axis_label_fs'],
+                   labelpad=style['axis_label_fs'])
+        plt.xticks(fontsize=style['axis_ticks_fs'])
         # plt.title(f'Disease Risk Trajectory for Subject ID: {i}', fontsize=28)
-        if len(plt_trajs) == 1:
-            plt.legend(fontsize=22,
-                       title_fontsize=32,
-                       loc='upper right',
-                       bbox_to_anchor=(1, 1.2),
-                       ncol=2)
-
-        else:
-            plt.legend(fontsize=22,
-                       title_fontsize=32,
-                       loc='upper right',
-                       bbox_to_anchor=(1.2, 1.25),
-                       ncol=3)
+        plt.legend(
+            fontsize=style['legend_fs'],
+            loc='upper right',
+            bbox_to_anchor=(1, 1.5),
+            ncol=1)
 
         current_figure = plt.gcf()
         current_figure.savefig(f"{out_dir}/{i}.pdf", bbox_inches='tight')
