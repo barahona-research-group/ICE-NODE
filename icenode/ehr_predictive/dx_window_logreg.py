@@ -95,7 +95,7 @@ class WindowLogReg(AbstractModel):
         params = self.get_params(opt_obj)
         res = self(params, batch)
         return {
-            'loss': {},
+            'loss': res['loss'],
             'stats': {},
             'risk_prediction': res['risk_prediction']
         }
@@ -135,7 +135,10 @@ class WindowLogReg(AbstractModel):
                                     prediction=r,
                                     ground_truth=gt)
 
-        return {'risk_prediction': risk_prediction}
+        X, y = model.dx_interface.tabular_features(subjects_batch)
+        loss = self.model_config['fun'](params, X, y)
+
+        return {'risk_prediction': risk_prediction, 'loss': loss}
 
     def detailed_loss(self, loss_mixing, params, res):
         raise Unsupported("Unsupported.")
@@ -186,7 +189,8 @@ class WindowLogReg(AbstractModel):
             'beta':
             trial.suggest_loguniform('beta', 1e-6, 1e3),
             'class_weight':
-            trial.suggest_categorical('class_weight', ['none', 'balanced', 'focal'])
+            trial.suggest_categorical('class_weight',
+                                      ['none', 'balanced', 'focal'])
         }
 
     @classmethod
