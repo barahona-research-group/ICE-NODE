@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 import random
 from typing import List, Optional, Dict, Set
-
+from absl import logging
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
@@ -166,7 +166,9 @@ class DxInterface_JAX:
                     map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes))
                 for code in ccs_codes - {None}:
                     counter[ccs_dag.dx_flatccs_idx[code]] += 1
-        return counter
+
+        # Return dictionary with zero-frequency codes added.
+        return {idx: counter[idx] for idx in ccs_dag.dx_flatccs_idx.values()}
 
     def dx_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
         counts = self.dx_flatccs_frequency(subjects)
@@ -185,7 +187,8 @@ class DxInterface_JAX:
                 ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes))
                 for code in ccs_codes:
                     counter[ccs_dag.dx_ccs_idx[code]] += 1
-        return counter
+        # Return dictionary with zero-frequency codes added.
+        return {idx: counter[idx] for idx in ccs_dag.dx_ccs_idx.values()}
 
     def dx_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
         counts = self.dx_ccs_frequency(subjects)
@@ -196,19 +199,16 @@ class DxInterface_JAX:
             counts_vec[i] = c
         return jnp.array(counts_vec)
 
-    def dx_flatccs_by_percentiles(self,
-                                  section_percentage: float = 20,
-                                  subjects: Optional[List[int]] = None):
-        n_sections = int(100 / section_percentage)
-        sections = list(
-            zip(range(0, 100, section_percentage),
-                range(section_percentage, 101, section_percentage)))
-
-        frequency = self.dx_flatccs_frequency(subjects)
+    @staticmethod
+    def _code_frequency_partitions(percentile_range, code_frequency):
+        sections = list(range(0, 100, percentile_range)) + [100]
+        sections[0] = -1
 
         frequency_df = pd.DataFrame({
-            'code': frequency.keys(),
-            'frequency': frequency.values()
+            'code':
+            sorted(code_frequency),
+            'frequency':
+            list(map(code_frequency.get, sorted(code_frequency)))
         })
 
         frequency_df = frequency_df.sort_values('frequency')
@@ -217,40 +217,25 @@ class DxInterface_JAX:
             'cum_sum'] / frequency_df["frequency"].sum()
 
         codes_by_percentiles = []
-        for l, u in sections:
+        for i in range(1, len(sections)):
+            l, u = sections[i - 1], sections[i]
             codes = frequency_df[(frequency_df['cum_perc'] > l)
                                  & (frequency_df['cum_perc'] <= u)].code
             codes_by_percentiles.append(set(codes))
 
         return codes_by_percentiles
+
+    def dx_flatccs_by_percentiles(self,
+                                  percentile_range: float = 20,
+                                  subjects: Optional[List[int]] = None):
+        return self._code_frequency_partitions(
+            percentile_range, self.dx_flatccs_frequency(subjects))
 
     def dx_ccs_by_percentiles(self,
-                              section_percentage: float = 20,
+                              percentile_range: float = 20,
                               subjects: Optional[List[int]] = None):
-        n_sections = int(100 / section_percentage)
-        sections = list(
-            zip(range(0, 100, section_percentage),
-                range(section_percentage, 101, section_percentage)))
-
-        frequency = self.dx_ccs_frequency(subjects)
-
-        frequency_df = pd.DataFrame({
-            'code': frequency.keys(),
-            'frequency': frequency.values()
-        })
-
-        frequency_df = frequency_df.sort_values('frequency')
-        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
-        frequency_df['cum_perc'] = 100 * frequency_df[
-            'cum_sum'] / frequency_df["frequency"].sum()
-
-        codes_by_percentiles = []
-        for l, u in sections:
-            codes = frequency_df[(frequency_df['cum_perc'] > l)
-                                 & (frequency_df['cum_perc'] <= u)].code
-            codes_by_percentiles.append(set(codes))
-
-        return codes_by_percentiles
+        return self._code_frequency_partitions(percentile_range,
+                                               self.dx_ccs_frequency(subjects))
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
