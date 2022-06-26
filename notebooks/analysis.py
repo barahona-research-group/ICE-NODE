@@ -331,26 +331,52 @@ def top_k_tables(clfs, eval_table, top_k_list, n_percentiles, out_prefix):
     return output
 
 
-plt.rcParams['figure.figsize'] = (10, 10)
+def dx_label(label):
+    return label if len(label) < 15 else label[:15] + ".."
 
 
-def plot_codes(codes_dict, ccs_color):
+def add_label(label, recorded_labels, group_priority=0):
+    if group_priority not in recorded_labels:
+        recorded_labels[group_priority] = set()
+    if label in recorded_labels[group_priority]:
+        return None
+    else:
+        recorded_labels[group_priority].add(label)
+        return label
+
+
+def plot_codes(codes_dict, ccs_color, legend_labels):
     for ccs_idx in codes_dict:
         ccs_desc = dx_flatccs_idx2desc[ccs_idx]
         time, traj_vals = zip(*codes_dict[ccs_idx])
-        plt.scatter(
-            time,
-            traj_vals,
-            s=300,
-            marker='^',
-            color=ccs_color[ccs_idx],
-            linewidths=2,
-            label=
-            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Diagnosis)'
-        )
+        plt.scatter(time,
+                    traj_vals,
+                    s=300,
+                    marker='^',
+                    color=ccs_color[ccs_idx],
+                    linewidths=2,
+                    label=add_label(f'{dx_label(ccs_desc)} (Diagnosis)',
+                                    legend_labels, ccs_desc + 'd'))
 
 
-def plot_admission_lines(adms):
+def plot_risk_traj(trajs, ccs_color, legend_labels):
+    for ccs_idx in trajs:
+        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
+        time, traj_vals = zip(*trajs[ccs_idx])
+        time = np.concatenate(time)
+        traj_vals = np.concatenate(traj_vals)
+
+        plt.plot(time,
+                 traj_vals,
+                 color=ccs_color[ccs_idx],
+                 marker='o',
+                 markersize=2,
+                 linewidth=3,
+                 label=add_label(f'{dx_label(ccs_desc)} (Predicted Risk)',
+                                 legend_labels, ccs_desc + 'p'))
+
+
+def plot_admission_lines(adms, legend_labels):
     ystart, yend = plt.gca().get_ylim()
     adms, dischs = zip(*adms)
     common_kwrgs = dict(lw=3, alpha=0.5, linestyle=':')
@@ -370,25 +396,7 @@ def plot_admission_lines(adms):
         plt.fill_between([adm_ti, disch_ti], [1.0, 1.0],
                          alpha=0.3,
                          color='gray',
-                         label='Hospital Stay' if i == 0 else None)
-
-
-def plot_risk_traj(trajs, ccs_color):
-    for ccs_idx in trajs:
-        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
-        time, traj_vals = zip(*trajs[ccs_idx])
-        time = np.concatenate(time)
-        traj_vals = np.concatenate(traj_vals)
-
-        plt.plot(
-            time,
-            traj_vals,
-            color=ccs_color[ccs_idx],
-            marker='o',
-            markersize=2,
-            linewidth=1,
-            label=
-            f'{ccs_desc if len(ccs_desc) < 15 else ccs_desc[:15]+".."} (Predicted Risk)')
+                         label=add_label('Hospital Stay', legend_labels, '0'))
 
 
 def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
@@ -398,7 +406,6 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
 
     flatccs_selection = set(flatccs_selection)
     for i, traj in list(trajectories.items()):
-
         adm_times = interface.adm_times(i)
         history = interface.dx_flatccs_history(i)
         history_indexes = set(
@@ -406,13 +413,12 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
 
         if len(history_indexes & flatccs_selection) == 0:
             continue
-        t = traj['t']
-        d = traj['d']
-
+        time_segments = traj['t']
         plt_codes = defaultdict(list)
         plt_trajs = defaultdict(list)
         max_min = [-np.inf, np.inf]
         for ccs_idx in (history_indexes & flatccs_selection):
+            risk = [r[:, ccs_idx] for r in traj['d']]
             code = dx_flatccs_idx2code[ccs_idx]
             code_history = history[code]
             code_history_adm, code_history_disch = zip(*code_history)
@@ -422,19 +428,23 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
             if code_history_adm[0] == adm_times[0][0]:
                 continue
 
-            for ti, di, (adm_time_i, disch_time_i) in zip(t, d, adm_times[1:]):
-                max_min[0] = max(max_min[0], di[:, ccs_idx].max())
-                max_min[1] = min(max_min[1], di[:, ccs_idx].min())
-                plt_trajs[ccs_idx].append((ti, di[:, ccs_idx]))
+            for time_segment, r, (adm_time_i,
+                                  disch_time_i) in zip(time_segments, risk,
+                                                       adm_times[1:]):
+                max_min[0] = max(max_min[0], r.max())
+                max_min[1] = min(max_min[1], r.min())
+                plt_trajs[ccs_idx].append((time_segment, r))
 
                 if disch_time_i in code_history_disch:
-                    plt_codes[ccs_idx].append((disch_time_i, di[-1, ccs_idx]))
+                    plt_codes[ccs_idx].append((disch_time_i, r[-1]))
 
         if len(plt_codes) == 0: continue
 
         plt.figure(i)
-        plot_codes(plt_codes, ccs_color)
-        plot_risk_traj(plt_trajs, ccs_color)
+
+        legend_labels = {}
+        plot_codes(plt_codes, ccs_color, legend_labels)
+        plot_risk_traj(plt_trajs, ccs_color, legend_labels)
 
         # Make the major grid
         plt.grid(which='major', linestyle=':', color='gray', linewidth='1')
@@ -451,7 +461,7 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
         ystart, yend = plt.gca().get_ylim()
         plt.gca().yaxis.set_ticks(np.arange(ystart, yend + 0.01, ystep))
 
-        plot_admission_lines(adm_times)
+        plot_admission_lines(adm_times, legend_labels)
         plt.ylabel('Predicted Risk ($\widehat{v}(t)$)',
                    fontsize=style['axis_label_fs'],
                    labelpad=style['axis_label_fs'])
@@ -460,8 +470,15 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
                    fontsize=style['axis_label_fs'],
                    labelpad=style['axis_label_fs'])
         plt.xticks(fontsize=style['axis_ticks_fs'])
-        # plt.title(f'Disease Risk Trajectory for Subject ID: {i}', fontsize=28)
-        plt.legend(fontsize=style['legend_fs'],
+
+        labels = []
+        for priority in sorted(legend_labels):
+            labels.extend(legend_labels[priority])
+        handles, _labels = plt.gca().get_legend_handles_labels()
+        handles = dict(zip(_labels, handles))
+        plt.legend(labels=labels,
+                   handles=list(map(handles.get, labels)),
+                   fontsize=style['legend_fs'],
                    loc='upper right',
                    bbox_to_anchor=(1, 1.5),
                    ncol=1)
