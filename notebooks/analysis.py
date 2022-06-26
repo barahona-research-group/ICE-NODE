@@ -102,14 +102,15 @@ def test_eval_table(dfs, metric):
     return pd.DataFrame(data=data, index=metric).transpose()
 
 
-def relative_performance_upset(auc_tests, selected_clfs, pvalue, min_auc):
+def relative_performance_upset(auc_tests,
+                               selected_clfs,
+                               pvalue,
+                               min_auc,
+                               code_attrs=None):
     flatccs_idx2code = {
         idx: code
         for code, idx in C.ccs_dag.dx_flatccs_idx.items()
     }
-    # flatccs_frequency_train = patient_interface.diag_flatccs_frequency(
-    # train_ids)
-
     auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(dx_flatccs_idx2desc.get)
 
     # remove codes that no classifier has scored above `min_auc`
@@ -183,13 +184,17 @@ def relative_performance_upset(auc_tests, selected_clfs, pvalue, min_auc):
                             list(f'AUC({clf})'
                                  for clf in competent_clfs)].mean()
         avg_aucs.append(avg_auc)
-        # n_codes.append(flatccs_frequency_train[c])
-    data = pd.DataFrame(
-        {'Avg. AUC': avg_aucs
-         # '#codes (train)': n_codes
-         },
-        index=code_index)
-    return content_sets, indicator_df, data, common_perf, competing_tests
+    data = pd.DataFrame({'Avg. AUC': avg_aucs}, index=code_index)
+    for label, attr in code_attrs.items():
+        data[label] = list(map(attr.get, code_index))
+
+    return {
+        'content_sets': content_sets,
+        'indicator_df': indicator_df,
+        'data': data,
+        'common_performance': common_perf,
+        'competing_performance': competing_tests
+    }
 
 
 def selected_auc_barplot(clfs, auctest_df, horizontal=False, rotate_ccs=True):
@@ -299,16 +304,19 @@ def make_clf_paris(clfs):
 
 def styled_df(df):
     pd.set_option('precision', 3)
+    data_sorted = -np.sort(-df.to_numpy(), axis=0)
+    rank1_vals = data_sorted[0, :]
+    rank2_vals = data_sorted[1, :]
+    last1_vals = data_sorted[-1, :]
+    last2_vals = data_sorted[-2, :]
 
-    def highlight_max(s, props=''):
-        return np.where(s == np.nanmax(s.values), props, '')
-
-    s_df = df.style
-    s_df = s_df.apply(highlight_max,
-                      props='bfseries: ;color:white;background-color:darkblue',
-                      axis=0)
-    texttt = [{'selector': 'th', 'props': 'font-family: monospace;'}]
-
+    df_guide = df.copy()
+    df_guide[:] = 0
+    df_guide[df == rank1_vals] = 1
+    df_guide[df == rank2_vals] = 0.5
+    df_guide[df == last1_vals] = -1
+    # df_guide[df == last2_vals] = -0.5
+    s_df = df.style.background_gradient(axis=None, gmap=df_guide, cmap="PiYG")
     latex_str = s_df.to_latex(convert_css=True)
     for clf in df.index.tolist():
         latex_str = latex_str.replace(clf, f'\\texttt{{{clf}}}', 1)
@@ -377,22 +385,8 @@ def plot_risk_traj(trajs, ccs_color, legend_labels):
 
 
 def plot_admission_lines(adms, legend_labels):
-    ystart, yend = plt.gca().get_ylim()
     adms, dischs = zip(*adms)
-    common_kwrgs = dict(lw=3, alpha=0.5, linestyle=':')
     for i, (adm_ti, disch_ti) in enumerate(zip(adms, dischs)):
-
-        # plt.axvline(x=adm_ti, color='black', **common_kwrgs)
-        # plt.axvline(x=disch_ti, color='black', **common_kwrgs)
-
-        #         plt.axvline(x=adm_ti,
-        #                     color='green',
-        #                     **common_kwrgs,
-        #                     label='Admission' if i == 0 else None)
-        #         plt.axvline(x=disch_ti,
-        #                     color='red',
-        #                     **common_kwrgs,
-        #                     label='Discharge' if i == 0 else None)
         plt.fill_between([adm_ti, disch_ti], [1.0, 1.0],
                          alpha=0.3,
                          color='gray',
