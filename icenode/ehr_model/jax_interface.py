@@ -27,24 +27,24 @@ class AdmissionInfo:
         self.dx_ccs_codes = self.dx_ccs_jax(dx_icd9_codes)
         self.dx_flatccs_codes = self.dx_flatccs_jax(dx_icd9_codes)
 
+    @staticmethod
+    def _set2jaxvec(code_set, code_index, transformer_dict=None):
+        if transformer_dict:
+            code_set = set(map(transformer_dict.get, code_set)) - {None}
+        vec = np.zeros(len(code_index))
+        for c in code_set:
+            vec[code_index[c]] = 1
+        return jnp.array(vec)
+
     @classmethod
     def dx_ccs_jax(cls, dx_icd9_codes):
-        dx_ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, dx_icd9_codes))
-        n_cols = len(ccs_dag.dx_ccs_idx)
-        mask = np.zeros(n_cols)
-        for c in dx_ccs_codes:
-            mask[ccs_dag.dx_ccs_idx[c]] = 1
-        return jnp.array(mask)
+        return cls._set2jaxvec(dx_icd9_codes, ccs_dag.dx_ccs_idx,
+                               ccs_dag.dx_icd2ccs)
 
     @classmethod
-    def dx_flatccs_jax(self, dx_icd9_codes):
-        dx_flatccs_codes = set(map(ccs_dag.dx_icd2flatccs.get, dx_icd9_codes))
-        n_cols = len(ccs_dag.dx_flatccs_idx)
-        mask = np.zeros(n_cols)
-        for c in dx_flatccs_codes - {None}:
-            mask[ccs_dag.dx_flatccs_idx[c]] = 1
-
-        return jnp.array(mask)
+    def dx_flatccs_jax(cls, dx_icd9_codes):
+        return cls._set2jaxvec(dx_icd9_codes, ccs_dag.dx_flatccs_idx,
+                               ccs_dag.dx_icd2flatccs)
 
     @classmethod
     def subject_to_admissions(cls,
@@ -124,23 +124,25 @@ class DxInterface_JAX:
         test_ids = subject_ids[split2:]
         return train_ids, valid_ids, test_ids
 
-    def dx_ccs_history(self, subject_id):
-        history = set()
-        for adm in self.subjects[subject_id]:
-            ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes))
-            history.update(ccs_codes)
-        history = list(history)
-        return history, list(map(ccs_dag.dx_ccs_idx.get, history))
-
-    def dx_flatccs_history(self, subject_id):
+    def _dx_history(self, subject_id, code_index, transformer_dict):
         history = defaultdict(list)
         for adm in self.subjects[subject_id]:
-            flatccs_codes = set(
-                map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes)) - {None}
-            for code in flatccs_codes:
+            code_set = adm.dx_icd9_codes
+            if transformer_dict:
+                code_set = set(map(transformer_dict.get,
+                                   adm.dx_icd9_codes)) - {None}
+            for code in code_set:
                 history[code].append(
                     (adm.admission_time, adm.admission_time + adm.los))
         return history
+
+    def dx_ccs_history(self, subject_id):
+        return self._dx_history(subject_id, ccs_dag.dx_ccs_idx,
+                                ccs_dag.dx_icd2ccs)
+
+    def dx_flatccs_history(self, subject_id):
+        return self._dx_history(subject_id, ccs_dag.dx_flatccs_idx,
+                                ccs_dag.dx_icd2flatccs)
 
     def adm_times(self, subject_id):
         adms_info = self.subjects[subject_id]
@@ -157,47 +159,44 @@ class DxInterface_JAX:
 
         return jnp.array(ancestors_mat)
 
-    def dx_flatccs_frequency(self, subjects: Optional[List[int]] = None):
-        subjects = subjects or self.subjects.keys()
+    def _dx_code_frequency(self, subjects: List[int], code_index: Dict[str,
+                                                                       int],
+                           transformer_dict: Dict[str, str]):
         counter = defaultdict(int)
         for subject_id in subjects:
             for adm in self.subjects[subject_id]:
-                ccs_codes = set(
-                    map(ccs_dag.dx_icd2flatccs.get, adm.dx_icd9_codes))
-                for code in ccs_codes - {None}:
-                    counter[ccs_dag.dx_flatccs_idx[code]] += 1
+                code_set = adm.dx_icd9_codes
+                if transformer_dict:
+                    code_set = set(map(transformer_dict.get,
+                                       code_set)) - {None}
+                for code in code_set:
+                    counter[code_index[code]] += 1
 
         # Return dictionary with zero-frequency codes added.
-        return {idx: counter[idx] for idx in ccs_dag.dx_flatccs_idx.values()}
+        return {idx: counter[idx] for idx in code_index.values()}
 
-    def dx_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        counts = self.dx_flatccs_frequency(subjects)
-        n_cols = len(ccs_dag.dx_flatccs_idx)
-
-        counts_vec = np.zeros(n_cols)
-        for i, c in counts.items():
-            counts_vec[i] = c
-        return jnp.array(counts_vec)
+    def dx_flatccs_frequency(self, subjects: Optional[List[int]] = None):
+        return self._dx_code_frequency(subjects or self.subjects.keys(),
+                                       ccs_dag.dx_flatccs_idx,
+                                       ccs_dag.dx_icd2flatccs)
 
     def dx_ccs_frequency(self, subjects: Optional[List[int]] = None):
-        subjects = subjects or self.subjects.keys()
-        counter = defaultdict(int)
-        for subject_id in subjects:
-            for adm in self.subjects[subject_id]:
-                ccs_codes = set(map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes))
-                for code in ccs_codes:
-                    counter[ccs_dag.dx_ccs_idx[code]] += 1
-        # Return dictionary with zero-frequency codes added.
-        return {idx: counter[idx] for idx in ccs_dag.dx_ccs_idx.values()}
+        return self._dx_code_frequency(subjects or self.subjects.keys(),
+                                       ccs_dag.dx_ccs_idx, ccs_dag.dx_icd2ccs)
+
+    def _dx_frequency_vec(self, frequency_dict, code_index):
+        vec = np.zeros(len(code_index))
+        for idx, count in frequency_dict.items():
+            vec[idx] = count
+        return jnp.array(vec)
+
+    def dx_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
+        return self._dx_frequency_vec(self.dx_flatccs_frequency(subjects),
+                                      ccs_dag.dx_flatccs_idx)
 
     def dx_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        counts = self.dx_ccs_frequency(subjects)
-        n_cols = len(ccs_dag.dx_ccs_idx)
-
-        counts_vec = np.zeros(n_cols)
-        for i, c in counts.items():
-            counts_vec[i] = c
-        return jnp.array(counts_vec)
+        return self._dx_frequency_vec(self.dx_ccs_frequency(subjects),
+                                      ccs_dag.dx_ccs_idx)
 
     @staticmethod
     def _code_frequency_partitions(percentile_range, code_frequency):
