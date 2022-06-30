@@ -9,8 +9,25 @@ from jax.tree_util import tree_flatten, tree_map, tree_leaves
 class OOPError(Exception):
     """Object Oriented design Exception (e.g. calling abstract method)."""
 
+
 class Unsupported(Exception):
     """Unsupported operation."""
+
+
+class LazyDict(dict):
+
+    def __getitem__(self, k):
+        v = super().__getitem__(k)
+        if callable(v):
+            v = v()
+            super().__setitem__(k, v)
+        return v
+
+    def get(self, k, default=None):
+        if k in self:
+            return self.__getitem__(k)
+        return default
+
 
 def parameters_size(t):
     """Return the parameters count in a PyTree object."""
