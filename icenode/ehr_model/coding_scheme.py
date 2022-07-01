@@ -3,6 +3,8 @@ data structures to support conversion between CCS and ICD9."""
 
 from collections import defaultdict
 import os
+import xml.etree.ElementTree as ET
+
 import pandas as pd
 
 from ..utils import OOPError, LazyDict
@@ -10,7 +12,6 @@ from ..utils import OOPError, LazyDict
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
-
 """
 Testing ideas:
 
@@ -19,6 +20,8 @@ Testing ideas:
 
 
 """
+
+
 class AbstractScheme:
     maps = {}
 
@@ -33,10 +36,12 @@ class AbstractScheme:
 
 
 class HierarchicalScheme(AbstractScheme):
+
     def __init__(self,
                  dag_codes=None,
                  dag_index=None,
                  dag_desc=None,
+                 code2dag=None,
                  pt2ch=None,
                  ch2pt=None,
                  **kwargs):
@@ -44,6 +49,11 @@ class HierarchicalScheme(AbstractScheme):
         self.dag_codes = dag_codes or kwargs['codes']
         self.dag_index = dag_index or kwargs['index']
         self.dag_desc = dag_desc or kwargs['desc']
+
+        if code2dag is not None:
+            self.code2dag = code2dag
+        else:
+            self.code2dag = {c: c for c in kwargs['codes']}
 
         assert pt2ch or ch2pt, "Should provide ch2pt or pt2ch connection dictionary"
         if ch2pt and pt2ch:
@@ -157,7 +167,76 @@ class HierarchicalScheme(AbstractScheme):
 
 
 class DxICD10(HierarchicalScheme):
-    pass
+    """
+    NOTE: for prediction targets, remember to exclude the following chapters:
+        - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
+        - 'chapter:20': 'External causes of morbidity (V00-Y99)',
+        - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
+        - 'chapter:22': 'Codes for special purposes (U00-U85)'
+    """
+
+    @staticmethod
+    def distill_icd10_xml(filename):
+        # https://www.cdc.gov/nchs/icd/Comprehensive-Listing-of-ICD-10-CM-Files.htm
+        _ICD10_FILE = os.path.join(_RSC_DIR, filename)
+        tree = ET.parse(_ICD10_FILE)
+        root = tree.getroot()
+        pt2ch = defaultdict(list)
+        desc = {'ICD10CM': 'ICD10CM'}
+        chapters = [ch for ch in root if ch.tag == 'chapter']
+
+        def _traverse_diag_dfs(parent_name, dx_element):
+            dx_name = next(e for e in dx_element if e.tag == 'name').text
+            dx_desc = next(e for e in dx_element if e.tag == 'desc').text
+            dx_name = f'dx:{dx_name}'
+            desc[dx_name] = dx_desc
+            pt2ch[parent_name].append(dx_name)
+
+            diags = [dx for dx in dx_element if dx.tag == 'diag']
+            for dx in diags:
+                _traverse_diag_dfs(dx_name, dx)
+
+        for chapter in chapters:
+            ch_name = next(e for e in chapter if e.tag == 'name').text
+            ch_desc = next(e for e in chapter if e.tag == 'desc').text
+            ch_name = f'chapter:{ch_name}'
+            pt2ch['ICD10CM'].append(ch_name)
+            desc[ch_name] = ch_desc
+
+            sections = [sec for sec in chapter if sec.tag == 'section']
+            for section in sections:
+                sec_name = section.attrib['id']
+                sec_desc = next(e for e in section if e.tag == 'desc').text
+                sec_name = f'section:{sec_name}'
+
+                pt2ch[ch_name].append(sec_name)
+                desc[sec_name] = sec_desc
+
+                diags = [dx for dx in section if dx.tag == 'diag']
+                for dx in diags:
+                    _traverse_diag_dfs(sec_name, dx)
+
+        icd_codes = sorted(c.split(':')[1] for c in desc if 'dx:' in c)
+        icd_index = dict(zip(icd_codes, range(len(icd_codes))))
+        icd_desc = {c: desc[f'dx:{c}'] for c in icd_codes}
+        icd2dag = {c: f'dx:{c}' for c in icd_codes}
+        dag_codes = [f'dx:{c}' for c in icd_codes] + sorted(
+            c for c in set(desc) - set(icd2dag.values()))
+        dag_index = dict(zip(dag_codes, range(len(dag_codes))))
+
+        return {
+            'codes': icd_codes,
+            'index': icd_index,
+            'desc': icd_desc,
+            'code2dag': icd2dag,
+            'dag_codes': dag_codes,
+            'dag_index': dag_index,
+            'dag_desc': desc,
+            'pt2ch': pt2ch
+        }
+
+    def __init__(self):
+        super().__init__(**self.distill_icd10_xml('icd10cm_tabular_2022.xml'))
 
 
 class PrICD10(HierarchicalScheme):
@@ -226,6 +305,7 @@ class DxICD9(HierarchicalScheme):
             'icd_codes': icd_codes,
             'icd_index': icd_index,
             'icd_desc': icd_desc,
+            'icd2dag': icd2dag,
             'dag_codes': dag_codes,
             'dag_index': dag_index,
             'dag_desc': dag_desc
@@ -249,6 +329,7 @@ class DxICD9(HierarchicalScheme):
         super().__init__(dag_codes=d['dag_codes'],
                          dag_index=d['dag_index'],
                          dag_desc=d['dag_desc'],
+                         code2dag=d['icd2dag'],
                          pt2ch=pt2ch,
                          codes=d['icd_codes'],
                          index=d['icd_index'],
@@ -256,6 +337,7 @@ class DxICD9(HierarchicalScheme):
 
 
 class PrICD9(HierarchicalScheme):
+
     def __init__(self):
         df = pd.DataFrame(DxICD9.icd9_columns())
         pt2ch = DxICD9.parent_child_mappings(df)
@@ -281,6 +363,7 @@ class PrICD9(HierarchicalScheme):
 
 
 class DxCCS(HierarchicalScheme):
+
     @staticmethod
     def ccs_columns(filename, n_levels):
         DX_CCS_FILE = os.path.join(_CCS_DIR, filename)
@@ -362,6 +445,7 @@ class DxCCS(HierarchicalScheme):
 
 
 class PrCCS(HierarchicalScheme):
+
     def __init__(self):
         cols = DxCCS.ccs_columns('ccs_multi_pr_tool_2015.csv', 3)
         df = pd.DataFrame(cols)
@@ -380,6 +464,7 @@ class PrCCS(HierarchicalScheme):
 
 
 class DxFlatCCS(AbstractScheme):
+
     @staticmethod
     def flatccs_columns(fname):
         filepath = os.path.join(_CCS_DIR, fname)
@@ -411,6 +496,7 @@ class DxFlatCCS(AbstractScheme):
 
 
 class PrFlatCCS(AbstractScheme):
+
     def __init__(self):
         cols = DxFlatCCS.flatccs_columns('$prref 2015.csv')
         codes = sorted(cols['code'])
