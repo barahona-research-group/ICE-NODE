@@ -11,7 +11,14 @@ _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
 
+"""
+Testing ideas:
 
+    - ICD9: #nodes > #ICD codes
+    - test *dfs vs *bfs algorithms.
+
+
+"""
 class AbstractScheme:
     maps = {}
 
@@ -162,6 +169,7 @@ class DxICD9(HierarchicalScheme):
 
     @staticmethod
     def icd9_columns():
+        # https://bioportal.bioontology.org/ontologies/HOM-ICD9
         ICD9CM_FILE = os.path.join(_RSC_DIR, 'HOM-ICD9.csv.gz')
         df = pd.read_csv(ICD9CM_FILE, dtype=str)
         df = df.fillna('')
@@ -253,7 +261,7 @@ class PrICD9(HierarchicalScheme):
         pt2ch = DxICD9.parent_child_mappings(df)
 
         # Remove the procedure codes.
-        pt2ch = self._select_subtree(pt2ch, DxICD9._PR_ROOT_CLASS_ID)
+        pt2ch = DxICD9._select_subtree(pt2ch, DxICD9._PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
         nodes = set.union(pt2ch.keys(), *pt2ch.values())
