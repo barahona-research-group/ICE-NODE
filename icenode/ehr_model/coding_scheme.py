@@ -53,6 +53,7 @@ class HierarchicalScheme(AbstractScheme):
         if code2dag is not None:
             self.code2dag = code2dag
         else:
+            # Identity
             self.code2dag = {c: c for c in kwargs['codes']}
 
         assert pt2ch or ch2pt, "Should provide ch2pt or pt2ch connection dictionary"
@@ -181,7 +182,7 @@ class DxICD10(HierarchicalScheme):
         _ICD10_FILE = os.path.join(_RSC_DIR, filename)
         tree = ET.parse(_ICD10_FILE)
         root = tree.getroot()
-        pt2ch = defaultdict(list)
+        pt2ch = defaultdict(set)
         desc = {'ICD10CM': 'ICD10CM'}
         chapters = [ch for ch in root if ch.tag == 'chapter']
 
@@ -190,7 +191,7 @@ class DxICD10(HierarchicalScheme):
             dx_desc = next(e for e in dx_element if e.tag == 'desc').text
             dx_name = f'dx:{dx_name}'
             desc[dx_name] = dx_desc
-            pt2ch[parent_name].append(dx_name)
+            pt2ch[parent_name].add(dx_name)
 
             diags = [dx for dx in dx_element if dx.tag == 'diag']
             for dx in diags:
@@ -200,7 +201,7 @@ class DxICD10(HierarchicalScheme):
             ch_name = next(e for e in chapter if e.tag == 'name').text
             ch_desc = next(e for e in chapter if e.tag == 'desc').text
             ch_name = f'chapter:{ch_name}'
-            pt2ch['ICD10CM'].append(ch_name)
+            pt2ch['ICD10CM'].add(ch_name)
             desc[ch_name] = ch_desc
 
             sections = [sec for sec in chapter if sec.tag == 'section']
@@ -209,7 +210,7 @@ class DxICD10(HierarchicalScheme):
                 sec_desc = next(e for e in section if e.tag == 'desc').text
                 sec_name = f'section:{sec_name}'
 
-                pt2ch[ch_name].append(sec_name)
+                pt2ch[ch_name].add(sec_name)
                 desc[sec_name] = sec_desc
 
                 diags = [dx for dx in section if dx.tag == 'diag']
@@ -319,7 +320,7 @@ class DxICD9(HierarchicalScheme):
         pt2ch = self._deselect_subtree(pt2ch, self._PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
-        nodes = set.union(pt2ch.keys(), *pt2ch.values())
+        nodes = set.union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
@@ -346,7 +347,7 @@ class PrICD9(HierarchicalScheme):
         pt2ch = DxICD9._select_subtree(pt2ch, DxICD9._PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
-        nodes = set.union(pt2ch.keys(), *pt2ch.values())
+        nodes = set.union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
@@ -356,6 +357,7 @@ class PrICD9(HierarchicalScheme):
         super().__init__(dag_codes=d['dag_codes'],
                          dag_index=d['dag_index'],
                          dag_desc=d['dag_desc'],
+                         code2dag=d['icd2dag'],
                          pt2ch=pt2ch,
                          codes=d['icd_codes'],
                          index=d['icd_index'],
@@ -481,7 +483,7 @@ class DxFlatCCS(AbstractScheme):
 
     def __init__(self):
         cols = self.flatccs_columns('$dxref 2015 filtered.csv')
-        codes = sorted(cols['code'])
+        codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=dict(zip(cols['code'], cols['desc'])))
@@ -499,7 +501,7 @@ class PrFlatCCS(AbstractScheme):
 
     def __init__(self):
         cols = DxFlatCCS.flatccs_columns('$prref 2015.csv')
-        codes = sorted(cols['code'])
+        codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=dict(zip(cols['code'], cols['desc'])))
