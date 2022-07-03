@@ -1,8 +1,9 @@
 """Extract diagnostic/procedure information of CCS files into new
 data structures to support conversion between CCS and ICD9."""
 
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import os
+import gzip
 import xml.etree.ElementTree as ET
 
 import pandas as pd
@@ -19,6 +20,12 @@ Testing ideas:
     - test *dfs vs *bfs algorithms.
 
 
+"""
+"""
+Ideas in mapping
+
+- For a certain scenario, a choice list of multiple code is represented by their common ancestor.
+- Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
 """
 
 
@@ -93,7 +100,7 @@ class HierarchicalScheme(AbstractScheme):
 
     @staticmethod
     def _bfs_traversal(connection, code, include_itself):
-        result = set()
+        result = OrderedDict()
         q = [code]
 
         while len(q) != 0:
@@ -102,11 +109,11 @@ class HierarchicalScheme(AbstractScheme):
             current_connections = connection.get(current_code, [])
             q.extend([c for c in current_connections if c not in result])
             if current_code not in result:
-                result.add(current_code)
+                result[current_code] = 1
 
         if not include_itself:
-            result.remove(code)
-        return result
+            del result[code]
+        return list(result.keys())
 
     @staticmethod
     def _dfs_traversal(connection, code, include_itself):
@@ -180,10 +187,11 @@ class DxICD10(HierarchicalScheme):
     def distill_icd10_xml(filename):
         # https://www.cdc.gov/nchs/icd/Comprehensive-Listing-of-ICD-10-CM-Files.htm
         _ICD10_FILE = os.path.join(_RSC_DIR, filename)
-        tree = ET.parse(_ICD10_FILE)
+        with gzip.open(_ICD10_FILE, 'r') as f:
+            tree = ET.parse(f)
         root = tree.getroot()
         pt2ch = defaultdict(set)
-        desc = {'ICD10CM': 'ICD10CM'}
+        desc = {root.tag: root.tag}
         chapters = [ch for ch in root if ch.tag == 'chapter']
 
         def _traverse_diag_dfs(parent_name, dx_element):
@@ -201,7 +209,7 @@ class DxICD10(HierarchicalScheme):
             ch_name = next(e for e in chapter if e.tag == 'name').text
             ch_desc = next(e for e in chapter if e.tag == 'desc').text
             ch_name = f'chapter:{ch_name}'
-            pt2ch['ICD10CM'].add(ch_name)
+            pt2ch[root.tag].add(ch_name)
             desc[ch_name] = ch_desc
 
             sections = [sec for sec in chapter if sec.tag == 'section']
@@ -237,7 +245,9 @@ class DxICD10(HierarchicalScheme):
         }
 
     def __init__(self):
-        super().__init__(**self.distill_icd10_xml('icd10cm_tabular_2022.xml'))
+        # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
+        super().__init__(
+            **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
 
 
 class PrICD10(HierarchicalScheme):
