@@ -83,16 +83,16 @@ class HierarchicalScheme(AbstractScheme):
             for conn in conns:
                 rconnection[conn].add(node)
 
-    def code_ancestors(self, code):
-        raise OOPError('Must be overriden')
-
     @staticmethod
-    def _code_ancestors_dots(code):
+    def _code_ancestors_dots(code, include_itself=True):
+
+        ancestors = {code} if include_itself else {}
         if code == 'root':
-            return []
+            return ancestors
+        else:
+            ancestors.add('root')
 
         indices = code.split('.')
-        ancestors = {'root'}
         for i in reversed(range(1, len(indices))):
             parent = '.'.join(indices[0:i])
             ancestors.add(parent)
@@ -126,7 +126,7 @@ class HierarchicalScheme(AbstractScheme):
 
         _traversal(code)
 
-        return result
+        return list(result)
 
     @staticmethod
     def _dfs_edges(connection, code):
@@ -144,7 +144,7 @@ class HierarchicalScheme(AbstractScheme):
     def _deselect_subtree(pt2ch, sub_root):
         to_del = HierarchicalScheme._bfs_traversal(pt2ch, sub_root, True)
         pt2ch = pt2ch.copy()
-        to_del = to_del & set(pt2ch.keys())
+        to_del = set(to_del) & set(pt2ch.keys())
         for node_idx in to_del:
             del pt2ch[node_idx]
         return pt2ch
@@ -152,7 +152,7 @@ class HierarchicalScheme(AbstractScheme):
     @staticmethod
     def _select_subtree(pt2ch, sub_root):
         to_keep = HierarchicalScheme._bfs_traversal(pt2ch, sub_root, True)
-        to_keep = to_keep & set(pt2ch.keys())
+        to_keep = set(to_keep) & set(pt2ch.keys())
         return {idx: pt2ch[idx] for idx in to_keep}
 
     def code_ancestors_bfs(self, code, include_itself=True):
@@ -172,6 +172,18 @@ class HierarchicalScheme(AbstractScheme):
 
     def successors_edges_dfs(self, code):
         return self._dfs_edges(self.pt2ch, code)
+
+    def least_common_ancestor(self, codes):
+        if len(codes) == 1:
+            return codes[0]
+        else:
+            a, b = codes[:2]
+            a_ancestors = self.code_ancestors_bfs(a, True)
+            b_ancestors = self.code_ancestors_bfs(b, True)
+            for ancestor in a_ancestors:
+                if ancestor in b_ancestors:
+                    return self.least_common_ancestor([ancestor] + codes[2:])
+            raise RuntimeError('Unresolved common ancestor!')
 
 
 class DxICD10(HierarchicalScheme):
@@ -249,6 +261,10 @@ class DxICD10(HierarchicalScheme):
         super().__init__(
             **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
 
+        map9to10 = DxICD9.distill_conversion_table('2018_gem_cm_I9I10.txt.gz',
+                                                   self.ch2pt)
+        AbstractScheme.add_map(DxICD9, DxICD10, map9to10)
+
 
 class PrICD10(HierarchicalScheme):
     pass
@@ -322,6 +338,78 @@ class DxICD9(HierarchicalScheme):
             'dag_desc': dag_desc
         }
 
+    @staticmethod
+    def load_conv_table(conv_fname, dotted_codes):
+        conv_fname = os.path.join(_RSC_DIR, conv_fname)
+        to_dotted = {c.replace('.', ''): c for c in dotted_codes}
+        df = pd.read_csv(conv_fname,
+                         sep='\s+',
+                         dtype=str,
+                         names=['source', 'target', 'meta'])
+        df['approximate'] = df['meta'].apply(lambda s: s[0])
+        df['no_map'] = df['meta'].apply(lambda s: s[1])
+        df['combination'] = df['meta'].apply(lambda s: s[2])
+        df['scenario'] = df['meta'].apply(lambda s: s[3])
+        df['choice_list'] = df['meta'].apply(lambda s: s[4])
+        df['source'] = df['source'].map(to_dotted)
+        df['target'] = df['target'].map(to_dotted)
+
+        return df
+
+    @staticmethod
+    def analyse_conversions(conv_fname, dotted_codes):
+        df = DxICD9.load_conv_table(conv_fname, dotted_codes)
+        codes = list(df['source'][df['no_map'] == '1'])
+        status = ['no_map' for _ in codes]
+        for code, source_df in df[df['no_map'] == '0'].groupby('source'):
+            codes.append(code)
+            if len(source_df) == 1:
+                status.append('11_map')
+            elif len(set(source_df['scenario'])) > 1:
+                status.append('ambiguous')
+            elif len(set(source_df['choice_list'])) < len(source_df):
+                status.append('1n_map(resolved)')
+            else:
+                status.append('1n_map')
+
+        status = pd.DataFrame({'code': codes, 'status': status})
+        return status
+
+    @staticmethod
+    def distill_conversion_table(conv_fname, ch2pt):
+        # For choice_list, represent each group by there common ancestor
+        def _resolve_choice_list(df):
+            represent = set()
+            for _, choice_list_df in df.groupby('choice_list'):
+                choice_list = list(choice_list_df['target'])
+                if len(choice_list) > 1:
+                    lca = HierarchicalScheme.least_common_ancestor(
+                        choice_list, ch2pt)
+                    represent.add(lca)
+                else:
+                    represent.add(choice_list[0])
+            return represent
+
+        dotted_codes = set.union(set(ch2pt), *ch2pt.values())
+        conv_df = DxICD9.load_conv_table(conv_fname, dotted_codes)
+        status_df = DxICD9.analyse_conversions(conv_fname, dotted_codes)
+        map_kind = dict(zip(status_df['code'], status_df['status']))
+        mapping = {}
+        for code, df in conv_df.groupby('source'):
+            kind = map_kind[code]
+            if kind == 'no_map':
+                continue
+            elif kind == '11_map' or kind == '1n_map':
+                mapping[code] = set(df['target'])
+            elif kind == '1n_map(resolved)':
+                mapping[code] = _resolve_choice_list(df)
+            elif kind == 'ambiguous':
+                represent = set()
+                for _, scenario_df in df.groupby('scenario'):
+                    represent.update(_resolve_choice_list(scenario_df))
+                mapping[code] = represent
+        return mapping
+
     def __init__(self):
         df = pd.DataFrame(self.icd9_columns())
         pt2ch = self.parent_child_mappings(df)
@@ -345,6 +433,10 @@ class DxICD9(HierarchicalScheme):
                          codes=d['icd_codes'],
                          index=d['icd_index'],
                          desc=d['icd_desc'])
+
+        map10to9 = self.distill_conversion_table('2018_gem_cm_I10I9.txt.gz',
+                                                 self.ch2pt)
+        AbstractScheme.add_map(DxICD10, DxICD9, map10to9)
 
 
 class PrICD9(HierarchicalScheme):
@@ -435,7 +527,7 @@ class DxCCS(HierarchicalScheme):
         return desc
 
     def __init__(self):
-        cols = self.ccs_columns('ccs_multi_dx_tool_2015.csv', 4)
+        cols = self.ccs_columns('ccs_multi_dx_tool_2015.csv.gz', 4)
         df = pd.DataFrame(cols)
         icd92ccs, ccs2icd9 = self.icd9_mappings(cols, 4)
         pt2ch = self.parent_child_mappings(df, 4)
@@ -450,16 +542,15 @@ class DxCCS(HierarchicalScheme):
         AbstractScheme.add_map(DxCCS, DxICD9, ccs2icd9)
         AbstractScheme.add_map(DxICD9, DxCCS, icd92ccs)
 
-    # Get parents of CCS code
     @classmethod
-    def code_parents(cls, code):
-        return cls._code_ancestors_dots(code)
+    def code_ancestors(cls, code, include_itself):
+        return cls._code_ancestors_dots(code, include_itself)
 
 
 class PrCCS(HierarchicalScheme):
 
     def __init__(self):
-        cols = DxCCS.ccs_columns('ccs_multi_pr_tool_2015.csv', 3)
+        cols = DxCCS.ccs_columns('ccs_multi_pr_tool_2015.csv.gz', 3)
         df = pd.DataFrame(cols)
         icd92ccs, ccs2icd9 = DxCCS.icd9_mappings(cols, 3)
         pt2ch = DxCCS.parent_child_mappings(df, 3)
@@ -473,6 +564,10 @@ class PrCCS(HierarchicalScheme):
 
         AbstractScheme.add_map(PrCCS, PrICD9, ccs2icd9)
         AbstractScheme.add_map(PrICD9, PrCCS, icd92ccs)
+
+    @classmethod
+    def code_ancestors(cls, code, include_itself=True):
+        return cls._code_ancestors_dots(code, include_itself)
 
 
 class DxFlatCCS(AbstractScheme):
@@ -492,7 +587,7 @@ class DxFlatCCS(AbstractScheme):
         return {'code': code_col, 'icd9': icd9_col, 'desc': desc_col}
 
     def __init__(self):
-        cols = self.flatccs_columns('$dxref 2015 filtered.csv')
+        cols = self.flatccs_columns('$dxref 2015 filtered.csv.gz')
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
@@ -510,7 +605,7 @@ class DxFlatCCS(AbstractScheme):
 class PrFlatCCS(AbstractScheme):
 
     def __init__(self):
-        cols = DxFlatCCS.flatccs_columns('$prref 2015.csv')
+        cols = DxFlatCCS.flatccs_columns('$prref 2015.csv.gz')
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
