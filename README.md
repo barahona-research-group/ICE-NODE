@@ -7,6 +7,8 @@ Integration of Clinical Embeddings with Neural Ordinary Differential Equations.
 
 ![](https://raw.githubusercontent.com/barahona-research-group/ICE-NODE/main/figures/figure1.svg)
 
+---
+
 ## Cloning ICE-NODE (MLHC 2022 version)
 
 The current codebase is under development for refactoring and future extensions. Therefore, this notebook clones a particular snapshot (Git Tag) for the code version that is reproducing our work described in the paper.
@@ -51,6 +53,8 @@ $ pip install -r requirements/mlhc2022.txt
 $ pip install jaxopt
 ```
 
+---
+
 ## Notebooks
 
 
@@ -67,3 +71,18 @@ To use one of the notebooks provided, please ensure that the newly installed env
 - Notebook 3 (`notebooks/dx_training.ipynb`): Training `ICE-NODE` and the baselines.
 - Notebook 4 (`notebooks/dx_fine_analysis.ipynb`): Performance Analysis and Trajectory Reconstruction.
 
+---
+
+## Citation
+
+To cite this work, please use the following BibTex entry:
+
+```
+@article{Alaa2022ICENODEIO,
+  title={ICE-NODE: Integration of Clinical Embeddings with Neural Ordinary Differential Equations},
+  author={Asem Alaa and Erik Mayer and Mauricio Barahona},
+  journal={ArXiv},
+  year={2022},
+  volume={abs/2207.01873}
+}
+```
