@@ -1,4 +1,5 @@
 import unittest
+import random
 
 from icenode.ehr_model.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
                                              PrCCS, PrFlatCCS, PrICD10, PrICD9)
@@ -53,7 +54,21 @@ class HierarchicalSchemeTests(AbstractSchemeTests):
                          s.dag_codes[:len(s.codes)])
 
     def test_bfs_vs_dfs(self):
-        pass
+        s = self.scheme
+        rng = random.Random(42)
+        some_codes = rng.sample(s.dag_codes, 15)
+
+        for code in some_codes:
+
+            ancestors_bfs = s.code_ancestors_bfs(code)
+            ancestors_dfs = s.code_ancestors_dfs(code)
+
+            self.assertCountEqual(ancestors_bfs, ancestors_dfs)
+
+            successors_bfs = s.code_successors_bfs(code)
+            successors_dfs = s.code_successors_dfs(code)
+
+            self.assertCountEqual(successors_bfs, successors_dfs)
 
 
 class TestDxFlatCCS(AbstractSchemeTests, unittest.TestCase):
@@ -105,8 +120,8 @@ class TestDxICD10(HierarchicalSchemeTests, unittest.TestCase):
         cls.scheme = DxICD10()
 
 
-# class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
+class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
 
-#     @classmethod
-#     def setUpClass(cls):
-#         cls.scheme = PrICD10()
+    @classmethod
+    def setUpClass(cls):
+        cls.scheme = PrICD10()
