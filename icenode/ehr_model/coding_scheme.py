@@ -5,6 +5,7 @@ from collections import defaultdict, OrderedDict
 import os
 import gzip
 import xml.etree.ElementTree as ET
+from absl import logging
 
 import pandas as pd
 
@@ -149,19 +150,78 @@ class HierarchicalScheme(AbstractScheme):
         return self._dfs_edges(self.pt2ch, code)
 
     def least_common_ancestor(self, codes):
-        if len(codes) == 1:
-            return codes[0]
-        else:
+        while len(codes) > 1:
             a, b = codes[:2]
             a_ancestors = self.code_ancestors_bfs(a, True)
             b_ancestors = self.code_ancestors_bfs(b, True)
+            last_len = len(codes)
             for ancestor in a_ancestors:
                 if ancestor in b_ancestors:
-                    return self.least_common_ancestor([ancestor] + codes[2:])
-            raise RuntimeError('Unresolved common ancestor!')
+                    codes = [ancestor] + codes[2:]
+            if len(codes) == last_len:
+                raise RuntimeError('Common Ancestor not Found!')
+        return codes[0]
 
 
-class CCSCommons:
+class CCSCommons(HierarchicalScheme):
+
+    @staticmethod
+    def ccs_columns(filename, n_levels, icd_cls):
+        DX_CCS_FILE = os.path.join(_CCS_DIR, filename)
+        df = pd.read_csv(DX_CCS_FILE)
+        cols = {}
+        for i in range(1, n_levels + 1):
+            cols[f'I{i}'] = list(
+                df[f'\'CCS LVL {i}\''].apply(lambda l: l.strip('\'').strip()))
+            cols[f'L{i}'] = list(df[f'\'CCS LVL {i} LABEL\''].apply(
+                lambda l: l.strip('\'').strip()))
+        cols['ICD'] = list(
+            df['\'ICD-9-CM CODE\''].apply(lambda l: l.strip('\'').strip()))
+        cols['ICD'] = list(map(icd_cls.add_dot, cols['ICD']))
+        return cols
+
+    @staticmethod
+    def icd9_mappings(cols, n_levels):
+        icd92ccs = defaultdict(set)
+        ccs2icd9 = defaultdict(set)
+        n_rows = len(cols['ICD'])
+        for i in range(n_rows):
+            last_index = None
+            for j in range(1, n_levels + 1):
+                level = cols[f'I{j}'][i]
+                if level != '':
+                    last_index = level
+            if last_index != None:
+                icode = cols['ICD'][i]
+                icd92ccs[icode].add(last_index)
+                ccs2icd9[last_index].add(icode)
+        return icd92ccs, ccs2icd9
+
+    @staticmethod
+    def parent_child_mappings(df, n_levels):
+        """Make dictionary for parent-child connections."""
+        pt2ch = {'root': set(df['I1'])}
+        levels = list(map(lambda i: f'I{i}', range(1, n_levels + 1)))
+
+        for pt_col, ch_col in zip(levels[:-1], levels[1:]):
+            df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
+            df_ = df_[[pt_col, ch_col]].drop_duplicates()
+            for parent_code, ch_df in df_.groupby(pt_col):
+                pt2ch[parent_code] = set(ch_df[ch_col])
+        return pt2ch
+
+    @staticmethod
+    def desc_mappings(df, n_levels):
+        """Make a dictionary for CCS labels."""
+        desc = {'root': 'root'}
+        levels = list(map(lambda i: f'I{i}', range(1, n_levels + 1)))
+        descs = list(map(lambda i: f'L{i}', range(1, n_levels + 1)))
+        for code_col, desc_col in zip(levels, descs):
+            df_ = df[df[code_col] != '']
+            df_ = df_[[code_col, desc_col]].drop_duplicates()
+            code_desc = dict(zip(df_[code_col], df_[desc_col]))
+            desc.update(code_desc)
+        return desc
 
     @staticmethod
     def _code_ancestors_dots(code, include_itself=True):
@@ -179,7 +239,7 @@ class CCSCommons:
         return ancestors
 
 
-class ICDCommons:
+class ICDCommons(HierarchicalScheme):
 
     @staticmethod
     def _deselect_subtree(pt2ch, sub_root):
@@ -239,15 +299,15 @@ class ICDCommons:
             for _, choice_list_df in df.groupby('choice_list'):
                 choice_list = choice_list_df['target'].map(self.code2dag)
                 if choice_list.isnull().sum() > 0:
-                    raise RuntimeError(
+                    logging.debug(
                         f'Failed mapping to DAG space: {list(choice_list_df["target"])} -> {list(choice_list)}'
                     )
 
-                choice_list = list(choice_list)
+                choice_list = list(choice_list[choice_list.notnull()])
                 if len(choice_list) > 1:
                     lca = self.least_common_ancestor(choice_list)
                     represent.add(lca)
-                else:
+                elif len(choice_list) == 1:
                     represent.add(choice_list[0])
             return represent
 
@@ -271,7 +331,7 @@ class ICDCommons:
         return mapping
 
 
-class DxICD10(HierarchicalScheme, ICDCommons):
+class DxICD10(ICDCommons):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
         - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
@@ -282,6 +342,9 @@ class DxICD10(HierarchicalScheme, ICDCommons):
 
     @staticmethod
     def add_dot(code):
+        if '.' in code:
+            logging.debug(f'Code {code} already is in decimal format')
+            return code
         if len(code) > 3:
             return code[:3] + '.' + code[3:]
         else:
@@ -357,7 +420,7 @@ class DxICD10(HierarchicalScheme, ICDCommons):
         self.add_map(DxICD9, DxICD10, map9to10)
 
 
-class PrICD10(HierarchicalScheme, ICDCommons):
+class PrICD10(ICDCommons):
 
     @staticmethod
     def add_dot(code):
@@ -426,11 +489,14 @@ class PrICD10(HierarchicalScheme, ICDCommons):
         self.add_map(PrICD9, PrICD10, map9to10)
 
 
-class DxICD9(HierarchicalScheme, ICDCommons):
+class DxICD9(ICDCommons):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
 
     @staticmethod
     def add_dot(code):
+        if '.' in code:
+            logging.debug(f'Code {code} already is in decimal format')
+            return code
         if code[0] == 'E':
             if len(code) > 4:
                 return code[:4] + '.' + code[4:]
@@ -535,10 +601,13 @@ class DxICD9(HierarchicalScheme, ICDCommons):
         self.add_map(DxICD10, DxICD9, map10to9)
 
 
-class PrICD9(HierarchicalScheme, ICDCommons):
+class PrICD9(ICDCommons):
 
     @staticmethod
     def add_dot(code):
+        if '.' in code:
+            logging.debug(f'Code {code} already is in decimal format')
+            return code
         if len(code) > 2:
             return code[:2] + '.' + code[2:]
         else:
@@ -572,69 +641,10 @@ class PrICD9(HierarchicalScheme, ICDCommons):
         self.add_map(PrICD10, PrICD9, map10to9)
 
 
-class DxCCS(HierarchicalScheme):
-
-    @staticmethod
-    def ccs_columns(filename, n_levels):
-        DX_CCS_FILE = os.path.join(_CCS_DIR, filename)
-        df = pd.read_csv(DX_CCS_FILE)
-        cols = {}
-        for i in range(1, n_levels + 1):
-            cols[f'I{i}'] = list(
-                df[f'\'CCS LVL {i}\''].apply(lambda l: l.strip('\'').strip()))
-            cols[f'L{i}'] = list(df[f'\'CCS LVL {i} LABEL\''].apply(
-                lambda l: l.strip('\'').strip()))
-        cols['ICD'] = list(
-            df['\'ICD-9-CM CODE\''].apply(lambda l: l.strip('\'').strip()))
-        return cols
-
-    @staticmethod
-    def icd9_mappings(cols, n_levels):
-        icd92ccs = defaultdict(set)
-        icd92ccs['root'] = {'root'}
-        ccs2icd9 = defaultdict(set)
-        ccs2icd9['root'] = {'root'}
-        n_rows = len(cols['ICD'])
-        for i in range(n_rows):
-            last_index = None
-            for j in range(1, n_levels + 1):
-                level = cols[f'I{j}'][i]
-                if level != '':
-                    last_index = level
-            if last_index != None:
-                icode = cols['ICD'][i]
-                icd92ccs[icode].add(last_index)
-                ccs2icd9[last_index].add(icode)
-        return icd92ccs, ccs2icd9
-
-    @staticmethod
-    def parent_child_mappings(df, n_levels):
-        """Make dictionary for parent-child connections."""
-        pt2ch = {'root': set(df['I1'])}
-        levels = list(map(lambda i: f'I{i}', range(1, n_levels + 1)))
-
-        for pt_col, ch_col in zip(levels[:-1], levels[1:]):
-            df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
-            df_ = df_[[pt_col, ch_col]].drop_duplicates()
-            for parent_code, ch_df in df_.groupby(pt_col):
-                pt2ch[parent_code] = set(ch_df[ch_col])
-        return pt2ch
-
-    @staticmethod
-    def desc_mappings(df, n_levels):
-        """Make a dictionary for CCS labels."""
-        desc = {'root': 'root'}
-        levels = list(map(lambda i: f'I{i}', range(1, n_levels + 1)))
-        descs = list(map(lambda i: f'L{i}', range(1, n_levels + 1)))
-        for code_col, desc_col in zip(levels, descs):
-            df_ = df[df[code_col] != '']
-            df_ = df_[[code_col, desc_col]].drop_duplicates()
-            code_desc = dict(zip(df_[code_col], df_[desc_col]))
-            desc.update(code_desc)
-        return desc
+class DxCCS(CCSCommons):
 
     def __init__(self):
-        cols = self.ccs_columns('ccs_multi_dx_tool_2015.csv.gz', 4)
+        cols = self.ccs_columns('ccs_multi_dx_tool_2015.csv.gz', 4, DxICD9)
         df = pd.DataFrame(cols)
         icd92ccs, ccs2icd9 = self.icd9_mappings(cols, 4)
         pt2ch = self.parent_child_mappings(df, 4)
@@ -654,14 +664,14 @@ class DxCCS(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
-class PrCCS(HierarchicalScheme):
+class PrCCS(CCSCommons):
 
     def __init__(self):
-        cols = DxCCS.ccs_columns('ccs_multi_pr_tool_2015.csv.gz', 3)
+        cols = DxCCS.ccs_columns('ccs_multi_pr_tool_2015.csv.gz', 3, PrICD9)
         df = pd.DataFrame(cols)
-        icd92ccs, ccs2icd9 = DxCCS.icd9_mappings(cols, 3)
-        pt2ch = DxCCS.parent_child_mappings(df, 3)
-        desc = DxCCS.desc_mappings(df, 3)
+        icd92ccs, ccs2icd9 = self.icd9_mappings(cols, 3)
+        pt2ch = self.parent_child_mappings(df, 3)
+        desc = self.desc_mappings(df, 3)
         codes = sorted(desc.keys())
 
         super().__init__(pt2ch=pt2ch,
@@ -677,13 +687,12 @@ class PrCCS(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
-class DxFlatCCS(AbstractScheme):
+class FlatCCSCommons(AbstractScheme):
 
     @staticmethod
-    def flatccs_columns(fname):
+    def flatccs_columns(fname, icd_cls):
         filepath = os.path.join(_CCS_DIR, fname)
-        df = pd.read_csv(filepath, skiprows=1)
-
+        df = pd.read_csv(filepath, skiprows=[0, 2])
         code_col = list(
             df['\'CCS CATEGORY\''].apply(lambda cat: cat.strip('\'').strip()))
         icd9_col = list(
@@ -691,10 +700,14 @@ class DxFlatCCS(AbstractScheme):
         desc_col = df['\'CCS CATEGORY DESCRIPTION\''].apply(
             lambda desc: desc.strip('\'').strip()).tolist()
 
+        icd9_col = list(map(icd_cls.add_dot, icd9_col))
         return {'code': code_col, 'icd9': icd9_col, 'desc': desc_col}
 
+
+class DxFlatCCS(FlatCCSCommons):
+
     def __init__(self):
-        cols = self.flatccs_columns('$dxref 2015.csv.gz')
+        cols = self.flatccs_columns('$dxref 2015.csv.gz', DxICD9)
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
@@ -713,10 +726,10 @@ class DxFlatCCS(AbstractScheme):
         self.add_map(DxICD9, DxFlatCCS, icd92flatccs)
 
 
-class PrFlatCCS(AbstractScheme):
+class PrFlatCCS(FlatCCSCommons):
 
     def __init__(self):
-        cols = DxFlatCCS.flatccs_columns('$prref 2015.csv.gz')
+        cols = self.flatccs_columns('$prref 2015.csv.gz', PrICD9)
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
