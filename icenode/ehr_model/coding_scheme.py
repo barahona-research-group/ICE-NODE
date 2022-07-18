@@ -196,10 +196,9 @@ class ICDCommons:
         to_keep = set(to_keep) & set(pt2ch.keys())
         return {idx: pt2ch[idx] for idx in to_keep}
 
-    @staticmethod
-    def load_conv_table(conv_fname, dotted_codes):
+    @classmethod
+    def load_conv_table(cls, conv_fname):
         conv_fname = os.path.join(_RSC_DIR, conv_fname)
-        to_dotted = {c.replace('.', ''): c for c in dotted_codes}
         df = pd.read_csv(conv_fname,
                          sep='\s+',
                          dtype=str,
@@ -209,14 +208,14 @@ class ICDCommons:
         df['combination'] = df['meta'].apply(lambda s: s[2])
         df['scenario'] = df['meta'].apply(lambda s: s[3])
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
-        df['source'] = df['source'].map(to_dotted)
-        df['target'] = df['target'].map(to_dotted)
+        df['source'] = df['source'].map(cls.add_dot)
+        df['target'] = df['target'].map(cls.add_dot)
 
         return df
 
-    @staticmethod
-    def analyse_conversions(conv_fname, dotted_codes):
-        df = DxICD9.load_conv_table(conv_fname, dotted_codes)
+    @classmethod
+    def analyse_conversions(cls, conv_fname):
+        df = cls.load_conv_table(conv_fname)
         codes = list(df['source'][df['no_map'] == '1'])
         status = ['no_map' for _ in codes]
         for code, source_df in df[df['no_map'] == '0'].groupby('source'):
@@ -233,24 +232,27 @@ class ICDCommons:
         status = pd.DataFrame({'code': codes, 'status': status})
         return status
 
-    @staticmethod
-    def distill_conversion_table(conv_fname, ch2pt):
+    def distill_conversion_table(self, conv_fname):
         # For choice_list, represent each group by there common ancestor
         def _resolve_choice_list(df):
             represent = set()
             for _, choice_list_df in df.groupby('choice_list'):
-                choice_list = list(choice_list_df['target'])
+                choice_list = choice_list_df['target'].map(self.code2dag)
+                if choice_list.isnull().sum() > 0:
+                    raise RuntimeError(
+                        f'Failed mapping to DAG space: {list(choice_list_df["target"])} -> {list(choice_list)}'
+                    )
+
+                choice_list = list(choice_list)
                 if len(choice_list) > 1:
-                    lca = HierarchicalScheme.least_common_ancestor(
-                        choice_list, ch2pt)
+                    lca = self.least_common_ancestor(choice_list)
                     represent.add(lca)
                 else:
                     represent.add(choice_list[0])
             return represent
 
-        dotted_codes = set.union(set(ch2pt), *ch2pt.values())
-        conv_df = DxICD9.load_conv_table(conv_fname, dotted_codes)
-        status_df = DxICD9.analyse_conversions(conv_fname, dotted_codes)
+        conv_df = self.load_conv_table(conv_fname)
+        status_df = self.analyse_conversions(conv_fname)
         map_kind = dict(zip(status_df['code'], status_df['status']))
         mapping = {}
         for code, df in conv_df.groupby('source'):
@@ -277,6 +279,13 @@ class DxICD10(HierarchicalScheme, ICDCommons):
         - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
+
+    @staticmethod
+    def add_dot(code):
+        if len(code) > 3:
+            return code[:3] + '.' + code[3:]
+        else:
+            return code
 
     @staticmethod
     def distill_icd10_xml(filename):
@@ -344,12 +353,16 @@ class DxICD10(HierarchicalScheme, ICDCommons):
         super().__init__(
             **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
 
-        map9to10 = self.distill_conversion_table('2018_gem_cm_I9I10.txt.gz',
-                                                 self.ch2pt)
+        map9to10 = self.distill_conversion_table('2018_gem_cm_I9I10.txt.gz')
         self.add_map(DxICD9, DxICD10, map9to10)
 
 
 class PrICD10(HierarchicalScheme, ICDCommons):
+
+    @staticmethod
+    def add_dot(code):
+        # No decimal point in ICD10-PCS
+        return code
 
     @staticmethod
     def distill_icd10_xml(filename):
@@ -409,13 +422,25 @@ class PrICD10(HierarchicalScheme, ICDCommons):
         super().__init__(
             **self.distill_icd10_xml('icd10pcs_codes_2023.txt.gz'))
 
-        map9to10 = self.distill_conversion_table('2018_gem_pcs_I9I10.txt.gz',
-                                                 self.ch2pt)
+        map9to10 = self.distill_conversion_table('2018_gem_pcs_I9I10.txt.gz')
         self.add_map(PrICD9, PrICD10, map9to10)
 
 
 class DxICD9(HierarchicalScheme, ICDCommons):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
+
+    @staticmethod
+    def add_dot(code):
+        if code[0] == 'E':
+            if len(code) > 4:
+                return code[:4] + '.' + code[4:]
+            else:
+                return code
+        else:
+            if len(code) > 3:
+                return code[:3] + '.' + code[3:]
+            else:
+                return code
 
     @staticmethod
     def icd9_columns():
@@ -490,7 +515,7 @@ class DxICD9(HierarchicalScheme, ICDCommons):
         pt2ch = self._deselect_subtree(pt2ch, self._PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
-        nodes = set.union(set(pt2ch), *pt2ch.values())
+        nodes = set().union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
@@ -506,12 +531,18 @@ class DxICD9(HierarchicalScheme, ICDCommons):
                          index=d['icd_index'],
                          desc=d['icd_desc'])
 
-        map10to9 = self.distill_conversion_table('2018_gem_cm_I10I9.txt.gz',
-                                                 self.ch2pt)
+        map10to9 = self.distill_conversion_table('2018_gem_cm_I10I9.txt.gz')
         self.add_map(DxICD10, DxICD9, map10to9)
 
 
 class PrICD9(HierarchicalScheme, ICDCommons):
+
+    @staticmethod
+    def add_dot(code):
+        if len(code) > 2:
+            return code[:2] + '.' + code[2:]
+        else:
+            return code
 
     def __init__(self):
         df = pd.DataFrame(DxICD9.icd9_columns())
@@ -521,7 +552,7 @@ class PrICD9(HierarchicalScheme, ICDCommons):
         pt2ch = self._select_subtree(pt2ch, DxICD9._PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
-        nodes = set.union(set(pt2ch), *pt2ch.values())
+        nodes = set().union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
@@ -537,8 +568,7 @@ class PrICD9(HierarchicalScheme, ICDCommons):
                          index=d['icd_index'],
                          desc=d['icd_desc'])
 
-        map10to9 = self.distill_conversion_table('2018_gem_pcs_I10I9.txt.gz',
-                                                 self.ch2pt)
+        map10to9 = self.distill_conversion_table('2018_gem_pcs_I10I9.txt.gz')
         self.add_map(PrICD10, PrICD9, map10to9)
 
 
@@ -560,9 +590,10 @@ class DxCCS(HierarchicalScheme):
 
     @staticmethod
     def icd9_mappings(cols, n_levels):
-        icd92ccs = {'root': 'root'}
-        ccs2icd9 = defaultdict(list)
-        ccs2icd9['root'] = ['root']
+        icd92ccs = defaultdict(set)
+        icd92ccs['root'] = {'root'}
+        ccs2icd9 = defaultdict(set)
+        ccs2icd9['root'] = {'root'}
         n_rows = len(cols['ICD'])
         for i in range(n_rows):
             last_index = None
@@ -572,8 +603,8 @@ class DxCCS(HierarchicalScheme):
                     last_index = level
             if last_index != None:
                 icode = cols['ICD'][i]
-                icd92ccs[icode] = last_index
-                ccs2icd9[last_index].append(icode)
+                icd92ccs[icode].add(last_index)
+                ccs2icd9[last_index].add(icode)
         return icd92ccs, ccs2icd9
 
     @staticmethod
@@ -663,16 +694,20 @@ class DxFlatCCS(AbstractScheme):
         return {'code': code_col, 'icd9': icd9_col, 'desc': desc_col}
 
     def __init__(self):
-        cols = self.flatccs_columns('$dxref 2015 filtered.csv.gz')
+        cols = self.flatccs_columns('$dxref 2015.csv.gz')
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=dict(zip(cols['code'], cols['desc'])))
 
         icd92flatccs = dict(zip(cols['icd9'], cols['code']))
-        flatccs2icd9 = defaultdict(list)
+        assert len(icd92flatccs) == len(cols['icd9']), "1toN mapping expected"
+
+        flatccs2icd9 = defaultdict(set)
         for icode, ccode in icd92flatccs.items():
-            flatccs2icd9[ccode].append(icode)
+            flatccs2icd9[ccode].add(icode)
+
+        icd92flatccs = {k: {v} for k, v in icd92flatccs.items()}
 
         self.add_map(DxFlatCCS, DxICD9, flatccs2icd9)
         self.add_map(DxICD9, DxFlatCCS, icd92flatccs)
@@ -688,15 +723,19 @@ class PrFlatCCS(AbstractScheme):
                          desc=dict(zip(cols['code'], cols['desc'])))
 
         icd92flatccs = dict(zip(cols['icd9'], cols['code']))
-        flatccs2icd9 = defaultdict(list)
+        assert len(icd92flatccs) == len(cols['icd9']), "1toN mapping expected"
+
+        flatccs2icd9 = defaultdict(set)
         for icode, ccode in icd92flatccs.items():
-            flatccs2icd9[ccode].append(icode)
+            flatccs2icd9[ccode].add(icode)
+
+        icd92flatccs = {k: {v} for k, v in icd92flatccs.items()}
         self.add_map(PrFlatCCS, PrICD9, flatccs2icd9)
         self.add_map(PrICD9, PrFlatCCS, icd92flatccs)
 
 
 # Singleton instance.
-code_scheme = {
+code_scheme = LazyDict({
     'dx_flatccs': lambda: DxFlatCCS(),
     'dx_ccs': lambda: DxCCS(),
     'dx_icd9': lambda: DxICD9(),
@@ -705,4 +744,4 @@ code_scheme = {
     'pr_ccs': lambda: PrCCS(),
     'pr_icd9': lambda: PrICD9(),
     'pr_icd10': lambda: PrICD10()
-}
+})

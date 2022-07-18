@@ -2,7 +2,8 @@ import unittest
 import random
 
 from icenode.ehr_model.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
-                                             PrCCS, PrFlatCCS, PrICD10, PrICD9)
+                                             PrCCS, PrFlatCCS, PrICD10, PrICD9,
+                                             code_scheme, HierarchicalScheme)
 
 
 class AbstractSchemeTests(object):
@@ -75,53 +76,80 @@ class TestDxFlatCCS(AbstractSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = DxFlatCCS()
+        cls.scheme = code_scheme['dx_flatccs']
 
 
 class TestPrFlatCCS(AbstractSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = PrFlatCCS()
+        cls.scheme = code_scheme['pr_flatccs']
 
 
 class TestDxCCS(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = DxCCS()
+        cls.scheme = code_scheme['dx_ccs']
 
 
 class TestPrCCS(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = PrCCS()
+        cls.scheme = code_scheme['pr_ccs']
 
 
 class TestDxICD9(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = DxICD9()
+        cls.scheme = code_scheme['dx_icd9']
 
 
 class TestPrICD9(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = PrICD9()
+        cls.scheme = code_scheme['pr_icd9']
 
 
 class TestDxICD10(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = DxICD10()
+        cls.scheme = code_scheme['dx_icd10']
 
 
 class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.scheme = PrICD10()
+        cls.scheme = code_scheme['pr_icd10']
+
+
+class TestConversionCoverage(unittest.TestCase):
+
+    def test_conversion_validity_and_95_coverage(self):
+
+        for s1_k in code_scheme.keys():
+            for s2_k in code_scheme.keys():
+                s1 = code_scheme[s1_k]
+                s2 = code_scheme[s2_k]
+                m = s1.maps.get((type(s1), type(s2)))
+                if m is not None:
+                    with self.subTest(
+                            msg=f"Validate mapping from {s1_k} to {s2_k}"):
+                        trgt_codes = set().union(*m.values())
+                        s2_codes = s2.codes
+                        if issubclass(s2, HierarchicalScheme):
+                            s2_codes = list(map(s2.code2dag.get, s2_codes))
+
+                        self.assertTrue(all(t in s2.codes for t in trgt_codes))
+
+                    with self.subTest(
+                            msg=f"95-coverage for mapping from {s1_k} to {s2_k}"
+                    ):
+                        src_count = len(s1.codes)
+                        src_coverage = len([c for c in s1.codes if c in m])
+                        self.assertTrue(src_coverage >= 0.85 * src_count)
