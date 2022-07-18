@@ -149,7 +149,7 @@ class TestConversionCoverage(unittest.TestCase):
                             [c in s2_codes for c in trgt_codes])
 
                         self.assertTrue(
-                            mappedto_coverage >= 0.85 * mappedto_count,
+                            mappedto_coverage >= 0.7 * mappedto_count,
                             msg=
                             f'unmatched codes ({len(trgt_codes - set(s2.codes)) / len(trgt_codes)}): {trgt_codes - set(s2.codes)}'
                         )
@@ -160,5 +160,5 @@ class TestConversionCoverage(unittest.TestCase):
                         src_count = len(s1.codes)
                         src_coverage = len([c for c in s1.codes if c in m])
                         self.assertTrue(
-                            src_coverage >= 0.85 * src_count,
+                            src_coverage >= 0.7 * src_count,
                             msg=f'coverage: {src_coverage / src_count} unmatched: {set(s1.codes) - set(m)}')
