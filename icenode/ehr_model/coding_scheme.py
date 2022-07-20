@@ -2,11 +2,13 @@
 data structures to support conversion between CCS and ICD9."""
 
 from collections import defaultdict, OrderedDict
+from typing import Set, Optional
 import os
 import gzip
 import xml.etree.ElementTree as ET
 from absl import logging
 
+import numpy as np
 import pandas as pd
 
 from ..utils import OOPError, LazyDict
@@ -39,12 +41,47 @@ class AbstractScheme:
         self.desc = desc
 
     @staticmethod
+    def map_codeset(codeset: Set[str], base_scheme: str, new_scheme: str):
+        base_scheme = code_scheme[base_scheme]
+        new_scheme = code_scheme[new_scheme] if new_scheme else base_scheme
+        if type(base_scheme) is type(new_scheme):
+            mapper = None
+        else:
+            mapper = AbstractScheme.get_map(base_scheme, new_scheme)
+
+        if mapper:
+            codeset = set().union(*[mapper[c] for c in codeset])
+
+        # The mapping process produces codes in the DAG
+        # space (leaves + internal nodes).
+        if mapper and new_scheme.hierarchical():
+            index = new_scheme.dag_index
+        else:
+            index = new_scheme.index
+        return codeset, index
+
+    @staticmethod
+    def codeset2vec(codeset: Set[str],
+                    base_scheme: str,
+                    new_scheme: Optional[str] = None):
+        codeset, index = AbstractScheme.map_codeset(codeset, base_scheme,
+                                                    new_scheme)
+        vec = np.zeros(len(index))
+        for c in codeset:
+            vec[index[c]] = 1
+        return vec
+
+    @staticmethod
     def add_map(src_cls, target_cls, mapping):
         AbstractScheme.maps[(src_cls, target_cls)] = mapping
 
     @staticmethod
     def get_map(src_obj, target_obj):
         return AbstractScheme.maps[(type(src_obj), type(target_obj))]
+
+    @classmethod
+    def hierarchical(cls):
+        return False
 
 
 class HierarchicalScheme(AbstractScheme):
@@ -68,6 +105,8 @@ class HierarchicalScheme(AbstractScheme):
             # Identity
             self.code2dag = {c: c for c in kwargs['codes']}
 
+        self.dag2code = {d: c for c, d in self.code2dag.items()}
+
         assert pt2ch or ch2pt, "Should provide ch2pt or pt2ch connection dictionary"
         if ch2pt and pt2ch:
             self.ch2pt = ch2pt
@@ -80,6 +119,20 @@ class HierarchicalScheme(AbstractScheme):
         elif ch2pt is not None:
             self.ch2pt = ch2pt
             self.pt2ch = self.reverse_connection(ch2pt)
+
+    @classmethod
+    def hierarchical(cls):
+        return True
+
+    def make_ancestors_mat(self, include_itself=True) -> np.ndarray:
+        ancestors_mat = np.zeros((len(self.dag_index), len(self.dag_index)),
+                                 dtype=bool)
+        for code_i, i in self.dag_index.items():
+            for ancestor_j in self.code_ancestors_bfs(code_i, include_itself):
+                j = self.dag_index[ancestor_j]
+                ancestors_mat[i, j] = 1
+
+        return ancestors_mat
 
     @staticmethod
     def reverse_connection(connection):

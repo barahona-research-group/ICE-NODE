@@ -4,94 +4,85 @@ from __future__ import annotations
 from collections import defaultdict
 import random
 from typing import List, Optional, Dict, Set
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 
-from .mimic.concept import DxSubject
-from .ccs_dag import ccs_dag
+from .concept import Subject, Admission
+
+from .coding_scheme import (code_scheme, code_scheme_cls, AbstractScheme,
+                            HierarchicalScheme)
+from .outcome import dx_outcome_filter, DxCodeOutcomeFilter
 
 
-class AdmissionInfo:
+class Admission_JAX:
 
-    def __init__(self, subject_id: int, admission_time: int, los: int,
-                 admission_id: int, dx_icd9_codes: Set[str]):
-        self.subject_id = subject_id
+    def __init__(self, adm: Admission, first_adm_date: datetime,
+                 dx_scheme: str, dx_outcome_filter_label: DxCodeOutcomeFilter,
+                 pr_scheme: Optional[str]):
         # Time as days since the first admission
-        self.admission_time = admission_time
+        self.admission_time = Subject.days(adm.admission_dates[0],
+                                           first_adm_date)
         # Length of Stay
-        self.los = los
-        self.admission_id = admission_id
-        self.dx_icd9_codes = dx_icd9_codes
-        self.dx_ccs_codes = self.dx_ccs_jax(dx_icd9_codes)
-        self.dx_flatccs_codes = self.dx_flatccs_jax(dx_icd9_codes)
+        # This 0.5 means if a patient is admitted and discharged at
+        # the same day, then we assume 0.5 day as length of stay (12 hours)
+        # In general, this would generalize the assumption to:
+        # Admissions during a day happen at the midnight 00:01
+        # While discharges during a day happen at the afternoon 12:00
+        self.los = Subject.days(adm.admission_dates[1],
+                                adm.admission_dates[0]) + 0.5
+        self.admission_id = adm.admission_id
+        self.dx_codes = self.jaxify_dx_codes(adm, dx_scheme)
+        self.dx_outcome = self.jaxify_dx_outcome(adm, dx_outcome_filter_label)
+
+        if pr_scheme and adm.pr_codes:
+            self.pr_codes = self.jaxify_pr_codes(adm, pr_scheme)
+        else:
+            self.pr_codes = None
 
     @staticmethod
-    def _set2jaxvec(code_set, code_index, transformer_dict=None):
-        if transformer_dict:
-            code_set = set(map(transformer_dict.get, code_set)) - {None}
-        vec = np.zeros(len(code_index))
-        for c in code_set:
-            vec[code_index[c]] = 1
-        return jnp.array(vec)
+    def jaxify_dx_codes(adm, dx_scheme):
+        dx_scheme = code_scheme[dx_scheme]
+        return jnp.array(
+            AbstractScheme.codeset2vec(adm.dx_codes, adm.dx_scheme, dx_scheme))
+
+    @staticmethod
+    def jaxify_dx_outcome(adm, dx_outcome_filter_label):
+        dx_outcome = dx_outcome_filter[dx_outcome_filter_label]
+        return jnp.array(dx_outcome(adm))
 
     @classmethod
-    def dx_ccs_jax(cls, dx_icd9_codes):
-        return cls._set2jaxvec(dx_icd9_codes, ccs_dag.dx_ccs_idx,
-                               ccs_dag.dx_icd2ccs)
+    def jaxify_pr_codes(cls, adm, pr_scheme):
+        pr_scheme = code_scheme[pr_scheme]
+        return jnp.array(
+            AbstractScheme.codeset2vec(adm.pr_codes, adm.pr_scheme, pr_scheme))
 
     @classmethod
-    def dx_flatccs_jax(cls, dx_icd9_codes):
-        return cls._set2jaxvec(dx_icd9_codes, ccs_dag.dx_flatccs_idx,
-                               ccs_dag.dx_icd2flatccs)
-
-    @classmethod
-    def subject_to_admissions(cls,
-                              subject: DxSubject) -> Dict[int, AdmissionInfo]:
-        first_day_date = subject.admissions[0].admission_dates[0]
-        adms = []
-        for adm in subject.admissions:
-            # days since first admission
-            time = DxSubject.days(adm.admission_dates[0],
-                                  subject.admissions[0].admission_dates[0])
-
-            los = DxSubject.days(adm.admission_dates[1],
-                                 adm.admission_dates[0]) + 0.5
-
-            # This 0.5 means if a patient is admitted and discharged at
-            # the same day, then we assume 0.5 day as length of stay (12 hours)
-            # In general, this would generalize the assumption to:
-            # Admissions during a day happen at the midnight 00:01
-            # While discharges during a day happen at the afternoon 12:00
-            adms.append(
-                AdmissionInfo(subject_id=subject.subject_id,
-                              admission_time=time,
-                              los=los,
-                              admission_id=adm.admission_id,
-                              dx_icd9_codes=adm.dx_icd9_codes))
-        return adms
+    def subject_to_admissions(
+            cls, subject: Subject, dx_scheme: str,
+            dx_outcome_filter_label: str,
+            pr_scheme: Optional[str]) -> Dict[int, Admission_JAX]:
+        kwargs = dict(first_adm_date=subject.admissions[0].admission_dates[0],
+                      dx_scheme=dx_scheme,
+                      dx_outcome_filter_label=dx_outcome_filter_label,
+                      pr_scheme=pr_scheme)
+        return [Admission_JAX(adm, **kwargs) for adm in subject.admissions]
 
 
 class WindowFeatures:
 
-    def __init__(self, past_admissions: List[AdmissionInfo]):
-        self.dx_ccs_features = self.dx_ccs_jax(past_admissions)
-        self.dx_flatccs_features = self.dx_flatccs_jax(past_admissions)
+    def __init__(self, past_admissions: List[Admission_JAX]):
+        self.dx_features = self.dx_jax(past_admissions)
 
     @staticmethod
-    def dx_ccs_jax(past_admissions: List[AdmissionInfo]):
-        past_ccs_codes = jnp.vstack(
-            [adm.dx_ccs_codes for adm in past_admissions])
-        return jnp.max(past_ccs_codes, axis=0)
-
-    @staticmethod
-    def dx_flatccs_jax(past_admissions: List[AdmissionInfo]):
-        past_flatccs_codes = jnp.vstack(
-            [adm.dx_flatccs_codes for adm in past_admissions])
-        return jnp.max(past_flatccs_codes, axis=0)
+    def dx_jax(past_admissions: List[Admission_JAX]):
+        past_codes = jnp.vstack([adm.dx_codes for adm in past_admissions])
+        return jnp.max(past_codes, axis=0)
 
 
-class DxInterface_JAX:
+class Subject_JAX:
     """
     Class to prepare EHRs information to predictive models.
     NOTE: admissions with overlapping admission dates for the same patietn
@@ -99,13 +90,28 @@ class DxInterface_JAX:
     are discarded.
     """
 
-    def __init__(self, subjects: List[DxSubject]):
-        self.dx_ccs_ancestors_mat = self.make_ccs_ancestors_mat(
-            ccs_dag.dx_ccs_idx)
+    def __init__(self,
+                 subjects: List[Subject],
+                 dx_scheme: str,
+                 dx_outcome_filter_label: str,
+                 pr_scheme: Optional[str] = None):
+
+        _dx_scheme = code_scheme[dx_scheme]
+        _pr_scheme = code_scheme[pr_scheme] if pr_scheme else None
+
+        if _dx_scheme.hierarchical():
+            self.dx_ancestors_mat = jnp.array(_dx_scheme.make_ancestors_mat())
+
+        if _pr_scheme and _pr_scheme.hierarchical():
+            self.pr_ancestors_mat = jnp.array(_pr_scheme.make_ancestors_mat())
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
-        self.subjects = self.jaxify_subject_admissions(subjects)
+        self.subjects = self.jaxify_subject_admissions(
+            subjects,
+            dx_scheme=dx_scheme,
+            dx_outcome_filter_label=dx_outcome_filter_label,
+            pr_scheme=pr_scheme)
 
     def random_splits(self,
                       split1: float,
@@ -148,7 +154,7 @@ class DxInterface_JAX:
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def make_ccs_ancestors_mat(self, code2index) -> jnp.ndarray:
+    def make_ancestors_mat(self, code2index) -> jnp.ndarray:
         ancestors_mat = np.zeros((len(code2index), len(code2index)),
                                  dtype=bool)
         for code_i, i in code2index.items():
@@ -246,9 +252,10 @@ class DxInterface_JAX:
     def subject_admission_sequence(self, subject_id):
         return self.subjects[subject_id]
 
-    def jaxify_subject_admissions(self, subjects):
+    def jaxify_subject_admissions(self, subjects, **kwargs):
         return {
-            subject.subject_id: AdmissionInfo.subject_to_admissions(subject)
+            subject.subject_id:
+            Admission_JAX.subject_to_admissions(subject, **kwargs)
             for subject in subjects
         }
 
@@ -298,7 +305,11 @@ class DxWindowedInterface_JAX:
         return len(ccs_dag.dx_flatccs_idx)
 
 
-def create_patient_interface(processed_mimic_tables_dir: str):
+def create_patient_interface(processed_mimic_tables_dir: str,
+                             adm_df_name: str,
+                             dx_df_name: str,
+                             pr_df_name: str,
+                             ):
     adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
     # Cast columns of dates to datetime64
     adm_df['ADMITTIME'] = pd.to_datetime(

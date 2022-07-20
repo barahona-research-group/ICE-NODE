@@ -8,6 +8,7 @@ import pandas as pd
 
 from .coding_scheme import (code_scheme, code_scheme_cls, AbstractScheme,
                             HierarchicalScheme)
+from .dataset import AbstractEHRDataset
 
 
 class AbstractAdmission:
@@ -96,14 +97,13 @@ class Subject:
         return (d1.to_pydatetime() - d2.to_pydatetime()).days
 
     @classmethod
-    def to_list(cls,
-                adm_df: pd.DataFrame,
-                dx_df: pd.DataFrame,
-                dx_colname: str,
-                dx_scheme: str,
-                pr_df: Optional[pd.DataFrame] = None,
-                pr_colname: Optional[str] = None,
-                pr_scheme: Optional[str] = None):
+    def to_list(cls, dataset: AbstractEHRDataset):
+        ret = {}
+
+        dx_scheme_obj = code_scheme[dx_scheme]
+        if pr_scheme:
+            pr_scheme_obj = code_scheme[pr_scheme]
+
         ehr = {}
         # Admissions
         for subject_id, subject_admissions_df in adm_df.groupby('SUBJECT_ID'):
@@ -123,19 +123,32 @@ class Subject:
             }
 
         # dx concepts
+        all_dx_codes = set()
+        valid_dx_codes = set(dx_scheme_obj.codes)
         for subject_id, subject_dx_df in dx_df.groupby('SUBJECT_ID'):
             for adm_id, codes_df in subject_dx_df.groupby('HADM_ID'):
-                ehr[subject_id]['admissions'][adm_id]['dx_codes'] = set(
-                    codes_df[dx_colname])
+                dx_codes = set(codes_df[dx_colname])
+                all_dx_codes |= dx_codes
+                dx_codes &= valid_dx_codes
+                ehr[subject_id]['admissions'][adm_id]['dx_codes'] = dx_codes
+        ret['dx_unrecognised'] = all_dx_codes - set(dx_scheme_obj.codes)
+
         if pr_df and pr_colname:
-            # dx concepts
+            # pr concepts
+            all_pr_codes = set()
+            valid_pr_codes = set(pr_scheme_obj.codes)
             for subject_id, subject_pr_df in pr_df.groupby('SUBJECT_ID'):
                 for adm_id, codes_df in subject_pr_df.groupby('HADM_ID'):
-                    ehr[subject_id]['admissions'][adm_id]['pr_codes'] = set(
-                        codes_df[pr_colname])
+                    pr_codes = set(codes_df[pr_colname])
+                    all_pr_codes |= pr_codes
+                    pr_codes &= valid_pr_codes
+                    ehr[subject_id]['admissions'][adm_id][
+                        'pr_codes'] = pr_codes
+            ret['pr_unrecognised'] = all_pr_codes - set(pr_scheme_obj.codes)
 
         for subject_id in ehr.keys():
             ehr[subject_id]['admissions'] = list(
                 map(lambda args: Admission(**args),
                     ehr[subject_id]['admissions'].values()))
-        return list(map(lambda args: cls(**args), ehr.values()))
+        ret['list'] = list(map(lambda args: cls(**args), ehr.values()))
+        return ret
