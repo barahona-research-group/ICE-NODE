@@ -139,26 +139,28 @@ class TestConversionCoverage(unittest.TestCase):
                 m = s1.maps.get((type(s1), type(s2)))
                 if m is not None:
                     with self.subTest(
-                            msg=f"Validate mapping from {s1_k} to {s2_k}"):
+                            msg=f"{s1_k} to {s2_k}: Target scheme coverage"):
                         trgt_codes = set().union(*m.values())
                         s2_codes = s2.codes
                         if issubclass(type(s2), HierarchicalScheme):
                             s2_codes = list(map(s2.code2dag.get, s2_codes))
                         mappedto_count = len(trgt_codes)
                         mappedto_coverage = len(
-                            [c in s2_codes for c in trgt_codes])
+                            [c for c in trgt_codes if c in s2_codes])
 
                         self.assertTrue(
-                            mappedto_coverage >= 0.7 * mappedto_count,
+                            mappedto_coverage == mappedto_count,
                             msg=
-                            f'unmatched codes ({len(trgt_codes - set(s2.codes)) / len(trgt_codes)}): {trgt_codes - set(s2.codes)}'
+                            f'coverage {mappedto_coverage / mappedto_count} unmatched: {trgt_codes - set(s2_codes)}'
                         )
 
                     with self.subTest(
-                            msg=f"95-coverage for mapping from {s1_k} to {s2_k}"
-                    ):
-                        src_count = len(s1.codes)
-                        src_coverage = len([c for c in s1.codes if c in m])
+                            msg=f"{s1_k} to {s2_k}: Source scheme coverage"):
+                        mappedfrom_count = len(s1.codes)
+                        mappedfrom_cover = len(
+                            [c for c in s1.codes if c in m and len(m[c]) > 0])
                         self.assertTrue(
-                            src_coverage >= 0.7 * src_count,
-                            msg=f'coverage: {src_coverage / src_count} unmatched: {set(s1.codes) - set(m)}')
+                            mappedfrom_cover == mappedfrom_count,
+                            msg=
+                            f'coverage: {mappedfrom_cover / mappedfrom_count} unmatched: {set(s1.codes) - set(m)}'
+                        )

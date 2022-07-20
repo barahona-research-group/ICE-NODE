@@ -747,14 +747,18 @@ class PrFlatCCS(FlatCCSCommons):
         self.add_map(PrICD9, PrFlatCCS, icd92flatccs)
 
 
+code_scheme_cls = {
+    'dx_flatccs': DxFlatCCS,
+    'dx_ccs': DxCCS,
+    'dx_icd9': DxICD9,
+    'dx_icd10': DxICD10,
+    'pr_flatccs': PrFlatCCS,
+    'pr_ccs': PrCCS,
+    'pr_icd9': PrICD9,
+    'pr_icd10': PrICD10
+}
+
 # Singleton instance.
-code_scheme = LazyDict({
-    'dx_flatccs': lambda: DxFlatCCS(),
-    'dx_ccs': lambda: DxCCS(),
-    'dx_icd9': lambda: DxICD9(),
-    'dx_icd10': lambda: DxICD10(),
-    'pr_flatccs': lambda: PrFlatCCS(),
-    'pr_ccs': lambda: PrCCS(),
-    'pr_icd9': lambda: PrICD9(),
-    'pr_icd10': lambda: PrICD10()
-})
+code_scheme = LazyDict(
+    {label: lambda: s_cls()
+     for label, s_cls in code_scheme_cls.items()})
