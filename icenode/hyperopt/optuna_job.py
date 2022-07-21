@@ -116,9 +116,9 @@ def capture_args():
     parser.add_argument('-m', '--model', required=True, help='Model label')
 
     parser.add_argument('-i',
-                        '--mimic-processed-dir',
+                        '--dataset',
                         required=True,
-                        help='Absolute path to MIMIC-III processed tables')
+                        help='Dataset tag (e.g. M3, M4, ..etc)')
 
     parser.add_argument(
         '-e',

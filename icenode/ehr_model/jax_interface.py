@@ -3,7 +3,7 @@
 from __future__ import annotations
 from collections import defaultdict
 import random
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict
 from datetime import datetime
 
 import numpy as np
@@ -11,9 +11,8 @@ import pandas as pd
 import jax.numpy as jnp
 
 from .concept import Subject, Admission
-
-from .coding_scheme import (code_scheme, code_scheme_cls, AbstractScheme,
-                            HierarchicalScheme)
+from .dataset import AbstractEHRDataset
+from .coding_scheme import (code_scheme, AbstractScheme)
 from .outcome import dx_outcome_filter, DxCodeOutcomeFilter
 
 
@@ -96,6 +95,10 @@ class Subject_JAX:
                  dx_outcome_filter_label: str,
                  pr_scheme: Optional[str] = None):
 
+        self.dx_scheme = dx_scheme
+        self.dx_outcome_filter_label = dx_outcome_filter_label
+        self.pr_scheme = pr_scheme
+
         _dx_scheme = code_scheme[dx_scheme]
         _pr_scheme = code_scheme[pr_scheme] if pr_scheme else None
 
@@ -107,7 +110,9 @@ class Subject_JAX:
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
-        self.subjects = self.jaxify_subject_admissions(
+
+        self.subjects = {s.subject_id: s for s in subjects}
+        self.subjects_jax = self.jaxify_subject_admissions(
             subjects,
             dx_scheme=dx_scheme,
             dx_outcome_filter_label=dx_outcome_filter_label,
@@ -129,79 +134,28 @@ class Subject_JAX:
         test_ids = subject_ids[split2:]
         return train_ids, valid_ids, test_ids
 
-    def _dx_history(self, subject_id, code_index, transformer_dict):
-        history = defaultdict(list)
-        for adm in self.subjects[subject_id]:
-            code_set = adm.dx_icd9_codes
-            if transformer_dict:
-                code_set = set(map(transformer_dict.get,
-                                   adm.dx_icd9_codes)) - {None}
-            for code in code_set:
-                history[code].append(
-                    (adm.admission_time, adm.admission_time + adm.los))
-        return history
-
-    def dx_ccs_history(self, subject_id):
-        return self._dx_history(subject_id, ccs_dag.dx_ccs_idx,
-                                ccs_dag.dx_icd2ccs)
-
-    def dx_flatccs_history(self, subject_id):
-        return self._dx_history(subject_id, ccs_dag.dx_flatccs_idx,
-                                ccs_dag.dx_icd2flatccs)
+    def dx_history(self, subject_id, dx_scheme=None, absolute_dates=False):
+        return self.subjects[subject_id].dx_history(dx_scheme, absolute_dates)
 
     def adm_times(self, subject_id):
-        adms_info = self.subjects[subject_id]
+        adms_info = self.subjects_jax[subject_id]
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def make_ancestors_mat(self, code2index) -> jnp.ndarray:
-        ancestors_mat = np.zeros((len(code2index), len(code2index)),
-                                 dtype=bool)
-        for code_i, i in code2index.items():
-            for ancestor_j in ccs_dag.get_ccs_parents(code_i):
-                j = code2index[ancestor_j]
-                ancestors_mat[i, j] = 1
+    def dx_code_frequency(self,
+                          subjects: List[int],
+                          dx_code_scheme: Optional[str] = None):
+        return Subject.dx_code_frequency([self.subjects[i] for i in subjects])
 
-        return jnp.array(ancestors_mat)
-
-    def _dx_code_frequency(self, subjects: List[int], code_index: Dict[str,
-                                                                       int],
-                           transformer_dict: Dict[str, str]):
-        counter = defaultdict(int)
-        for subject_id in subjects:
-            for adm in self.subjects[subject_id]:
-                code_set = adm.dx_icd9_codes
-                if transformer_dict:
-                    code_set = set(map(transformer_dict.get,
-                                       code_set)) - {None}
-                for code in code_set:
-                    counter[code_index[code]] += 1
-
-        # Return dictionary with zero-frequency codes added.
-        return {idx: counter[idx] for idx in code_index.values()}
-
-    def dx_flatccs_frequency(self, subjects: Optional[List[int]] = None):
-        return self._dx_code_frequency(subjects or self.subjects.keys(),
-                                       ccs_dag.dx_flatccs_idx,
-                                       ccs_dag.dx_icd2flatccs)
-
-    def dx_ccs_frequency(self, subjects: Optional[List[int]] = None):
-        return self._dx_code_frequency(subjects or self.subjects.keys(),
-                                       ccs_dag.dx_ccs_idx, ccs_dag.dx_icd2ccs)
-
-    def _dx_frequency_vec(self, frequency_dict, code_index):
-        vec = np.zeros(len(code_index))
-        for idx, count in frequency_dict.items():
+    def dx_frequency_vec(self,
+                         subjects: Optional[List[int]] = None,
+                         dx_code_scheme=None):
+        subjects = subjects or self.subjects
+        freq_dict = self.dx_code_frequency(subjects, dx_code_scheme)
+        vec = np.zeros(len(freq_dict))
+        for idx, count in freq_dict.items():
             vec[idx] = count
         return jnp.array(vec)
-
-    def dx_flatccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        return self._dx_frequency_vec(self.dx_flatccs_frequency(subjects),
-                                      ccs_dag.dx_flatccs_idx)
-
-    def dx_ccs_frequency_vec(self, subjects: Optional[List[int]] = None):
-        return self._dx_frequency_vec(self.dx_ccs_frequency(subjects),
-                                      ccs_dag.dx_ccs_idx)
 
     @staticmethod
     def _code_frequency_partitions(percentile_range, code_frequency):
@@ -229,17 +183,12 @@ class Subject_JAX:
 
         return codes_by_percentiles
 
-    def dx_flatccs_by_percentiles(self,
-                                  percentile_range: float = 20,
-                                  subjects: Optional[List[int]] = None):
+    def dx_codes_by_percentiles(self,
+                                percentile_range: float = 20,
+                                subjects: Optional[List[int]] = None,
+                                dx_scheme: Optional[str] = None):
         return self._code_frequency_partitions(
-            percentile_range, self.dx_flatccs_frequency(subjects))
-
-    def dx_ccs_by_percentiles(self,
-                              percentile_range: float = 20,
-                              subjects: Optional[List[int]] = None):
-        return self._code_frequency_partitions(percentile_range,
-                                               self.dx_ccs_frequency(subjects))
+            percentile_range, self.dx_code_frequency(subjects, dx_scheme))
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
@@ -260,16 +209,16 @@ class Subject_JAX:
         }
 
 
-class DxWindowedInterface_JAX:
+class WindowedInterface_JAX:
 
-    def __init__(self, dx_interface: DxInterface_JAX):
-        self.dx_interface = dx_interface
-        self.dx_win_features = self._compute_window_features(dx_interface)
+    def __init__(self, interface: Subject_JAX):
+        self.interface = interface
+        self.win_features = self._compute_window_features(interface)
 
     @staticmethod
-    def _compute_window_features(dx_interface: DxInterface_JAX):
+    def _compute_window_features(interface: Subject_JAX):
         features = {}
-        for subj_id, adms in dx_interface.subjects.items():
+        for subj_id, adms in interface.subjects_jax.items():
             current_window = []
             # Windowed features only contain information about the past adms.
             # First element, corresponding to first admission time, is None.
@@ -286,39 +235,27 @@ class DxWindowedInterface_JAX:
         Features are the past window of CCS codes, and labels
         are the past window of Flat CCS codes.
         """
-        batch = batch or sorted(self.dx_win_features.keys())
+        batch = batch or sorted(self.win_features.keys())
         X = []
         y = []
         for subj_id in batch:
-            adms = self.dx_interface.subjects[subj_id]
-            features = self.dx_win_features[subj_id]
+            adms = self.interface.subjects_jax[subj_id]
+            features = self.win_features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
-                X.append(feats.dx_ccs_features)
-                y.append(adm.dx_flatccs_codes)
+                X.append(feats.dx_codes)
+                y.append(adm.dx_outcome)
 
         return np.vstack(X), np.vstack(y)
 
     def n_features(self):
-        return len(ccs_dag.dx_ccs_idx)
+        adm = list(self.interface.subjects_jax.values())[0][0]
+        return len(adm.dx_codes)
 
     def n_targets(self):
-        return len(ccs_dag.dx_flatccs_idx)
+        adm = list(self.interface.subjects_jax.values())[0][0]
+        return len(adm.dx_outcome)
 
-
-def create_patient_interface(processed_mimic_tables_dir: str,
-                             adm_df_name: str,
-                             dx_df_name: str,
-                             pr_df_name: str,
-                             ):
-    adm_df = pd.read_csv(f'{processed_mimic_tables_dir}/adm_df.csv.gz')
-    # Cast columns of dates to datetime64
-    adm_df['ADMITTIME'] = pd.to_datetime(
-        adm_df['ADMITTIME'], infer_datetime_format=True).dt.normalize()
-    adm_df['DISCHTIME'] = pd.to_datetime(
-        adm_df['DISCHTIME'], infer_datetime_format=True).dt.normalize()
-    dx_df = pd.read_csv(f'{processed_mimic_tables_dir}/dx_df.csv.gz',
-                        dtype={'ICD9_CODE': str})
-
-    patients = DxSubject.to_list(adm_df=adm_df, dx_df=dx_df)
-
-    return DxInterface_JAX(patients)
+    @classmethod
+    def from_dataset(cls, dataset: AbstractEHRDataset):
+        subjects = Subject.from_dataset(dataset)
+        return cls(subjects)

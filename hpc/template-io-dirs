@@ -1,12 +1,7 @@
+export DATA_DIR="$HOME/GP/ehr-data"
 OUTPUT_DIR=""
-DATA_DIR=""
-
 if [[ "$DATA_TAG" == "M3" ]]; then
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
 else
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
-
-

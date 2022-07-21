@@ -76,8 +76,13 @@ class AbstractScheme:
         AbstractScheme.maps[(src_cls, target_cls)] = mapping
 
     @staticmethod
-    def get_map(src_obj, target_obj):
-        return AbstractScheme.maps[(type(src_obj), type(target_obj))]
+    def get_map(src_scheme, target_scheme):
+        if isinstance(src_scheme, str):
+            src_scheme = code_scheme[src_scheme]
+        if isinstance(target_scheme, str):
+            target_scheme = code_scheme[target_scheme]
+
+        return AbstractScheme.maps[(type(src_scheme), type(target_scheme))]
 
     @classmethod
     def hierarchical(cls):

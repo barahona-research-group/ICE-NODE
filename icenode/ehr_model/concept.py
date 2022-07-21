@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 from datetime import date
-from typing import Dict, List, Tuple, Set, Optional
+from collections import defaultdict
+from typing import List, Tuple, Set, Optional
+from absl import logging
 
 import pandas as pd
 
-from .coding_scheme import (code_scheme, code_scheme_cls, AbstractScheme,
-                            HierarchicalScheme)
+from .coding_scheme import (code_scheme, AbstractScheme, HierarchicalScheme)
 from .dataset import AbstractEHRDataset
 
 
@@ -51,21 +52,80 @@ class Subject:
         self.admissions = sorted(admissions_disjoint,
                                  key=lambda a: a.admission_dates[0])
 
+        for a1, a2 in zip(self.admissions[:-1], self.admissions[1:]):
+            if a1.admission_dates[0] == a2.admission_dates[0]:
+                logging.warning(f'same day admission: {self.subject_id}')
+            if a1.admission_dates[1] == a2.admission_dates[0]:
+                logging.warning(f'same day readmission: {self.subject_id}')
 
-#         for a1, a2 in zip(self.admissions[:-1], self.admissions[1:]):
-#             if a1.admission_dates[0] == a2.admission_dates[0]:
-#                 logging.info(f'same day admission: {self.subject_id}')
-#             if a1.admission_dates[1] == a2.admission_dates[0]:
-#                 logging.info(f'same day readmission: {self.subject_id}')
+    def dx_history(self, dx_scheme=None, absolute_dates=False):
+        history = defaultdict(list)
+        if dx_scheme is None or self.dx_scheme() == dx_scheme:
+            mapper = None
+        else:
+            mapper = AbstractScheme.get_map(self.dx_scheme(), dx_scheme)
+
+        first_adm_date = self.admissions[0].admission_dates[0]
+        for adm in self.admissions:
+            code_set = adm.dx_codes
+            if mapper:
+                code_set = set().union(*list(mapper[c] for c in adm.dx_codes))
+            for code in code_set:
+                if absolute_dates:
+                    history[code].append(adm.admission_dates)
+                else:
+                    history[code].append(
+                        self.days(adm.admission_dates[0], first_adm_date),
+                        self.days(adm.admission_dates[1], first_adm_date))
+        return history
+
+    def pr_history(self, pr_scheme=None):
+        pass
+
+    @staticmethod
+    def _dx_scheme(admissions):
+        s = admissions[0].dx_scheme
+        assert all(a.dx_scheme == s
+                   for a in admissions), "Scheme inconsistency"
+        return s
+
+    def dx_scheme(self):
+        return self._dx_scheme(self.admissions)
+
+    @staticmethod
+    def _pr_scheme(admissions):
+        s = admissions[0].pr_scheme
+        assert all(a.pr_scheme == s
+                   for a in admissions), "Scheme inconsistency"
+        return s
+
+    def pr_scheme(self):
+        return self._pr_scheme(self.admissions)
+
+    @staticmethod
+    def dx_code_frequency(subjects: List[Subject],
+                          dx_scheme: Optional[str] = None):
+        src_scheme = subjects[0].dx_scheme()
+        assert all(s.dx_scheme() == src_scheme
+                   for s in subjects), "Scheme inconsistency"
+
+        counter = defaultdict(int)
+        for subject in subjects:
+            for adm in subject.admissions:
+                codeset, codeindex = AbstractScheme.map_codeset(
+                    adm.dx_codes, src_scheme, dx_scheme)
+                for code in codeset:
+                    counter[codeindex[code]] += 1
+
+        # Return dictionary with zero-frequency codes added.
+        return {idx: counter[idx] for idx in codeindex.values()}
 
     @staticmethod
     def merge_overlaps(admissions):
         admissions = sorted(admissions, key=lambda adm: adm.admission_dates[0])
-        dx_scheme = admissions[0].dx_scheme
-        pr_scheme = admissions[0].pr_scheme
+        dx_scheme = Subject._dx_scheme(admissions)
+        pr_scheme = Subject._pr_scheme(admissions)
 
-        assert all(a.dx_scheme == dx_scheme and a.pr_scheme == pr_scheme
-                   for a in admissions), "Scheme inconsistency"
         super_admissions = [admissions[0]]
         for adm in admissions[1:]:
             s_adm = super_admissions[-1]
@@ -97,58 +157,10 @@ class Subject:
         return (d1.to_pydatetime() - d2.to_pydatetime()).days
 
     @classmethod
-    def to_list(cls, dataset: AbstractEHRDataset):
-        ret = {}
-
-        dx_scheme_obj = code_scheme[dx_scheme]
-        if pr_scheme:
-            pr_scheme_obj = code_scheme[pr_scheme]
-
-        ehr = {}
-        # Admissions
-        for subject_id, subject_admissions_df in adm_df.groupby('SUBJECT_ID'):
-            subject_admissions = {}
-            for adm_row in subject_admissions_df.itertuples():
-                subject_admissions[adm_row.HADM_ID] = {
-                    'admission_id': adm_row.HADM_ID,
-                    'admission_dates': (adm_row.ADMITTIME, adm_row.DISCHTIME),
-                    'dx_codes': set(),
-                    'dx_scheme': dx_scheme,
-                    'pr_codes': set(),
-                    'pr_scheme': pr_scheme
-                }
-            ehr[subject_id] = {
-                'subject_id': subject_id,
-                'admissions': subject_admissions
-            }
-
-        # dx concepts
-        all_dx_codes = set()
-        valid_dx_codes = set(dx_scheme_obj.codes)
-        for subject_id, subject_dx_df in dx_df.groupby('SUBJECT_ID'):
-            for adm_id, codes_df in subject_dx_df.groupby('HADM_ID'):
-                dx_codes = set(codes_df[dx_colname])
-                all_dx_codes |= dx_codes
-                dx_codes &= valid_dx_codes
-                ehr[subject_id]['admissions'][adm_id]['dx_codes'] = dx_codes
-        ret['dx_unrecognised'] = all_dx_codes - set(dx_scheme_obj.codes)
-
-        if pr_df and pr_colname:
-            # pr concepts
-            all_pr_codes = set()
-            valid_pr_codes = set(pr_scheme_obj.codes)
-            for subject_id, subject_pr_df in pr_df.groupby('SUBJECT_ID'):
-                for adm_id, codes_df in subject_pr_df.groupby('HADM_ID'):
-                    pr_codes = set(codes_df[pr_colname])
-                    all_pr_codes |= pr_codes
-                    pr_codes &= valid_pr_codes
-                    ehr[subject_id]['admissions'][adm_id][
-                        'pr_codes'] = pr_codes
-            ret['pr_unrecognised'] = all_pr_codes - set(pr_scheme_obj.codes)
-
-        for subject_id in ehr.keys():
-            ehr[subject_id]['admissions'] = list(
-                map(lambda args: Admission(**args),
-                    ehr[subject_id]['admissions'].values()))
-        ret['list'] = list(map(lambda args: cls(**args), ehr.values()))
-        return ret
+    def from_dataset(cls, dataset: AbstractEHRDataset):
+        adms = dataset.to_dict()
+        for subject_id in adms.keys():
+            adms[subject_id]['admissions'] = list(
+                map(lambda kwargs: Admission(**kwargs),
+                    adms[subject_id]['admissions'].values()))
+        return list(map(lambda kwargs: cls(**kwargs), adms.values()))

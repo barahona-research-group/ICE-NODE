@@ -3,5 +3,5 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
 --study-tag $STUDY_TAG \
 --config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
---mimic-processed-dir $DATA_DIR \
+--dataset $DATA_TAG \
 --model $MODEL

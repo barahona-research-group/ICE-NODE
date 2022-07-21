@@ -8,9 +8,9 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--model', required=True, help='Model label')
 
     parser.add_argument('-i',
-                        '--mimic-processed-dir',
+                        '--dataset',
                         required=True,
-                        help='Absolute path to MIMIC-III/IV processed tables')
+                        help='Dataset tag (e.g. M3, M4, ..etc).')
 
     parser.add_argument('-o',
                         '--output-dir',
@@ -71,7 +71,7 @@ if __name__ == '__main__':
     optuna_store = args.optuna_store
     mlflow_store = args.mlflow_store
     num_trials = args.num_trials
-    mimic_processed_dir = args.mimic_processed_dir
+    dataset = args.dataset
     output_dir = args.output_dir
     trials_time_limit = args.trials_time_limit
     training_time_limit = args.training_time_limit
@@ -89,7 +89,7 @@ if __name__ == '__main__':
         sys.executable, '-m', 'icenode.hyperopt.optuna_job', '--model', model,
         '--study-tag', study_tag, '--optuna-store', optuna_store,
         '--mlflow-store', mlflow_store, '--output-dir', output_dir,
-        '--mimic-processed-dir', mimic_processed_dir, '--data-tag', data_tag,
+        '--dataset', dataset, '--data-tag', data_tag,
         '--emb', emb, '--num-trials',
         str(num_trials), '--trials-time-limit',
         str(trials_time_limit), '--training-time-limit',

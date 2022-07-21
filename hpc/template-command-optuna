@@ -1,6 +1,6 @@
 $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --output-dir $OUTPUT_DIR \
---mimic-processed-dir $DATA_DIR \
+--dataset $DATA_TAG \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
