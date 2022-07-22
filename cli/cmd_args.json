@@ -1,6 +1,6 @@
 {
     "--config": {
-        "help": "Path to config JSON file",
+        "help": "Path to config JSON file.",
         "required": true
     },
     "--config-tag": {
@@ -8,22 +8,34 @@
         "required": false
     },
     "--dataset": {
-        "help": "Dataset tag (e.g. M3, M4, ..etc).",
+        "help": "Dataset tag. Accepted values: {dataset_labels}.",
         "required": true
     },
+    "--dx-scheme": {
+        "help": "Label of the diagnostic coding scheme used in predictive models. tag. Accepted values: {dx_scheme_labels}.",
+        "required": true
+    },
+    "--dx-outcome": {
+        "help": "Label of the outcome/target to be predicted by predictive models. tag. Accepted values: {dx_outcome_labels}.",
+        "required": true
+    },
+    "--pr-scheme": {
+        "help": "Label of the procedure coding scheme used in predictive models. tag. Accepted values: {pr_scheme_labels}.",
+        "required": false
+    },
     "--emb": {
-        "help": "Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)",
+        "help": "Embedding method to use. Accepted values: {emb_labels}.",
         "required": true
     },
     "--job-id": {
         "required": false
     },
     "--mlflow-store": {
-        "help": "Storage URL for mlflow records, e.g. for PostgresQL database",
+        "help": "Storage URL for mlflow records, e.g. for PostgresQL database.",
         "required": true
     },
     "--model": {
-        "help": "Model label",
+        "help": "Model label. Accepted values: {model_labels}.",
         "required": true
     },
     "--num-processes": {
@@ -37,23 +49,23 @@
         "type": "int"
     },
     "--optuna-store": {
-        "help": "Storage URL for optuna records, e.g. for PostgresQL database",
+        "help": "Storage URL for optuna records, e.g. for PostgresQL database.",
         "required": true
     },
     "--output-dir": {
-        "help": "Aboslute path to log intermediate results",
+        "help": "Aboslute path to log intermediate results.",
         "required": true
     },
     "--study-tag": {
         "required": true
     },
     "--training-time-limit": {
-        "help": "Number of maximum hours for training in single trial",
+        "help": "Number of maximum hours for training in single trial.",
         "required": true,
         "type": "int"
     },
     "--trials-time-limit": {
-        "help": "Number of maximum hours for all trials",
+        "help": "Number of maximum hours for all trials.",
         "required": true,
         "type": "int"
     }

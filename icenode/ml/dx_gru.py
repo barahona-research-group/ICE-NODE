@@ -5,8 +5,8 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 
-from ..ehr_model.jax_interface import Subject_JAX
-from ..embeddings.gram import AbstractEmbeddingsLayer
+from .. import ehr
+from .. import embeddings as E
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
 
@@ -20,17 +20,17 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
                     (1 - y) * jnp.log(1 - jax.nn.softmax(dx_logits)))
 
 
-class GRAM(AbstractModel):
+class GRU(AbstractModel):
 
-    def __init__(self, subject_interface: Subject_JAX,
-                 dx_emb: AbstractEmbeddingsLayer, state_size: int):
+    def __init__(self, subject_interface: ehr.Subject_JAX,
+                 dx_emb: E.AbstractEmbeddingsLayer, state_size: int):
 
         self.subject_interface = subject_interface
         self.dx_emb = dx_emb
 
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_outcome': subject_interface.dx_outcome_dim(),
+            'dx_outcome': subject_interface.dx_outcome_dim,
             'state': state_size
         }
 
@@ -75,19 +75,19 @@ class GRAM(AbstractModel):
             adms = [adms[n_i][subject_id] for n_i in n]
 
             # Exclude last input for irrelevance (not more future predictions)
-            dx_ccs = [adm.dx_ccs_codes for adm in adms[:-1]]
+            dx_vec = [adm.dx_vec for adm in adms[:-1]]
 
             # Exclude first one, we need to predict them for a future step.
-            dx_flatccs = [adm.dx_flatccs_codes for adm in adms[1:]]
+            dx_outcome = [adm.dx_outcome for adm in adms[1:]]
 
             admission_id = [adm.admission_id for adm in adms[1:]]
 
-            emb_seqs = map(emb, dx_ccs)
+            emb_seqs = map(emb, dx_vec)
 
             loss[subject_id] = []
             state = state0
             for i, dx_emb in enumerate(emb_seqs):
-                y_i = dx_flatccs[i]
+                y_i = dx_outcome[i]
                 output, state = self.gru(params['gru'], dx_emb, state)
                 logits = self.out(params['out'], output)
                 risk_prediction.add(subject_id=subject_id,

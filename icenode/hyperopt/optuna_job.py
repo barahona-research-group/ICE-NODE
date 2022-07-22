@@ -1,7 +1,6 @@
 """Hyperparameter optimization of EHR predictive models."""
 
 import os
-import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 import copy
@@ -15,13 +14,17 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from ...cli.cmd_args import get_cmd_parser
-from ..ehr_model.dataset import datasets
-from ..ehr_model.jax_interface import Subject_JAX
-from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
-                                      EvaluationDiskWriter, ParamsDiskWriter,
-                                      ConfigDiskWriter)
-from ..ehr_predictive.train_app import train_with_config, model_cls, short_tags
+from ... import cli
+from .. import ehr
+from .. import ml
+from .. import embeddings as E
+
+cli_args = [
+    '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
+    '--trials-time-limit', '--training-time-limit', '--optuna-store',
+    '--mlflow-store', '--study-tag', '--data-tag', '--job-id', '--dx-scheme',
+    '--pr-scheme', '--dx-outcome'
+]
 
 
 class ResourceTimeout(Exception):
@@ -32,7 +35,7 @@ class StudyHalted(Exception):
     """Raised when a trial is spawned from a retired study."""
 
 
-class OptunaReporter(AbstractReporter):
+class OptunaReporter(ml.AbstractReporter):
 
     def __init__(self, trial):
         self.trial = trial
@@ -65,7 +68,7 @@ class OptunaReporter(AbstractReporter):
         self.trial.report(objective_v, eval_step)
 
 
-class MLFlowReporter(AbstractReporter):
+class MLFlowReporter(ml.AbstractReporter):
 
     def report_params_size(self, size):
         mlflow.set_tag('parameters_size', size)
@@ -129,7 +132,7 @@ def objective(model: str, emb: str, subject_interface, job_id, study_dir,
     trial.set_user_attr('dir', trial_dir)
 
     logging.info('[LOADING] Sampling Hyperparameters')
-    m_cls = model_cls[model]
+    m_cls = ml.model_cls[model]
     config = m_cls.sample_experiment_config(trial, emb_kind=emb)
     logging.info('[DONE] Sampling Hyperparameters')
 
@@ -140,10 +143,10 @@ def objective(model: str, emb: str, subject_interface, job_id, study_dir,
         logging.warning(f'Supressed error when logging config sample: {e}')
 
     reporters = [
-        MinibatchLogger(),
-        EvaluationDiskWriter(output_dir=trial_dir),
-        ParamsDiskWriter(output_dir=trial_dir),
-        ConfigDiskWriter(output_dir=trial_dir)
+        ml.MinibatchLogger(),
+        ml.EvaluationDiskWriter(output_dir=trial_dir),
+        ml.ParamsDiskWriter(output_dir=trial_dir),
+        ml.ConfigDiskWriter(output_dir=trial_dir)
     ]
     if frozen == False:
         reporters.append(MLFlowReporter())
@@ -157,31 +160,30 @@ def objective(model: str, emb: str, subject_interface, job_id, study_dir,
                                              split2=0.85,
                                              random_seed=42)
 
-    return train_with_config(model=model,
-                             config=config,
-                             subject_interface=subject_interface,
-                             splits=splits,
-                             rng_seed=42,
-                             trial_terminate_time=trial_terminate_time,
-                             reporters=reporters)
+    return ml.train_with_config(model=model,
+                                config=config,
+                                subject_interface=subject_interface,
+                                splits=splits,
+                                rng_seed=42,
+                                trial_terminate_time=trial_terminate_time,
+                                reporters=reporters)
 
 
 if __name__ == '__main__':
-    data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
-
-    args = get_cmd_parser([
-        '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
-        '--trials-time-limit', '--training-time-limit', '--optuna-store',
-        '--mlflow-store', '--study-tag', '--data-tag', '--job-id'
-    ]).parse_args()
-    study_name = f'{args.study_tag}{args.data_tag}_{args.model}_{short_tags[args.emb]}'
+    args = cli.get_cmd_parser(cli_args).parse_args()
+    study_name = f'{args.study_tag}{args.data_tag}_{args.model}_{E.short_tag[args.emb]}'
     study_dir = os.path.join(args.output_dir, study_name)
 
     terminate_time = datetime.now() + timedelta(hours=args.trials_time_limit)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
-    dataset = datasets[args.dataset]
-    subject_interface = Subject_JAX.from_dataset(dataset)
+    dataset = ehr.datasets[args.dataset]
+    code_scheme = {
+        'dx': args.dx_scheme,
+        'dx_outcome': args.dx_outcome,
+        'pr': args.pr_scheme
+    }
+    subject_interface = ehr.Subject_JAX.from_dataset(dataset, code_scheme)
     logging.info('[DONE] patient interface')
 
     storage = RDBStorage(url=args.optuna_store,
@@ -195,7 +197,7 @@ if __name__ == '__main__':
                                                      patience=50))
 
     study.set_user_attr('metric', 'MICRO-AUC')
-    study.set_user_attr('data', data_tag_fullname[args.data_tag])
+    study.set_user_attr('data', dataset.name)
     study.set_user_attr('embeddings', args.emb)
 
     study_attrs = study.user_attrs

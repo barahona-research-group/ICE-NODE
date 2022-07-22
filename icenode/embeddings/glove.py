@@ -8,9 +8,7 @@ from typing import List, Dict, Mapping, Tuple, Callable, Set
 
 import numpy as np
 
-from ..ehr_model.mimic.concept import DxSubject, DxAdmission
-from ..ehr_model.ccs_dag import ccs_dag
-from ..ehr_model.jax_interface import DxInterface_JAX
+from .. import ehr
 
 glove_logger = logging.getLogger("glove")
 """
@@ -21,9 +19,10 @@ http://www.foldl.me/2014/glove-python/
 CooccurrencesType = Dict[Tuple[int, int], int]
 
 
-def build_coocur(subjects: List[DxSubject],
-                 code2idx: Mapping[str, int],
-                 adm_ccs_codes: Callable[[DxAdmission], Set[str]],
+def build_coocur(subjects: List[List[ehr.Admission_JAX]],
+                 index: Mapping[str, int],
+                 get_codes: Callable[[ehr.Admission_JAX], Set[str]],
+                 code_ancestors: Callable[[str], Set[str]],
                  window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
     Build cooccurrence matrix from timestamped CCS codes.
@@ -37,47 +36,35 @@ def build_coocur(subjects: List[DxSubject],
     """
     # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
     # As described in the paper of GRAM, ancestors duplications are allowed and informative.
-    subject_augmented_admissions = {}
-    for subject in subjects:
-        augmented_admissions = []
-        for adm in subject.admissions:
-            augmented_codes = []
-            ccs_codes = adm_ccs_codes(adm)
+    aug_adms = []
+    for subject_adms in subjects:
+        subj_aug_adms = []
+        for adm in subject_adms:
+            aug_codes = []
+            codes = get_codes(adm)
+            for c in codes:
+                aug_codes.extend(code_ancestors(c))
 
-            for c in ccs_codes:
-                augmented_codes.append(c)
-                parents = ccs_dag.get_ccs_parents(c)
-                augmented_codes.extend(parents)
+            subj_aug_adms.append((adm.admission_time, aug_codes))
 
-            augmented_admissions.append(
-                (adm.admission_dates[0], augmented_codes))
-
-        subject_augmented_admissions[subject.subject_id] = augmented_admissions
+        aug_adms.append(subj_aug_adms)
 
     cooccurrences: CooccurrencesType = defaultdict(int)
-    for subject_id, admissions in subject_augmented_admissions.items():
-        glove_logger.debug(f'admissions({len(admissions)}): {admissions}')
-        for adm_date, adm in admissions:
+    for subj_aug_adms in aug_adms:
+        for adm_day, adm in subj_aug_adms:
 
             def is_context(other_adm):
-                _adm_date, _adm = other_adm
-                delta_days = DxSubject.days(adm_date, _adm_date)
-                glove_logger.debug(f'delta_days: {delta_days}')
+                oth_adm_day, _ = other_adm
                 # Symmetric context (left+right)
-                return abs(delta_days) <= window_size_days
+                return abs(adm_day - oth_adm_day) <= window_size_days
 
-            context_admissions = filter(is_context, admissions)
+            context_admissions = filter(is_context, subj_aug_adms)
 
-            glove_logger.debug(f'{list(context_admissions)}')
             concepts = [c for a in context_admissions for c in a]
-
             concept_count: Dict[int, int] = defaultdict(int)
 
             for c in concepts:
-                if c in code2idx:
-                    concept_count[code2idx[c]] += 1
-                else:
-                    glove_logger.debug(f'CCS code {c} not found')
+                concept_count[index[c]] += 1
 
             for i, count_i in concept_count.items():
                 for j, count_j in concept_count.items():
@@ -166,7 +153,7 @@ def run_iter(data, learning_rate=0.05, x_max=100, alpha=0.75):
     return global_cost
 
 
-def train_glove(code2idx: Mapping[str, int],
+def train_glove(index: Mapping[str, int],
                 cooccurrences: Mapping[Tuple[int, int], int],
                 vector_size=100,
                 iterations=25,
@@ -184,7 +171,7 @@ def train_glove(code2idx: Mapping[str, int],
     Returns the computed word vector dictionary (code: vector).
     """
 
-    size = len(code2idx)
+    size = len(index)
 
     W = (np.random.rand(size * 2, vector_size) - 0.5) / float(vector_size + 1)
     biases = (np.random.rand(size * 2) - 0.5) / float(vector_size + 1)
@@ -206,14 +193,14 @@ def train_glove(code2idx: Mapping[str, int],
         glove_logger.info("\t\tDone (cost %f)", cost)
 
     code_vector = {}
-    for code, idx in code2idx.items():
+    for code, idx in index.items():
         code_vector[code] = W[idx, :]
 
     return code_vector
 
 
 def glove_representation(category: str,
-                         patient_interface: DxInterface_JAX,
+                         subject_interface: ehr.Subject_JAX,
                          train_ids: List[int],
                          vector_size: int = 80,
                          iterations=25,
@@ -238,20 +225,27 @@ def glove_representation(category: str,
     """
 
     if category == 'dx':
-        code2idx = ccs_dag.dx_ccs_idx
-        adm_ccs_codes = lambda adm: set(
-            map(ccs_dag.dx_icd2ccs.get, adm.dx_icd9_codes)) - {None}
-    else:
-        raise ValueError(f'Category {category} is not supported')
+        code_scheme = ehr.code_scheme[subject_interface.dx_scheme]
+        assert code_scheme.hierarchical, "Code scheme must be hierarchical"
+        index = subject_interface.dx_index
+        get_codes = lambda adm: adm.dx_codes
+        code_ancestors = lambda c: code_scheme.code_ancestors_bfs(c, True)
+    elif category == 'pr':
+        code_scheme = ehr.code_scheme[subject_interface.pr_scheme]
+        assert code_scheme.hierarchical, "Code scheme must be hierarchical"
+        index = subject_interface.pr_index
+        get_codes = lambda adm: adm.pr_codes
+        code_ancestors = lambda c: code_scheme.code_ancestors_bfs(c, True)
 
     glove_logger.setLevel(logging.WARNING)
 
     cooc = build_coocur(
-        subjects=[patient_interface.subjects[i] for i in train_ids],
-        code2idx=code2idx,
-        adm_ccs_codes=adm_ccs_codes,
+        subjects=[subject_interface.subjects_jax[i] for i in train_ids],
+        index=index,
+        get_codes=get_codes,
+        code_ancestors=code_ancestors,
         window_size_days=window_size_days)
-    return train_glove(code2idx=code2idx,
+    return train_glove(index=index,
                        cooccurrences=cooc,
                        vector_size=vector_size,
                        iterations=iterations,

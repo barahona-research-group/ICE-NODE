@@ -9,12 +9,12 @@ import jax.numpy as jnp
 import optuna
 from absl import logging
 
-from ..ehr_model.jax_interface import Subject_JAX
-from ..embeddings.gram import AbstractEmbeddingsLayer
+from .. import ehr
+from .. import embeddings as E
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
-from ..ehr_predictive.abstract import AbstractModel
 
+from .abstract import AbstractModel
 from .risk import BatchPredictedRisks
 
 
@@ -26,8 +26,8 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 class RETAIN(AbstractModel):
 
-    def __init__(self, subject_interface: Subject_JAX,
-                 dx_emb: AbstractEmbeddingsLayer, state_a_size: int,
+    def __init__(self, subject_interface: ehr.Subject_JAX,
+                 dx_emb: E.AbstractEmbeddingsLayer, state_a_size: int,
                  state_b_size: int):
 
         self.subject_interface = subject_interface
@@ -35,8 +35,8 @@ class RETAIN(AbstractModel):
 
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_in': subject_interface.dx_dim(),
-            'dx_outcome': subject_interface.dx_outcome_dim(),
+            'dx_in': subject_interface.dx_dim,
+            'dx_outcome': subject_interface.dx_outcome_dim,
             'state_a': state_a_size,
             'state_b': state_b_size
         }
@@ -110,16 +110,14 @@ class RETAIN(AbstractModel):
         for subj_id in subjects_batch:
             adms = self.subject_interface.subject_admission_sequence(subj_id)
 
-            dx_ccs = jnp.vstack([adm.dx_ccs_codes for adm in adms])
-            dx_flatccs = [adm.dx_flatccs_codes for adm in adms]
+            dx_vec = jnp.vstack([adm.dx_vec for adm in adms])
+            dx_outcome = [adm.dx_outcome for adm in adms]
             admission_id = [adm.admission_id for adm in adms]
-
-            logging.debug(len(dx_ccs))
 
             # step 1 @RETAIN paper
 
             # v1, v2, ..., vT
-            v_seq = emb(dx_ccs)
+            v_seq = emb(dx_vec)
 
             loss[subj_id] = []
 
@@ -167,9 +165,9 @@ class RETAIN(AbstractModel):
                                     admission_id=admission_id,
                                     index=i,
                                     prediction=logits,
-                                    ground_truth=dx_flatccs[i])
+                                    ground_truth=dx_outcome[i])
 
-                loss[subj_id].append(dx_loss(dx_flatccs[i], logits))
+                loss[subj_id].append(dx_loss(dx_outcome[i], logits))
 
         # Loss of all visits 2, ..., T, normalized by T
         loss = [sum(l) / len(l) for l in loss.values()]

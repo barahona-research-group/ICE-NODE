@@ -69,7 +69,7 @@ class AbstractScheme:
         vec = np.zeros(len(index))
         for c in codeset:
             vec[index[c]] = 1
-        return vec
+        return vec, codeset, index
 
     @staticmethod
     def add_map(src_cls, target_cls, mapping):
@@ -84,8 +84,8 @@ class AbstractScheme:
 
         return AbstractScheme.maps[(type(src_scheme), type(target_scheme))]
 
-    @classmethod
-    def hierarchical(cls):
+    @property
+    def hierarchical(self):
         return False
 
 
@@ -125,8 +125,8 @@ class HierarchicalScheme(AbstractScheme):
             self.ch2pt = ch2pt
             self.pt2ch = self.reverse_connection(ch2pt)
 
-    @classmethod
-    def hierarchical(cls):
+    @property
+    def hierarchical(self):
         return True
 
     def make_ancestors_mat(self, include_itself=True) -> np.ndarray:

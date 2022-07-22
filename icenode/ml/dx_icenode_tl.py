@@ -14,8 +14,8 @@ import optuna
 
 from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
 from ..utils import wrap_module
-from ..ehr_model.jax_interface import (Subject_JAX, AdmissionInfo)
-from ..embeddings.gram import AbstractEmbeddingsLayer
+from .. import ehr
+from .. import embeddings as E
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract import AbstractModel
@@ -24,8 +24,8 @@ from .risk import BatchPredictedRisks
 
 class ICENODE(AbstractModel):
 
-    def __init__(self, subject_interface: Subject_JAX,
-                 dx_emb: AbstractEmbeddingsLayer, ode_dyn: str,
+    def __init__(self, subject_interface: ehr.Subject_JAX,
+                 dx_emb: E.AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, state_size: int,
                  timescale: float):
         self.subject_interface = subject_interface
@@ -33,7 +33,7 @@ class ICENODE(AbstractModel):
         self.timescale = timescale
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_outcome': subject_interface.dx_outcome_dim(),
+            'dx_outcome': subject_interface.dx_outcome_dim,
             'state': state_size
         }
         depth = 2
@@ -124,7 +124,7 @@ class ICENODE(AbstractModel):
         }
 
     def _extract_nth_admission(self, params: Any,
-                               batch: Dict[int, Dict[int, AdmissionInfo]],
+                               batch: Dict[int, Dict[int, ehr.Admission_JAX]],
                                n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
         adms = batch[n]
         if len(adms) == 0:
@@ -132,7 +132,7 @@ class ICENODE(AbstractModel):
 
         dx_G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
         dx_emb = {
-            i: self.dx_emb.encode(dx_G, adm.dx_ccs_codes)
+            i: self.dx_emb.encode(dx_G, adm.dx_vec)
             for i, adm in adms.items()
         }
         dx_outcome = {i: adm.dx_outcomes for i, adm in adms.items()}

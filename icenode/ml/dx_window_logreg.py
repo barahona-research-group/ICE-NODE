@@ -151,8 +151,8 @@ class WindowLogReg(AbstractModel):
         raise Unsupported("Unsupported.")
 
     def init_params(self, prng_seed: int = 0):
-        n_features = self.interface.n_features()
-        n_targets = self.interface.n_targets()
+        n_features = self.interface.n_features
+        n_targets = self.interface.n_targets
         W = 1e-5 * jnp.ones((n_features, n_targets), dtype=float)
         b = jnp.ones(n_targets, dtype=float)
         return {'W': W, 'b': b}

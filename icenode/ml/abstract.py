@@ -9,15 +9,20 @@ import optuna
 
 from ..utils import (parameters_size, tree_hasnan, tree_lognan, write_params,
                      OOPError)
-from ..embeddings.gram import (GloVeGRAM, MatrixEmbeddings, OrthogonalGRAM)
+from .. import embeddings as E
+from .. import ehr
 from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
                                      admissions_auc_scores, codes_auc_scores)
-from ..ehr_model.jax_interface import Subject_JAX
 from .trainer import minibatch_trainer
 
 
 class AbstractModel:
+    model_cls = {}
+
+    @classmethod
+    def register_model(cls, label):
+        cls.model_cls[label] = cls
 
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise OOPError('Should be overriden')
@@ -128,24 +133,20 @@ class AbstractModel:
     def create_embedding(cls, emb_config, emb_kind, subject_interface,
                          train_ids):
         if emb_kind == 'matrix':
-            return MatrixEmbeddings(input_dim=subject_interface.dx_dim(),
-                                    **emb_config)
+            return E.MatrixEmbeddings(input_dim=subject_interface.dx_dim,
+                                      **emb_config)
 
-        if emb_kind == 'orthogonal_gram':
-            return OrthogonalGRAM('dx',
-                                  subject_interface=subject_interface,
-                                  **emb_config)
-        if emb_kind == 'glove_gram':
-            return GloVeGRAM(category='dx',
-                             subject_interface=subject_interface,
-                             train_ids=train_ids,
-                             **emb_config)
+        if emb_kind == 'gram':
+            return E.GRAM(category='dx',
+                          subject_interface=subject_interface,
+                          train_ids=train_ids,
+                          **emb_config)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
     @staticmethod
-    def code_partitions(subject_interface: Subject_JAX, train_ids: List[int],
-                        dx_scheme: str):
+    def code_partitions(subject_interface: ehr.Subject_JAX,
+                        train_ids: List[int], dx_scheme: str):
         return subject_interface.dx_codes_by_percentiles(
             20, train_ids, dx_scheme)
 
@@ -154,7 +155,7 @@ class AbstractModel:
         raise OOPError('Should be overriden')
 
     @classmethod
-    def select_loss(cls, loss_label: str, subject_interface: Subject_JAX,
+    def select_loss(cls, loss_label: str, subject_interface: ehr.Subject_JAX,
                     train_ids: List[int], dx_scheme: str):
         if loss_label == 'balanced_focal':
             return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
@@ -189,11 +190,9 @@ class AbstractModel:
     @classmethod
     def sample_embeddings_config(cls, trial: optuna.Trial, emb_kind: str):
         if emb_kind == 'matrix':
-            emb_config = MatrixEmbeddings.sample_model_config('dx', trial)
-        elif emb_kind == 'orthogonal_gram':
-            emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
-        elif emb_kind == 'glove_gram':
-            emb_config = GloVeGRAM.sample_model_config('dx', trial)
+            emb_config = E.MatrixEmbeddings.sample_model_config('dx', trial)
+        elif emb_kind == 'gram':
+            emb_config = E.GRAM.sample_model_config('dx', trial)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 

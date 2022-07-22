@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..utils import load_config, LazyDict
 
-from .coding_scheme import code_scheme, AbstractScheme
+from .coding_scheme import code_scheme as C
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -18,10 +18,10 @@ _DATASET_META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 
 class AbstractEHRDataset:
 
-    def __init__(self, adm_df, dx_df, pr_df, code_scheme_label, code_colname,
-                 adm_colname):
-
-        self.code_scheme_label = code_scheme_label
+    def __init__(self, adm_df, dx_df, pr_df, code_scheme, code_colname,
+                 adm_colname, name, **kwargs):
+        self.name = name
+        self.code_scheme = code_scheme
         self.adm_colname = adm_colname
         self.code_colname = code_colname
         self.adm_df = adm_df
@@ -29,17 +29,16 @@ class AbstractEHRDataset:
         self.pr_df = pr_df
 
         AbstractEHRDataset._validate_codes(set(dx_df[code_colname["dx"]]),
-                                           code_scheme_label["dx"])
+                                           code_scheme["dx"])
         AbstractEHRDataset._validate_codes(set(pr_df[code_colname["pr"]]),
-                                           code_scheme_label["pr"])
+                                           code_scheme["pr"])
 
     @staticmethod
     def _validate_codes(codeset, scheme):
-        scheme_: AbstractScheme = code_scheme[scheme]
-        unrecognised = codeset - set(scheme_.codes)
+        unrecognised = codeset - set(C[scheme].codes)
         if len(unrecognised) > 0:
             logging.warning(
-                f'Unrecognised {type(scheme_)} codes {len(unrecognised)}: {unrecognised}'
+                f'Unrecognised {type(C[scheme])} codes {len(unrecognised)}: {unrecognised}'
             )
 
     def to_dict(self):
@@ -49,8 +48,8 @@ class AbstractEHRDataset:
         dist_col = col["dischtime"]
         dx_col = self.code_colname["dx"]
         pr_col = self.code_colname["pr"]
-        dx_scheme = self.code_scheme_label["dx"]
-        pr_scheme = self.code_scheme_label["pr"]
+        dx_scheme = self.code_scheme["dx"]
+        pr_scheme = self.code_scheme["pr"]
 
         adms = {}
         # Admissions
@@ -87,8 +86,7 @@ class AbstractEHRDataset:
 class MIMICDataset(AbstractEHRDataset):
 
     def __init__(self, base_dir: str, files: Dict[str, str],
-                 adm_colname: Dict[str, str], code_scheme_label: Dict[str,
-                                                                      str],
+                 adm_colname: Dict[str, str], code_scheme: Dict[str, str],
                  code_colname: Dict[str, str], **kwargs):
 
         adm_df = pd.read_csv(os.path.join(base_dir, files['adm']))
@@ -107,12 +105,13 @@ class MIMICDataset(AbstractEHRDataset):
         pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
                             dtype={code_colname['pr']: str})
 
-        super().__init__(code_scheme_label=code_scheme_label,
+        super().__init__(code_scheme=code_scheme,
                          adm_colname=adm_colname,
                          code_colname=code_colname,
                          adm_df=adm_df,
                          dx_df=dx_df,
-                         pr_df=pr_df)
+                         pr_df=pr_df,
+                         **kwargs)
 
     @staticmethod
     def from_meta_json(meta_fname):

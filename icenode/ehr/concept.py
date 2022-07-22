@@ -6,9 +6,7 @@ from collections import defaultdict
 from typing import List, Tuple, Set, Optional
 from absl import logging
 
-import pandas as pd
-
-from .coding_scheme import (code_scheme, AbstractScheme, HierarchicalScheme)
+from .coding_scheme import AbstractScheme
 from .dataset import AbstractEHRDataset
 
 
@@ -28,6 +26,7 @@ class AbstractAdmission:
     def discharge_day(self, ref_date):
         return self.days(self.admission_dates[1], ref_date)
 
+    @property
     def length_of_stay(self):
         # Length of Stay
         # This 0.5 means if a patient is admitted and discharged at
@@ -78,12 +77,16 @@ class Subject:
             if a1.admission_dates[1] == a2.admission_dates[0]:
                 logging.warning(f'same day readmission: {self.subject_id}')
 
+    @property
+    def first_adm_date(self):
+        return self.admissions[0].admission_dates[0]
+
     def dx_history(self, dx_scheme=None, absolute_dates=False):
         history = defaultdict(list)
-        if dx_scheme is None or self.dx_scheme() == dx_scheme:
+        if dx_scheme is None or self.dx_scheme== dx_scheme:
             mapper = None
         else:
-            mapper = AbstractScheme.get_map(self.dx_scheme(), dx_scheme)
+            mapper = AbstractScheme.get_map(self.dx_scheme, dx_scheme)
 
         first_adm_date = self.admissions[0].admission_dates[0]
         for adm in self.admissions:
@@ -108,6 +111,7 @@ class Subject:
                    for a in admissions), "Scheme inconsistency"
         return s
 
+    @property
     def dx_scheme(self):
         return self._dx_scheme(self.admissions)
 
@@ -118,14 +122,15 @@ class Subject:
                    for a in admissions), "Scheme inconsistency"
         return s
 
+    @property
     def pr_scheme(self):
         return self._pr_scheme(self.admissions)
 
     @staticmethod
     def dx_code_frequency(subjects: List[Subject],
                           dx_scheme: Optional[str] = None):
-        src_scheme = subjects[0].dx_scheme()
-        assert all(s.dx_scheme() == src_scheme
+        src_scheme = subjects[0].dx_scheme
+        assert all(s.dx_scheme == src_scheme
                    for s in subjects), "Scheme inconsistency"
 
         counter = defaultdict(int)

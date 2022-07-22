@@ -10,7 +10,7 @@
         "subject_id": "SUBJECT_ID",
         "admission_id": "HADM_ID"
     },
-    "code_scheme_label": {
+    "code_scheme": {
         "dx": "dx_icd9",
         "pr": "dx_icd9"
     },
