@@ -22,16 +22,8 @@ class Admission_JAX:
                  dx_scheme: str, dx_outcome_filter_label: DxCodeOutcomeFilter,
                  pr_scheme: Optional[str]):
         # Time as days since the first admission
-        self.admission_time = Subject.days(adm.admission_dates[0],
-                                           first_adm_date)
-        # Length of Stay
-        # This 0.5 means if a patient is admitted and discharged at
-        # the same day, then we assume 0.5 day as length of stay (12 hours)
-        # In general, this would generalize the assumption to:
-        # Admissions during a day happen at the midnight 00:01
-        # While discharges during a day happen at the afternoon 12:00
-        self.los = Subject.days(adm.admission_dates[1],
-                                adm.admission_dates[0]) + 0.5
+        self.admission_time = adm.admission_day(first_adm_date)
+        self.los = adm.length_of_stay()
         self.admission_id = adm.admission_id
         self.dx_codes = self.jaxify_dx_codes(adm, dx_scheme)
         self.dx_outcome = self.jaxify_dx_outcome(adm, dx_outcome_filter_label)
@@ -117,6 +109,43 @@ class Subject_JAX:
             dx_scheme=dx_scheme,
             dx_outcome_filter_label=dx_outcome_filter_label,
             pr_scheme=pr_scheme)
+
+    def dx_source_scheme(self):
+        subject = list(self.subjects.values())[0]
+        return subject.dx_scheme()
+
+    def pr_source_scheme(self):
+        subject = list(self.subjects.values())[0]
+        return subject.pr_scheme()
+
+    @staticmethod
+    def index(source_scheme, target_scheme):
+
+        _target_scheme = code_scheme[target_scheme]
+
+        if source_scheme == target_scheme:
+            return _target_scheme.index
+
+        if _target_scheme.hierarchical():
+            return _target_scheme.dag_index
+        else:
+            return _target_scheme.index
+
+    def dx_index(self):
+        return self.index(self.dx_source_scheme(), self.dx_scheme)
+
+    def pr_index(self):
+        return self.index(self.pr_source_scheme(), self.pr_scheme)
+
+    def dx_dim(self):
+        return len(self.dx_index())
+
+    def pr_dim(self):
+        return len(self.pr_index())
+
+    def dx_outcome_dim(self):
+        adm = list(self.subjects_jax.values())[0][0]
+        return len(adm.dx_outcome)
 
     def random_splits(self,
                       split1: float,
@@ -248,12 +277,10 @@ class WindowedInterface_JAX:
         return np.vstack(X), np.vstack(y)
 
     def n_features(self):
-        adm = list(self.interface.subjects_jax.values())[0][0]
-        return len(adm.dx_codes)
+        return self.interface.dx_dim()
 
     def n_targets(self):
-        adm = list(self.interface.subjects_jax.values())[0][0]
-        return len(adm.dx_outcome)
+        return self.interface.dx_outcome_dim()
 
     @classmethod
     def from_dataset(cls, dataset: AbstractEHRDataset):

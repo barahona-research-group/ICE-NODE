@@ -1,0 +1,60 @@
+{
+    "--config": {
+        "help": "Path to config JSON file",
+        "required": true
+    },
+    "--config-tag": {
+        "help": "Tag name for this experiment.",
+        "required": false
+    },
+    "--dataset": {
+        "help": "Dataset tag (e.g. M3, M4, ..etc).",
+        "required": true
+    },
+    "--emb": {
+        "help": "Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)",
+        "required": true
+    },
+    "--job-id": {
+        "required": false
+    },
+    "--mlflow-store": {
+        "help": "Storage URL for mlflow records, e.g. for PostgresQL database",
+        "required": true
+    },
+    "--model": {
+        "help": "Model label",
+        "required": true
+    },
+    "--num-processes": {
+        "help": "Number of parallel processes.",
+        "required": true,
+        "type": "int"
+    },
+    "--num-trials": {
+        "help": "Number of HPO trials.",
+        "required": true,
+        "type": "int"
+    },
+    "--optuna-store": {
+        "help": "Storage URL for optuna records, e.g. for PostgresQL database",
+        "required": true
+    },
+    "--output-dir": {
+        "help": "Aboslute path to log intermediate results",
+        "required": true
+    },
+    "--study-tag": {
+        "required": true
+    },
+    "--training-time-limit": {
+        "help": "Number of maximum hours for training in single trial",
+        "required": true,
+        "type": "int"
+    },
+    "--trials-time-limit": {
+        "help": "Number of maximum hours for all trials",
+        "required": true,
+        "type": "int"
+    }
+}

@@ -5,8 +5,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 
-from ..ehr_model.jax_interface import DxInterface_JAX
-from ..ehr_model.ccs_dag import ccs_dag
+from ..ehr_model.jax_interface import Subject_JAX
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
@@ -23,7 +22,7 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 class GRAM(AbstractModel):
 
-    def __init__(self, subject_interface: DxInterface_JAX,
+    def __init__(self, subject_interface: Subject_JAX,
                  dx_emb: AbstractEmbeddingsLayer, state_size: int):
 
         self.subject_interface = subject_interface
@@ -31,7 +30,7 @@ class GRAM(AbstractModel):
 
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_out': len(ccs_dag.dx_flatccs_idx),
+            'dx_outcome': subject_interface.dx_outcome_dim(),
             'state': state_size
         }
 
@@ -43,7 +42,7 @@ class GRAM(AbstractModel):
         out_init, out = hk.without_apply_rng(
             hk.transform(
                 wrap_module(hk.Linear,
-                            output_size=self.dimensions['dx_out'],
+                            output_size=self.dimensions['dx_outcome'],
                             name='out')))
         self.out = jax.jit(out)
 
@@ -127,12 +126,12 @@ class GRAM(AbstractModel):
         return {}
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
+    def create_model(cls, config, subject_interface, train_ids):
         dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
                                       emb_kind=config['emb']['kind'],
-                                      patient_interface=patient_interface,
+                                      subject_interface=subject_interface,
                                       train_ids=train_ids)
 
-        return cls(subject_interface=patient_interface,
+        return cls(subject_interface=subject_interface,
                    dx_emb=dx_emb,
                    **config['model'])

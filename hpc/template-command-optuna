@@ -8,7 +8,7 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --trials-time-limit $temp_hours \
--N $temp_parallel \
+--num-processes $temp_parallel \
 --num-trials $temp_num_trials \
 --training-time-limit $temp_training_time_limit \
 --job-id $temp_job_id

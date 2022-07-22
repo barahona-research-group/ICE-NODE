@@ -2,7 +2,6 @@
 previous visits."""
 
 from typing import Any, List, Dict
-from functools import partial
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -13,8 +12,7 @@ from jaxopt import ProximalGradient
 from jaxopt.prox import prox_elastic_net, prox_none
 import optuna
 
-from ..ehr_model.jax_interface import (DxInterface_JAX,
-                                       DxWindowedInterface_JAX)
+from ..ehr_model.jax_interface import (Subject_JAX, WindowedInterface_JAX)
 from ..ehr_predictive.abstract import AbstractModel
 from ..metric.common_metrics import (softmax_logits_bce,
                                      softmax_logits_weighted_bce,
@@ -73,11 +71,11 @@ class WindowLogReg(AbstractModel):
 
     def __init__(
             self,
-            subject_interface: DxInterface_JAX,
+            subject_interface: Subject_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
             class_weight: str):
-        self.dx_interface = DxWindowedInterface_JAX(subject_interface)
+        self.interface = WindowedInterface_JAX(subject_interface)
 
         self.model_config = {
             'fun': logreg_loss_multinomial_mode[class_weight],
@@ -123,11 +121,11 @@ class WindowLogReg(AbstractModel):
 
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = model.dx_interface.dx_interface.subjects[subj_id]
-            features = model.dx_interface.dx_win_features[subj_id]
+            adms = model.interface.interface.subjects[subj_id]
+            features = model.interface.win_features[subj_id]
 
-            X = np.vstack([feats.dx_ccs_features for feats in features[1:]])
-            y = np.vstack([adm.dx_flatccs_codes for adm in adms[1:]])
+            X = np.vstack([feats.dx_features for feats in features[1:]])
+            y = np.vstack([adm.dx_outcome for adm in adms[1:]])
             risk = predict_multinomial(params, X)
 
             for i, (r, gt) in enumerate(zip(risk, y)):
@@ -137,7 +135,7 @@ class WindowLogReg(AbstractModel):
                                     prediction=r,
                                     ground_truth=gt)
 
-        X, y = model.dx_interface.tabular_features(subjects_batch)
+        X, y = model.interface.tabular_features(subjects_batch)
         loss = self.model_config['fun'](params, X, y)
 
         return {'risk_prediction': risk_prediction, 'loss': loss}
@@ -153,8 +151,8 @@ class WindowLogReg(AbstractModel):
         raise Unsupported("Unsupported.")
 
     def init_params(self, prng_seed: int = 0):
-        n_features = self.dx_interface.n_features()
-        n_targets = self.dx_interface.n_targets()
+        n_features = self.interface.n_features()
+        n_targets = self.interface.n_targets()
         W = 1e-5 * jnp.ones((n_features, n_targets), dtype=float)
         b = jnp.ones(n_targets, dtype=float)
         return {'W': W, 'b': b}
@@ -202,8 +200,8 @@ class WindowLogReg(AbstractModel):
         }
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
-        return cls(subject_interface=patient_interface, **config['model'])
+    def create_model(cls, config, subject_interface, train_ids):
+        return cls(subject_interface=subject_interface, **config['model'])
 
     @staticmethod
     def get_trainer():
@@ -214,14 +212,14 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
     def __init__(
             self,
-            subject_interface: DxInterface_JAX,
+            subject_interface: Subject_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
             class_weight: str):
         if class_weight != 'balanced':
             class_weight = None
 
-        self.dx_interface = DxWindowedInterface_JAX(subject_interface)
+        self.dx_interface = WindowedInterface_JAX(subject_interface)
         self.model_config = {
             'penalty': 'elasticnet',
             'solver': 'saga',
@@ -257,11 +255,11 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = model.dx_interface.dx_interface.subjects[subj_id]
-            features = model.dx_interface.dx_win_features[subj_id]
+            adms = model.interface.interface.subjects[subj_id]
+            features = model.interface.win_features[subj_id]
 
-            X = np.vstack([feats.dx_ccs_features for feats in features[1:]])
-            y = np.vstack([adm.dx_flatccs_codes for adm in adms[1:]])
+            X = np.vstack([feats.dx_features for feats in features[1:]])
+            y = np.vstack([adm.dx_outcome for adm in adms[1:]])
 
             risk = np.zeros_like(y, dtype=float)
             # .predict_proba function now returns a list of arrays

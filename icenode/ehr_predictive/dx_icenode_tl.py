@@ -14,8 +14,7 @@ import optuna
 
 from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
 from ..utils import wrap_module
-from ..ehr_model.jax_interface import (DxInterface_JAX, AdmissionInfo)
-from ..ehr_model.ccs_dag import ccs_dag
+from ..ehr_model.jax_interface import (Subject_JAX, AdmissionInfo)
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
@@ -25,7 +24,7 @@ from .risk import BatchPredictedRisks
 
 class ICENODE(AbstractModel):
 
-    def __init__(self, subject_interface: DxInterface_JAX,
+    def __init__(self, subject_interface: Subject_JAX,
                  dx_emb: AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, state_size: int,
                  timescale: float):
@@ -34,7 +33,7 @@ class ICENODE(AbstractModel):
         self.timescale = timescale
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_out': len(ccs_dag.dx_flatccs_idx),
+            'dx_outcome': subject_interface.dx_outcome_dim(),
             'state': state_size
         }
         depth = 2
@@ -78,7 +77,7 @@ class ICENODE(AbstractModel):
                 wrap_module(EmbeddingsDecoder_Logits,
                             n_layers=2,
                             embeddings_size=self.dimensions['dx_emb'],
-                            diag_size=self.dimensions['dx_out'],
+                            diag_size=self.dimensions['dx_outcome'],
                             name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
@@ -136,7 +135,7 @@ class ICENODE(AbstractModel):
             i: self.dx_emb.encode(dx_G, adm.dx_ccs_codes)
             for i, adm in adms.items()
         }
-        dx_out = {i: adm.dx_flatccs_codes for i, adm in adms.items()}
+        dx_outcome = {i: adm.dx_outcomes for i, adm in adms.items()}
         los = {i: adm.los for i, adm in adms.items()}
         adm_id = {i: adm.admission_id for i, adm in adms.items()}
         adm_time = {i: adm.admission_time for i, adm in adms.items()}
@@ -145,7 +144,7 @@ class ICENODE(AbstractModel):
             'admission_time': adm_time,
             'los': los,
             'dx_emb': dx_emb,
-            'dx_out': dx_out,
+            'dx_outcome': dx_outcome,
             'admission_id': adm_id
         }
 
@@ -235,7 +234,7 @@ class ICENODE(AbstractModel):
             adm_los = adm_n['los']  # length of stay
             adm_time = adm_n['admission_time']
             emb = adm_n['dx_emb']
-            dx = adm_n['dx_out']
+            dx = adm_n['dx_outcome']
 
             adm_counts.append(len(adm_id))
 
@@ -388,7 +387,7 @@ class ICENODE(AbstractModel):
             adm_los = adm_n['los']  # length of stay
             adm_time = adm_n['admission_time']
             emb = adm_n['dx_emb']
-            dx = adm_n['dx_out']
+            dx = adm_n['dx_outcome']
 
             state_e = {i: subject_state[i]['state_e'] for i in adm_id}
 
@@ -470,12 +469,12 @@ class ICENODE(AbstractModel):
         return admissions_auc_scores(res['risk_prediction'])
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
+    def create_model(cls, config, subject_interface, train_ids):
         dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
                                       emb_kind=config['emb']['kind'],
-                                      patient_interface=patient_interface,
+                                      subject_interface=subject_interface,
                                       train_ids=train_ids)
-        return cls(subject_interface=patient_interface,
+        return cls(subject_interface=subject_interface,
                    dx_emb=dx_emb,
                    **config['model'])
 

@@ -1,14 +1,17 @@
 """."""
 import os
-import argparse
 from typing import List, Any, Dict, Tuple
 from datetime import datetime
 from pathlib import Path
 
 from absl import logging
 
-from ..ehr_model.jax_interface import create_patient_interface
+from ...cli.cmd_args import get_cmd_parser
+
 from ..utils import load_config
+
+from ..ehr_model.dataset import datasets
+from ..ehr_model.jax_interface import Subject_JAX
 
 from .trainer import (AbstractReporter, MinibatchLogger, ConfigDiskWriter,
                       ParamsDiskWriter, EvaluationDiskWriter)
@@ -60,46 +63,21 @@ def train_with_config(model: str,
                                reporters=reporters)['objective']
 
 
-def capture_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--model', required=True, help='Model label')
-    parser.add_argument('-c',
-                        '--config',
-                        required=True,
-                        help='Path to config JSON file')
-    parser.add_argument('-t',
-                        '--config-tag',
-                        required=False,
-                        help='Tag name for this experiment.')
-    parser.add_argument('-s',
-                        '--study-tag',
-                        required=False,
-                        help='GitHub tag name.')
-
-    parser.add_argument('-i',
-                        '--mimic-processed-dir',
-                        required=True,
-                        help='Absolute path to MIMIC-III processed tables')
-
-    parser.add_argument('-o',
-                        '--output-dir',
-                        required=True,
-                        help='Aboslute path to log intermediate results')
-
-    return parser.parse_args()
-
-
 if __name__ == '__main__':
-    args = capture_args()
+    args = get_cmd_parser([
+        '--model', '--config', '--config-tag', '--study-tag', '--dataset',
+        '--output-dir'
+    ]).parse_args()
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
-    _subject_interface = create_patient_interface(args.mimic_processed_dir)
+    dataset = datasets[args.dataset]
+    subject_interface = Subject_JAX.from_dataset(dataset)
     logging.info('[DONE] patient interface')
 
     # splits = train:val:test = 0.7:.15:.15
-    _splits = _subject_interface.random_splits(split1=0.7,
-                                               split2=0.85,
-                                               random_seed=42)
+    splits = subject_interface.random_splits(split1=0.7,
+                                             split2=0.85,
+                                             random_seed=42)
 
     expt_dir = f'{args.model}_expt'
     if args.config_tag:
@@ -118,7 +96,7 @@ if __name__ == '__main__':
     ]
     train_with_config(model=args.model,
                       config=load_config(args.config),
-                      subject_interface=_subject_interface,
-                      splits=_splits,
+                      subject_interface=subject_interface,
+                      splits=splits,
                       rng_seed=42,
                       reporters=_reporters)

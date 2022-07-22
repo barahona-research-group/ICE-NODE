@@ -13,8 +13,7 @@ from ..embeddings.gram import (GloVeGRAM, MatrixEmbeddings, OrthogonalGRAM)
 from ..metric.common_metrics import (bce, softmax_logits_bce,
                                      balanced_focal_bce, weighted_bce,
                                      admissions_auc_scores, codes_auc_scores)
-from ..ehr_model.ccs_dag import ccs_dag
-
+from ..ehr_model.jax_interface import Subject_JAX
 from .trainer import minibatch_trainer
 
 
@@ -126,46 +125,37 @@ class AbstractModel:
         write_params(params, fname)
 
     @classmethod
-    def create_embedding(cls, emb_config, emb_kind, patient_interface,
+    def create_embedding(cls, emb_config, emb_kind, subject_interface,
                          train_ids):
         if emb_kind == 'matrix':
-            input_dim = len(ccs_dag.dx_ccs_idx)
-            return MatrixEmbeddings(input_dim=input_dim, **emb_config)
+            return MatrixEmbeddings(input_dim=subject_interface.dx_dim(),
+                                    **emb_config)
 
         if emb_kind == 'orthogonal_gram':
             return OrthogonalGRAM('dx',
-                                  patient_interface=patient_interface,
+                                  subject_interface=subject_interface,
                                   **emb_config)
         if emb_kind == 'glove_gram':
             return GloVeGRAM(category='dx',
-                             patient_interface=patient_interface,
+                             subject_interface=subject_interface,
                              train_ids=train_ids,
                              **emb_config)
-
-
-#         if emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-#             pretrained_components = load_config(pretrained_components)
-#             emb_component = pretrained_components['emb']['dx']['params_file']
-#             emb_params = load_params(emb_component)['dx_emb']
-#             if emb_kind == 'semi_frozen_gram':
-#                 return SemiFrozenGRAM(initial_params=emb_params, **emb_config)
-#             elif emb_kind == 'frozen_gram':
-#                 return FrozenGRAM(initial_params=emb_params, **emb_config)
-#             else:
-#                 return TunableGRAM(initial_params=emb_params, **emb_config)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
     @staticmethod
-    def code_partitions(patient_interface, train_ids):
-        return patient_interface.dx_flatccs_by_percentiles(20, train_ids)
+    def code_partitions(subject_interface: Subject_JAX, train_ids: List[int],
+                        dx_scheme: str):
+        return subject_interface.dx_codes_by_percentiles(
+            20, train_ids, dx_scheme)
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
+    def create_model(cls, config, subject_interface, train_ids):
         raise OOPError('Should be overriden')
 
     @classmethod
-    def select_loss(cls, loss_label: str, patient_interface, train_ids):
+    def select_loss(cls, loss_label: str, subject_interface: Subject_JAX,
+                    train_ids: List[int], dx_scheme: str):
         if loss_label == 'balanced_focal':
             return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
         elif loss_label == 'softmax_logits_bce':
@@ -173,7 +163,8 @@ class AbstractModel:
         elif loss_label == 'bce':
             return bce
         elif loss_label == 'balanced_bce':
-            codes_dist = patient_interface.dx_flatccs_frequency_vec(train_ids)
+            codes_dist = subject_interface.dx_code_frequency_vec(
+                train_ids, dx_scheme)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
             return lambda t, logits: weighted_bce(t, logits, weights)
         else:
@@ -203,12 +194,6 @@ class AbstractModel:
             emb_config = OrthogonalGRAM.sample_model_config('dx', trial)
         elif emb_kind == 'glove_gram':
             emb_config = GloVeGRAM.sample_model_config('dx', trial)
-        # elif emb_kind in ('semi_frozen_gram', 'frozen_gram', 'tunable_gram'):
-        #     pretrained_components = load_config(pretrained_components)
-        #     gram_component = pretrained_components['emb']['dx']['config_file']
-        #     gram_component = load_config(gram_component)
-
-        #     emb_config = gram_component['emb']['dx']
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 

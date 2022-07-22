@@ -9,12 +9,11 @@ import jax.numpy as jnp
 import optuna
 from absl import logging
 
-from ..ehr_model.jax_interface import DxInterface_JAX
+from ..ehr_model.jax_interface import Subject_JAX
 from ..embeddings.gram import AbstractEmbeddingsLayer
 from ..metric.common_metrics import l2_squared, l1_absolute
 from ..utils import wrap_module
 from ..ehr_predictive.abstract import AbstractModel
-from ..ehr_model.ccs_dag import ccs_dag
 
 from .risk import BatchPredictedRisks
 
@@ -27,7 +26,7 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 class RETAIN(AbstractModel):
 
-    def __init__(self, subject_interface: DxInterface_JAX,
+    def __init__(self, subject_interface: Subject_JAX,
                  dx_emb: AbstractEmbeddingsLayer, state_a_size: int,
                  state_b_size: int):
 
@@ -36,8 +35,8 @@ class RETAIN(AbstractModel):
 
         self.dimensions = {
             'dx_emb': dx_emb.embeddings_dim,
-            'dx_in': len(ccs_dag.dx_ccs_idx),
-            'dx_out': len(ccs_dag.dx_flatccs_idx),
+            'dx_in': subject_interface.dx_dim(),
+            'dx_outcome': subject_interface.dx_outcome_dim(),
             'state_a': state_a_size,
             'state_b': state_b_size
         }
@@ -69,7 +68,7 @@ class RETAIN(AbstractModel):
         decode_init, decode = hk.without_apply_rng(
             hk.transform(
                 wrap_module(hk.Linear,
-                            output_size=self.dimensions['dx_out'],
+                            output_size=self.dimensions['dx_outcome'],
                             name='decoder')))
         self.decode = jax.jit(decode)
 
@@ -98,13 +97,6 @@ class RETAIN(AbstractModel):
 
     def state_size(self):
         return self.dimensions['state']
-
-    def dx_out_index(self) -> List[str]:
-        index2code = {
-            i: c
-            for c, i in self.subject_interface.dx_ccs_idx.items()
-        }
-        return list(map(index2code.get, range(len(index2code))))
 
     def __call__(self, params: Any, subjects_batch: List[int]):
         G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
@@ -208,13 +200,13 @@ class RETAIN(AbstractModel):
         return {}
 
     @classmethod
-    def create_model(cls, config, patient_interface, train_ids):
+    def create_model(cls, config, subject_interface, train_ids):
         dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
                                       emb_kind=config['emb']['kind'],
-                                      patient_interface=patient_interface,
+                                      subject_interface=subject_interface,
                                       train_ids=train_ids)
 
-        return cls(subject_interface=patient_interface,
+        return cls(subject_interface=subject_interface,
                    dx_emb=dx_emb,
                    **config['model'])
 

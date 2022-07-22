@@ -1,14 +1,10 @@
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Set)
-from absl import logging
+from typing import (Any, Dict)
 
 import jax
-from jax.experimental import optimizers
 
 import optuna
 
-from ..ehr_model.jax_interface import (DxInterface_JAX)
-from ..embeddings.gram import AbstractEmbeddingsLayer
 from .dx_icenode_tl import ICENODE as ICENODE_TL
 
 

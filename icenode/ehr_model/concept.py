@@ -18,6 +18,26 @@ class AbstractAdmission:
         self.admission_id = admission_id
         self.admission_dates = admission_dates
 
+    @staticmethod
+    def days(d1, d2):
+        return (d1.to_pydatetime() - d2.to_pydatetime()).days
+
+    def admission_day(self, ref_date):
+        return self.days(self.admission_dates[0], ref_date)
+
+    def discharge_day(self, ref_date):
+        return self.days(self.admission_dates[1], ref_date)
+
+    def length_of_stay(self):
+        # Length of Stay
+        # This 0.5 means if a patient is admitted and discharged at
+        # the same day, then we assume 0.5 day as length of stay (12 hours)
+        # In general, this would generalize the assumption to:
+        # Admissions during a day happen at the midnight 00:01
+        # While discharges during a day happen at the afternoon 12:00
+        return self.days(self.admission_dates[1],
+                         self.admission_dates[0]) + 0.5
+
 
 class Admission(AbstractAdmission):
 
@@ -74,9 +94,8 @@ class Subject:
                 if absolute_dates:
                     history[code].append(adm.admission_dates)
                 else:
-                    history[code].append(
-                        self.days(adm.admission_dates[0], first_adm_date),
-                        self.days(adm.admission_dates[1], first_adm_date))
+                    history[code].append(adm.admission_day(first_adm_date),
+                                         adm.discharge_day(first_adm_date))
         return history
 
     def pr_history(self, pr_scheme=None):
@@ -151,10 +170,6 @@ class Subject:
                 super_admissions.append(adm)
 
         return super_admissions
-
-    @classmethod
-    def days(cls, d1, d2):
-        return (d1.to_pydatetime() - d2.to_pydatetime()).days
 
     @classmethod
     def from_dataset(cls, dataset: AbstractEHRDataset):

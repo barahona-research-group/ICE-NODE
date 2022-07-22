@@ -15,7 +15,9 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from ..ehr_model.jax_interface import create_patient_interface
+from ...cli.cmd_args import get_cmd_parser
+from ..ehr_model.dataset import datasets
+from ..ehr_model.jax_interface import Subject_JAX
 from ..ehr_predictive.trainer import (AbstractReporter, MinibatchLogger,
                                       EvaluationDiskWriter, ParamsDiskWriter,
                                       ConfigDiskWriter)
@@ -111,67 +113,6 @@ def mlflow_log_metrics(eval_dict, step, frozen):
         mlflow.log_metrics(eval_dict, step=step)
 
 
-def capture_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--model', required=True, help='Model label')
-
-    parser.add_argument('-i',
-                        '--dataset',
-                        required=True,
-                        help='Dataset tag (e.g. M3, M4, ..etc)')
-
-    parser.add_argument(
-        '-e',
-        '--emb',
-        required=True,
-        help=
-        'Embedding method to use (matrix|orthogonal_gram|glove_gram|semi_frozen_gram|frozen_gram|tunable_gram|NA)'
-    )
-
-    parser.add_argument('-o',
-                        '--output-dir',
-                        required=True,
-                        help='Aboslute path to log intermediate results')
-    parser.add_argument('-n',
-                        '--num-trials',
-                        type=int,
-                        required=True,
-                        help='Number of HPO trials.')
-    parser.add_argument('--trials-time-limit',
-                        type=int,
-                        required=True,
-                        help='Number of maximum hours for all trials')
-    parser.add_argument(
-        '--training-time-limit',
-        type=int,
-        required=True,
-        help='Number of maximum hours for training in single trial')
-
-    parser.add_argument(
-        '--optuna-store',
-        required=True,
-        help='Storage URL for optuna records, e.g. for PostgresQL database')
-
-    parser.add_argument(
-        '--mlflow-store',
-        required=True,
-        help='Storage URL for mlflow records, e.g. for PostgresQL database')
-
-    parser.add_argument('--study-tag', required=True)
-
-    parser.add_argument(
-        '-d',
-        '--data-tag',
-        required=True,
-        help='Data identifier tag (m3 for MIMIC-III or m4 for MIMIC-IV')
-
-    parser.add_argument('--job-id', required=False)
-
-    args = parser.parse_args()
-
-    return args
-
-
 def objective(model: str, emb: str, subject_interface, job_id, study_dir,
               trial_terminate_time: datetime, frozen: bool,
               trial: optuna.Trial):
@@ -228,14 +169,19 @@ def objective(model: str, emb: str, subject_interface, job_id, study_dir,
 if __name__ == '__main__':
     data_tag_fullname = {'M3': 'MIMIC-III', 'M4': 'MIMIC-IV'}
 
-    args = capture_args()
+    args = get_cmd_parser([
+        '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
+        '--trials-time-limit', '--training-time-limit', '--optuna-store',
+        '--mlflow-store', '--study-tag', '--data-tag', '--job-id'
+    ]).parse_args()
     study_name = f'{args.study_tag}{args.data_tag}_{args.model}_{short_tags[args.emb]}'
     study_dir = os.path.join(args.output_dir, study_name)
 
     terminate_time = datetime.now() + timedelta(hours=args.trials_time_limit)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
-    subject_interface = create_patient_interface(args.mimic_processed_dir)
+    dataset = datasets[args.dataset]
+    subject_interface = Subject_JAX.from_dataset(dataset)
     logging.info('[DONE] patient interface')
 
     storage = RDBStorage(url=args.optuna_store,
