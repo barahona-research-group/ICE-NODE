@@ -9,17 +9,28 @@ import pandas as pd
 
 from ..utils import load_config, LazyDict
 
-from .coding_scheme import code_scheme as C
+from .coding_scheme import code_scheme as C, ICDCommons
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
-_DATASET_META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
+_META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 
 
 class AbstractEHRDataset:
 
     def __init__(self, adm_df, dx_df, pr_df, code_scheme, code_colname,
                  adm_colname, name, **kwargs):
+        # Add ICD dots if they are absent.
+        if isinstance(C[code_scheme["dx"]], ICDCommons):
+            dx_scheme = C[code_scheme["dx"]]
+            col = code_colname["dx"]
+            dx_df[col] = dx_df[col].apply(dx_scheme.add_dot)
+
+        if pr_df and isinstance(C[code_scheme["pr"]], ICDCommons):
+            pr_scheme = C[code_scheme["pr"]]
+            col = code_colname["pr"]
+            pr_df[col] = pr_df[col].apply(pr_scheme.add_dot)
+
         self.name = name
         self.code_scheme = code_scheme
         self.adm_colname = adm_colname
@@ -27,11 +38,11 @@ class AbstractEHRDataset:
         self.adm_df = adm_df
         self.dx_df = dx_df
         self.pr_df = pr_df
-
         AbstractEHRDataset._validate_codes(set(dx_df[code_colname["dx"]]),
                                            code_scheme["dx"])
-        AbstractEHRDataset._validate_codes(set(pr_df[code_colname["pr"]]),
-                                           code_scheme["pr"])
+        if self.pr_df:
+            AbstractEHRDataset._validate_codes(set(pr_df[code_colname["pr"]]),
+                                               code_scheme["pr"])
 
     @staticmethod
     def _validate_codes(codeset, scheme):
@@ -47,16 +58,16 @@ class AbstractEHRDataset:
         admt_col = col["admittime"]
         dist_col = col["dischtime"]
         dx_col = self.code_colname["dx"]
-        pr_col = self.code_colname["pr"]
+        pr_col = self.code_colname.get("pr")
         dx_scheme = self.code_scheme["dx"]
-        pr_scheme = self.code_scheme["pr"]
+        pr_scheme = self.code_scheme.get("pr")
 
         adms = {}
         # Admissions
         for subj_id, subj_adms_df in self.adm_df.groupby(col["subject_id"]):
             subj_adms = {}
 
-            for adm_row in subj_adms_df.iterrows():
+            for idx, adm_row in subj_adms_df.iterrows():
                 adm_id = adm_row[adm_id_col]
                 subj_adms[adm_id] = {
                     'admission_id': adm_id,
@@ -75,6 +86,8 @@ class AbstractEHRDataset:
                 adms[subj_id]['admissions'][adm_id]['dx_codes'] = dx_codes
 
         # pr concepts
+        if self.pr_df is None:
+            return adms
         for subj_id, subject_pr_df in self.pr_df.groupby(col["subject_id"]):
             for adm_id, codes_df in subject_pr_df.groupby(adm_id_col):
                 pr_codes = set(codes_df[pr_col])
@@ -102,8 +115,11 @@ class MIMICDataset(AbstractEHRDataset):
         dx_df = pd.read_csv(os.path.join(base_dir, files['dx']),
                             dtype={code_colname['dx']: str})
 
-        pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
-                            dtype={code_colname['pr']: str})
+        if 'pr' in files:
+            pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
+                                dtype={code_colname['pr']: str})
+        else:
+            pr_df = None
 
         super().__init__(code_scheme=code_scheme,
                          adm_colname=adm_colname,
@@ -114,14 +130,15 @@ class MIMICDataset(AbstractEHRDataset):
                          **kwargs)
 
     @staticmethod
-    def from_meta_json(meta_fname):
-        meta_fpath = os.path.join(_DATASET_META_DIR, meta_fname)
+    def from_meta_json(meta_fpath):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
         return MIMICDataset(**meta)
 
 
 datasets = LazyDict({
-    'M3': MIMICDataset.from_meta_json('mimic3_meta.json'),
-    'M4': MIMICDataset.from_meta_json('mimic4_meta.json')
+    'M3':
+    lambda: MIMICDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json'),
+    'M4':
+    lambda: MIMICDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
 })

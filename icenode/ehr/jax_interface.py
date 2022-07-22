@@ -19,8 +19,7 @@ from .outcome import dx_outcome_filter
 class Admission_JAX:
 
     def __init__(self, adm: Admission, first_adm_date: datetime,
-                 code_scheme: Dict[str, str], dx_scheme: str, dx_outcome: str,
-                 pr_scheme: str):
+                 dx_scheme: str, dx_outcome: str, pr_scheme: str):
         # Time as days since the first admission
         self.admission_time = adm.admission_day(first_adm_date)
         self.los = adm.length_of_stay
@@ -59,7 +58,7 @@ class WindowFeatures:
 
     @staticmethod
     def dx_jax(past_admissions: List[Admission_JAX]):
-        past_codes = jnp.vstack([adm.dx_codes for adm in past_admissions])
+        past_codes = jnp.vstack([adm.dx_vec for adm in past_admissions])
         return jnp.max(past_codes, axis=0)
 
 
@@ -163,16 +162,15 @@ class Subject_JAX:
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def dx_code_frequency(self,
-                          subjects: List[int],
-                          dx_code_scheme: Optional[str] = None):
-        return Subject.dx_code_frequency([self.subjects[i] for i in subjects])
+    def dx_code_frequency(self, subjects: List[int]):
+        return Subject.dx_code_frequency([self.subjects[i] for i in subjects],
+                                         self.dx_scheme)
 
     def dx_frequency_vec(self,
                          subjects: Optional[List[int]] = None,
                          dx_code_scheme=None):
         subjects = subjects or self.subjects_jax
-        freq_dict = self.dx_code_frequency(subjects, dx_code_scheme)
+        freq_dict = self.dx_code_frequency(subjects)
         vec = np.zeros(len(freq_dict))
         for idx, count in freq_dict.items():
             vec[idx] = count
@@ -206,10 +204,10 @@ class Subject_JAX:
 
     def dx_codes_by_percentiles(self,
                                 percentile_range: float = 20,
-                                subjects: Optional[List[int]] = None,
-                                dx_scheme: Optional[str] = None):
+                                subjects: List[int] = []):
+        subjects = subjects or self.subjects
         return self._code_frequency_partitions(
-            percentile_range, self.dx_code_frequency(subjects, dx_scheme))
+            percentile_range, self.dx_code_frequency(subjects))
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
@@ -239,6 +237,11 @@ class Subject_JAX:
             Subject_JAX.subject_to_admissions(subject, **kwargs)
             for subject in subjects
         }
+
+    @classmethod
+    def from_dataset(cls, dataset: AbstractEHRDataset, *args, **kwargs):
+        subjects = Subject.from_dataset(dataset)
+        return cls(subjects, *args, **kwargs)
 
 
 class WindowedInterface_JAX:
@@ -274,7 +277,7 @@ class WindowedInterface_JAX:
             adms = self.interface.subjects_jax[subj_id]
             features = self.win_features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
-                X.append(feats.dx_codes)
+                X.append(feats.dx_vec)
                 y.append(adm.dx_outcome)
 
         return np.vstack(X), np.vstack(y)
@@ -286,8 +289,3 @@ class WindowedInterface_JAX:
     @property
     def n_targets(self):
         return self.interface.dx_outcome_dim
-
-    @classmethod
-    def from_dataset(cls, dataset: AbstractEHRDataset, *args, **kwargs):
-        subjects = Subject.from_dataset(dataset)
-        return cls(subjects, *args, **kwargs)

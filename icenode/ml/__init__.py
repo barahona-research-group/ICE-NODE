@@ -7,11 +7,11 @@ from .dx_icenode_uniform import ICENODE as ICENODE_UNIFORM
 from .dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM_2LR
 from .dx_retain import RETAIN
 from .dx_window_logreg import (WindowLogReg as WLR, WindowLogReg_Sklearn as
-                               WLR_SK)
+                               WLR_SK, logreg_loss_multinomial_mode)
 
 from .trainer import (AbstractReporter, MinibatchLogger, EvaluationDiskWriter,
                       ParamsDiskWriter, ConfigDiskWriter)
-from .train_app import train_with_config
+from .risk import (BatchPredictedRisks, SubjectPredictedRisk)
 
 GRU.register_model('dx_gru')
 ICENODE_TL.register_model('dx_icenode')

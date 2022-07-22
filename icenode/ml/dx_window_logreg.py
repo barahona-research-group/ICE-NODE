@@ -12,8 +12,8 @@ from jaxopt import ProximalGradient
 from jaxopt.prox import prox_elastic_net, prox_none
 import optuna
 
-from ..ehr_model.jax_interface import (Subject_JAX, WindowedInterface_JAX)
-from ..ehr_predictive.abstract import AbstractModel
+from .. import ehr
+from .. import ml
 from ..metric.common_metrics import (softmax_logits_bce,
                                      softmax_logits_weighted_bce,
                                      softmax_logits_balanced_focal_bce)
@@ -67,15 +67,15 @@ def prox_elastic_net_with_intercept(p, hyperparams, scaling):
     }
 
 
-class WindowLogReg(AbstractModel):
+class WindowLogReg(ml.AbstractModel):
 
     def __init__(
             self,
-            subject_interface: Subject_JAX,
+            subject_interface: ehr.Subject_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
             class_weight: str):
-        self.interface = WindowedInterface_JAX(subject_interface)
+        self.interface = ehr.WindowedInterface_JAX(subject_interface)
 
         self.model_config = {
             'fun': logreg_loss_multinomial_mode[class_weight],
@@ -121,7 +121,7 @@ class WindowLogReg(AbstractModel):
 
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = model.interface.interface.subjects[subj_id]
+            adms = model.interface.interface.subjects_jax[subj_id]
             features = model.interface.win_features[subj_id]
 
             X = np.vstack([feats.dx_features for feats in features[1:]])
@@ -212,14 +212,14 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
     def __init__(
             self,
-            subject_interface: Subject_JAX,
+            subject_interface: ehr.Subject_JAX,
             alpha: float,  # [0, \inf]
             beta: float,  #[0, \inf]
             class_weight: str):
         if class_weight != 'balanced':
             class_weight = None
 
-        self.dx_interface = WindowedInterface_JAX(subject_interface)
+        self.dx_interface = ehr.WindowedInterface_JAX(subject_interface)
         self.model_config = {
             'penalty': 'elasticnet',
             'solver': 'saga',
@@ -253,7 +253,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
         y_mask = model.supported_labels
 
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = ml.BatchPredictedRisks()
         for subj_id in subjects_batch:
             adms = model.interface.interface.subjects[subj_id]
             features = model.interface.win_features[subj_id]

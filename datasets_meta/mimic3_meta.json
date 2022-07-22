@@ -12,7 +12,7 @@
     },
     "code_scheme": {
         "dx": "dx_icd9",
-        "pr": "dx_icd9"
+        "pr": "pr_icd9"
     },
     "files": {
         "adm": "adm_df.csv.gz",

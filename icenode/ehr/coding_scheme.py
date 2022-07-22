@@ -36,6 +36,7 @@ class AbstractScheme:
     maps = {}
 
     def __init__(self, codes, index, desc):
+        logging.info(f'Constructing {type(self)} scheme')
         self.codes = codes
         self.index = index
         self.desc = desc
@@ -54,7 +55,7 @@ class AbstractScheme:
 
         # The mapping process produces codes in the DAG
         # space (leaves + internal nodes).
-        if mapper and new_scheme.hierarchical():
+        if mapper and new_scheme.hierarchical:
             index = new_scheme.dag_index
         else:
             index = new_scheme.index
@@ -805,18 +806,14 @@ class PrFlatCCS(FlatCCSCommons):
         self.add_map(PrICD9, PrFlatCCS, icd92flatccs)
 
 
-code_scheme_cls = {
-    'dx_flatccs': DxFlatCCS,
-    'dx_ccs': DxCCS,
-    'dx_icd9': DxICD9,
-    'dx_icd10': DxICD10,
-    'pr_flatccs': PrFlatCCS,
-    'pr_ccs': PrCCS,
-    'pr_icd9': PrICD9,
-    'pr_icd10': PrICD10
-}
-
 # Singleton instance.
-code_scheme = LazyDict(
-    {label: lambda: s_cls()
-     for label, s_cls in code_scheme_cls.items()})
+code_scheme = LazyDict({
+    'dx_flatccs': lambda: DxFlatCCS(),
+    'dx_ccs': lambda: DxCCS(),
+    'dx_icd9': lambda: DxICD9(),
+    'dx_icd10': lambda: DxICD10(),
+    'pr_flatccs': lambda: PrFlatCCS(),
+    'pr_ccs': lambda: PrCCS(),
+    'pr_icd9': lambda: PrICD9(),
+    'pr_icd10': lambda: PrICD10()
+})

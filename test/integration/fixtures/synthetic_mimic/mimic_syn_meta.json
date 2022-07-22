@@ -1,8 +1,7 @@
 {
-    "base_dir": "$DATA_DIR/mimic4-cohort",
+    "base_dir": "test/integration/fixtures/synthetic_mimic",
     "code_colname": {
-        "dx": "ICD9_CODE",
-        "pr": "ICD9_CODE"
+        "dx": "ICD9_CODE"
     },
     "adm_colname": {
         "admittime": "ADMITTIME",
@@ -11,15 +10,13 @@
         "admission_id": "HADM_ID"
     },
     "code_scheme": {
-        "dx": "dx_icd9",
-        "pr": "pr_icd9"
+        "dx": "dx_icd9"
     },
     "files": {
         "adm": "adm_df.csv.gz",
-        "dx": "dx_df.csv.gz",
-        "pr": "pr_df.csv.gz"
+        "dx": "dx_df.csv.gz"
     },
-    "name": "MIMIC-IV",
+    "name": "MIMIC-III",
     "python_class": "MIMICDataset",
-    "version": "v0.4"
+    "version": "v1.4"
 }

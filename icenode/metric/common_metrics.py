@@ -1,8 +1,7 @@
 """Performance metrics and loss functions."""
 
-from collections import defaultdict
 from enum import Flag, auto
-from typing import Dict, Iterable
+from typing import Dict
 
 from absl import logging
 from tqdm import tqdm
@@ -16,7 +15,7 @@ from jax.tree_util import tree_flatten
 from sklearn import metrics
 
 from .delong import DeLongTest, FastDeLongTest
-from ..ehr_predictive.risk import BatchPredictedRisks, SubjectPredictedRisk
+from ..ml.risk import BatchPredictedRisks
 
 
 @jax.jit

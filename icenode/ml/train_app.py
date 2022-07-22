@@ -6,7 +6,7 @@ from pathlib import Path
 
 from absl import logging
 
-from ...cli.cmd_args import get_cmd_parser
+from cli.cmd_args import get_cmd_parser
 
 from ..utils import load_config
 from .. import ehr

@@ -1,9 +1,9 @@
 import unittest
 import random
 
-from icenode.ehr_model.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
-                                             PrCCS, PrFlatCCS, PrICD10, PrICD9,
-                                             code_scheme, HierarchicalScheme)
+from icenode.ehr.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
+                                       PrCCS, PrFlatCCS, PrICD10, PrICD9,
+                                       code_scheme, HierarchicalScheme)
 
 
 class AbstractSchemeTests(object):

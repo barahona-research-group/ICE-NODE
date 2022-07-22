@@ -1,32 +1,26 @@
 """Integration Test for EHR Dx predictive model
 To execute this test from the root directory:
-    python -m unittest discover -s test/integration/ehr_predictive -v -t .
+    python -m unittest discover -s test/integration/ml -v -t .
 """
 
 import unittest
 import os
-
-from icenode.ehr_predictive.trainer import MinibatchLogger
-from icenode.ehr_predictive.dx_window_logreg import (
-    WindowLogReg, logreg_loss_multinomial_mode, WindowLogReg_Sklearn)
-from icenode.ehr_predictive.dx_gram import GRAM
-from icenode.ehr_predictive.dx_retain import RETAIN
-from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
-from icenode.ehr_predictive.dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM
-
+from icenode import ml
+from icenode import ehr
 from icenode.utils import load_config, load_params
-from icenode.ehr_model.jax_interface import (create_patient_interface)
 
 
 def setUpModule():
-    global dx_interface, splits, code_groups
+    global interface, splits, code_groups
+    dataset = ehr.MIMICDataset.from_meta_json(
+        'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
+    interface = ehr.Subject_JAX.from_dataset(dataset, {
+        'dx': 'dx_flatccs',
+        'dx_outcome': 'dx_flatccs_v1'
+    })
 
-    dx_interface = create_patient_interface(
-        'test/integration/fixtures/synthetic_mimic')
-    splits = dx_interface.random_splits(split1=0.7,
-                                        split2=0.85,
-                                        random_seed=42)
-    code_groups = dx_interface.dx_flatccs_by_percentiles(20)
+    splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)
+    code_groups = interface.dx_codes_by_percentiles(20)
 
 
 def tearDownModule():
@@ -43,7 +37,7 @@ class DxCommonTests(object):
     def setUp(self):
         self.models = []
         for config in self.configs:
-            model = self.model_cls.create_model(config, dx_interface, [])
+            model = self.model_cls.create_model(config, interface, [])
             state = model.init(config)
 
             self.assertTrue(callable(model))
@@ -57,7 +51,7 @@ class DxCommonTests(object):
                                           config=config,
                                           splits=splits,
                                           rng_seed=42,
-                                          reporters=[MinibatchLogger()])
+                                          reporters=[ml.MinibatchLogger()])
             model_, state_ = results['model']
             test_out1 = model_(model_.get_params(state_),
                                splits[2])['risk_prediction']
@@ -81,12 +75,12 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
             'test/integration/fixtures/model_configs/dx_winlogreg.json')
 
         cls.configs = []
-        for class_weight in logreg_loss_multinomial_mode.keys():
+        for class_weight in ml.logreg_loss_multinomial_mode.keys():
             config = c.copy()
             config['class_weight'] = class_weight
             cls.configs.append(config)
 
-        cls.model_cls = WindowLogReg
+        cls.model_cls = ml.WLR
 
 
 class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
@@ -97,7 +91,7 @@ class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
             load_config(
                 'test/integration/fixtures/model_configs/dx_winlogreg.json')
         ]
-        cls.model_cls = WindowLogReg_Sklearn
+        cls.model_cls = ml.WLR_SK
 
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):
@@ -108,7 +102,7 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
             load_config(
                 'test/integration/fixtures/model_configs/dx_gru_m.json')
         ]
-        cls.model_cls = GRAM
+        cls.model_cls = ml.GRU
 
 
 class TestDxGRU_G(DxCommonTests, unittest.TestCase):
@@ -119,7 +113,7 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
             load_config(
                 'test/integration/fixtures/model_configs/dx_gru_g.json')
         ]
-        cls.model_cls = GRAM
+        cls.model_cls = ml.GRU
 
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):
@@ -130,7 +124,7 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
             load_config(
                 'test/integration/fixtures/model_configs/dx_retain_m.json')
         ]
-        cls.model_cls = RETAIN
+        cls.model_cls = ml.RETAIN
 
 
 class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
@@ -142,7 +136,7 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
             )
         ]
-        cls.model_cls = ICENODE
+        cls.model_cls = ml.ICENODE_2LR
 
 
 class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
@@ -154,7 +148,7 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_icenode_2lr_g.json'
             )
         ]
-        cls.model_cls = ICENODE
+        cls.model_cls = ml.ICENODE_2LR
 
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
@@ -166,7 +160,7 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
             )
         ]
-        cls.model_cls = ICENODE_UNIFORM
+        cls.model_cls = ml.ICENODE_UNIFORM_2LR
 
 
 if __name__ == '__main__':

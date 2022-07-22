@@ -2,10 +2,10 @@ import argparse
 from typing import List
 from pydoc import locate
 
-from ..icenode.utils import load_config
-from ..icenode import ml
-from ..icenode import ehr
-from ..icenode import embeddings as E
+from icenode.utils import load_config
+from icenode import ml
+from icenode import ehr
+from icenode import embeddings as E
 
 help_expand = dict(dataset_labels=ehr.datasets,
                    dx_scheme_labels=[s for s in ehr.code_scheme if 'dx' in s],
