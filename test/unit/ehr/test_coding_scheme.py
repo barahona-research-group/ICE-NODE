@@ -136,12 +136,32 @@ class TestConversionCoverage(unittest.TestCase):
         for s1 in C.keys():
             for s2 in C.keys():
                 m = CodeMapper.get_mapper(s1, s2)
+                if m is None:
+                    continue
                 with self.subTest(msg=f"{s1} to {s2}: Target scheme coverage"):
                     m_values = set().union(*m.values())
                     t_codes = set(m.t_index)
-                    self.assertCountEqual(m_values - t_codes, set())
+                    diff = m_values - t_codes
+                    self.assertCountEqual(diff,
+                                          set(),
+                                          msg=f"""
+                                          diff ({len(diff)}): \
+                                          {sorted(diff)[:10]}\n
+                                          m_values ({len(m_values)}): \
+                                          {sorted(m_values)[:10]}\n
+                                          t_codes ({len(t_codes)}): \
+                                          {sorted(t_codes)[:10]}""")
 
                 with self.subTest(msg=f"{s1} to {s2}: Source scheme coverage"):
                     m_keys = set(m)
                     s_codes = set(m.s_index)
-                    self.assertCountEqual(s_codes - m_keys, set())
+                    diff = s_codes - m_keys
+                    self.assertCountEqual(diff,
+                                          set(),
+                                          msg=f"""
+                                          diff ({len(diff)}): \
+                                          {sorted(diff)[:10]}\n
+                                          s_codes ({len(s_codes)}): \
+                                          {sorted(s_codes)[:10]}\n
+                                          m_keys: ({len(m_keys)}): \
+                                          {sorted(m_keys)[:10]}""")

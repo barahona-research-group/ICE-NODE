@@ -73,7 +73,7 @@ class CodeMapper(defaultdict):
         if key in load_maps:
             load_maps[key]()
 
-        return CodeMapper.maps[key]
+        return CodeMapper.maps.get(key)
 
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
@@ -98,7 +98,7 @@ class IdentityCodeMapper(CodeMapper):
                          t_scheme=scheme,
                          t_dag_space=False,
                          *args)
-        self.update({c: c for c in scheme.codes})
+        self.update({c: {c} for c in scheme.codes})
 
     def map_codeset(self, codeset):
         return codeset
@@ -179,7 +179,7 @@ class HierarchicalScheme(AbstractScheme):
 
     @property
     def dag_index(self):
-        return self.dag_index
+        return self._dag_index
 
     @property
     def dag_codes(self):
@@ -684,7 +684,7 @@ class CCSCommons(HierarchicalScheme):
 
     @classmethod
     def ccs_columns(cls, icd9_cls):
-        df = pd.read_csv(os.path.join(_CCS_DIR, cls._SCHEME_FILE))
+        df = pd.read_csv(os.path.join(_CCS_DIR, cls._SCHEME_FILE), dtype=str)
         cols = {}
         for i in range(1, cls._N_LEVELS + 1):
             cols[f'I{i}'] = list(
@@ -800,7 +800,7 @@ class FlatCCSCommons(AbstractScheme):
     @classmethod
     def flatccs_columns(cls, icd9_cls):
         filepath = os.path.join(_CCS_DIR, cls._SCHEME_FILE)
-        df = pd.read_csv(filepath, skiprows=[0, 2])
+        df = pd.read_csv(filepath, skiprows=[0, 2], dtype=str)
         code_col = list(
             df['\'CCS CATEGORY\''].apply(lambda cat: cat.strip('\'').strip()))
         icd9_col = list(
@@ -815,20 +815,19 @@ class FlatCCSCommons(AbstractScheme):
     def register_mappings(flatccs_scheme, icd9_scheme):
         cols = flatccs_scheme.flatccs_columns(icd9_scheme)
 
-        icd92flatccs = dict(zip(cols['icd9'], cols['code']))
-        assert len(icd92flatccs) == len(cols['icd9']), "1toN mapping expected"
-
         flatccs2icd9 = CodeMapper(flatccs_scheme,
                                   icd9_scheme,
                                   t_dag_space=False)
-        for icode, ccode in icd92flatccs.items():
-            flatccs2icd9[ccode].add(icode)
-
         icd92flatccs = CodeMapper(icd9_scheme,
                                   flatccs_scheme,
                                   t_dag_space=False)
 
-        icd92flatccs.update({k: {v} for k, v in icd92flatccs.items()})
+        map_n1 = dict(zip(cols['icd9'], cols['code']))
+        assert len(map_n1) == len(cols['icd9']), "1toN mapping expected"
+
+        for icode, ccode in map_n1.items():
+            flatccs2icd9[ccode].add(icode)
+            icd92flatccs[icode].add(ccode)
 
 
 class DxFlatCCS(FlatCCSCommons):
