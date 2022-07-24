@@ -84,6 +84,9 @@ class WindowLogReg(ml.AbstractModel):
             'hyperparams_prox': self.alpha_beta_config(alpha, beta),
         }
 
+        self.supported_labels = None
+        self.n_labels = None
+
     @staticmethod
     def alpha_beta_config(alpha, beta):
         # alpha is for L2-norm, beta is for L1-norm
@@ -104,7 +107,7 @@ class WindowLogReg(ml.AbstractModel):
     def step_optimizer(cls, eval_step, m_state: Any,
                        subjects_batch: List[int]):
         model, params = m_state
-        X, y = model.dx_interface.tabular_features(subjects_batch)
+        X, y = model.interface.tabular_features(subjects_batch)
         pg = ProximalGradient(fun=model.model_config['fun'],
                               prox=model.model_config['prox'],
                               maxiter=model.model_config['maxiter'],
@@ -219,7 +222,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
         if class_weight != 'balanced':
             class_weight = None
 
-        self.dx_interface = ehr.WindowedInterface_JAX(subject_interface)
+        self.interface = ehr.WindowedInterface_JAX(subject_interface)
         self.model_config = {
             'penalty': 'elasticnet',
             'solver': 'saga',
@@ -227,8 +230,6 @@ class WindowLogReg_Sklearn(WindowLogReg):
             'max_iter': 2000,
             **self.alpha_beta_config(alpha, beta)
         }
-        self.supported_labels = None
-        self.n_labels = None
 
     @staticmethod
     def alpha_beta_config(alpha, beta):
@@ -240,7 +241,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
     def step_optimizer(cls, eval_step, m_state: Any,
                        subjects_batch: List[int]):
         model, skmodel = m_state
-        X, y = model.dx_interface.tabular_features(subjects_batch)
+        X, y = model.interface.tabular_features(subjects_batch)
         # Training with LR requires at least two classes in the training.
         y_mask = (y.sum(axis=0) != 0).squeeze()
         skmodel = skmodel.fit(X, y[:, y_mask])

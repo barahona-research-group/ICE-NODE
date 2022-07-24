@@ -15,7 +15,7 @@ def setUpModule():
     dataset = ehr.MIMICDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
     interface = ehr.Subject_JAX.from_dataset(dataset, {
-        'dx': 'dx_flatccs',
+        'dx': 'dx_ccs',
         'dx_outcome': 'dx_flatccs_v1'
     })
 
@@ -40,8 +40,8 @@ class DxCommonTests(object):
             model = self.model_cls.create_model(config, interface, [])
             state = model.init(config)
 
-            self.assertTrue(callable(model))
-            self.assertTrue(state is not None)
+            self.assertTrue(callable(model), msg=f"config: {config}")
+            self.assertTrue(state is not None , msg=f"config: {config}")
             self.models.append((model, state))
 
     def test_train_read_write_params(self):
@@ -64,7 +64,7 @@ class DxCommonTests(object):
             test_out2 = model_(model_.get_params(state_),
                                splits[2])['risk_prediction']
 
-            self.assertEqual(test_out1, test_out2)
+            self.assertEqual(test_out1, test_out2, msg=f"config: {config}")
 
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):

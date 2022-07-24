@@ -31,6 +31,12 @@ class AbstractEHRDataset:
             col = code_colname["pr"]
             pr_df[col] = pr_df[col].apply(pr_scheme.add_dot)
 
+        dx_df = AbstractEHRDataset._validate_codes(dx_df, code_colname["dx"],
+                                                   code_scheme["dx"])
+        if pr_df:
+            pr_df = AbstractEHRDataset._validate_codes(pr_df,
+                                                       code_colname["pr"],
+                                                       code_scheme["pr"])
         self.name = name
         self.code_scheme = code_scheme
         self.adm_colname = adm_colname
@@ -38,19 +44,21 @@ class AbstractEHRDataset:
         self.adm_df = adm_df
         self.dx_df = dx_df
         self.pr_df = pr_df
-        AbstractEHRDataset._validate_codes(set(dx_df[code_colname["dx"]]),
-                                           code_scheme["dx"])
-        if self.pr_df:
-            AbstractEHRDataset._validate_codes(set(pr_df[code_colname["pr"]]),
-                                               code_scheme["pr"])
 
     @staticmethod
-    def _validate_codes(codeset, scheme):
-        unrecognised = codeset - set(C[scheme].codes)
+    def _validate_codes(df, colname, scheme):
+        codeset = set(df[colname])
+        validset = set(C[scheme].codes)
+        unrecognised = codeset - validset
         if len(unrecognised) > 0:
-            logging.warning(
-                f'Unrecognised {type(C[scheme])} codes {len(unrecognised)}: {unrecognised}'
-            )
+            logging.warning(f"""
+                Unrecognised {type(C[scheme])} codes ({len(unrecognised)})
+                to be removed: {sorted(unrecognised)}""")
+
+            # Data Loss!
+            df = df[df[colname].isin(validset)]
+
+        return df
 
     def to_dict(self):
         col = self.adm_colname

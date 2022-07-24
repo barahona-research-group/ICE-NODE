@@ -135,7 +135,7 @@ class ICENODE(AbstractModel):
             i: self.dx_emb.encode(dx_G, adm.dx_vec)
             for i, adm in adms.items()
         }
-        dx_outcome = {i: adm.dx_outcomes for i, adm in adms.items()}
+        dx_outcome = {i: adm.dx_outcome for i, adm in adms.items()}
         los = {i: adm.los for i, adm in adms.items()}
         adm_id = {i: adm.admission_id for i, adm in adms.items()}
         adm_time = {i: adm.admission_time for i, adm in adms.items()}

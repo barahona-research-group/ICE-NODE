@@ -23,7 +23,7 @@ class DxCodeOutcomeFilter:
         self.codes = [c for c in base_codes if c not in exclude_codes]
         self.index = dict(zip(self.codes, range(len(self.codes))))
 
-    def __call__(self, adm: Admission):
+    def apply(self, adm: Admission):
         codeset, _ = AbstractScheme.map_codeset(adm.dx_codes, adm.dx_scheme,
                                                 self.outcome_scheme)
         if C[self.outcome_scheme].hierarchical:

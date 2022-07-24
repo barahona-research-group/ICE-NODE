@@ -12,43 +12,36 @@ import jax.numpy as jnp
 
 from .concept import Subject, Admission
 from .dataset import AbstractEHRDataset
-from .coding_scheme import (code_scheme as C, AbstractScheme)
-from .outcome import dx_outcome_filter
+from .coding_scheme import CodeMapper
+from .outcome import dx_outcome_filter, DxCodeOutcomeFilter
 
 
 class Admission_JAX:
 
     def __init__(self, adm: Admission, first_adm_date: datetime,
-                 dx_scheme: str, dx_outcome: str, pr_scheme: str):
+                 dx_mapper: CodeMapper, dx_outcome: DxCodeOutcomeFilter,
+                 pr_mapper: Optional[CodeMapper]):
         # Time as days since the first admission
         self.admission_time = adm.admission_day(first_adm_date)
         self.los = adm.length_of_stay
         self.admission_id = adm.admission_id
-        self.dx_vec, self.dx_codes = self.jaxify_dx_codes(adm, dx_scheme)
-        self.dx_outcome = self.jaxify_dx_outcome(adm, dx_outcome)
 
-        if pr_scheme and adm.pr_codes:
-            self.pr_vec, self.pr_codes = self.jaxify_pr_codes(adm, pr_scheme)
+        self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
+        self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
+
+        if pr_mapper and adm.pr_codes:
+            self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
+            self.pr_vec = pr_mapper.codeset2vec(self.pr_codes)
         else:
             self.pr_vec, self.pr_codes = None, None
 
-    @staticmethod
-    def jaxify_dx_codes(adm, dx_scheme):
-        vec, codes, _ = AbstractScheme.codeset2vec(adm.dx_codes, adm.dx_scheme,
-                                                   dx_scheme)
-        return jnp.array(vec), codes
+        self.dx_outcome = self.jaxify_dx_outcome(adm, dx_outcome)
 
     @staticmethod
     def jaxify_dx_outcome(adm, dx_outcome_filter_label):
         dx_outcome = dx_outcome_filter[dx_outcome_filter_label]
 
-        return jnp.array(dx_outcome(adm))
-
-    @classmethod
-    def jaxify_pr_codes(cls, adm, pr_scheme):
-        vec, codes, _ = AbstractScheme.codeset2vec(adm.pr_codes, adm.pr_scheme,
-                                                   pr_scheme)
-        return jnp.array(vec), codes
+        return jnp.array(dx_outcome.apply(adm))
 
 
 class WindowFeatures:
@@ -75,55 +68,38 @@ class Subject_JAX:
         self.dx_outcome = code_scheme['dx_outcome']
         self.pr_scheme = code_scheme.get('pr')
 
-        _dx_scheme = C[self.dx_scheme]
-        _pr_scheme = C[self.pr_scheme] if self.pr_scheme else None
-
-        if _dx_scheme.hierarchical:
-            self.dx_ancestors_mat = jnp.array(_dx_scheme.make_ancestors_mat())
-
-        if _pr_scheme and _pr_scheme.hierarchical:
-            self.pr_ancestors_mat = jnp.array(_pr_scheme.make_ancestors_mat())
-
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
 
-        self.subjects = {s.subject_id: s for s in subjects}
+        self.dx_mapper = CodeMapper.get_mapper(subjects[0].dx_scheme,
+                                               self.dx_scheme)
+        self.pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
+                                               self.pr_scheme)
+
+        self._subjects = {s.subject_id: s for s in subjects}
         self.subjects_jax = self.jaxify_subject_admissions(
             subjects,
-            dx_scheme=self.dx_scheme,
+            dx_mapper=self.dx_mapper,
             dx_outcome=self.dx_outcome,
-            pr_scheme=self.pr_scheme)
+            pr_mapper=self.pr_mapper)
 
     @property
     def dx_source_scheme(self) -> str:
-        subject = list(self.subjects.values())[0]
+        subject = list(self._subjects.values())[0]
         return subject.dx_scheme
 
     @property
     def pr_source_scheme(self) -> str:
-        subject = list(self.subjects.values())[0]
+        subject = list(self._subjects.values())[0]
         return subject.pr_scheme
-
-    @staticmethod
-    def index(source_scheme: str, target_scheme: str) -> Dict[str, int]:
-
-        _target_scheme = C[target_scheme]
-
-        if source_scheme == target_scheme:
-            return _target_scheme.index
-
-        if _target_scheme.hierarchical:
-            return _target_scheme.dag_index
-        else:
-            return _target_scheme.index
 
     @property
     def dx_index(self) -> Dict[str, int]:
-        return self.index(self.dx_source_scheme, self.dx_scheme)
+        return self.dx_mapper.t_index
 
     @property
     def pr_index(self) -> Dict[str, int]:
-        return self.index(self.pr_source_scheme, self.pr_scheme)
+        return self.pr_mapper.t_index
 
     @property
     def dx_dim(self):
@@ -143,7 +119,7 @@ class Subject_JAX:
                       split2: float,
                       random_seed: int = 42):
         rng = random.Random(random_seed)
-        subject_ids = list(sorted(self.subjects.keys()))
+        subject_ids = list(sorted(self._subjects.keys()))
         rng.shuffle(subject_ids)
 
         split1 = int(split1 * len(subject_ids))
@@ -155,7 +131,7 @@ class Subject_JAX:
         return train_ids, valid_ids, test_ids
 
     def dx_history(self, subject_id, dx_scheme=None, absolute_dates=False):
-        return self.subjects[subject_id].dx_history(dx_scheme, absolute_dates)
+        return self._subjects[subject_id].dx_history(dx_scheme, absolute_dates)
 
     def adm_times(self, subject_id):
         adms_info = self.subjects_jax[subject_id]
@@ -163,7 +139,7 @@ class Subject_JAX:
                 for adm in adms_info]
 
     def dx_code_frequency(self, subjects: List[int]):
-        return Subject.dx_code_frequency([self.subjects[i] for i in subjects],
+        return Subject.dx_code_frequency([self._subjects[i] for i in subjects],
                                          self.dx_scheme)
 
     def dx_frequency_vec(self,
@@ -205,7 +181,7 @@ class Subject_JAX:
     def dx_codes_by_percentiles(self,
                                 percentile_range: float = 20,
                                 subjects: List[int] = []):
-        subjects = subjects or self.subjects
+        subjects = subjects or self._subjects
         return self._code_frequency_partitions(
             percentile_range, self.dx_code_frequency(subjects))
 
@@ -218,17 +194,15 @@ class Subject_JAX:
         return nth_admission
 
     def subject_admission_sequence(self, subject_id):
-        return self.subjects[subject_id]
+        return self.subjects_jax[subject_id]
 
     @staticmethod
-    def subject_to_admissions(subject: Subject, dx_scheme: str,
-                              dx_outcome: str,
-                              pr_scheme: str) -> Dict[int, Admission_JAX]:
-        kwargs = dict(first_adm_date=subject.first_adm_date,
-                      dx_scheme=dx_scheme,
-                      dx_outcome=dx_outcome,
-                      pr_scheme=pr_scheme)
-        return [Admission_JAX(adm, **kwargs) for adm in subject.admissions]
+    def subject_to_admissions(subject: Subject,
+                              **kwargs) -> Dict[int, Admission_JAX]:
+        return [
+            Admission_JAX(adm, first_adm_date=subject.first_adm_date, **kwargs)
+            for adm in subject.admissions
+        ]
 
     @staticmethod
     def jaxify_subject_admissions(subjects, **kwargs):
@@ -277,7 +251,7 @@ class WindowedInterface_JAX:
             adms = self.interface.subjects_jax[subj_id]
             features = self.win_features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
-                X.append(feats.dx_vec)
+                X.append(feats.dx_features)
                 y.append(adm.dx_outcome)
 
         return np.vstack(X), np.vstack(y)

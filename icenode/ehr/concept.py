@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import List, Tuple, Set, Optional
 from absl import logging
 
-from .coding_scheme import AbstractScheme
+from .coding_scheme import AbstractScheme, CodeMapper
 from .dataset import AbstractEHRDataset
 
 
@@ -83,17 +83,11 @@ class Subject:
 
     def dx_history(self, dx_scheme=None, absolute_dates=False):
         history = defaultdict(list)
-        if dx_scheme is None or self.dx_scheme== dx_scheme:
-            mapper = None
-        else:
-            mapper = AbstractScheme.get_map(self.dx_scheme, dx_scheme)
+        mapper = CodeMapper.get_mapper(self.dx_scheme, dx_scheme)
 
         first_adm_date = self.admissions[0].admission_dates[0]
         for adm in self.admissions:
-            code_set = adm.dx_codes
-            if mapper:
-                code_set = set().union(*list(mapper[c] for c in adm.dx_codes))
-            for code in code_set:
+            for code in mapper.map_codeset(adm.dx_codes):
                 if absolute_dates:
                     history[code].append(adm.admission_dates)
                 else:
@@ -132,17 +126,17 @@ class Subject:
         src_scheme = subjects[0].dx_scheme
         assert all(s.dx_scheme == src_scheme
                    for s in subjects), "Scheme inconsistency"
+        mapper = CodeMapper.get_mapper(src_scheme, dx_scheme)
 
         counter = defaultdict(int)
         for subject in subjects:
             for adm in subject.admissions:
-                codeset, codeindex = AbstractScheme.map_codeset(
-                    adm.dx_codes, src_scheme, dx_scheme)
-                for code in codeset:
-                    counter[codeindex[code]] += 1
+                codeset = mapper.map_codeset(adm.dx_codes)
+                for idx in map(mapper.t_index, codeset):
+                    counter[idx] += 1
 
         # Return dictionary with zero-frequency codes added.
-        return {idx: counter[idx] for idx in codeindex.values()}
+        return {idx: counter[idx] for idx in mapper.t_index.values()}
 
     @staticmethod
     def merge_overlaps(admissions):
