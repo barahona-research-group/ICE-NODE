@@ -1,6 +1,8 @@
 import unittest
 import random
 
+raise Exception('TEST types in CodeMapper')
+
 from icenode.ehr.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
                                        PrCCS, PrFlatCCS, PrICD10, PrICD9,
                                        HierarchicalScheme, CodeMapper,

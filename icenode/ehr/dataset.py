@@ -68,7 +68,7 @@ class AbstractEHRDataset:
         dx_col = self.code_colname["dx"]
         pr_col = self.code_colname.get("pr")
         dx_scheme = self.code_scheme["dx"]
-        pr_scheme = self.code_scheme.get("pr")
+        pr_scheme = self.code_scheme.get("pr", "none")
 
         adms = {}
         # Admissions

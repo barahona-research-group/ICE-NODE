@@ -5,52 +5,55 @@ import numpy as np
 
 from ..utils import load_config, LazyDict
 
-from .coding_scheme import AbstractScheme, code_scheme as C
+from .coding_scheme import AbstractScheme, CodeMapper
 from .concept import Admission
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 
+conf_files = {'dx_flatccs_v1': 'dx_flatccs_v1.json'}
+
 
 class DxCodeOutcomeFilter:
 
-    def __init__(self, outcome_scheme: str, exclude_codes: List[str],
-                 **kwargs):
-        self.outcome_scheme = outcome_scheme
-        base_codes = C[outcome_scheme].codes
-        # Aleady sorted as base_scheme.codes is sorted.
-        self.codes = [c for c in base_codes if c not in exclude_codes]
-        self.index = dict(zip(self.codes, range(len(self.codes))))
+    def __init__(self, s_dx_scheme: str, conf='dx_flatccs_v1'):
+        conf = self.conf_from_json(conf_files[conf])
+        self._mapper = CodeMapper.get_mapper(s_dx_scheme, conf['code_scheme'])
 
-    def apply(self, adm: Admission):
-        codeset, _ = AbstractScheme.map_codeset(adm.dx_codes, adm.dx_scheme,
-                                                self.outcome_scheme)
-        if C[self.outcome_scheme].hierarchical:
-            dag2code = self.outcome_scheme.dag2code
-            codeset = {dag2code[c] for c in codeset if c in dag2code}
+        base_codes = sorted(self.mapper.t_index)
+        self._codes = [c for c in base_codes if c not in conf['exclude_codes']]
+        self._index = dict(zip(self.codes, range(len(self.codes))))
 
+    @property
+    def mapper(self):
+        return self._mapper
+
+    @property
+    def codes(self):
+        return self._codes
+
+    @property
+    def index(self):
+        return self._index
+
+    def adm2vec(self, adm: Admission):
+        codeset = self.mapper.map_codeset(adm.dx_codes)
         vec = np.zeros(len(self.index))
         for c in codeset & set(self.codes):
             vec[self.index[c]] = 1
         return vec
 
     @staticmethod
-    def from_json(json_file: str):
+    def conf_from_json(json_file: str):
         json_file = os.path.join(_OUTCOME_DIR, json_file)
-        kwargs = load_config(json_file)
+        conf = load_config(json_file)
 
-        if 'exclude_branches' in kwargs:
+        if 'exclude_branches' in conf:
             # TODO
             return None
-        elif 'select_branches' in kwargs:
+        elif 'select_branches' in conf:
             # TODO
             return None
-        elif 'exclude_codes' in kwargs:
-            return DxCodeOutcomeFilter(**kwargs)
-
-
-dx_outcome_filter = LazyDict({
-    'dx_flatccs_v1':
-    lambda: DxCodeOutcomeFilter.from_json('dx_flatccs_v1.json')
-})
+        elif 'exclude_codes' in conf:
+            return conf

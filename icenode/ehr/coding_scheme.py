@@ -46,8 +46,11 @@ class CodeMapper(defaultdict):
         CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
 
     def report_discrepancy(self):
-        s_discrepancy = self.report_source_discrepancy()
-        t_discrepancy = self.report_target_discrepancy()
+        try:
+            s_discrepancy = self.report_source_discrepancy()
+            t_discrepancy = self.report_target_discrepancy()
+        except TypeError as e:
+            logging.error(f'{self._s_scheme}->{self._t_scheme}: {e}')
 
         if s_discrepancy['fwd_p'] > 0.1:
             logging.warning('Source discrepancy > 10%!')
@@ -119,6 +122,9 @@ class CodeMapper(defaultdict):
 
     @staticmethod
     def get_mapper(s_scheme: str, t_scheme: Optional[str] = None):
+        if s_scheme is None:
+            return NullCodeMapper()
+
         t_scheme = t_scheme or s_scheme
 
         if isinstance(s_scheme, str):
@@ -166,10 +172,27 @@ class IdentityCodeMapper(CodeMapper):
                          t_dag_space=False,
                          *args)
         self.update({c: {c} for c in scheme.codes})
-        self.report_discrepancy()
 
     def map_codeset(self, codeset):
         return codeset
+
+
+class NullCodeMapper(CodeMapper):
+
+    def __init__(self, *args):
+        super().__init__(s_scheme=None,
+                         t_scheme=None,
+                         t_dag_space=False,
+                         *args)
+
+    def map_codeset(self, codeset):
+        return None
+
+    def codeset2vec(self, codeset):
+        return None
+
+    def __bool__(self):
+        return False
 
 
 class AbstractScheme:
@@ -180,6 +203,9 @@ class AbstractScheme:
         self._index = index
         self._desc = desc
         IdentityCodeMapper(self)
+
+    def __bool__(self):
+        return len(self.codes) > 0
 
     @property
     def codes(self):
@@ -196,6 +222,12 @@ class AbstractScheme:
     @staticmethod
     def maps_to_register():
         return []
+
+
+class NullScheme(AbstractScheme):
+
+    def __init__(self):
+        super().__init__([], {}, {})
 
 
 class HierarchicalScheme(AbstractScheme):
@@ -923,6 +955,7 @@ class PrFlatCCS(FlatCCSCommons):
 
 # Singleton instance.
 code_scheme = LazyDict({
+    'none': lambda: NullScheme(),
     'dx_flatccs': lambda: DxFlatCCS(),
     'dx_ccs': lambda: DxCCS(),
     'dx_icd9': lambda: DxICD9(),

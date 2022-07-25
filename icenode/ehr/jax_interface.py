@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from .concept import Subject, Admission
 from .dataset import AbstractEHRDataset
 from .coding_scheme import CodeMapper
-from .outcome import dx_outcome_filter, DxCodeOutcomeFilter
+from .outcome import DxCodeOutcomeFilter
 
 
 class Admission_JAX:
@@ -29,19 +29,10 @@ class Admission_JAX:
         self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
         self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
 
-        if pr_mapper and adm.pr_codes:
-            self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
-            self.pr_vec = pr_mapper.codeset2vec(self.pr_codes)
-        else:
-            self.pr_vec, self.pr_codes = None, None
+        self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
+        self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
 
-        self.dx_outcome = self.jaxify_dx_outcome(adm, dx_outcome)
-
-    @staticmethod
-    def jaxify_dx_outcome(adm, dx_outcome_filter_label):
-        dx_outcome = dx_outcome_filter[dx_outcome_filter_label]
-
-        return jnp.array(dx_outcome.apply(adm))
+        self.dx_outcome = jnp.array(dx_outcome.adm2vec(adm))
 
 
 class WindowFeatures:
@@ -64,17 +55,17 @@ class Subject_JAX:
     """
 
     def __init__(self, subjects: List[Subject], code_scheme: Dict[str, str]):
-        self.dx_scheme = code_scheme['dx']
-        self.dx_outcome = code_scheme['dx_outcome']
-        self.pr_scheme = code_scheme.get('pr')
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
 
         self.dx_mapper = CodeMapper.get_mapper(subjects[0].dx_scheme,
-                                               self.dx_scheme)
+                                               code_scheme['dx'])
         self.pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
-                                               self.pr_scheme)
+                                               code_scheme.get('pr', 'none'))
+
+        self.dx_outcome = DxCodeOutcomeFilter(
+            s_dx_scheme=subjects[0].dx_scheme, conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
         self.subjects_jax = self.jaxify_subject_admissions(
@@ -102,6 +93,10 @@ class Subject_JAX:
         return self.pr_mapper.t_index
 
     @property
+    def outcome_index(self) -> Dict[str, int]:
+        return self.dx_outcome.index
+
+    @property
     def dx_dim(self):
         return len(self.dx_index)
 
@@ -111,8 +106,7 @@ class Subject_JAX:
 
     @property
     def dx_outcome_dim(self):
-        adm = list(self.subjects_jax.values())[0][0]
-        return len(adm.dx_outcome)
+        return len(self.dx_outcome.index)
 
     def random_splits(self,
                       split1: float,
@@ -140,7 +134,7 @@ class Subject_JAX:
 
     def dx_code_frequency(self, subjects: List[int]):
         return Subject.dx_code_frequency([self._subjects[i] for i in subjects],
-                                         self.dx_scheme)
+                                         self.dx_mapper.t_scheme)
 
     def dx_frequency_vec(self,
                          subjects: Optional[List[int]] = None,

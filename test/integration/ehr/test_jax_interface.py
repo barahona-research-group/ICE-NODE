@@ -15,7 +15,11 @@ class TestSubject_JAX(unittest.TestCase):
 
         cls.interfaces = []
         for dx_scheme in [s for s in ehr.code_scheme if 'dx' in s]:
-            code_scheme = {'dx': dx_scheme, 'dx_outcome': 'dx_flatccs_v1'}
+            code_scheme = {
+                'dx': dx_scheme,
+                'dx_outcome': 'dx_flatccs_v1',
+                'pr': 'none'
+            }
             interface = ehr.Subject_JAX.from_dataset(dataset, code_scheme)
             cls.interfaces.append(interface)
 
