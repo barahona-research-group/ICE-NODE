@@ -46,6 +46,12 @@ class CodeMapper(defaultdict):
         CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
 
     def report_discrepancy(self):
+        assert all(
+            type(c) == str for c in self
+        ), f"All M_domain({self._s_scheme}->{self._t_scheme}) types should be str"
+        assert all(
+            type(c) == str for c in set().union(*self.values())
+        ), f"All M_range({self._s_scheme}->{self._t_scheme}) types should be str"
         try:
             s_discrepancy = self.report_source_discrepancy()
             t_discrepancy = self.report_target_discrepancy()
@@ -144,7 +150,8 @@ class CodeMapper(defaultdict):
             load_maps[key]()
 
         mapper = CodeMapper.maps.get(key)
-        mapper.report_discrepancy()
+        if mapper:
+            mapper.report_discrepancy()
 
         return mapper
 
@@ -202,6 +209,12 @@ class AbstractScheme:
         self._codes = codes
         self._index = index
         self._desc = desc
+
+        for collection in [codes, index, desc]:
+            assert all(
+                type(c) == str
+                for c in collection), f"{self}: All name types should be str."
+
         IdentityCodeMapper(self)
 
     def __bool__(self):
@@ -266,6 +279,14 @@ class HierarchicalScheme(AbstractScheme):
         elif ch2pt is not None:
             self._ch2pt = ch2pt
             self._pt2ch = self.reverse_connection(ch2pt)
+
+        for collection in [
+                self._dag_codes, self._dag_index, self._dag_desc,
+                self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
+        ]:
+            assert all(
+                type(c) == str
+                for c in collection), f"{self}: All name types should be str."
 
     def make_ancestors_mat(self, include_itself=True) -> np.ndarray:
         ancestors_mat = np.zeros((len(self.dag_index), len(self.dag_index)),
@@ -410,7 +431,10 @@ class ICDCommons(HierarchicalScheme):
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
         df['source'] = df['source'].map(s_scheme.add_dot)
         df['target'] = df['target'].map(t_scheme.add_dot)
-        df['target'] = df['target'].map(t_scheme.code2dag)
+        df['target'] = df['target'].map(lambda c: t_scheme.code2dag.get(c, c))
+
+
+        assert df['target'].map(lambda c: type(c) == float).sum() == 0, "eeee"
 
         return df
 

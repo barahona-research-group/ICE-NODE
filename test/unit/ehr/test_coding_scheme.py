@@ -1,8 +1,6 @@
 import unittest
 import random
 
-raise Exception('TEST types in CodeMapper')
-
 from icenode.ehr.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
                                        PrCCS, PrFlatCCS, PrICD10, PrICD9,
                                        HierarchicalScheme, CodeMapper,
@@ -130,3 +128,15 @@ class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
     def setUpClass(cls):
         cls.scheme = C['pr_icd10']
 
+
+class TestCodeMappers(unittest.TestCase):
+
+    def test_dtypes(self):
+        for s1 in C:
+            for s2 in C:
+                m = CodeMapper.get_mapper(s1, s2)
+                if m is None: continue
+                with self.subTest(f"{s1}->{s2} types"):
+                    self.assertTrue(all(type(c) == str for c in m))
+                    m_range = set().union(*m.values())
+                    self.assertTrue(all(type(c) == str for c in m_range))
