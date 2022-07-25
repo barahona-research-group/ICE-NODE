@@ -45,6 +45,70 @@ class CodeMapper(defaultdict):
         self._t_index = t_scheme.dag_index if t_dag_space else t_scheme.index
         CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
 
+    def report_discrepancy(self):
+        s_discrepancy = self.report_source_discrepancy()
+        t_discrepancy = self.report_target_discrepancy()
+
+        if s_discrepancy['fwd_p'] > 0.1:
+            logging.warning('Source discrepancy > 10%!')
+            logging.warning(s_discrepancy['msg'])
+
+        if t_discrepancy['fwd_p'] > 0.1:
+            logging.warning('Target discrepancy > 10%')
+            logging.warning(t_discrepancy['msg'])
+
+    def report_target_discrepancy(self):
+        """
+        S={S-Space}  ---M={S:T MAPPER}---> T={T-Space}
+        M-domain = M.keys()
+        M-range = set().union(*M.values())
+        """
+        M_range = set().union(*self.values())
+        T = set(self.t_index)
+        fwd_diff = M_range - T
+        bwd_diff = T - M_range
+        fwd_p = len(fwd_diff) / len(M_range)
+        bwd_p = len(bwd_diff) / len(T)
+        return dict(fwd_diff=fwd_diff,
+                    bwd_diff=bwd_diff,
+                    fwd_p=fwd_p,
+                    bwd_p=bwd_p,
+                    msg=f"""
+                            M_range - T ({len(fwd_diff)}, p={fwd_p}): \
+                            {sorted(fwd_diff)[:5]}...\n
+                            T - M_range ({len(bwd_diff)}, p={bwd_p}): \
+                            {sorted(bwd_diff)[:5]}...\n
+                            M_range ({len(M_range)}): \
+                            {sorted(M_range)[:5]}...\n
+                            T ({len(T)}): \
+                            {sorted(T)[:5]}...""")
+
+    def report_source_discrepancy(self):
+        """
+        S={S-Space}  ---M={S:T MAPPER}---> T={T-Space}
+        M-domain = M.keys()
+        M-range = set().union(*M.values())
+        """
+        M_domain = set(self.keys())
+        S = set(self.s_index)
+        fwd_diff = S - M_domain
+        bwd_diff = M_domain - S
+        fwd_p = len(fwd_diff) / len(S)
+        bwd_p = len(bwd_diff) / len(M_domain)
+        return dict(fwd_diff=fwd_diff,
+                    bwd_diff=bwd_diff,
+                    fwd_p=fwd_p,
+                    bwd_p=bwd_p,
+                    msg=f"""
+                            S - M_domain ({len(fwd_diff)}, p={fwd_p}): \
+                            {sorted(fwd_diff)[:5]}...\n
+                            M_domain - S ({len(bwd_diff)}, p={bwd_p}): \
+                            {sorted(bwd_diff)[:5]}...\n
+                            M_domain ({len(M_domain)}): \
+                            {sorted(M_domain)[:5]}...\n
+                            S ({len(S)}): \
+                            {sorted(S)[:5]}...""")
+
     @property
     def t_index(self):
         return self._t_index
@@ -73,7 +137,10 @@ class CodeMapper(defaultdict):
         if key in load_maps:
             load_maps[key]()
 
-        return CodeMapper.maps.get(key)
+        mapper = CodeMapper.maps.get(key)
+        mapper.report_discrepancy()
+
+        return mapper
 
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
@@ -99,6 +166,7 @@ class IdentityCodeMapper(CodeMapper):
                          t_dag_space=False,
                          *args)
         self.update({c: {c} for c in scheme.codes})
+        self.report_discrepancy()
 
     def map_codeset(self, codeset):
         return codeset
