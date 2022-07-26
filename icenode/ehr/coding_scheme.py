@@ -35,13 +35,14 @@ Ideas in mapping
 class CodeMapper(defaultdict):
     maps = {}
 
-    def __init__(self, s_scheme, t_scheme, *args, **kwargs):
+    def __init__(self, s_scheme, t_scheme, t_dag_space, *args, **kwargs):
         super(CodeMapper, self).__init__(*(args or (set, )))
 
         self._s_scheme = s_scheme
         self._t_scheme = t_scheme
         self._s_index = s_scheme.index
-        if s_scheme != t_scheme and isinstance(t_scheme, HierarchicalScheme):
+        self._t_dag_space = t_dag_space
+        if s_scheme != t_scheme and t_dag_space:
             self._t_index = t_scheme.dag_index
         else:
             self._t_index = t_scheme.index
@@ -71,7 +72,7 @@ class CodeMapper(defaultdict):
                     'code_scheme': self._s_scheme.name,
                     'conv_file': self._conv_file,
                     'n': len(self._unrecognised_domain),
-                    'codes': sorted(self._unrecognised_range)
+                    'codes': sorted(self._unrecognised_domain)
                 }, json_fname)
 
     def log_uncovered_source_codes(self, json_fname):
@@ -100,12 +101,12 @@ class CodeMapper(defaultdict):
         except TypeError as e:
             logging.error(f'{self}: {e}')
 
-        if s_discrepancy['fwd_p'] > 0.1:
-            logging.warning('Source discrepancy > 10%!')
+        if s_discrepancy['fwd_p'] > 0:
+            logging.warning('Source discrepancy')
             logging.warning(s_discrepancy['msg'])
 
-        if t_discrepancy['fwd_p'] > 0.1:
-            logging.warning('Target discrepancy > 10%')
+        if t_discrepancy['fwd_p'] > 0:
+            logging.warning('Target discrepancy')
             logging.warning(t_discrepancy['msg'])
 
     def report_target_discrepancy(self):
@@ -222,7 +223,10 @@ class CodeMapper(defaultdict):
 class IdentityCodeMapper(CodeMapper):
 
     def __init__(self, scheme, *args):
-        super().__init__(s_scheme=scheme, t_scheme=scheme, *args)
+        super().__init__(s_scheme=scheme,
+                         t_scheme=scheme,
+                         t_dag_space=False,
+                         *args)
         self.update({c: {c} for c in scheme.codes})
 
     def map_codeset(self, codeset):
@@ -232,7 +236,10 @@ class IdentityCodeMapper(CodeMapper):
 class NullCodeMapper(CodeMapper):
 
     def __init__(self, *args):
-        super().__init__(s_scheme=None, t_scheme=None, *args)
+        super().__init__(s_scheme=None,
+                         t_scheme=None,
+                         t_dag_space=False,
+                         *args)
 
     def map_codeset(self, codeset):
         return None
@@ -544,6 +551,7 @@ class ICDCommons(HierarchicalScheme):
 
         mapping = CodeMapper(s_scheme,
                              t_scheme,
+                             t_dag_space=True,
                              unrecognised_source=res["unrecognised_source"],
                              unrecognised_target=res["unrecognised_target"],
                              conv_file=res["conv_file"])
@@ -906,10 +914,12 @@ class CCSCommons(HierarchicalScheme):
 
         icd92ccs = CodeMapper(icd9_scheme,
                               ccs_scheme,
+                              t_dag_space=False,
                               unrecognised_source=res["unrecognised_icd9"],
                               conv_file=res["conv_file"])
         ccs2icd9 = CodeMapper(ccs_scheme,
                               icd9_scheme,
+                              t_dag_space=False,
                               unrecognised_target=res["unrecognised_icd9"],
                               conv_file=res["conv_file"])
         cols = res["cols"]
@@ -1043,10 +1053,12 @@ class FlatCCSCommons(AbstractScheme):
 
         flatccs2icd9 = CodeMapper(flatccs_scheme,
                                   icd9_scheme,
+                                  t_dag_space=False,
                                   unrecognised_target=res["unrecognised_icd9"],
                                   conv_file=res["conv_file"])
         icd92flatccs = CodeMapper(icd9_scheme,
                                   flatccs_scheme,
+                                  t_dag_space=False,
                                   unrecognised_source=res["unrecognised_icd9"],
                                   conv_file=res["conv_file"])
 
