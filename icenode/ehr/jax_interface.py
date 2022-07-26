@@ -76,21 +76,33 @@ class Subject_JAX:
 
     @property
     def dx_source_scheme(self) -> str:
-        subject = list(self._subjects.values())[0]
-        return subject.dx_scheme
+        return self.dx_mapper.s_scheme.name
 
     @property
-    def pr_source_scheme(self) -> str:
-        subject = list(self._subjects.values())[0]
-        return subject.pr_scheme
+    def dx_scheme(self) -> str:
+        return self.dx_mapper.t_scheme.name
 
     @property
     def dx_index(self) -> Dict[str, int]:
         return self.dx_mapper.t_index
 
+    def dx_make_ancestors_mat(self):
+        return self.dx_mapper.t_scheme.make_ancestors_mat()
+
+    @property
+    def pr_source_scheme(self) -> str:
+        return self.pr_mapper.s_scheme.name
+
+    @property
+    def pr_scheme(self) -> str:
+        return self.pr_mapper.t_scheme.name
+
     @property
     def pr_index(self) -> Dict[str, int]:
         return self.pr_mapper.t_index
+
+    def pr_make_ancestors_mat(self):
+        return self.pr_mapper.t_scheme.make_ancestors_mat()
 
     @property
     def outcome_index(self) -> Dict[str, int]:

@@ -132,7 +132,7 @@ class Subject:
         for subject in subjects:
             for adm in subject.admissions:
                 codeset = mapper.map_codeset(adm.dx_codes)
-                for idx in map(mapper.t_index, codeset):
+                for idx in map(mapper.t_index.get, codeset):
                     counter[idx] += 1
 
         # Return dictionary with zero-frequency codes added.

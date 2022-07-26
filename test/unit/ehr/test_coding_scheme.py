@@ -1,10 +1,14 @@
 import unittest
 import random
+import os
+from pathlib import Path
 
 from icenode.ehr.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
                                        PrCCS, PrFlatCCS, PrICD10, PrICD9,
                                        HierarchicalScheme, CodeMapper,
                                        code_scheme as C)
+
+_DIR = os.path.dirname(__file__)
 
 
 class AbstractSchemeTests(object):
@@ -131,12 +135,24 @@ class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
 
 class TestCodeMappers(unittest.TestCase):
 
-    def test_dtypes(self):
+    def test_code_mappers(self):
+        log_dir = os.path.join(_DIR, 'logs')
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
         for s1 in C:
             for s2 in C:
                 m = CodeMapper.get_mapper(s1, s2)
-                if m is None: continue
-                with self.subTest(f"{s1}->{s2} types"):
+                if not m: continue
+                with self.subTest(f"M: {m}"):
                     self.assertTrue(all(type(c) == str for c in m))
                     m_range = set().union(*m.values())
                     self.assertTrue(all(type(c) == str for c in m_range))
+                    m.log_unrecognised_domain(
+                        f'{log_dir}/{m}_unrecognised_domain.json')
+                    m.log_unrecognised_range(
+                        f'{log_dir}/{m}_unrecognised_range.json')
+                    m.log_uncovered_source_codes(
+                        f'{log_dir}/{m}_uncovered_source.json')
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -11,7 +11,7 @@ from absl import logging
 import numpy as np
 import pandas as pd
 
-from ..utils import OOPError, LazyDict
+from ..utils import OOPError, LazyDict, write_config
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -35,28 +35,70 @@ Ideas in mapping
 class CodeMapper(defaultdict):
     maps = {}
 
-    def __init__(self, s_scheme, t_scheme, t_dag_space=False, *args):
+    def __init__(self, s_scheme, t_scheme, *args, **kwargs):
         super(CodeMapper, self).__init__(*(args or (set, )))
 
-        self._t_dag_space = t_dag_space
         self._s_scheme = s_scheme
         self._t_scheme = t_scheme
         self._s_index = s_scheme.index
-        self._t_index = t_scheme.dag_index if t_dag_space else t_scheme.index
+        if s_scheme != t_scheme and isinstance(t_scheme, HierarchicalScheme):
+            self._t_index = t_scheme.dag_index
+        else:
+            self._t_index = t_scheme.index
+
+        self._unrecognised_range = kwargs.get('unrecognised_target', set())
+        self._unrecognised_domain = kwargs.get('unrecognised_source', set())
+        self._conv_file = kwargs.get('conv_file', '')
         CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
 
+    def __str__(self):
+        return f'{self.s_scheme.name}->{self.t_scheme.name}'
+
+    def log_unrecognised_range(self, json_fname):
+        if self._unrecognised_range:
+            write_config(
+                {
+                    'code_scheme': self._t_scheme.name,
+                    'conv_file': self._conv_file,
+                    'n': len(self._unrecognised_range),
+                    'codes': sorted(self._unrecognised_range)
+                }, json_fname)
+
+    def log_unrecognised_domain(self, json_fname):
+        if self._unrecognised_domain:
+            write_config(
+                {
+                    'code_scheme': self._s_scheme.name,
+                    'conv_file': self._conv_file,
+                    'n': len(self._unrecognised_domain),
+                    'codes': sorted(self._unrecognised_range)
+                }, json_fname)
+
+    def log_uncovered_source_codes(self, json_fname):
+        res = self.report_source_discrepancy()
+        uncovered = res["fwd_diff"]
+        if len(uncovered) > 0:
+            write_config(
+                {
+                    'code_scheme': self._s_scheme.name,
+                    'conv_file': self._conv_file,
+                    'n': len(uncovered),
+                    'p': len(uncovered) / len(self._s_scheme.index),
+                    'codes': sorted(uncovered),
+                    'desc': {c: self._s_scheme.desc[c]
+                             for c in uncovered}
+                }, json_fname)
+
     def report_discrepancy(self):
-        assert all(
-            type(c) == str for c in self
-        ), f"All M_domain({self._s_scheme}->{self._t_scheme}) types should be str"
-        assert all(
-            type(c) == str for c in set().union(*self.values())
-        ), f"All M_range({self._s_scheme}->{self._t_scheme}) types should be str"
+        assert all(type(c) == str
+                   for c in self), f"All M_domain({self}) types should be str"
+        assert all(type(c) == str for c in set().union(
+            *self.values())), f"All M_range({self}) types should be str"
         try:
             s_discrepancy = self.report_source_discrepancy()
             t_discrepancy = self.report_target_discrepancy()
         except TypeError as e:
-            logging.error(f'{self._s_scheme}->{self._t_scheme}: {e}')
+            logging.error(f'{self}: {e}')
 
         if s_discrepancy['fwd_p'] > 0.1:
             logging.warning('Source discrepancy > 10%!')
@@ -82,15 +124,14 @@ class CodeMapper(defaultdict):
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""
-                            M_range - T ({len(fwd_diff)}, p={fwd_p}): \
+                    msg=f"""M: {self} \n
+                            M_range - T ({len(fwd_diff)}, p={fwd_p}):
                             {sorted(fwd_diff)[:5]}...\n
-                            T - M_range ({len(bwd_diff)}, p={bwd_p}): \
+                            T - M_range ({len(bwd_diff)}, p={bwd_p}):
                             {sorted(bwd_diff)[:5]}...\n
-                            M_range ({len(M_range)}): \
+                            M_range ({len(M_range)}):
                             {sorted(M_range)[:5]}...\n
-                            T ({len(T)}): \
-                            {sorted(T)[:5]}...""")
+                            T ({len(T)}): {sorted(T)[:5]}...""")
 
     def report_source_discrepancy(self):
         """
@@ -108,15 +149,14 @@ class CodeMapper(defaultdict):
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""
-                            S - M_domain ({len(fwd_diff)}, p={fwd_p}): \
+                    msg=f"""M: {self} \n
+                            S - M_domain ({len(fwd_diff)}, p={fwd_p}):
                             {sorted(fwd_diff)[:5]}...\n
-                            M_domain - S ({len(bwd_diff)}, p={bwd_p}): \
+                            M_domain - S ({len(bwd_diff)}, p={bwd_p}):
                             {sorted(bwd_diff)[:5]}...\n
-                            M_domain ({len(M_domain)}): \
+                            M_domain ({len(M_domain)}):
                             {sorted(M_domain)[:5]}...\n
-                            S ({len(S)}): \
-                            {sorted(S)[:5]}...""")
+                            S ({len(S)}): {sorted(S)[:5]}...""")
 
     @property
     def t_index(self):
@@ -125,6 +165,14 @@ class CodeMapper(defaultdict):
     @property
     def s_index(self):
         return self._s_index
+
+    @property
+    def s_scheme(self):
+        return self._s_scheme
+
+    @property
+    def t_scheme(self):
+        return self._t_scheme
 
     @staticmethod
     def get_mapper(s_scheme: str, t_scheme: Optional[str] = None):
@@ -174,10 +222,7 @@ class CodeMapper(defaultdict):
 class IdentityCodeMapper(CodeMapper):
 
     def __init__(self, scheme, *args):
-        super().__init__(s_scheme=scheme,
-                         t_scheme=scheme,
-                         t_dag_space=False,
-                         *args)
+        super().__init__(s_scheme=scheme, t_scheme=scheme, *args)
         self.update({c: {c} for c in scheme.codes})
 
     def map_codeset(self, codeset):
@@ -187,10 +232,7 @@ class IdentityCodeMapper(CodeMapper):
 class NullCodeMapper(CodeMapper):
 
     def __init__(self, *args):
-        super().__init__(s_scheme=None,
-                         t_scheme=None,
-                         t_dag_space=False,
-                         *args)
+        super().__init__(s_scheme=None, t_scheme=None, *args)
 
     def map_codeset(self, codeset):
         return None
@@ -204,11 +246,12 @@ class NullCodeMapper(CodeMapper):
 
 class AbstractScheme:
 
-    def __init__(self, codes, index, desc):
-        logging.info(f'Constructing {type(self)} scheme')
+    def __init__(self, codes, index, desc, name):
+        logging.info(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
         self._index = index
         self._desc = desc
+        self._name = name
 
         for collection in [codes, index, desc]:
             assert all(
@@ -219,6 +262,9 @@ class AbstractScheme:
 
     def __bool__(self):
         return len(self.codes) > 0
+
+    def __str__(self):
+        return self.name
 
     @property
     def codes(self):
@@ -232,15 +278,15 @@ class AbstractScheme:
     def desc(self):
         return self._desc
 
-    @staticmethod
-    def maps_to_register():
-        return []
+    @property
+    def name(self):
+        return self._name
 
 
 class NullScheme(AbstractScheme):
 
-    def __init__(self):
-        super().__init__([], {}, {})
+    def __init__(self, name):
+        super().__init__([], {}, {}, name)
 
 
 class HierarchicalScheme(AbstractScheme):
@@ -419,8 +465,7 @@ class ICDCommons(HierarchicalScheme):
 
     @staticmethod
     def load_conv_table(s_scheme, t_scheme, conv_fname):
-        conv_fname = os.path.join(_RSC_DIR, conv_fname)
-        df = pd.read_csv(conv_fname,
+        df = pd.read_csv(os.path.join(_RSC_DIR, conv_fname),
                          sep='\s+',
                          dtype=str,
                          names=['source', 'target', 'meta'])
@@ -431,16 +476,36 @@ class ICDCommons(HierarchicalScheme):
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
         df['source'] = df['source'].map(s_scheme.add_dot)
         df['target'] = df['target'].map(t_scheme.add_dot)
-        df['target'] = df['target'].map(lambda c: t_scheme.code2dag.get(c, c))
 
+        valid_target = df['target'].isin(t_scheme.index)
+        unrecognised_target = set(df[~valid_target]["target"])
+        if len(unrecognised_target) > 0:
+            logging.warning(f"""
+                            {s_scheme}->{t_scheme} Unrecognised t_codes
+                            ({len(unrecognised_target)}):
+                            {sorted(unrecognised_target)[:20]}...""")
 
-        assert df['target'].map(lambda c: type(c) == float).sum() == 0, "eeee"
+        valid_source = df['source'].isin(s_scheme.index)
+        unrecognised_source = set(df[~valid_source]["source"])
+        if len(unrecognised_source) > 0:
+            logging.warning(f"""
+                            {s_scheme}->{t_scheme} Unrecognised s_codes
+                            ({len(unrecognised_source)}):
+                            {sorted(unrecognised_source)[:20]}...""")
 
-        return df
+        df = df[valid_target & valid_source]
+        df['target'] = df['target'].map(t_scheme.code2dag)
+
+        return {
+            "df": df,
+            "conv_file": conv_fname,
+            "unrecognised_target": unrecognised_target,
+            "unrecognised_source": unrecognised_source
+        }
 
     @staticmethod
     def analyse_conversions(s_scheme, t_scheme, conv_fname):
-        df = ICDCommons.load_conv_table(s_scheme, t_scheme, conv_fname)
+        df = ICDCommons.load_conv_table(s_scheme, t_scheme, conv_fname)["df"]
         codes = list(df['source'][df['no_map'] == '1'])
         status = ['no_map' for _ in codes]
         for code, source_df in df[df['no_map'] == '0'].groupby('source'):
@@ -463,13 +528,7 @@ class ICDCommons(HierarchicalScheme):
         def _resolve_choice_list(df):
             represent = set()
             for _, choice_list_df in df.groupby('choice_list'):
-                choice_list = choice_list_df['target']
-                if choice_list.isnull().sum() > 0:
-                    logging.debug(
-                        f'Failed mapping to DAG space: {list(choice_list_df["target"])} -> {list(choice_list)}'
-                    )
-
-                choice_list = list(choice_list[choice_list.notnull()])
+                choice_list = list(choice_list_df['target'])
                 if len(choice_list) > 1:
                     lca = t_scheme.least_common_ancestor(choice_list)
                     represent.add(lca)
@@ -477,12 +536,18 @@ class ICDCommons(HierarchicalScheme):
                     represent.add(choice_list[0])
             return represent
 
-        conv_df = ICDCommons.load_conv_table(s_scheme, t_scheme, conv_fname)
+        res = ICDCommons.load_conv_table(s_scheme, t_scheme, conv_fname)
+        conv_df = res["df"]
         status_df = ICDCommons.analyse_conversions(s_scheme, t_scheme,
                                                    conv_fname)
         map_kind = dict(zip(status_df['code'], status_df['status']))
 
-        mapping = CodeMapper(s_scheme, t_scheme, t_dag_space=True)
+        mapping = CodeMapper(s_scheme,
+                             t_scheme,
+                             unrecognised_source=res["unrecognised_source"],
+                             unrecognised_target=res["unrecognised_target"],
+                             conv_file=res["conv_file"])
+
         for code, df in conv_df.groupby('source'):
             kind = map_kind[code]
             if kind == 'no_map':
@@ -579,10 +644,11 @@ class DxICD10(ICDCommons):
             'pt2ch': pt2ch
         }
 
-    def __init__(self):
+    def __init__(self, name):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
-        super().__init__(
-            **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
+        super().__init__(**self.distill_icd10_xml(
+            'icd10cm_tabular_2023.xml.gz'),
+                         name=name)
 
 
 class PrICD10(ICDCommons):
@@ -646,9 +712,10 @@ class PrICD10(ICDCommons):
             'pt2ch': pt2ch
         }
 
-    def __init__(self):
-        super().__init__(
-            **self.distill_icd10_xml('icd10pcs_codes_2023.txt.gz'))
+    def __init__(self, name):
+        super().__init__(**self.distill_icd10_xml(
+            'icd10pcs_codes_2023.txt.gz'),
+                         name=name)
 
 
 class DxICD9(ICDCommons):
@@ -740,7 +807,7 @@ class DxICD9(ICDCommons):
             'dag_desc': dag_desc
         }
 
-    def __init__(self):
+    def __init__(self, name):
         df = pd.DataFrame(self.icd9_columns())
         pt2ch = self.parent_child_mappings(df)
 
@@ -762,7 +829,8 @@ class DxICD9(ICDCommons):
                          pt2ch=pt2ch,
                          codes=d['icd_codes'],
                          index=d['icd_index'],
-                         desc=d['icd_desc'])
+                         desc=d['icd_desc'],
+                         name=name)
 
 
 class PrICD9(ICDCommons):
@@ -777,7 +845,7 @@ class PrICD9(ICDCommons):
         else:
             return code
 
-    def __init__(self):
+    def __init__(self, name):
         df = pd.DataFrame(DxICD9.icd9_columns())
         pt2ch = DxICD9.parent_child_mappings(df)
 
@@ -799,7 +867,8 @@ class PrICD9(ICDCommons):
                          pt2ch=pt2ch,
                          codes=d['icd_codes'],
                          index=d['icd_index'],
-                         desc=d['icd_desc'])
+                         desc=d['icd_desc'],
+                         name=name)
 
 
 class CCSCommons(HierarchicalScheme):
@@ -807,25 +876,43 @@ class CCSCommons(HierarchicalScheme):
     _N_LEVELS = None
 
     @classmethod
-    def ccs_columns(cls, icd9_cls):
+    def ccs_columns(cls, icd9_scheme):
         df = pd.read_csv(os.path.join(_CCS_DIR, cls._SCHEME_FILE), dtype=str)
+        icd_cname = '\'ICD-9-CM CODE\''
+
+        df[icd_cname] = df[icd_cname].apply(lambda l: l.strip('\'').strip())
+        df[icd_cname] = df[icd_cname].map(icd9_scheme.add_dot)
+        valid_icd = df[icd_cname].isin(icd9_scheme.index)
+        unrecognised_icd9 = set(df[~valid_icd][icd_cname])
+        df = df[valid_icd]
+
         cols = {}
         for i in range(1, cls._N_LEVELS + 1):
             cols[f'I{i}'] = list(
                 df[f'\'CCS LVL {i}\''].apply(lambda l: l.strip('\'').strip()))
             cols[f'L{i}'] = list(df[f'\'CCS LVL {i} LABEL\''].apply(
                 lambda l: l.strip('\'').strip()))
-        cols['ICD'] = list(
-            df['\'ICD-9-CM CODE\''].apply(lambda l: l.strip('\'').strip()))
-        cols['ICD'] = list(map(icd9_cls.add_dot, cols['ICD']))
-        return cols
+        cols['ICD'] = list(df[icd_cname])
+
+        return {
+            "cols": cols,
+            "unrecognised_icd9": unrecognised_icd9,
+            "conv_file": cls._SCHEME_FILE
+        }
 
     @staticmethod
     def register_mappings(ccs_scheme, icd9_scheme):
-        cols = ccs_scheme.ccs_columns(icd9_scheme)
+        res = ccs_scheme.ccs_columns(icd9_scheme)
 
-        icd92ccs = CodeMapper(icd9_scheme, ccs_scheme, t_dag_space=False)
-        ccs2icd9 = CodeMapper(ccs_scheme, icd9_scheme, t_dag_space=False)
+        icd92ccs = CodeMapper(icd9_scheme,
+                              ccs_scheme,
+                              unrecognised_source=res["unrecognised_icd9"],
+                              conv_file=res["conv_file"])
+        ccs2icd9 = CodeMapper(ccs_scheme,
+                              icd9_scheme,
+                              unrecognised_target=res["unrecognised_icd9"],
+                              conv_file=res["conv_file"])
+        cols = res["cols"]
         n_rows = len(cols['ICD'])
         for i in range(n_rows):
             last_index = None
@@ -888,8 +975,8 @@ class DxCCS(CCSCommons):
     _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
     _N_LEVELS = 4
 
-    def __init__(self):
-        cols = self.ccs_columns(DxICD9)
+    def __init__(self, icd9_scheme, name):
+        cols = self.ccs_columns(icd9_scheme)["cols"]
         df = pd.DataFrame(cols)
         pt2ch = self.parent_child_mappings(df)
         desc = self.desc_mappings(df)
@@ -898,15 +985,16 @@ class DxCCS(CCSCommons):
         super().__init__(pt2ch=pt2ch,
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
-                         desc=desc)
+                         desc=desc,
+                         name=name)
 
 
 class PrCCS(CCSCommons):
     _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
     _N_LEVELS = 3
 
-    def __init__(self):
-        cols = self.ccs_columns(PrICD9)
+    def __init__(self, icd9_scheme, name):
+        cols = self.ccs_columns(icd9_scheme)["cols"]
         df = pd.DataFrame(cols)
         pt2ch = self.parent_child_mappings(df)
         desc = self.desc_mappings(df)
@@ -915,39 +1003,55 @@ class PrCCS(CCSCommons):
         super().__init__(pt2ch=pt2ch,
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
-                         desc=desc)
+                         desc=desc,
+                         name=name)
 
 
 class FlatCCSCommons(AbstractScheme):
     _SCHEME_FILE = None
 
     @classmethod
-    def flatccs_columns(cls, icd9_cls):
+    def flatccs_columns(cls, icd9_scheme):
         filepath = os.path.join(_CCS_DIR, cls._SCHEME_FILE)
         df = pd.read_csv(filepath, skiprows=[0, 2], dtype=str)
-        code_col = list(
-            df['\'CCS CATEGORY\''].apply(lambda cat: cat.strip('\'').strip()))
-        icd9_col = list(
-            df['\'ICD-9-CM CODE\''].apply(lambda c: c.strip('\'').strip()))
-        desc_col = df['\'CCS CATEGORY DESCRIPTION\''].apply(
-            lambda desc: desc.strip('\'').strip()).tolist()
+        icd9_cname = '\'ICD-9-CM CODE\''
+        cat_cname = '\'CCS CATEGORY\''
+        desc_cname = '\'CCS CATEGORY DESCRIPTION\''
+        df[icd9_cname] = df[icd9_cname].map(lambda c: c.strip('\'').strip())
+        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dot)
 
-        icd9_col = list(map(icd9_cls.add_dot, icd9_col))
-        return {'code': code_col, 'icd9': icd9_col, 'desc': desc_col}
+        valid_icd9 = df[icd9_cname].isin(icd9_scheme.index)
+
+        unrecognised_icd9 = set(df[~valid_icd9][icd9_cname])
+        df = df[valid_icd9]
+
+        code_col = list(df[cat_cname].map(lambda c: c.strip('\'').strip()))
+        icd9_col = list(df[icd9_cname])
+        desc_col = list(df[desc_cname].map(lambda d: d.strip('\'').strip()))
+
+        return {
+            'code': code_col,
+            'icd9': icd9_col,
+            'desc': desc_col,
+            'unrecognised_icd9': unrecognised_icd9,
+            'conv_file': cls._SCHEME_FILE
+        }
 
     @staticmethod
     def register_mappings(flatccs_scheme, icd9_scheme):
-        cols = flatccs_scheme.flatccs_columns(icd9_scheme)
+        res = flatccs_scheme.flatccs_columns(icd9_scheme)
 
         flatccs2icd9 = CodeMapper(flatccs_scheme,
                                   icd9_scheme,
-                                  t_dag_space=False)
+                                  unrecognised_target=res["unrecognised_icd9"],
+                                  conv_file=res["conv_file"])
         icd92flatccs = CodeMapper(icd9_scheme,
                                   flatccs_scheme,
-                                  t_dag_space=False)
+                                  unrecognised_source=res["unrecognised_icd9"],
+                                  conv_file=res["conv_file"])
 
-        map_n1 = dict(zip(cols['icd9'], cols['code']))
-        assert len(map_n1) == len(cols['icd9']), "1toN mapping expected"
+        map_n1 = dict(zip(res['icd9'], res['code']))
+        assert len(map_n1) == len(res['icd9']), "1toN mapping expected"
 
         for icode, ccode in map_n1.items():
             flatccs2icd9[ccode].add(icode)
@@ -958,40 +1062,39 @@ class DxFlatCCS(FlatCCSCommons):
 
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
-    def __init__(self):
-        cols = self.flatccs_columns(DxICD9)
+    def __init__(self, icd9_scheme, name):
+        cols = self.flatccs_columns(icd9_scheme)
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
-                         desc=dict(zip(cols['code'], cols['desc'])))
+                         desc=dict(zip(cols['code'], cols['desc'])),
+                         name=name)
 
 
 class PrFlatCCS(FlatCCSCommons):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
-    def __init__(self):
-        cols = self.flatccs_columns(PrICD9)
+    def __init__(self, icd9_scheme, name):
+        cols = self.flatccs_columns(icd9_scheme)
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
-                         desc=dict(zip(cols['code'], cols['desc'])))
+                         desc=dict(zip(cols['code'], cols['desc'])),
+                         name=name)
 
 
-# Singleton instance.
-code_scheme = LazyDict({
-    'none': lambda: NullScheme(),
-    'dx_flatccs': lambda: DxFlatCCS(),
-    'dx_ccs': lambda: DxCCS(),
-    'dx_icd9': lambda: DxICD9(),
-    'dx_icd10': lambda: DxICD10(),
-    'pr_flatccs': lambda: PrFlatCCS(),
-    'pr_ccs': lambda: PrCCS(),
-    'pr_icd9': lambda: PrICD9(),
-    'pr_icd10': lambda: PrICD10()
-})
-
-# Short alias
-_C = code_scheme
+# Singleton instance. Lazy on-demand loading.
+_C = LazyDict({})
+_C['none'] = lambda: NullScheme('none')
+_C['dx_flatccs'] = lambda: DxFlatCCS(_C['dx_icd9'], 'dx_flatccs')
+_C['dx_ccs'] = lambda: DxCCS(_C['dx_icd9'], 'dx_ccs')
+_C['dx_icd9'] = lambda: DxICD9('dx_icd9')
+_C['dx_icd10'] = lambda: DxICD10('dx_icd10')
+_C['pr_flatccs'] = lambda: PrFlatCCS(_C['pr_icd9'], 'pr_flatccs')
+_C['pr_ccs'] = lambda: PrCCS(_C['pr_icd9'], 'pr_ccs')
+_C['pr_icd9'] = lambda: PrICD9('pr_icd9')
+_C['pr_icd10'] = lambda: PrICD10('pr_icd10')
+code_scheme = _C
 
 # Possible Mappings
 load_maps = {

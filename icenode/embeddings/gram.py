@@ -186,9 +186,9 @@ class GRAM(AbstractGRAM):
                  **init_kwargs):
 
         if category == 'dx':
-            ancestors_mat = subject_interface.dx_ancestors_mat
+            ancestors_mat = subject_interface.dx_make_ancestors_mat()
         else:
-            ancestors_mat = subject_interface.pr_ancestors_mat
+            ancestors_mat = subject_interface.pr_make_ancestors_mat()
 
         super().__init__(attention_dim=attention_dim,
                          attention_method=attention_method,

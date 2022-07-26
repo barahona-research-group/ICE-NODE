@@ -30,7 +30,7 @@ class TestSubject_JAX(unittest.TestCase):
                                                           random_seed=42)
         self.assertCountEqual(
             set(train_ids) | set(valid_ids) | set(test_ids),
-            IF.subjects.keys())
+            IF._subjects.keys())
 
     def test_code_frequency_paritions(self):
         IFs = self.interfaces
