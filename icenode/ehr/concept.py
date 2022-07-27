@@ -153,20 +153,17 @@ class Subject:
                 for c in codeset:
                     counter[c] += 1
 
-        # Return dictionary with zero-frequency codes added.
-        res = {c: counter[c] for c in codeset}
-
         if index:
-            res = {index[c]: res[c] for c in res}
+            counter = {index[c]: counter[c] for c in counter}
 
-        return res
+        return counter
 
     @staticmethod
     def _event_frequency_vec(subjects: List[Subject],
                              adm2codeset: Callable[[Admission], Set[str]],
                              index: Dict[str, int]):
         freq_dict = Subject._event_frequency(subjects, adm2codeset, index)
-        vec = np.zeros(len(freq_dict))
+        vec = np.zeros(len(index))
         for idx, count in freq_dict.items():
             vec[idx] = count
         return vec
@@ -178,7 +175,7 @@ class Subject:
                    for s in subjects), "Scheme inconsistency"
         m = CodeMapper.get_mapper(src_scheme, dx_scheme)
 
-        return Subject._event_frequency(
+        return Subject._event_frequency_vec(
             subjects=subjects,
             adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
             index=m.t_index)
@@ -191,7 +188,7 @@ class Subject:
             Source scheme of admission info ({subjects[0].dx_scheme}) != Source
             scheme of filter mapper {m.mapper.s_scheme.name}
             """)
-        return Subject._event_frequency(
+        return Subject._event_frequency_vec(
             subjects=subjects,
             adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
             index=m.index)

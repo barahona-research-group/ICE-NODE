@@ -20,7 +20,7 @@ def setUpModule():
     })
 
     splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)
-    code_groups = interface.dx_codes_by_percentiles(20)
+    code_groups = interface.dx_outcome_by_percentiles(20)
 
 
 def tearDownModule():

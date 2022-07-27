@@ -41,7 +41,7 @@ class TestSubject_JAX(unittest.TestCase):
         for IF in IFs:
             with self.subTest(msg=f"{IF.dx_source_scheme}->{IF.dx_scheme}"):
                 for percentile_range in [2, 5, 10, 20, 25, 33, 50, 100]:
-                    code_partitions = IF.dx_codes_by_percentiles(
+                    code_partitions = IF.dx_by_percentiles(
                         percentile_range, train_ids)
                     # Assert that union of all partitions recovers all the codes.
                     self.assertEqual(set(IF.dx_index.values()),

@@ -170,11 +170,11 @@ class Subject_JAX(dict):
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def dx_frequency_vec(self, subjects: List[int]):
+    def dx_frequency_vec(self, subjects: List[Subject]):
         np_res = Subject.dx_frequency_vec(subjects, self.dx_scheme.name)
         return jnp.array(np_res)
 
-    def dx_outcome_frequency_vec(self, subjects: List[int]):
+    def dx_outcome_frequency_vec(self, subjects: List[Subject]):
         np_res = Subject.dx_outcome_frequency_vec(subjects, self.dx_outcome)
         return jnp.array(np_res)
 
@@ -205,14 +205,14 @@ class Subject_JAX(dict):
     def dx_by_percentiles(self,
                           percentile_range: float = 20,
                           subjects: List[int] = []):
-        subjects = subjects or self._subjects
+        subjects = [self._subjects[i] for i in subjects or self._subjects]
         return self._code_frequency_partitions(percentile_range,
                                                self.dx_frequency_vec(subjects))
 
     def dx_outcome_by_percentiles(self,
                                   percentile_range: float = 20,
                                   subjects: List[int] = []):
-        subjects = subjects or self._subjects
+        subjects = [self._subjects[i] for i in subjects or self._subjects]
         return self._code_frequency_partitions(
             percentile_range, self.dx_outcome_frequency_vec(subjects))
 
