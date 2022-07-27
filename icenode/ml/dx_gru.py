@@ -71,8 +71,7 @@ class GRU(AbstractModel):
         state0 = jnp.zeros(self.dimensions['state'])
         for subject_id in subjects_batch:
             adms = self.subject_interface.batch_nth_admission([subject_id])
-            n = sorted(adms)
-            adms = [adms[n_i][subject_id] for n_i in n]
+            adms = [adms[n_i][subject_id] for n_i in sorted(adms)]
 
             # Exclude last input for irrelevance (not more future predictions)
             dx_vec = [adm.dx_vec for adm in adms[:-1]]

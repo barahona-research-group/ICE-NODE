@@ -5,9 +5,8 @@ import sys
 sys.path.append(['.', '..'])
 import common as C
 
-from icenode.ehr_predictive.trainer import (MinibatchLogger,
-                                            EvaluationDiskWriter,
-                                            ParamsDiskWriter)
+from icenode.ml import (MinibatchLogger, EvaluationDiskWriter,
+                        ParamsDiskWriter)
 
 
 def make_reporters(clfs, clf_dir):

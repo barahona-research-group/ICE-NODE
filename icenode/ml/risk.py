@@ -17,6 +17,13 @@ class SubjectPredictedRisk:
         self.ground_truth = ground_truth
         self.other_attrs = other_attrs
 
+    def __str__(self):
+        return f"""
+    adm_id (i: {self.index}): {self.admission_id}\n
+    prediction: {self.prediction}\n
+    ground_truth: {self.ground_truth}
+    """
+
     def __eq__(self, other):
         id_attrs = lambda x: (x.admission_id, x.index)
         arr_attrs = lambda x: (x.prediction, x.ground_truth)
@@ -31,6 +38,14 @@ class BatchPredictedRisks:
 
     def __eq__(self, other):
         return self.subject_risks == other.subject_risks
+
+    def __str__(self):
+        subjects_str = []
+        for subj_id, _risks in self.subject_risks.items():
+            subjects_str.extend([
+                f'subject_id:{subj_id}\n{_risk}' for _risk in _risks.values()
+            ])
+        return '\n========\n'.join(subjects_str)
 
     def add(self,
             subject_id,

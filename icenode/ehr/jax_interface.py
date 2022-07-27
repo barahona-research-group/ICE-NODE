@@ -32,7 +32,7 @@ class Admission_JAX:
         self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
         self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
 
-        self.dx_outcome = jnp.array(dx_outcome.adm2vec(adm))
+        self.dx_outcome = jnp.array(dx_outcome.codeset2vec(adm.dx_codes))
 
 
 class WindowFeatures:
@@ -46,7 +46,7 @@ class WindowFeatures:
         return jnp.max(past_codes, axis=0)
 
 
-class Subject_JAX:
+class Subject_JAX(dict):
     """
     Class to prepare EHRs information to predictive models.
     NOTE: admissions with overlapping admission dates for the same patietn
@@ -59,28 +59,36 @@ class Subject_JAX:
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
 
-        self.dx_mapper = CodeMapper.get_mapper(subjects[0].dx_scheme,
-                                               code_scheme['dx'])
-        self.pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
-                                               code_scheme.get('pr', 'none'))
+        self._dx_mapper = CodeMapper.get_mapper(subjects[0].dx_scheme,
+                                                code_scheme['dx'])
+        self._pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
+                                                code_scheme.get('pr', 'none'))
 
-        self.dx_outcome = DxCodeOutcomeFilter(
-            s_dx_scheme=subjects[0].dx_scheme, conf=code_scheme['dx_outcome'])
+        self._dx_outcome = DxCodeOutcomeFilter(
+            input_dx_scheme=subjects[0].dx_scheme, conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
-        self.subjects_jax = self.jaxify_subject_admissions(
-            subjects,
-            dx_mapper=self.dx_mapper,
-            dx_outcome=self.dx_outcome,
-            pr_mapper=self.pr_mapper)
+        self.update(
+            self.jaxify_subject_admissions(subjects,
+                                           dx_mapper=self.dx_mapper,
+                                           dx_outcome=self.dx_outcome,
+                                           pr_mapper=self.pr_mapper))
+
+    @property
+    def subjects(self):
+        return self._subjects
+
+    @property
+    def dx_mapper(self):
+        return self._dx_mapper
 
     @property
     def dx_source_scheme(self) -> str:
-        return self.dx_mapper.s_scheme.name
+        return self.dx_mapper.s_scheme
 
     @property
     def dx_scheme(self) -> str:
-        return self.dx_mapper.t_scheme.name
+        return self.dx_mapper.t_scheme
 
     @property
     def dx_index(self) -> Dict[str, int]:
@@ -90,12 +98,20 @@ class Subject_JAX:
         return self.dx_mapper.t_scheme.make_ancestors_mat()
 
     @property
+    def dx_dim(self):
+        return len(self.dx_index)
+
+    @property
+    def pr_mapper(self):
+        return self._pr_mapper
+
+    @property
     def pr_source_scheme(self) -> str:
-        return self.pr_mapper.s_scheme.name
+        return self.pr_mapper.s_scheme
 
     @property
     def pr_scheme(self) -> str:
-        return self.pr_mapper.t_scheme.name
+        return self.pr_mapper.t_scheme
 
     @property
     def pr_index(self) -> Dict[str, int]:
@@ -105,16 +121,20 @@ class Subject_JAX:
         return self.pr_mapper.t_scheme.make_ancestors_mat()
 
     @property
-    def outcome_index(self) -> Dict[str, int]:
+    def pr_dim(self):
+        return len(self.pr_index)
+
+    @property
+    def dx_outcome(self):
+        return self._dx_outcome
+
+    @property
+    def dx_outcome_index(self) -> Dict[str, int]:
         return self.dx_outcome.index
 
     @property
-    def dx_dim(self):
-        return len(self.dx_index)
-
-    @property
-    def pr_dim(self):
-        return len(self.pr_index)
+    def dx_outcome_desc(self) -> Dict[str, str]:
+        return self.dx_outcome.desc
 
     @property
     def dx_outcome_dim(self):
@@ -136,11 +156,16 @@ class Subject_JAX:
         test_ids = subject_ids[split2:]
         return train_ids, valid_ids, test_ids
 
-    def dx_history(self, subject_id, dx_scheme=None, absolute_dates=False):
-        return self._subjects[subject_id].dx_history(dx_scheme, absolute_dates)
+    def dx_history(self, subject_id, absolute_dates=False):
+        return self.subjects[subject_id].dx_history(self.dx_scheme.name,
+                                                    absolute_dates)
+
+    def dx_outcome_history(self, subject_id, absolute_dates=False):
+        return self.subjects[subject_id].dx_outcome_history(
+            self.dx_outcome, absolute_dates)
 
     def adm_times(self, subject_id):
-        adms_info = self.subjects_jax[subject_id]
+        adms_info = self[subject_id]
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
@@ -151,7 +176,7 @@ class Subject_JAX:
     def dx_frequency_vec(self,
                          subjects: Optional[List[int]] = None,
                          dx_code_scheme=None):
-        subjects = subjects or self.subjects_jax
+        subjects = subjects or self.keys()
         freq_dict = self.dx_code_frequency(subjects)
         vec = np.zeros(len(freq_dict))
         for idx, count in freq_dict.items():
@@ -194,13 +219,10 @@ class Subject_JAX:
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
         for subject_id in batch:
-            adms = self.subjects_jax[subject_id]
+            adms = self[subject_id]
             for n, adm in enumerate(adms):
                 nth_admission[n][subject_id] = adm
         return nth_admission
-
-    def subject_admission_sequence(self, subject_id):
-        return self.subjects_jax[subject_id]
 
     @staticmethod
     def subject_to_admissions(subject: Subject,
@@ -224,16 +246,20 @@ class Subject_JAX:
         return cls(subjects, *args, **kwargs)
 
 
-class WindowedInterface_JAX:
+class WindowedInterface_JAX(Subject_JAX):
 
     def __init__(self, interface: Subject_JAX):
-        self.interface = interface
-        self.win_features = self._compute_window_features(interface)
+        self._dx_mapper = interface._dx_mapper
+        self._pr_mapper = interface._pr_mapper
+        self._dx_outcome = interface._dx_outcome
+        self._subjects = interface._subjects
+        self.update(interface)
+        self.features = self._compute_window_features(interface)
 
     @staticmethod
     def _compute_window_features(interface: Subject_JAX):
         features = {}
-        for subj_id, adms in interface.subjects_jax.items():
+        for subj_id, adms in interface.items():
             current_window = []
             # Windowed features only contain information about the past adms.
             # First element, corresponding to first admission time, is None.
@@ -250,12 +276,12 @@ class WindowedInterface_JAX:
         Features are the past window of CCS codes, and labels
         are the past window of Flat CCS codes.
         """
-        batch = batch or sorted(self.win_features.keys())
+        batch = batch or sorted(self.features.keys())
         X = []
         y = []
         for subj_id in batch:
-            adms = self.interface.subjects_jax[subj_id]
-            features = self.win_features[subj_id]
+            adms = self[subj_id]
+            features = self.features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
                 X.append(feats.dx_features)
                 y.append(adm.dx_outcome)
@@ -264,8 +290,8 @@ class WindowedInterface_JAX:
 
     @property
     def n_features(self):
-        return self.interface.dx_dim
+        return self.dx_dim
 
     @property
     def n_targets(self):
-        return self.interface.dx_outcome_dim
+        return self.dx_outcome_dim

@@ -16,7 +16,7 @@ def setUpModule():
         'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
     interface = ehr.Subject_JAX.from_dataset(dataset, {
         'dx': 'dx_ccs',
-        'dx_outcome': 'dx_flatccs_v1'
+        'dx_outcome': 'dx_flatccs_filter_v1'
     })
 
     splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)

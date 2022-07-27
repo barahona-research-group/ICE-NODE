@@ -108,7 +108,7 @@ class RETAIN(AbstractModel):
         state_b0 = jnp.zeros(self.dimensions['state_b'])
 
         for subj_id in subjects_batch:
-            adms = self.subject_interface.subject_admission_sequence(subj_id)
+            adms = self.subject_interface[subj_id]
 
             dx_vec = jnp.vstack([adm.dx_vec for adm in adms])
             dx_outcome = [adm.dx_outcome for adm in adms]

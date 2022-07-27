@@ -17,7 +17,7 @@ class TestSubject_JAX(unittest.TestCase):
         for dx_scheme in [s for s in ehr.code_scheme if 'dx' in s]:
             code_scheme = {
                 'dx': dx_scheme,
-                'dx_outcome': 'dx_flatccs_v1',
+                'dx_outcome': 'dx_flatccs_filter_v1',
                 'pr': 'none'
             }
             interface = ehr.Subject_JAX.from_dataset(dataset, code_scheme)
@@ -30,7 +30,7 @@ class TestSubject_JAX(unittest.TestCase):
                                                           random_seed=42)
         self.assertCountEqual(
             set(train_ids) | set(valid_ids) | set(test_ids),
-            IF._subjects.keys())
+            IF.subjects.keys())
 
     def test_code_frequency_paritions(self):
         IFs = self.interfaces

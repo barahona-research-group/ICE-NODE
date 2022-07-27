@@ -11,19 +11,9 @@ import matplotlib.pyplot as plt
 from IPython.display import display
 
 sys.path.append('..')
-from icenode.metric.common_metrics import codes_auc_pairwise_tests
-from icenode.metric.common_metrics import evaluation_table
+from icenode.metric import codes_auc_pairwise_tests, evaluation_table
 
 import common as C
-
-dx_flatccs_idx2code = {
-    idx: code
-    for code, idx in C.ccs_dag.dx_flatccs_idx.items()
-}
-dx_flatccs_idx2desc = {
-    idx: C.ccs_dag.dx_flatccs_desc[dx_flatccs_idx2code[idx]]
-    for idx in dx_flatccs_idx2code
-}
 
 
 def performance_traces(data_tag, clfs, train_dir, model_dir):
@@ -106,12 +96,12 @@ def relative_performance_upset(auc_tests,
                                selected_clfs,
                                pvalue,
                                min_auc,
+                               interface,
                                code_attrs=None):
-    flatccs_idx2code = {
-        idx: code
-        for code, idx in C.ccs_dag.dx_flatccs_idx.items()
-    }
-    auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(dx_flatccs_idx2desc.get)
+    outcome = interface.dx_outcome
+    idx2code = outcome.idx2code
+
+    auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(idx2code.get)
 
     # remove codes that no classifier has scored above `min_auc`
     accepted_aucs = auc_tests.loc[:, [f'AUC({clf})'
@@ -353,35 +343,36 @@ def add_label(label, recorded_labels, group_priority=0):
         return label
 
 
-def plot_codes(codes_dict, ccs_color, legend_labels):
-    for ccs_idx in codes_dict:
-        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
-        time, traj_vals = zip(*codes_dict[ccs_idx])
+def plot_codes(codes_dict, outcome_color, legend_labels, idx2desc):
+
+    for idx in codes_dict:
+        desc = idx2desc[idx]
+        time, traj_vals = zip(*codes_dict[idx])
         plt.scatter(time,
                     traj_vals,
                     s=300,
                     marker='^',
-                    color=ccs_color[ccs_idx],
+                    color=outcome_color[idx],
                     linewidths=2,
-                    label=add_label(f'{dx_label(ccs_desc)} (Diagnosis)',
-                                    legend_labels, ccs_desc + 'd'))
+                    label=add_label(f'{label(desc)} (Diagnosis)',
+                                    legend_labels, desc + 'd'))
 
 
-def plot_risk_traj(trajs, ccs_color, legend_labels):
-    for ccs_idx in trajs:
-        ccs_desc = dx_flatccs_idx2desc[ccs_idx]
-        time, traj_vals = zip(*trajs[ccs_idx])
+def plot_risk_traj(trajs, outcome_color, legend_labels, idx2desc):
+    for idx in trajs:
+        desc = idx2desc[idx]
+        time, traj_vals = zip(*trajs[idx])
         time = np.concatenate(time)
         traj_vals = np.concatenate(traj_vals)
 
         plt.plot(time,
                  traj_vals,
-                 color=ccs_color[ccs_idx],
+                 color=outcome_color[idx],
                  marker='o',
                  markersize=2,
                  linewidth=3,
-                 label=add_label(f'{dx_label(ccs_desc)} (Predicted Risk)',
-                                 legend_labels, ccs_desc + 'p'))
+                 label=add_label(f'{dx_label(desc)} (Predicted Risk)',
+                                 legend_labels, desc + 'p'))
 
 
 def plot_admission_lines(adms, legend_labels):
@@ -393,27 +384,33 @@ def plot_admission_lines(adms, legend_labels):
                          label=add_label('Hospital Stay', legend_labels, '0'))
 
 
-def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
+def plot_trajectory(trajectories, interface, outcome_selection, outcome_color,
                     out_dir):
 
     style = {'axis_label_fs': 20, 'axis_ticks_fs': 18, 'legend_fs': 16}
+    outcome = interface.dx_outcome
+    index = outcome.index
+    desc = outcome.desc
+    idx2code = outcome.idx2code
+    idx2desc = outcome.idx2desc
 
-    flatccs_selection = set(flatccs_selection)
+    outcome_selection = set(outcome_selection)
+
     for i, traj in list(trajectories.items()):
         adm_times = interface.adm_times(i)
-        history = interface.dx_flatccs_history(i)
-        history_indexes = set(
-            map(lambda code: C.ccs_dag.dx_flatccs_idx[code], history))
+        history = interface.dx_outcome_history(i)
 
-        if len(history_indexes & flatccs_selection) == 0:
+        outcome_selection &= set(index[c] for c in history)
+        if len(outcome_selection) == 0:
             continue
+
         time_segments = traj['t']
         plt_codes = defaultdict(list)
         plt_trajs = defaultdict(list)
         max_min = [-np.inf, np.inf]
-        for ccs_idx in (history_indexes & flatccs_selection):
+        for ccs_idx in outcome_selection:
             risk = [r[:, ccs_idx] for r in traj['d']]
-            code = dx_flatccs_idx2code[ccs_idx]
+            code = idx2code[ccs_idx]
             code_history = history[code]
             code_history_adm, code_history_disch = zip(*code_history)
 
@@ -437,8 +434,14 @@ def plot_trajectory(trajectories, interface, flatccs_selection, ccs_color,
         plt.figure(i)
 
         legend_labels = {}
-        plot_codes(plt_codes, ccs_color, legend_labels)
-        plot_risk_traj(plt_trajs, ccs_color, legend_labels)
+        plot_codes(codes_dict=plt_codes,
+                   outcome_color=outcome_color,
+                   legend_labels=legend_labels,
+                   idx2desc=idx2desc)
+        plot_risk_traj(trajs=plt_trajs,
+                       outcome_color=outcome_color,
+                       legend_labels=legend_labels,
+                       idx2desc=idx2desc)
 
         # Make the major grid
         plt.grid(which='major', linestyle=':', color='gray', linewidth='1')

@@ -3,10 +3,11 @@
 from __future__ import annotations
 from datetime import date
 from collections import defaultdict
-from typing import List, Tuple, Set, Optional
+from typing import List, Tuple, Set, Optional, Callable
 from absl import logging
 
 from .coding_scheme import AbstractScheme, CodeMapper
+from .outcome import DxCodeOutcomeFilter
 from .dataset import AbstractEHRDataset
 
 
@@ -40,13 +41,9 @@ class AbstractAdmission:
 
 class Admission(AbstractAdmission):
 
-    def __init__(self,
-                 admission_id: int,
-                 admission_dates: Tuple[date, date],
-                 dx_codes: Set[str] = set(),
-                 pr_codes: Set[str] = set(),
-                 dx_scheme: Optional[str] = None,
-                 pr_scheme: Optional[str] = None):
+    def __init__(self, admission_id: int, admission_dates: Tuple[date, date],
+                 dx_codes: Set[str], pr_codes: Set[str], dx_scheme: str,
+                 pr_scheme: str):
         super().__init__(admission_id, admission_dates)
         self.dx_codes = dx_codes
         self.dx_scheme = dx_scheme
@@ -81,13 +78,14 @@ class Subject:
     def first_adm_date(self):
         return self.admissions[0].admission_dates[0]
 
-    def dx_history(self, dx_scheme=None, absolute_dates=False):
+    @staticmethod
+    def _event_history(adms_sorted: List[Admission],
+                       adm2codeset: Callable[[Admission], Set[str]],
+                       absolute_dates=False):
         history = defaultdict(list)
-        mapper = CodeMapper.get_mapper(self.dx_scheme, dx_scheme)
-
-        first_adm_date = self.admissions[0].admission_dates[0]
-        for adm in self.admissions:
-            for code in mapper.map_codeset(adm.dx_codes):
+        first_adm_date = adms_sorted[0].admission_dates[0]
+        for adm in adms_sorted:
+            for code in adm2codeset(adm):
                 if absolute_dates:
                     history[code].append(adm.admission_dates)
                 else:
@@ -95,8 +93,30 @@ class Subject:
                                          adm.discharge_day(first_adm_date))
         return history
 
-    def pr_history(self, pr_scheme=None):
-        pass
+    def dx_outcome_history(self,
+                           dx_outcome: DxCodeOutcomeFilter,
+                           absolute_dates=False):
+
+        m = dx_outcome
+        assert (self.dx_scheme == m.mapper.s_scheme.name, f"""
+            Source scheme of admission info ({self.dx_scheme}) != Source
+            scheme of filter mapper {m.mapper.s_scheme.name}
+            """)
+        return self._event_history(self.admissions,
+                                   lambda adm: m.map_codeset(adm.dx_codes),
+                                   absolute_dates)
+
+    def dx_history(self, dx_scheme=None, absolute_dates=False):
+        m = CodeMapper.get_mapper(self.dx_scheme, dx_scheme)
+        return self._event_history(self.admissions,
+                                   lambda adm: m.map_codeset(adm.dx_codes),
+                                   absolute_dates)
+
+    def pr_history(self, pr_scheme=None, absolute_dates=False):
+        m = CodeMapper.get_mapper(self.pr_scheme, pr_scheme)
+        return self._event_history(self.admissions,
+                                   lambda adm: m.map_codeset(adm.pr_codes),
+                                   absolute_dates)
 
     @staticmethod
     def _dx_scheme(admissions):

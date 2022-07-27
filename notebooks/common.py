@@ -6,22 +6,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 sys.path.append('..')
-from icenode.ehr_predictive.dx_icenode_2lr import ICENODE
-from icenode.ehr_predictive.dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM
-from icenode.ehr_predictive.dx_gram import GRAM
-from icenode.ehr_predictive.dx_retain import RETAIN
-from icenode.ehr_predictive.dx_window_logreg import WindowLogReg
-from icenode.ehr_model.ccs_dag import ccs_dag
-from icenode.ehr_model.jax_interface import create_patient_interface
-
+from icenode.ml import ICENODE, ICENODE_UNIFORM, GRU, RETAIN, WLR
+from icenode.ehr import MIMICDataset, Subject_JAX, code_scheme
 from icenode.utils import load_config, load_params, write_params, write_config
 
 model_cls = {
     'ICE-NODE': ICENODE,
     'ICE-NODE_UNIFORM': ICENODE_UNIFORM,
-    'GRU': GRAM,
+    'GRU': GRU,
     'RETAIN': RETAIN,
-    'LogReg': WindowLogReg
+    'WLR': WLR
 }
 
 

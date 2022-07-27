@@ -236,7 +236,7 @@ def auc_scores(risk_prediction: BatchPredictedRisks):
                 preds.append(jit_sigmoid(risk.prediction))
 
     if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
-        logging.warning('no detections or nan probs')
+        logging.warning(f'no detections or nan probs: {risk_prediction}')
         # nan is returned indicator of undetermined AUC.
         return {'MACRO-AUC': float('nan'), 'MICRO-AUC': float('nan')}
 

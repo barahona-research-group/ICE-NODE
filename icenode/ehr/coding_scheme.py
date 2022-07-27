@@ -44,8 +44,10 @@ class CodeMapper(defaultdict):
         self._t_dag_space = t_dag_space
         if s_scheme != t_scheme and t_dag_space:
             self._t_index = t_scheme.dag_index
+            self._t_desc = t_scheme.dag_desc
         else:
             self._t_index = t_scheme.index
+            self._t_desc = t_scheme.desc
 
         self._unrecognised_range = kwargs.get('unrecognised_target', set())
         self._unrecognised_domain = kwargs.get('unrecognised_source', set())
@@ -162,6 +164,10 @@ class CodeMapper(defaultdict):
     @property
     def t_index(self):
         return self._t_index
+
+    @property
+    def t_desc(self):
+        return self._t_desc
 
     @property
     def s_index(self):
@@ -288,6 +294,14 @@ class AbstractScheme:
     @property
     def name(self):
         return self._name
+
+    @property
+    def idx2code(self):
+        return {idx: code for code, idx in self.index.items()}
+
+    @property
+    def idx2desc(self):
+        return {self.index[code]: desc for code, desc in self.desc.items()}
 
 
 class NullScheme(AbstractScheme):

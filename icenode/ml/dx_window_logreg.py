@@ -124,8 +124,8 @@ class WindowLogReg(ml.AbstractModel):
 
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = model.interface.interface.subjects_jax[subj_id]
-            features = model.interface.win_features[subj_id]
+            adms = model.interface[subj_id]
+            features = model.interface.features[subj_id]
 
             X = np.vstack([feats.dx_features for feats in features[1:]])
             y = np.vstack([adm.dx_outcome for adm in adms[1:]])
@@ -256,8 +256,8 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
         risk_prediction = ml.BatchPredictedRisks()
         for subj_id in subjects_batch:
-            adms = model.interface.interface.subjects_jax[subj_id]
-            features = model.interface.win_features[subj_id]
+            adms = model.interface[subj_id]
+            features = model.interface.features[subj_id]
 
             X = np.vstack([feats.dx_features for feats in features[1:]])
             y = np.vstack([adm.dx_outcome for adm in adms[1:]])
