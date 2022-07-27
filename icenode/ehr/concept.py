@@ -3,8 +3,10 @@
 from __future__ import annotations
 from datetime import date
 from collections import defaultdict
-from typing import List, Tuple, Set, Optional, Callable
+from typing import List, Tuple, Set, Optional, Callable, Dict
 from absl import logging
+
+import numpy as np
 
 from .coding_scheme import AbstractScheme, CodeMapper
 from .outcome import DxCodeOutcomeFilter
@@ -141,22 +143,58 @@ class Subject:
         return self._pr_scheme(self.admissions)
 
     @staticmethod
-    def dx_code_frequency(subjects: List[Subject],
-                          dx_scheme: Optional[str] = None):
-        src_scheme = subjects[0].dx_scheme
-        assert all(s.dx_scheme == src_scheme
-                   for s in subjects), "Scheme inconsistency"
-        mapper = CodeMapper.get_mapper(src_scheme, dx_scheme)
-
+    def _event_frequency(subjects: List[Subject],
+                         adm2codeset: Callable[[Admission], Set[str]],
+                         index=None):
         counter = defaultdict(int)
         for subject in subjects:
             for adm in subject.admissions:
-                codeset = mapper.map_codeset(adm.dx_codes)
-                for idx in map(mapper.t_index.get, codeset):
-                    counter[idx] += 1
+                codeset = adm2codeset(adm)
+                for c in codeset:
+                    counter[c] += 1
 
         # Return dictionary with zero-frequency codes added.
-        return {idx: counter[idx] for idx in mapper.t_index.values()}
+        res = {c: counter[c] for c in codeset}
+
+        if index:
+            res = {index[c]: res[c] for c in res}
+
+        return res
+
+    @staticmethod
+    def _event_frequency_vec(subjects: List[Subject],
+                             adm2codeset: Callable[[Admission], Set[str]],
+                             index: Dict[str, int]):
+        freq_dict = Subject._event_frequency(subjects, adm2codeset, index)
+        vec = np.zeros(len(freq_dict))
+        for idx, count in freq_dict.items():
+            vec[idx] = count
+        return vec
+
+    @staticmethod
+    def dx_frequency_vec(subjects: List[Subject], dx_scheme: str):
+        src_scheme = subjects[0].dx_scheme
+        assert all(s.dx_scheme == src_scheme
+                   for s in subjects), "Scheme inconsistency"
+        m = CodeMapper.get_mapper(src_scheme, dx_scheme)
+
+        return Subject._event_frequency(
+            subjects=subjects,
+            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
+            index=m.t_index)
+
+    @staticmethod
+    def dx_outcome_frequency_vec(subjects: List[Subject],
+                                 dx_outcome: DxCodeOutcomeFilter):
+        m = dx_outcome
+        assert (subjects[0].dx_scheme == m.mapper.s_scheme.name, f"""
+            Source scheme of admission info ({subjects[0].dx_scheme}) != Source
+            scheme of filter mapper {m.mapper.s_scheme.name}
+            """)
+        return Subject._event_frequency(
+            subjects=subjects,
+            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
+            index=m.index)
 
     @staticmethod
     def merge_overlaps(admissions):

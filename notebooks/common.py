@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 
 sys.path.append('..')
 from icenode.ml import ICENODE, ICENODE_UNIFORM, GRU, RETAIN, WLR
-from icenode.ehr import MIMICDataset, Subject_JAX, code_scheme
-from icenode.utils import load_config, load_params, write_params, write_config
+from icenode.ehr import MIMICDataset, Subject_JAX, code_scheme, datasets
+from icenode.utils import load_config, load_params, write_params, write_config, modified_environ
 
 model_cls = {
     'ICE-NODE': ICENODE,

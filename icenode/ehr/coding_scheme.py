@@ -182,11 +182,9 @@ class CodeMapper(defaultdict):
         return self._t_scheme
 
     @staticmethod
-    def get_mapper(s_scheme: str, t_scheme: Optional[str] = None):
-        if s_scheme is None:
+    def get_mapper(s_scheme: str, t_scheme: str):
+        if any(s == 'none' or s is None for s in (s_scheme, t_scheme)):
             return NullCodeMapper()
-
-        t_scheme = t_scheme or s_scheme
 
         if isinstance(s_scheme, str):
             s_scheme = code_scheme[s_scheme]
@@ -242,8 +240,8 @@ class IdentityCodeMapper(CodeMapper):
 class NullCodeMapper(CodeMapper):
 
     def __init__(self, *args):
-        super().__init__(s_scheme=None,
-                         t_scheme=None,
+        super().__init__(s_scheme=code_scheme['none'],
+                         t_scheme=code_scheme['none'],
                          t_dag_space=False,
                          *args)
 

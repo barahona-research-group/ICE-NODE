@@ -65,7 +65,8 @@ class Subject_JAX(dict):
                                                 code_scheme.get('pr', 'none'))
 
         self._dx_outcome = DxCodeOutcomeFilter(
-            input_dx_scheme=subjects[0].dx_scheme, conf=code_scheme['dx_outcome'])
+            input_dx_scheme=subjects[0].dx_scheme,
+            conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
         self.update(
@@ -169,30 +170,22 @@ class Subject_JAX(dict):
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def dx_code_frequency(self, subjects: List[int]):
-        return Subject.dx_code_frequency([self._subjects[i] for i in subjects],
-                                         self.dx_mapper.t_scheme)
+    def dx_frequency_vec(self, subjects: List[int]):
+        np_res = Subject.dx_frequency_vec(subjects, self.dx_scheme.name)
+        return jnp.array(np_res)
 
-    def dx_frequency_vec(self,
-                         subjects: Optional[List[int]] = None,
-                         dx_code_scheme=None):
-        subjects = subjects or self.keys()
-        freq_dict = self.dx_code_frequency(subjects)
-        vec = np.zeros(len(freq_dict))
-        for idx, count in freq_dict.items():
-            vec[idx] = count
-        return jnp.array(vec)
+    def dx_outcome_frequency_vec(self, subjects: List[int]):
+        np_res = Subject.dx_outcome_frequency_vec(subjects, self.dx_outcome)
+        return jnp.array(np_res)
 
     @staticmethod
-    def _code_frequency_partitions(percentile_range, code_frequency):
+    def _code_frequency_partitions(percentile_range, code_frequency_vec):
         sections = list(range(0, 100, percentile_range)) + [100]
         sections[0] = -1
 
         frequency_df = pd.DataFrame({
-            'code':
-            sorted(code_frequency),
-            'frequency':
-            list(map(code_frequency.get, sorted(code_frequency)))
+            'code': range(len(code_frequency_vec)),
+            'frequency': code_frequency_vec
         })
 
         frequency_df = frequency_df.sort_values('frequency')
@@ -209,12 +202,19 @@ class Subject_JAX(dict):
 
         return codes_by_percentiles
 
-    def dx_codes_by_percentiles(self,
-                                percentile_range: float = 20,
-                                subjects: List[int] = []):
+    def dx_by_percentiles(self,
+                          percentile_range: float = 20,
+                          subjects: List[int] = []):
+        subjects = subjects or self._subjects
+        return self._code_frequency_partitions(percentile_range,
+                                               self.dx_frequency_vec(subjects))
+
+    def dx_outcome_by_percentiles(self,
+                                  percentile_range: float = 20,
+                                  subjects: List[int] = []):
         subjects = subjects or self._subjects
         return self._code_frequency_partitions(
-            percentile_range, self.dx_code_frequency(subjects))
+            percentile_range, self.dx_outcome_frequency_vec(subjects))
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)

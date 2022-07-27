@@ -26,14 +26,14 @@ class AbstractEHRDataset:
             col = code_colname["dx"]
             dx_df[col] = dx_df[col].apply(dx_scheme.add_dot)
 
-        if pr_df and isinstance(C[code_scheme["pr"]], ICDCommons):
+        if pr_df is not None and isinstance(C[code_scheme["pr"]], ICDCommons):
             pr_scheme = C[code_scheme["pr"]]
             col = code_colname["pr"]
             pr_df[col] = pr_df[col].apply(pr_scheme.add_dot)
 
         dx_df = AbstractEHRDataset._validate_codes(dx_df, code_colname["dx"],
                                                    code_scheme["dx"])
-        if pr_df:
+        if pr_df is not None:
             pr_df = AbstractEHRDataset._validate_codes(pr_df,
                                                        code_colname["pr"],
                                                        code_scheme["pr"])
