@@ -13,13 +13,13 @@ import jax.numpy as jnp
 from .concept import Subject, Admission
 from .dataset import AbstractEHRDataset
 from .coding_scheme import CodeMapper
-from .outcome import DxCodeOutcomeFilter
+from .outcome import DxOutcome
 
 
 class Admission_JAX:
 
     def __init__(self, adm: Admission, first_adm_date: datetime,
-                 dx_mapper: CodeMapper, dx_outcome: DxCodeOutcomeFilter,
+                 dx_mapper: CodeMapper, dx_outcome: DxOutcome,
                  pr_mapper: Optional[CodeMapper]):
         # Time as days since the first admission
         self.admission_time = adm.admission_day(first_adm_date)
@@ -64,9 +64,8 @@ class Subject_JAX(dict):
         self._pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
                                                 code_scheme.get('pr', 'none'))
 
-        self._dx_outcome = DxCodeOutcomeFilter(
-            input_dx_scheme=subjects[0].dx_scheme,
-            conf=code_scheme['dx_outcome'])
+        self._dx_outcome = DxOutcome(input_dx_scheme=subjects[0].dx_scheme,
+                                     conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
         self.update(

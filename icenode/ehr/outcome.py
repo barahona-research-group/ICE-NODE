@@ -14,7 +14,7 @@ _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 conf_files = {'dx_flatccs_filter_v1': 'dx_flatccs_v1.json'}
 
 
-class DxCodeOutcomeFilter(AbstractScheme):
+class DxOutcome(AbstractScheme):
 
     def __init__(self, input_dx_scheme: str, conf='dx_flatccs_filter_v1'):
         conf = self.conf_from_json(conf_files[conf])

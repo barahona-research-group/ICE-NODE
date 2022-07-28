@@ -9,7 +9,7 @@ from absl import logging
 import numpy as np
 
 from .coding_scheme import AbstractScheme, CodeMapper
-from .outcome import DxCodeOutcomeFilter
+from .outcome import DxOutcome
 from .dataset import AbstractEHRDataset
 
 
@@ -96,7 +96,7 @@ class Subject:
         return history
 
     def dx_outcome_history(self,
-                           dx_outcome: DxCodeOutcomeFilter,
+                           dx_outcome: DxOutcome,
                            absolute_dates=False):
 
         m = dx_outcome
@@ -182,7 +182,7 @@ class Subject:
 
     @staticmethod
     def dx_outcome_frequency_vec(subjects: List[Subject],
-                                 dx_outcome: DxCodeOutcomeFilter):
+                                 dx_outcome: DxOutcome):
         m = dx_outcome
         assert (subjects[0].dx_scheme == m.mapper.s_scheme.name, f"""
             Source scheme of admission info ({subjects[0].dx_scheme}) != Source
