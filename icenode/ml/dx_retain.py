@@ -7,15 +7,13 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import optuna
-from absl import logging
 
 from .. import ehr
 from .. import embeddings as E
-from ..metric.common_metrics import l2_squared, l1_absolute
-from ..utils import wrap_module
+from .. import metric
+from .. import utils
 
 from .abstract import AbstractModel
-from .risk import BatchPredictedRisks
 
 
 @jax.jit
@@ -43,31 +41,31 @@ class RETAIN(AbstractModel):
 
         gru_a_init, gru_a = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU, hidden_size=state_a_size, name='gru_a')))
+                utils.wrap_module(hk.GRU, hidden_size=state_a_size, name='gru_a')))
         self.gru_a = jax.jit(gru_a)
 
         gru_b_init, gru_b = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.GRU, hidden_size=state_b_size, name='gru_b')))
+                utils.wrap_module(hk.GRU, hidden_size=state_b_size, name='gru_b')))
         self.gru_b = jax.jit(gru_b)
 
         # Followed by a softmax on e1, e2, ..., -> alpha1, alpha2, ...
         att_layer_a_init, att_layer_a = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.Linear, output_size=1, name='att_layer_a')))
+                utils.wrap_module(hk.Linear, output_size=1, name='att_layer_a')))
         self.att_layer_a = jax.jit(att_layer_a)
 
         # followed by a tanh
         att_layer_b_init, att_layer_b = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.Linear,
+                utils.wrap_module(hk.Linear,
                             output_size=self.dimensions['dx_emb'],
                             name='att_layer_b')))
         self.att_layer_b = jax.jit(att_layer_b)
 
         decode_init, decode = hk.without_apply_rng(
             hk.transform(
-                wrap_module(hk.Linear,
+                utils.wrap_module(hk.Linear,
                             output_size=self.dimensions['dx_outcome'],
                             name='decoder')))
         self.decode = jax.jit(decode)
@@ -103,7 +101,7 @@ class RETAIN(AbstractModel):
         emb = jax.vmap(partial(self.dx_emb.encode, G))
 
         loss = {}
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = metric.BatchPredictedRisks()
         state_a0 = jnp.zeros(self.dimensions['state_a'])
         state_b0 = jnp.zeros(self.dimensions['state_b'])
 
@@ -180,8 +178,8 @@ class RETAIN(AbstractModel):
     def detailed_loss(self, loss_mixing, params, res):
 
         dx_loss_ = res['loss']
-        l1_loss = l1_absolute(params)
-        l2_loss = l2_squared(params)
+        l1_loss = metric.l1_absolute(params)
+        l2_loss = metric.l2_squared(params)
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
 

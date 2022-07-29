@@ -7,11 +7,10 @@ import jax.numpy as jnp
 
 from .. import ehr
 from .. import embeddings as E
-from ..metric.common_metrics import l2_squared, l1_absolute
+from .. import metric
 from ..utils import wrap_module
 
 from .abstract import AbstractModel
-from .risk import BatchPredictedRisks
 
 
 @jax.jit
@@ -67,7 +66,7 @@ class GRU(AbstractModel):
         emb = partial(self.dx_emb.encode, G)
 
         loss = {}
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = metric.BatchPredictedRisks()
         state0 = jnp.zeros(self.dimensions['state'])
         for subject_id in subjects_batch:
             adms = self.subject_interface.batch_nth_admission([subject_id])
@@ -107,8 +106,8 @@ class GRU(AbstractModel):
     def detailed_loss(self, loss_mixing, params, res):
 
         dx_loss_ = res['loss']
-        l1_loss = l1_absolute(params)
-        l2_loss = l2_squared(params)
+        l1_loss = metric.l1_absolute(params)
+        l2_loss = metric.l2_squared(params)
         l1_alpha = loss_mixing['L_l1']
         l2_alpha = loss_mixing['L_l2']
 

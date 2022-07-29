@@ -14,12 +14,9 @@ import optuna
 
 from .. import ehr
 from .. import ml
-from ..metric.common_metrics import (softmax_logits_bce,
-                                     softmax_logits_weighted_bce,
-                                     softmax_logits_balanced_focal_bce)
-from ..utils import Unsupported
+from .. import metric
+from .. import utils
 
-from .risk import BatchPredictedRisks
 from .trainer import onestep_trainer
 
 
@@ -36,20 +33,20 @@ def predict_multinomial(p, X):
 @jax.jit
 def logreg_loss_multinomial(p, X, y):
     logits = X @ p['W'] + p['b']
-    return softmax_logits_bce(y, logits)
+    return metric.softmax_logits_bce(y, logits)
 
 
 @jax.jit
 def logreg_loss_multinomial_balanced_focal(p, X, y):
     logits = X @ p['W'] + p['b']
-    return softmax_logits_balanced_focal_bce(y, logits)
+    return metric.softmax_logits_balanced_focal_bce(y, logits)
 
 
 @jax.jit
 def logreg_loss_multinomial_balanced(p, X, y):
     logits = X @ p['W'] + p['b']
     weights = y.shape[0] / (y.sum(axis=0) + 1e-10)
-    return softmax_logits_weighted_bce(y, logits, weights)
+    return metric.softmax_logits_weighted_bce(y, logits, weights)
 
 
 logreg_loss_multinomial_mode = {
@@ -122,7 +119,7 @@ class WindowLogReg(ml.AbstractModel):
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         model, params = self.init_with_params(self.model_config, params)
 
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = metric.BatchPredictedRisks()
         for subj_id in subjects_batch:
             adms = model.interface[subj_id]
             features = model.interface.features[subj_id]
@@ -144,14 +141,14 @@ class WindowLogReg(ml.AbstractModel):
         return {'risk_prediction': risk_prediction, 'loss': loss}
 
     def detailed_loss(self, loss_mixing, params, res):
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     def eval_stats(self, res):
         return {}
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int], **kwargs) -> float:
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     def init_params(self, prng_seed: int = 0):
         n_features = self.interface.n_features
@@ -162,15 +159,15 @@ class WindowLogReg(ml.AbstractModel):
 
     @staticmethod
     def optimizer_class(label: str):
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     @staticmethod
     def lr_schedule(lr, decay_rate):
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     @classmethod
     def init_optimizer(cls, config, params):
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     def init_with_params(self, config: Dict[str, Any], params: Any):
         return (self, params)
@@ -182,7 +179,7 @@ class WindowLogReg(ml.AbstractModel):
 
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
-        raise Unsupported("Unsupported.")
+        raise utils.Unsupported("Unsupported.")
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
@@ -254,7 +251,7 @@ class WindowLogReg_Sklearn(WindowLogReg):
 
         y_mask = model.supported_labels
 
-        risk_prediction = ml.BatchPredictedRisks()
+        risk_prediction = metric.BatchPredictedRisks()
         for subj_id in subjects_batch:
             adms = model.interface[subj_id]
             features = model.interface.features[subj_id]

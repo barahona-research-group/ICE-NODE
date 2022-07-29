@@ -7,13 +7,10 @@ import jax
 from jax.example_libraries import optimizers
 import optuna
 
-from ..utils import (parameters_size, tree_hasnan, tree_lognan, write_params,
-                     OOPError)
+from .. import utils
 from .. import embeddings as E
 from .. import ehr
-from ..metric.common_metrics import (bce, softmax_logits_bce,
-                                     balanced_focal_bce, weighted_bce,
-                                     admissions_auc_scores, codes_auc_scores)
+from .. import metric
 from .trainer import minibatch_trainer
 
 
@@ -25,13 +22,13 @@ class AbstractModel:
         cls.model_cls[label] = cls
 
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        raise OOPError('Should be overriden')
+        raise utils.OOPError('Should be overriden')
 
     def detailed_loss(self, loss_mixing, params, res):
-        raise OOPError('Should be overriden')
+        raise utils.OOPError('Should be overriden')
 
     def eval_stats(self, res):
-        raise OOPError('Should be overriden')
+        raise utils.OOPError('Should be overriden')
 
     def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
         loss_mixing = opt_obj[-1]
@@ -47,12 +44,12 @@ class AbstractModel:
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch)
-        return admissions_auc_scores(res['risk_prediction'])
+        return metric.admissions_auc_scores(res['risk_prediction'])
 
     def codes_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch)
-        return codes_auc_scores(res['risk_prediction'])
+        return metric.codes_auc_scores(res['risk_prediction'])
 
     def loss(self, loss_mixing: Dict[str, float], params: Any,
              batch: List[int], **kwargs) -> float:
@@ -60,7 +57,7 @@ class AbstractModel:
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
     def init_params(self, prng_seed: int = 0):
-        raise OOPError('Should be ovreriden')
+        raise utils.OOPError('Should be ovreriden')
 
     @staticmethod
     def optimizer_class(label: str):
@@ -114,20 +111,20 @@ class AbstractModel:
     @classmethod
     def parameters_size(cls, opt_object):
         params = cls.get_params(opt_object)
-        return parameters_size(params)
+        return utils.parameters_size(params)
 
     @classmethod
     def hasnan(cls, opt_obj):
         params = cls.get_params(opt_obj)
-        if tree_hasnan(params):
-            logging.warning(f'params with NaN: {tree_lognan(params)}')
+        if utils.tree_hasnan(params):
+            logging.warning(f'params with NaN: {utils.tree_lognan(params)}')
             return True
         return False
 
     @classmethod
     def write_params(cls, opt_obj, fname):
         params = cls.get_params(opt_obj)
-        write_params(params, fname)
+        utils.write_params(params, fname)
 
     @classmethod
     def create_embedding(cls, emb_config, emb_kind, subject_interface,
@@ -152,22 +149,22 @@ class AbstractModel:
 
     @classmethod
     def create_model(cls, config, subject_interface, train_ids):
-        raise OOPError('Should be overriden')
+        raise utils.OOPError('Should be overriden')
 
     @classmethod
     def select_loss(cls, loss_label: str, subject_interface: ehr.Subject_JAX,
                     train_ids: List[int], dx_scheme: str):
         if loss_label == 'balanced_focal':
-            return lambda t, p: balanced_focal_bce(t, p, gamma=2, beta=0.999)
+            return lambda t, p: metric.balanced_focal_bce(t, p, gamma=2, beta=0.999)
         elif loss_label == 'softmax_logits_bce':
-            return softmax_logits_bce
+            return metric.softmax_logits_bce
         elif loss_label == 'bce':
-            return bce
+            return metric.bce
         elif loss_label == 'balanced_bce':
             codes_dist = subject_interface.dx_code_frequency_vec(
                 train_ids, dx_scheme)
             weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
-            return lambda t, logits: weighted_bce(t, logits, weights)
+            return lambda t, logits: metric.weighted_bce(t, logits, weights)
         else:
             raise ValueError(f'Unrecognized dx_loss: {loss_label}')
 

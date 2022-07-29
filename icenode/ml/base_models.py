@@ -10,30 +10,6 @@ from jax.nn import softplus, sigmoid, leaky_relu
 
 from ..ode.odeint_nfe import odeint as odeint_nfe
 
-from ..experimental.inn_models import InvertibleLayers
-
-# GRU-ODE: Neural Negative Feedback ODE with Bayesian jumps
-'''
-Note(Asem): Haiku modules don't define the input dimensions
-Input dimensions are defined during initialization step afterwards.
-'''
-
-# class QuadraticAugmentation(hk.Module):
-#     """
-#     Dynamics for ODE as a parametric function of the terms x1^2, x1x2, x1x3,...
-#     """
-#     def __init__(self, name: Optional[str] = None):
-#         super().__init__(name=name)
-
-#     def __call__(self, x):
-#         out = hk.Linear(jnp.size(x), with_bias=True)(x)
-#         return out * x
-
-
-# IDEA: research on mixed loss functions.
-# Instead of using hyperparamters for mixing loss functions,
-# Each training iteration optimizes one of the loss functions on a rolling
-# basis.
 class MLPDynamics(hk.Module):
     """
     Dynamics for ODE as an MLP.

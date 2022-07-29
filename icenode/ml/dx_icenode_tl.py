@@ -12,15 +12,14 @@ import numpy as onp
 
 import optuna
 
-from ..metric.common_metrics import (balanced_focal_bce, admissions_auc_scores)
-from ..utils import wrap_module
+from .. import metric
+from .. import utils
 from .. import ehr
 from .. import embeddings as E
+
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract import AbstractModel
-from .risk import BatchPredictedRisks
-
 
 class ICENODE(AbstractModel):
 
@@ -53,7 +52,7 @@ class ICENODE(AbstractModel):
 
         f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
-                wrap_module(NeuralODE,
+                utils.wrap_module(NeuralODE,
                             ode_dyn_cls=ode_dyn_cls,
                             state_size=state_emb_size,
                             depth=depth,
@@ -66,7 +65,7 @@ class ICENODE(AbstractModel):
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
-                wrap_module(StateUpdate,
+                utils.wrap_module(StateUpdate,
                             state_size=state_size,
                             embeddings_size=self.dimensions['dx_emb'],
                             name='f_update')))
@@ -74,7 +73,7 @@ class ICENODE(AbstractModel):
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
-                wrap_module(EmbeddingsDecoder_Logits,
+                utils.wrap_module(EmbeddingsDecoder_Logits,
                             n_layers=2,
                             embeddings_size=self.dimensions['dx_emb'],
                             diag_size=self.dimensions['dx_outcome'],
@@ -186,7 +185,7 @@ class ICENODE(AbstractModel):
 
     def _dx_loss(self, dx: Dict[int, jnp.ndarray], dec_dx: Dict[int,
                                                                 jnp.ndarray]):
-        l = [balanced_focal_bce(dx[i], dec_dx[i]) for i in sorted(dx.keys())]
+        l = [metric.balanced_focal_bce(dx[i], dec_dx[i]) for i in sorted(dx.keys())]
         return sum(l) / len(l)
 
     @staticmethod
@@ -221,7 +220,7 @@ class ICENODE(AbstractModel):
         total_nfe = 0
 
         prediction_losses = []
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = metric.BatchPredictedRisks()
         adm_counts = []
         odeint_time = []
         dyn_loss = 0
@@ -466,7 +465,7 @@ class ICENODE(AbstractModel):
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):
         params = self.get_params(model_state)
         res = self(params, batch, count_nfe=True)
-        return admissions_auc_scores(res['risk_prediction'])
+        return metric.admissions_auc_scores(res['risk_prediction'])
 
     @classmethod
     def create_model(cls, config, subject_interface, train_ids):

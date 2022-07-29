@@ -7,8 +7,8 @@ from datetime import datetime
 from absl import logging
 from tqdm import tqdm
 
-from ..metric.common_metrics import evaluation_table
-from ..utils import write_config
+from .. import metric
+from .. import utils
 
 
 class AbstractReporter:
@@ -93,7 +93,7 @@ class ConfigDiskWriter(AbstractReporter):
         self.output_dir = output_dir
 
     def report_config(self, config):
-        write_config(config, os.path.join(self.output_dir, 'config.json'))
+        utils.write_config(config, os.path.join(self.output_dir, 'config.json'))
 
 
 def minibatch_trainer(model,
@@ -154,7 +154,7 @@ def minibatch_trainer(model,
                 'VAL': model.eval(m_state, valid_ids)
             }
 
-        eval_df, eval_flat = evaluation_table(raw_res, code_frequency_groups)
+        eval_df, eval_flat = metric.evaluation_table(raw_res, code_frequency_groups)
 
         auc = eval_df.loc['MICRO-AUC', 'VAL']
 
@@ -196,7 +196,7 @@ def onestep_trainer(model,
         'TST': model.eval(m_state, test_ids)
     }
 
-    eval_df, eval_flat = evaluation_table(raw_res, code_frequency_groups)
+    eval_df, eval_flat = metric.evaluation_table(raw_res, code_frequency_groups)
 
     auc = eval_df.loc['MICRO-AUC', 'VAL']
 

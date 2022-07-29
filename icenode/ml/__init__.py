@@ -11,7 +11,6 @@ from .dx_window_logreg import (WindowLogReg as WLR, WindowLogReg_Sklearn as
 
 from .trainer import (AbstractReporter, MinibatchLogger, EvaluationDiskWriter,
                       ParamsDiskWriter, ConfigDiskWriter)
-from .risk import (BatchPredictedRisks, SubjectPredictedRisk)
 
 GRU.register_model('dx_gru')
 ICENODE.register_model('dx_icenode')

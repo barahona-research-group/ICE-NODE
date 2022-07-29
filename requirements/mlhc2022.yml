@@ -1,0 +1,5 @@
+dependencies:
+  - pip
+  - python=3.8
+  - pip:
+    - -r mlhc2022.txt

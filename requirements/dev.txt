@@ -1,2 +1,3 @@
 -r common.txt
+-r hyperopt-sec.txt
 -r analysis-sec.txt
