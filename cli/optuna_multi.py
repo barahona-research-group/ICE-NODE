@@ -4,7 +4,7 @@ import sys
 import subprocess
 import os
 
-from ...cli.cmd_args import get_cmd_parser, forward_cmd_args
+from .cmd_args import get_cmd_parser, forward_cmd_args
 from .optuna_job import cli_args
 
 if __name__ == '__main__':

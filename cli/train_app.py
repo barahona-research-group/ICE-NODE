@@ -8,13 +8,9 @@ from absl import logging
 
 from cli.cmd_args import get_cmd_parser
 
-from ..utils import load_config, translate_path
+from .. import utils
 from .. import ehr
-
-from .trainer import (AbstractReporter, MinibatchLogger, ConfigDiskWriter,
-                      ParamsDiskWriter, EvaluationDiskWriter)
-
-from .abstract import AbstractModel
+from .. import ml
 
 cli_args = [
     '--model', '--config', '--config-tag', '--study-tag', '--dataset',
@@ -28,10 +24,10 @@ def train_with_config(model: str,
                       splits: Tuple[List[int]],
                       rng_seed: int,
                       trial_terminate_time=datetime.max,
-                      reporters: List[AbstractReporter] = []):
+                      reporters: List[ml.AbstractReporter] = []):
 
     logging.info('[LOADING] Initialize models')
-    model_cls = AbstractModel.model_cls[model]
+    model_cls = ml.AbstractModel.model_cls[model]
     model = model_cls.create_model(config, subject_interface, splits[0])
     m_state = model.init(config, rng_seed)
     logging.info('[DONE] Initialize models')
@@ -49,7 +45,7 @@ def train_with_config(model: str,
 
 if __name__ == '__main__':
     args = get_cmd_parser(cli_args).parse_args()
-    config = load_config(args.config)
+    config = utils.load_config(args.config)
     logging.set_verbosity(logging.INFO)
     logging.info('[LOADING] patient interface')
     dataset = ehr.datasets[args.dataset]
@@ -68,15 +64,15 @@ if __name__ == '__main__':
     if args.study_tag:
         expt_dir = f'S{args.study_tag}_{expt_dir}'
 
-    output_dir = translate_path(args.output_dir)
+    output_dir = utils.translate_path(args.output_dir)
     expt_dir = os.path.join(output_dir, expt_dir)
     Path(expt_dir).mkdir(parents=True, exist_ok=True)
 
     _reporters = [
-        MinibatchLogger(),
-        EvaluationDiskWriter(output_dir=expt_dir),
-        ParamsDiskWriter(output_dir=expt_dir),
-        ConfigDiskWriter(output_dir=expt_dir)
+        ml.MinibatchLogger(),
+        ml.EvaluationDiskWriter(output_dir=expt_dir),
+        ml.ParamsDiskWriter(output_dir=expt_dir),
+        ml.ConfigDiskWriter(output_dir=expt_dir)
     ]
     train_with_config(model=args.model,
                       config=config,
