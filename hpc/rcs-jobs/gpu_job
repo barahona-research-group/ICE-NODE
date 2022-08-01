@@ -19,27 +19,22 @@ module load cudnn/8.2.4
 module load cuda/11.4.2
 
 # Input data and output configuration
+export DATA_DIR="$HOME/GP/ehr-data"
 OUTPUT_DIR=""
-DATA_DIR=""
-
 if [[ "$DATA_TAG" == "M3" ]]; then
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
 else
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
-
-
 
 
 # Run program
 
 export JAX_PLATFORM_NAME="gpu"
 
-$HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
+$HOME/GP/env/icenode-env/bin/python -m cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
---mimic-processed-dir $DATA_DIR \
+--dataset $DATA_TAG \
 --study-tag $STUDY_TAG \
 --data-tag $DATA_TAG \
 --emb $EMB \
@@ -47,7 +42,7 @@ $HOME/GP/env/icenode-env/bin/python -m icenode.hyperopt.optuna_multi \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
 --trials-time-limit 24 \
--N 1 \
+--num-processes 1 \
 --num-trials 30 \
 --training-time-limit 12 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX"

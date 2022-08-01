@@ -41,26 +41,21 @@ source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 export JAX_PLATFORM_NAME="gpu"
 export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
+export DATA_DIR="$HOME/GP/ehr-data"
 OUTPUT_DIR=""
-DATA_DIR=""
-
 if [[ "$DATA_TAG" == "M3" ]]; then
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic3-transforms"
 else
   OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
-  DATA_DIR="$HOME/GP/ehr-data/mimic4-transforms"
 fi
 
 
-
-
-$HOME/GP/env/icenode-env/bin/python -m icenode.ehr_predictive.train_app \
+$HOME/GP/env/icenode-env/bin/python -m cli.train_app \
 --config $CONFIG \
 --study-tag $STUDY_TAG \
 --config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
---mimic-processed-dir $DATA_DIR \
+--dataset $DATA_TAG \
 --model $MODEL
 
 
