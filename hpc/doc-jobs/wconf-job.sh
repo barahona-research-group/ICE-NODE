@@ -50,7 +50,7 @@ else
 fi
 
 
-$HOME/GP/env/icenode-env/bin/python -m cli.train_app \
+$HOME/GP/env/icenode-dev/bin/python -m cli.train_app \
 --config $CONFIG \
 --study-tag $STUDY_TAG \
 --config-tag $CONFIG_TAG \

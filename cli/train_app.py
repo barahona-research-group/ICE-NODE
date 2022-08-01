@@ -8,7 +8,7 @@ from absl import logging
 
 from cli.cmd_args import get_cmd_parser
 
-from ..utils import load_config
+from ..utils import load_config, translate_path
 from .. import ehr
 
 from .trainer import (AbstractReporter, MinibatchLogger, ConfigDiskWriter,
@@ -68,7 +68,8 @@ if __name__ == '__main__':
     if args.study_tag:
         expt_dir = f'S{args.study_tag}_{expt_dir}'
 
-    expt_dir = os.path.join(args.output_dir, expt_dir)
+    output_dir = translate_path(args.output_dir)
+    expt_dir = os.path.join(output_dir, expt_dir)
     Path(expt_dir).mkdir(parents=True, exist_ok=True)
 
     _reporters = [

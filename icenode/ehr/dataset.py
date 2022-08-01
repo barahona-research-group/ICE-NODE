@@ -7,7 +7,7 @@ from absl import logging
 
 import pandas as pd
 
-from ..utils import load_config, LazyDict
+from ..utils import load_config, LazyDict, translate_path
 
 from .coding_scheme import code_scheme as C, ICDCommons
 
