@@ -15,7 +15,7 @@ model_cls = {
     'ICE-NODE_UNIFORM': ICENODE_UNIFORM_2LR,
     'GRU': GRU,
     'RETAIN': RETAIN,
-    'WLR': WLR
+    'LogReg': WLR
 }
 
 
