@@ -10,7 +10,7 @@ from icenode import embeddings as E
 help_expand = dict(dataset_labels=ehr.datasets,
                    dx_scheme_labels=[s for s in ehr.code_scheme if 'dx' in s],
                    pr_scheme_labels=[s for s in ehr.code_scheme if 'pr' in s],
-                   dx_outcome_labels=[o for o in ehr.dx_outcome_filter],
+                   dx_outcome_labels=[o for o in ehr.outcome_conf_files],
                    emb_labels=[f'{v} ({k})' for k, v in E.short_tag.items()],
                    model_labels=ml.model_cls)
 

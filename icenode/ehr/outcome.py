@@ -11,13 +11,13 @@ _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 
-conf_files = {'dx_flatccs_filter_v1': 'dx_flatccs_v1.json'}
+outcome_conf_files = {'dx_flatccs_filter_v1': 'dx_flatccs_v1.json'}
 
 
 class DxOutcome(AbstractScheme):
 
     def __init__(self, input_dx_scheme: str, conf='dx_flatccs_filter_v1'):
-        conf = self.conf_from_json(conf_files[conf])
+        conf = self.conf_from_json(outcome_conf_files[conf])
         self._mapper = CodeMapper.get_mapper(input_dx_scheme,
                                              conf['code_scheme'])
 
