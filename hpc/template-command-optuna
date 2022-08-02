@@ -1,4 +1,4 @@
-$HOME/GP/env/icenode-dev/bin/python -m cli.optuna_multi \
+$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $env_data_tag \
 --study-tag $env_study_tag \

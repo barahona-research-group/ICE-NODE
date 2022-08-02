@@ -14,10 +14,11 @@ from optuna.integration import MLflowCallback
 from sqlalchemy.pool import NullPool
 import mlflow
 
-from ... import cli
-from .. import ehr
-from .. import ml
-from .. import embeddings as E
+from .cmd_args import get_cmd_parser
+
+from . import ehr
+from . import ml
+from . import embeddings as E
 
 cli_args = [
     '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
@@ -170,7 +171,7 @@ def objective(model: str, emb: str, subject_interface, job_id, study_dir,
 
 
 if __name__ == '__main__':
-    args = cli.get_cmd_parser(cli_args).parse_args()
+    args = get_cmd_parser(cli_args).parse_args()
     study_name = f'{args.study_tag}{args.dataset}_{args.model}_{E.short_tag[args.emb]}'
     study_dir = os.path.join(args.output_dir, study_name)
 

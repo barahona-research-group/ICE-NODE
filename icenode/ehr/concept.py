@@ -100,7 +100,7 @@ class Subject:
                            absolute_dates=False):
 
         m = dx_outcome
-        assert (self.dx_scheme == m.mapper.s_scheme.name, f"""
+        assert self.dx_scheme == m.mapper.s_scheme.name, (f"""
             Source scheme of admission info ({self.dx_scheme}) != Source
             scheme of filter mapper {m.mapper.s_scheme.name}
             """)
@@ -184,7 +184,7 @@ class Subject:
     def dx_outcome_frequency_vec(subjects: List[Subject],
                                  dx_outcome: DxOutcome):
         m = dx_outcome
-        assert (subjects[0].dx_scheme == m.mapper.s_scheme.name, f"""
+        assert subjects[0].dx_scheme == m.mapper.s_scheme.name, (f"""
             Source scheme of admission info ({subjects[0].dx_scheme}) != Source
             scheme of filter mapper {m.mapper.s_scheme.name}
             """)

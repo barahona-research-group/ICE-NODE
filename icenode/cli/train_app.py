@@ -6,11 +6,11 @@ from pathlib import Path
 
 from absl import logging
 
-from cli.cmd_args import get_cmd_parser
+from .cmd_args import get_cmd_parser
 
-from ..icenode import utils
-from ..icenode import ehr
-from ..icenode import ml
+from . import utils
+from . import ehr
+from . import ml
 
 cli_args = [
     '--model', '--config', '--config-tag', '--study-tag', '--dataset',

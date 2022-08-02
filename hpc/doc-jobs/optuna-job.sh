@@ -52,7 +52,7 @@ else
 fi
 
 
-$HOME/GP/env/icenode-dev/bin/python -m cli.optuna_multi \
+$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $DATA_TAG \
 --study-tag $STUDY_TAG \
