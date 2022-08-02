@@ -32,7 +32,8 @@ def train_with_config(model: str,
     m_state = model.init(config, rng_seed)
     logging.info('[DONE] Initialize models')
 
-    code_frequency_groups = model.code_partitions(subject_interface, splits[0])
+    code_frequency_groups = model.dx_outcome_partitions(
+        subject_interface, splits[0])
     return model.get_trainer()(model=model,
                                m_state=m_state,
                                config=config,

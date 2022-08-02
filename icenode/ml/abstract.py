@@ -145,10 +145,9 @@ class AbstractModel:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
     @staticmethod
-    def code_partitions(subject_interface: ehr.Subject_JAX,
-                        train_ids: List[int], dx_scheme: str):
-        return subject_interface.dx_codes_by_percentiles(
-            20, train_ids, dx_scheme)
+    def dx_outcome_partitions(subject_interface: ehr.Subject_JAX,
+                              train_ids: List[int]):
+        return subject_interface.dx_outcome_by_percentiles(20, train_ids)
 
     @classmethod
     def create_model(cls, config, subject_interface, train_ids):
@@ -158,7 +157,8 @@ class AbstractModel:
     def select_loss(cls, loss_label: str, subject_interface: ehr.Subject_JAX,
                     train_ids: List[int], dx_scheme: str):
         if loss_label == 'balanced_focal':
-            return lambda t, p: metric.balanced_focal_bce(t, p, gamma=2, beta=0.999)
+            return lambda t, p: metric.balanced_focal_bce(
+                t, p, gamma=2, beta=0.999)
         elif loss_label == 'softmax_logits_bce':
             return metric.softmax_logits_bce
         elif loss_label == 'bce':
