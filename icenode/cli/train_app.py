@@ -8,9 +8,9 @@ from absl import logging
 
 from .cmd_args import get_cmd_parser
 
-from . import utils
-from . import ehr
-from . import ml
+from .. import utils
+from .. import ehr
+from .. import ml
 
 cli_args = [
     '--model', '--config', '--config-tag', '--study-tag', '--dataset',

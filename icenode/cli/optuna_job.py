@@ -16,9 +16,9 @@ import mlflow
 
 from .cmd_args import get_cmd_parser
 
-from . import ehr
-from . import ml
-from . import embeddings as E
+from .. import ehr
+from .. import ml
+from .. import embeddings as E
 
 cli_args = [
     '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
