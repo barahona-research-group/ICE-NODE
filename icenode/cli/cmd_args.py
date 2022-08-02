@@ -1,3 +1,4 @@
+import os
 import argparse
 from typing import List
 from pydoc import locate
@@ -6,6 +7,8 @@ from ..utils import load_config
 from .. import ml
 from .. import ehr
 from .. import embeddings as E
+
+_DIR = os.path.dirname(__file__)
 
 help_expand = dict(dataset_labels=ehr.datasets,
                    dx_scheme_labels=[s for s in ehr.code_scheme if 'dx' in s],
@@ -18,7 +21,7 @@ help_expand = {k: ', '.join(v) for k, v in help_expand.items()}
 
 
 def get_cmd_parser(cmd_keys: List[str]) -> argparse.ArgumentParser:
-    args = load_config('cmd_args.json')
+    args = load_config(os.path.join(_DIR, 'cmd_args.json'))
     for k, v in args.items():
         if 'type' in v:
             v['type'] = locate(v['type'])
