@@ -1,6 +1,6 @@
 """Logistic Regression EHR predictive model based on diagnostic codes in
 previous visits."""
-
+from __future__ import annotations
 from typing import Any, List, Dict, TYPE_CHECKING
 
 import numpy as np

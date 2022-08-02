@@ -1,5 +1,5 @@
 """JAX implementation of RETAIN algorithm."""
-
+from __future__ import annotations
 from functools import partial
 from typing import Any, List, TYPE_CHECKING
 
