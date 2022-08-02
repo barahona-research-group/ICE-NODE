@@ -14,7 +14,7 @@ help_expand = dict(dataset_labels=ehr.datasets,
                    emb_labels=[f'{v} ({k})' for k, v in E.short_tag.items()],
                    model_labels=ml.model_cls)
 
-help_expand = {k: ', '.join(v) for k, v in help_expand}
+help_expand = {k: ', '.join(v) for k, v in help_expand.items()}
 
 
 def get_cmd_parser(cmd_keys: List[str]) -> argparse.ArgumentParser:
