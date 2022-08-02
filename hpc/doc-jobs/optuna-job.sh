@@ -8,7 +8,13 @@ TERM=vt100 # or TERM=xterm
 STORE=/vol/bitbucket/am8520
 
 WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
+export JAX_PLATFORM_NAME="gpu"
+export MLFLOW_STORE="file://${STORE}/mlflow-store"
 
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+# $DATA_TAG: Name of the data tag. Example: M3
+# $EMB: Embedding module label. Example: gram
 
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
@@ -37,10 +43,6 @@ unset __conda_setup
 
 source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
 
-
-export JAX_PLATFORM_NAME="gpu"
-export MLFLOW_STORE="file://${STORE}/mlflow-store"
-
 export DATA_DIR="$HOME/GP/ehr-data"
 OUTPUT_DIR=""
 if [[ "$DATA_TAG" == "M3" ]]; then
@@ -54,7 +56,6 @@ $HOME/GP/env/icenode-dev/bin/python -m cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $DATA_TAG \
 --study-tag $STUDY_TAG \
---data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \

@@ -1,7 +1,7 @@
 """."""
 
 from functools import partial
-from typing import (Any, Dict, List)
+from typing import Any, Dict, List, TYPE_CHECKING
 
 from tqdm import tqdm
 import haiku as hk
@@ -10,7 +10,8 @@ from jax import lax
 import jax.numpy as jnp
 import numpy as onp
 
-import optuna
+if TYPE_CHECKING:
+    import optuna
 
 from .. import metric
 from .. import utils

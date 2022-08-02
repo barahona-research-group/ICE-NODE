@@ -1,0 +1,45 @@
+{
+	"study_tag":
+	{
+		"env": "STUDY_TAG",
+		"desc": "Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name.",
+		"examples": ["v0.2.25", "v0.8.01", "main"],
+		"type": "str"
+	},
+	"data_tag":
+	{
+		"env": "DATA_TAG",
+		"desc": "Name of the data tag.",
+		"examples": ["M3", "M4"],
+		"type": "str"
+	},
+	"config":
+	{
+		"env": "CONFIG",
+		"desc": "Path (absolute or relative) to JSON config file for the experiment settings.",
+		"examples": ["~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json"],
+		"type": "path"
+	},
+	"config_tag":
+	{
+		"env": "CONFIG_TAG",
+		"desc": "Textual tag attributing the config JSON file, to be used for the experiment output directory name.",
+		"examples": ["Cv0.2.25"],
+		"type": "str"
+	},
+	"model":
+	{
+		"env": "MODEL",
+		"desc": "Model label to be used in the experiment.",
+		"examples": ["dx_icenode_2lr"],
+		"type": "str"
+	},
+	"emb":
+	{
+		"env": "EMB",
+		"desc": "Embedding module label.",
+		"examples": ["gram", "matrix"],
+		"type": "str"
+	}
+}
+

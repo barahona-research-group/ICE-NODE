@@ -7,12 +7,14 @@ $temp_array_place
 # Setup environement using .bashrc
 source $HOME/.bashrc
 
+$temp_doc
+
 # Clone repository and checkout to the given tag name.
-git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $env_study_tag --single-branch  --depth 1 
 
 cd $TMPDIR/ICE-NODE
 
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
+$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-dev
 
 # Load modules
 $temp_modules_place

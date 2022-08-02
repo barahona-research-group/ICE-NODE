@@ -7,12 +7,17 @@
 # Setup environement using .bashrc
 source $HOME/.bashrc
 
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+# $DATA_TAG: Name of the data tag. Example: M3
+# $EMB: Embedding module label. Example: gram
+
 # Clone repository and checkout to the given tag name.
 git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
 
 cd $TMPDIR/ICE-NODE
 
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
+$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-dev
 
 # Load modules
 
@@ -35,7 +40,6 @@ $HOME/GP/env/icenode-dev/bin/python -m cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $DATA_TAG \
 --study-tag $STUDY_TAG \
---data-tag $DATA_TAG \
 --emb $EMB \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \

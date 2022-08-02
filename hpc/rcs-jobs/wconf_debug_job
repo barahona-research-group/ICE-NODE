@@ -7,12 +7,19 @@
 # Setup environement using .bashrc
 source $HOME/.bashrc
 
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+# $DATA_TAG: Name of the data tag. Example: M3
+# $CONFIG: Path (absolute or relative) to JSON config file for the experiment settings. Example: ~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json
+# $CONFIG_TAG: Textual tag attributing the config JSON file, to be used for the experiment output directory name. Example: Cv0.2.25
+# $MODEL: Model label to be used in the experiment. Example: dx_icenode_2lr
+
 # Clone repository and checkout to the given tag name.
 git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
 
 cd $TMPDIR/ICE-NODE
 
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-env
+$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-dev
 
 # Load modules
 

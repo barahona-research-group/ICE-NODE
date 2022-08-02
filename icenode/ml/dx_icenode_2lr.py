@@ -1,9 +1,11 @@
+
 from functools import partial
-from typing import (Any, Dict)
+from typing import Any, Dict, TYPE_CHECKING
 
 import jax
 
-import optuna
+if TYPE_CHECKING:
+    import optuna
 
 from .dx_icenode_tl import ICENODE as ICENODE_TL
 

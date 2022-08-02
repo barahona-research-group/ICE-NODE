@@ -1,12 +1,14 @@
 """JAX implementation of RETAIN algorithm."""
 
 from functools import partial
-from typing import Any, List
+from typing import Any, List, TYPE_CHECKING
 
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import optuna
+
+if TYPE_CHECKING:
+    import optuna
 
 from .. import ehr
 from .. import embeddings as E

@@ -1,7 +1,7 @@
 """Logistic Regression EHR predictive model based on diagnostic codes in
 previous visits."""
 
-from typing import Any, List, Dict
+from typing import Any, List, Dict, TYPE_CHECKING
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -10,7 +10,9 @@ import jax
 import jax.numpy as jnp
 from jaxopt import ProximalGradient
 from jaxopt.prox import prox_elastic_net, prox_none
-import optuna
+
+if TYPE_CHECKING:
+    import optuna
 
 from .. import ehr
 from .. import ml

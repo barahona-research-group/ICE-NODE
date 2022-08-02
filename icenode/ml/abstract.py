@@ -1,11 +1,14 @@
 """Abstract class for predictive EHR models."""
 
-from typing import Dict, List, Any
+from __future__ import annotations
+from typing import Dict, List, Any, TYPE_CHECKING
 from functools import partial
 from absl import logging
 import jax
 from jax.example_libraries import optimizers
-import optuna
+
+if TYPE_CHECKING:
+    import optuna
 
 from .. import utils
 from .. import embeddings as E

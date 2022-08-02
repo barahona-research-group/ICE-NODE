@@ -1,7 +1,7 @@
 $HOME/GP/env/icenode-dev/bin/python -m cli.train_app \
---config $CONFIG \
---study-tag $STUDY_TAG \
---config-tag $CONFIG_TAG \
+--config $env_config \
+--study-tag $env_study_tag \
+--config-tag $env_config_tag \
 --output-dir $OUTPUT_DIR \
---dataset $DATA_TAG \
---model $MODEL
+--dataset $env_data_tag \
+--model $env_model

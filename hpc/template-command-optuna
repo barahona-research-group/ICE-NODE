@@ -1,9 +1,8 @@
 $HOME/GP/env/icenode-dev/bin/python -m cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
---dataset $DATA_TAG \
---study-tag $STUDY_TAG \
---data-tag $DATA_TAG \
---emb $EMB \
+--dataset $env_data_tag \
+--study-tag $env_study_tag \
+--emb $env_emb \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \

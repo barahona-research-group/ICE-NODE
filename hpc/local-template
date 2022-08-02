@@ -1,7 +1,9 @@
 #!/bin/bash
 
+$temp_doc
+
 if [[ -v STUDY_TAG ]]; then 
-  git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
+  git clone git@github.com:A-Alaa/ICE-NODE.git --branch $env_study_tag --single-branch  --depth 1 ICE-NODE
   cd ICE-NODE
 else
   cp ../icenode . -r

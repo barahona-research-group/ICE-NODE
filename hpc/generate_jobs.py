@@ -2,6 +2,7 @@
 
 from string import Template
 import json
+import os
 from pathlib import Path
 
 
@@ -23,6 +24,21 @@ CMD_TEMPLATE_OPTUNA = Template(load_file('template-command-optuna'))
 RCS_TEMPLATE = Template(load_file('rcs-template'))
 DOC_TEMPLATE = Template(load_file('doc-template'))
 LOCAL_TEMPLATE = Template(load_file('local-template'))
+
+ENV_HOLDERS = load_config('env_input.json')
+
+def replace_env_holders(txt):
+    mapping = {}
+    help_lines = ["Input Environment Variables:"]
+    for holder, data in ENV_HOLDERS.items():
+        holder_txt = '_'.join(('env', holder))
+        if holder_txt in txt:
+            mapping[holder_txt] = f"${data['env']}"
+            help_lines.append(f"${data['env']}: {data['desc']} Example: {data['examples'][0]}")
+
+    mapping['temp_doc'] = '\n'.join(map(lambda l: f'# {l}', help_lines))
+    return Template(txt).safe_substitute(**mapping)
+
 
 
 def gen_local_cmd_optuna():
@@ -61,6 +77,7 @@ def gen_local_jobs():
                     'temp_command': cmd,
                     'temp_platform': f'"{plat}"'
                 })
+            job_text = replace_env_holders(job_text)
             fname = f'{cmd_l}-job-{plat}'
             with open(f'local-jobs/{fname}.sh', "w",
                       encoding="utf-8") as job_file:
@@ -83,9 +100,9 @@ def gen_doc_jobs():
         })
 
     with open('doc-jobs/optuna-job.sh', "w", encoding="utf-8") as job_file:
-        job_file.write(optuna_job_text)
+        job_file.write(replace_env_holders(optuna_job_text))
     with open('doc-jobs/wconf-job.sh', "w", encoding="utf-8") as job_file:
-        job_file.write(wconf_job_text)
+        job_file.write(replace_env_holders(wconf_job_text))
 
 
 def gen_rcs_cmd_optuna(job_class, config, hours):
@@ -143,7 +160,7 @@ def gen_rcs_job(job_class, config, wconfig):
         filename = f'rcs-jobs/{job_class}_job'
 
     with open(filename, "w", encoding="utf-8") as job_file:
-        job_file.write(job_file_text)
+        job_file.write(replace_env_holders(job_file_text))
 
 
 def gen_rcs_jobs():
