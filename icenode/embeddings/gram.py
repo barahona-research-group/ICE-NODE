@@ -10,7 +10,7 @@ by Asem Alaa (asem.a.abdelaziz@gmail.com)
 from __future__ import annotations
 
 from functools import partial
-from typing import (Any, Dict, Iterable, Optional)
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 import numpy as onp
 import jax
@@ -18,7 +18,9 @@ from jax import lax
 import jax.numpy as jnp
 
 import haiku as hk
-import optuna
+
+if TYPE_CHECKING:
+    import optuna
 
 from ..utils import wrap_module
 from .. import ehr
