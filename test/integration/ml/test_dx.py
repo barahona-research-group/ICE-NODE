@@ -37,7 +37,7 @@ class DxCommonTests(object):
     def setUp(self):
         self.models = []
         for config in self.configs:
-            model = self.model_cls.create_model(config, interface, [])
+            model = self.model_cls.create_model(config, interface, splits[0])
             state = model.init(config)
 
             self.assertTrue(callable(model), msg=f"config: {config}")
