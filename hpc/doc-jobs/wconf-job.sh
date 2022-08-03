@@ -28,22 +28,7 @@ cd $WORKDIR/ICENODE
 # PostgresQL
 source ~/.pgdb-am8520-am8520
 
-# >>> conda initialize >>>
-# !! Contents within this block are managed by 'conda init' !!
-__conda_setup="$('/vol/bitbucket/am8520/opt/anaconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
-if [ $? -eq 0 ]; then
-    eval "$__conda_setup"
-else
-    if [ -f "/vol/bitbucket/am8520/opt/anaconda3/etc/profile.d/conda.sh" ]; then
-        . "/vol/bitbucket/am8520/opt/anaconda3/etc/profile.d/conda.sh"
-    else
-        export PATH="/vol/bitbucket/am8520/opt/anaconda3/bin:$PATH"
-    fi
-fi
-unset __conda_setup
-# <<< conda initialize <<<
-
-source /vol/cuda/11.2.1-cudnn8.1.0.77/setup.sh
+source /vol/cuda/11.4.120-cudnn8.2.4/setup.sh
 
 export DATA_DIR="$HOME/GP/ehr-data"
 OUTPUT_DIR=""
