@@ -237,12 +237,11 @@ def glove_representation(category: str,
 
     glove_logger.setLevel(logging.WARNING)
 
-    cooc = build_coocur(
-        subjects=[subject_interface.subjects_jax[i] for i in train_ids],
-        index=index,
-        get_codes=get_codes,
-        code_ancestors=code_ancestors,
-        window_size_days=window_size_days)
+    cooc = build_coocur(subjects=list(map(subject_interface.get, train_ids)),
+                        index=index,
+                        get_codes=get_codes,
+                        code_ancestors=code_ancestors,
+                        window_size_days=window_size_days)
     return train_glove(index=index,
                        cooccurrences=cooc,
                        vector_size=vector_size,
