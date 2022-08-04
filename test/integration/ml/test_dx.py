@@ -7,18 +7,31 @@ import unittest
 import os
 from icenode import ml
 from icenode import ehr
+from icenode import embeddings as E
 from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global interface, splits, code_groups
+    global interface, interface_icd10, interface_icd9, splits, code_groups
     dataset = ehr.MIMICDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
-    interface = ehr.Subject_JAX.from_dataset(dataset, {
-        'dx': 'dx_ccs',
-        'dx_outcome': 'dx_flatccs_filter_v1'
-    })
+    interface = ehr.Subject_JAX.from_dataset(
+        dataset, {
+            'dx': 'dx_ccs',
+            'dx_outcome': 'dx_flatccs_filter_v1'
+        })
 
+    interface_icd10 = ehr.Subject_JAX.from_dataset(
+        dataset, {
+            'dx': 'dx_icd10',
+            'dx_outcome': 'dx_flatccs_filter_v1'
+        })
+
+    interface_icd9 = ehr.Subject_JAX.from_dataset(
+        dataset, {
+            'dx': 'dx_icd9',
+            'dx_outcome': 'dx_flatccs_filter_v1'
+        })
     splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)
     code_groups = interface.dx_outcome_by_percentiles(20)
 
@@ -41,7 +54,7 @@ class DxCommonTests(object):
             state = model.init(config)
 
             self.assertTrue(callable(model), msg=f"config: {config}")
-            self.assertTrue(state is not None , msg=f"config: {config}")
+            self.assertTrue(state is not None, msg=f"config: {config}")
             self.models.append((model, state))
 
     def test_train_read_write_params(self):
@@ -161,6 +174,34 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_UNIFORM_2LR
+
+
+class TestGlove(unittest.TestCase):
+
+    def test_glove(self):
+        glove_E = E.glove_representation(category='dx',
+                                         subject_interface=interface,
+                                         train_ids=splits[0],
+                                         vector_size=150,
+                                         iterations=30,
+                                         window_size_days=730)
+
+        glove_E = E.glove_representation(category='dx',
+                                         subject_interface=interface_icd10,
+                                         train_ids=splits[0],
+                                         vector_size=150,
+                                         iterations=30,
+                                         window_size_days=730)
+
+
+        glove_E = E.glove_representation(category='dx',
+                                         subject_interface=interface_icd9,
+                                         train_ids=splits[0],
+                                         vector_size=150,
+                                         iterations=30,
+                                         window_size_days=730)
+
+
 
 
 if __name__ == '__main__':

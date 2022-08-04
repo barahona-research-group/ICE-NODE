@@ -1,16 +1,13 @@
 """GloVe for initializing the basic embeddings for the GRAM method"""
 
-import logging
 import math
 from collections import defaultdict
 from random import shuffle
 from typing import List, Dict, Mapping, Tuple, Callable, Set
-
+from absl import logging
 import numpy as np
 
 from .. import ehr
-
-glove_logger = logging.getLogger("glove")
 """
 This implementation follows the following technical blog:
 http://www.foldl.me/2014/glove-python/
@@ -60,7 +57,9 @@ def build_coocur(subjects: List[List[ehr.Admission_JAX]],
 
             context_admissions = filter(is_context, subj_aug_adms)
 
-            concepts = [c for a in context_admissions for c in a]
+            concepts = [
+                c for day, concepts in context_admissions for c in concepts
+            ]
             concept_count: Dict[int, int] = defaultdict(int)
 
             for c in concepts:
@@ -186,11 +185,11 @@ def train_glove(index: Mapping[str, int],
             for (i_main, i_context), cooccurrence in cooccurrences.items()]
 
     for i in range(iterations):
-        glove_logger.info("\tBeginning iteration %i..", i)
+        logging.info("\tBeginning iteration %i..", i)
 
         cost = run_iter(data, **kwargs)
 
-        glove_logger.info("\t\tDone (cost %f)", cost)
+        logging.info("\t\tDone (cost %f)", cost)
 
     code_vector = {}
     for code, idx in index.items():
@@ -234,8 +233,6 @@ def glove_representation(category: str,
         index = subject_interface.pr_index
         get_codes = lambda adm: adm.pr_codes
         code_ancestors = lambda c: code_scheme.code_ancestors_bfs(c, True)
-
-    glove_logger.setLevel(logging.WARNING)
 
     cooc = build_coocur(subjects=list(map(subject_interface.get, train_ids)),
                         index=index,
