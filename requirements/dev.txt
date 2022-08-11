@@ -1,3 +1,4 @@
 -r common.txt
 -r hyperopt-sec.txt
 -r analysis-sec.txt
+networkx==2.8.5

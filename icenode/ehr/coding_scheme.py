@@ -3,6 +3,7 @@ data structures to support conversion between CCS and ICD9."""
 
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
+import re
 import os
 import gzip
 import xml.etree.ElementTree as ET
@@ -10,6 +11,14 @@ from absl import logging
 
 import numpy as np
 import pandas as pd
+
+try:
+    import networkx as nx
+except ImportError:
+    logging.warning('networkx library is not available')
+    _has_networkx = False
+else:
+    _has_networkx = True
 
 from ..utils import OOPError, LazyDict, write_config
 
@@ -277,6 +286,10 @@ class AbstractScheme:
     def __str__(self):
         return self.name
 
+    def __contains__(self, code):
+        """Returns True if `code` is contained in the current scheme."""
+        return code in self._codes
+
     @property
     def codes(self):
         return self._codes
@@ -300,6 +313,17 @@ class AbstractScheme:
     @property
     def idx2desc(self):
         return {self.index[code]: desc for code, desc in self.desc.items()}
+
+    def search_regex(self, query, regex_flags=re.I):
+        """
+        a regex-supported search of codes by a `query` string. the search is
+        applied on the code description.
+        for example, you can use it to return all codes related to cancer
+        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
+        """
+        return set(
+            filter(lambda c: re.match(query, self._desc[c], flags=regex_flags),
+                   self.codes))
 
 
 class NullScheme(AbstractScheme):
@@ -378,6 +402,10 @@ class HierarchicalScheme(AbstractScheme):
     @property
     def code2dag(self):
         return self._code2dag
+
+    def __contains__(self, code):
+        """Returns True if `code` is contained in the current hierarchy."""
+        return code in self._dag_codes or code in self._code2dag
 
     @staticmethod
     def reverse_connection(connection):
@@ -459,6 +487,51 @@ class HierarchicalScheme(AbstractScheme):
             if len(codes) == last_len:
                 raise RuntimeError('Common Ancestor not Found!')
         return codes[0]
+
+    def search_regex(self, query, regex_flags=re.I):
+        """
+        A regex-based search of codes by a `query` string. the search is
+        applied on the code descriptions.
+        for example, you can use it to return all codes related to cancer
+        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
+        For all found codes, their successor codes are also returned in the resutls.
+        """
+
+        codes = filter(
+            lambda c: re.match(query, self._desc[c], flags=regex_flags),
+            self.codes)
+
+        dag_codes = filter(
+            lambda c: re.match(query, self._dag_desc[c], flags=regex_flags),
+            self.dag_codes)
+
+        all_codes = set(map(self._code2dag.get, codes)) | set(dag_codes)
+
+        for c in list(all_codes):
+            all_codes.update(self.code_successors_dfs(c))
+
+        return all_codes
+
+    def to_digraph(self, df, discard_set=set(), node_attrs=None):
+        """
+        Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
+        Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
+        """
+        dag = nx.DiGraph()
+
+        def _populate_dag(ch):
+            for pt in self._ch2pt.get(ch, []):
+                dag.add_edge(ch, pt)
+                _populate_dag(pt)
+
+        for c in set(self._dag_codes) - set(discard_set):
+            _populate_dag(c)
+
+        if node_attrs is not None:
+            for node in dag.nodes:
+                for attr_name, attr_dict in node_attrs.items():
+                    dag.nodes[node][attr_name] = attr_dict.get(node, '')
+        return dag
 
 
 class ICDCommons(HierarchicalScheme):

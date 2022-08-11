@@ -1,0 +1,12 @@
+{
+    "code_scheme": {
+        "dx": "dx_ccs",
+        "dx_outcome": "dx_flatccs_filter_v1",
+        "pr": "none"
+    },
+    "model": {
+        "alpha": 1.0025875130319654e-06,
+        "beta": 1.0002315751642798e-06,
+        "class_weight": "none"
+    }
+}
