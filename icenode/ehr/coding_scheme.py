@@ -234,7 +234,6 @@ class CodeMapper(defaultdict):
 
 
 class IdentityCodeMapper(CodeMapper):
-
     def __init__(self, scheme, *args):
         super().__init__(s_scheme=scheme,
                          t_scheme=scheme,
@@ -247,7 +246,6 @@ class IdentityCodeMapper(CodeMapper):
 
 
 class NullCodeMapper(CodeMapper):
-
     def __init__(self, *args):
         super().__init__(s_scheme=code_scheme['none'],
                          t_scheme=code_scheme['none'],
@@ -265,7 +263,6 @@ class NullCodeMapper(CodeMapper):
 
 
 class AbstractScheme:
-
     def __init__(self, codes, index, desc, name):
         logging.info(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
@@ -327,13 +324,11 @@ class AbstractScheme:
 
 
 class NullScheme(AbstractScheme):
-
     def __init__(self, name):
         super().__init__([], {}, {}, name)
 
 
 class HierarchicalScheme(AbstractScheme):
-
     def __init__(self,
                  dag_codes=None,
                  dag_index=None,
@@ -402,6 +397,10 @@ class HierarchicalScheme(AbstractScheme):
     @property
     def code2dag(self):
         return self._code2dag
+
+    @property
+    def dag2code(self):
+        return self._dag2code
 
     def __contains__(self, code):
         """Returns True if `code` is contained in the current hierarchy."""
@@ -512,7 +511,7 @@ class HierarchicalScheme(AbstractScheme):
 
         return all_codes
 
-    def to_digraph(self, df, discard_set=set(), node_attrs=None):
+    def to_digraph(self, discard_set=set(), node_attrs={}):
         """
         Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
         Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
@@ -527,15 +526,13 @@ class HierarchicalScheme(AbstractScheme):
         for c in set(self._dag_codes) - set(discard_set):
             _populate_dag(c)
 
-        if node_attrs is not None:
+        for attr_name, attr_dict in node_attrs.items():
             for node in dag.nodes:
-                for attr_name, attr_dict in node_attrs.items():
-                    dag.nodes[node][attr_name] = attr_dict.get(node, '')
+                dag.nodes[node][attr_name] = attr_dict.get(node, '')
         return dag
 
 
 class ICDCommons(HierarchicalScheme):
-
     @staticmethod
     def add_dot(code):
         raise OOPError('Should be overriden')
@@ -664,7 +661,6 @@ class DxICD10(ICDCommons):
         - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
-
     @staticmethod
     def add_dot(code):
         if '.' in code:
@@ -745,7 +741,6 @@ class DxICD10(ICDCommons):
 
 
 class PrICD10(ICDCommons):
-
     @staticmethod
     def add_dot(code):
         # No decimal point in ICD10-PCS
@@ -927,7 +922,6 @@ class DxICD9(ICDCommons):
 
 
 class PrICD9(ICDCommons):
-
     @staticmethod
     def add_dot(code):
         if '.' in code:
