@@ -22,6 +22,28 @@ from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract import AbstractModel
 
+
+class ICENODEResult(dict):
+
+    @staticmethod
+    def combine(res_list):
+        pred_loss = jnp.average(
+            jnp.array([r['prediction_loss'] for r in res_list]),
+            weights=jnp.array([r['admissions_count'] for r in res_list]))
+
+        risk_prediction = res_list[0]['risk_prediction'].copy()
+        for r in res_list[1:]:
+            risk_prediction.update(r['risk_prediction'])
+        return {
+            'prediction_loss': pred_loss,
+            'dyn_loss': sum(r['dyn_loss'] for r in res_list),
+            'odeint_weeks': sum(r['odeint_weeks'] for r in res_list),
+            'admissions_count': sum(r['admissions_count'] for r in res_list),
+            'nfe': sum(r['nfe'] for r in res_list),
+            'risk_prediction': risk_prediction
+        }
+
+
 class ICENODE(AbstractModel):
 
     def __init__(self, subject_interface: ehr.Subject_JAX,
@@ -54,31 +76,31 @@ class ICENODE(AbstractModel):
         f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(NeuralODE,
-                            ode_dyn_cls=ode_dyn_cls,
-                            state_size=state_emb_size,
-                            depth=depth,
-                            timescale=timescale,
-                            with_bias=ode_with_bias,
-                            init_var=ode_init_var,
-                            name='f_n_ode',
-                            tay_reg=3)))
+                                  ode_dyn_cls=ode_dyn_cls,
+                                  state_size=state_emb_size,
+                                  depth=depth,
+                                  timescale=timescale,
+                                  with_bias=ode_with_bias,
+                                  init_var=ode_init_var,
+                                  name='f_n_ode',
+                                  tay_reg=3)))
         self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
 
         f_update_init, f_update = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(StateUpdate,
-                            state_size=state_size,
-                            embeddings_size=self.dimensions['dx_emb'],
-                            name='f_update')))
+                                  state_size=state_size,
+                                  embeddings_size=self.dimensions['dx_emb'],
+                                  name='f_update')))
         self.f_update = jax.jit(f_update)
 
         f_dec_init, f_dec = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(EmbeddingsDecoder_Logits,
-                            n_layers=2,
-                            embeddings_size=self.dimensions['dx_emb'],
-                            diag_size=self.dimensions['dx_outcome'],
-                            name='f_dec')))
+                                  n_layers=2,
+                                  embeddings_size=self.dimensions['dx_emb'],
+                                  diag_size=self.dimensions['dx_outcome'],
+                                  name='f_dec')))
         self.f_dec = jax.jit(f_dec)
 
         self.initializers = {
@@ -186,7 +208,10 @@ class ICENODE(AbstractModel):
 
     def _dx_loss(self, dx: Dict[int, jnp.ndarray], dec_dx: Dict[int,
                                                                 jnp.ndarray]):
-        l = [metric.balanced_focal_bce(dx[i], dec_dx[i]) for i in sorted(dx.keys())]
+        l = [
+            metric.balanced_focal_bce(dx[i], dec_dx[i])
+            for i in sorted(dx.keys())
+        ]
         return sum(l) / len(l)
 
     @staticmethod
@@ -281,16 +306,36 @@ class ICENODE(AbstractModel):
         prediction_loss = jnp.average(jnp.array(prediction_losses),
                                       weights=jnp.array(adm_counts))
 
-        ret = {
+        ret = ICENODEResult({
             'prediction_loss': prediction_loss,
             'dyn_loss': dyn_loss,
             'odeint_weeks': sum(odeint_time) / 7.0,
             'admissions_count': sum(adm_counts),
             'nfe': total_nfe,
             'risk_prediction': risk_prediction
-        }
+        })
 
         return ret
+
+    def eval(self, model_state: Any, batch: List[int]) -> Dict[str, float]:
+        loss_mixing = model_state[-1]
+        params = self.get_params(model_state)
+
+        # Due to memory constraint in evaluation (causes OoM crashes, divide the batches.
+        if len(batch) > 16:
+            res = []
+            n = len(batch) // 16
+            for _batch in [batch[i:i + n] for i in range(0, len(batch), n)]:
+                res.append(self(params, _batch, count_nfe=True))
+            res = ICENODEResult.combine(res)
+        else:
+            res = self(params, batch, count_nfe=True)
+
+        return {
+            'loss': self.detailed_loss(loss_mixing, params, res),
+            'stats': self.eval_stats(res),
+            'risk_prediction': res['risk_prediction']
+        }
 
     def _f_n_ode_trajectory(self, params, sampling_rate, state_e, t_offset, t):
         nn_decode = partial(self._f_dec, params)
@@ -450,17 +495,6 @@ class ICENODE(AbstractModel):
             'admissions_count': res['admissions_count'],
             'nfe_per_week': nfe / res['odeint_weeks'],
             'Kfe': nfe / 1000
-        }
-
-    def eval(self, model_state: Any, batch: List[int]) -> Dict[str, float]:
-        loss_mixing = model_state[-1]
-        params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True)
-
-        return {
-            'loss': self.detailed_loss(loss_mixing, params, res),
-            'stats': self.eval_stats(res),
-            'risk_prediction': res['risk_prediction']
         }
 
     def admissions_auc_scores(self, model_state: Any, batch: List[int]):

@@ -69,7 +69,7 @@ def compute_auc(v_truth, v_preds):
 def auc_scores(risk_prediction: BatchPredictedRisks):
     gtruth = []
     preds = []
-    for subject_risks in risk_prediction.subject_risks.values():
+    for subject_risks in risk_prediction.values():
         for risk in subject_risks.values():
             # In some cases the ground truth is all negative, avoid them.
             # Note: in Python {0.0, 1.0} == {0, 1} => True
@@ -92,7 +92,7 @@ def codes_auc_scores(risk_prediction: BatchPredictedRisks):
     ground_truth = []
     predictions = []
 
-    for subject_risks in risk_prediction.subject_risks.values():
+    for subject_risks in risk_prediction.values():
         for risk in subject_risks.values():
             ground_truth.append(risk.ground_truth)
             predictions.append(jit_sigmoid(risk.prediction))
@@ -128,7 +128,7 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
     nfe = []
     intervals = []
 
-    for subject_id, subject_risks in risk_prediction.subject_risks.items():
+    for subject_id, subject_risks in risk_prediction.items():
         for i, admission_index in enumerate(sorted(subject_risks.keys())):
             risk = subject_risks[admission_index]
             # If ground truth has no clinical codes, skip.
@@ -177,7 +177,7 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
 
 def compute_confusion_matrix(risk_prediction: BatchPredictedRisks):
     cm = []
-    for subject_risks in risk_prediction.subject_risks.values():
+    for subject_risks in risk_prediction.values():
         for risk in subject_risks.values():
             logits = risk.prediction
             cm.append(confusion_matrix(risk.ground_truth, jit_sigmoid(logits)))
@@ -191,7 +191,7 @@ def top_k_detectability_scores(code_groups, risk_predictions, top_k_list):
     ground_truth = []
     risks = []
 
-    for subject_risks in risk_predictions.subject_risks.values():
+    for subject_risks in risk_predictions.values():
         for risk_pred in subject_risks.values():
             risks.append(risk_pred.prediction)
             ground_truth.append(risk_pred.ground_truth)
@@ -274,9 +274,9 @@ def codes_auc_pairwise_tests(results: Dict[str, BatchPredictedRisks],
 
     def extract_subjects():
         example_risk_predictions = results[clf_labels[0]]
-        subjects = set(example_risk_predictions.subject_risks.keys())
+        subjects = set(example_risk_predictions.keys())
         assert all(
-            set(other_risk_prediction.subject_risks.keys()) == subjects
+            set(other_risk_prediction.keys()) == subjects
             for other_risk_prediction in
             results.values()), "results should correspond to the same group"
         return list(sorted(subjects))
@@ -291,7 +291,7 @@ def codes_auc_pairwise_tests(results: Dict[str, BatchPredictedRisks],
             clf_scores = []
             clf_risk_prediction = results[clf_label]
             for subject_id in subjects:
-                subj_pred_risks = clf_risk_prediction.subject_risks[subject_id]
+                subj_pred_risks = clf_risk_prediction[subject_id]
                 for index in sorted(subj_pred_risks):
                     risk_prediction = subj_pred_risks[index]
                     clf_ground_truth.append(risk_prediction.ground_truth)

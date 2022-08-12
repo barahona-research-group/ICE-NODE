@@ -31,17 +31,10 @@ class SubjectPredictedRisk:
             all(map(jnp.array_equal, arr_attrs(self), arr_attrs(other)))
 
 
-class BatchPredictedRisks:
-
-    def __init__(self):
-        self.subject_risks = {}
-
-    def __eq__(self, other):
-        return self.subject_risks == other.subject_risks
-
+class BatchPredictedRisks(dict):
     def __str__(self):
         subjects_str = []
-        for subj_id, _risks in self.subject_risks.items():
+        for subj_id, _risks in self.items():
             subjects_str.extend([
                 f'subject_id:{subj_id}\n{_risk}' for _risk in _risks.values()
             ])
@@ -54,10 +47,10 @@ class BatchPredictedRisks:
             prediction,
             ground_truth=None,
             **other_attrs):
-        if subject_id not in self.subject_risks:
-            self.subject_risks[subject_id] = {}
+        if subject_id not in self:
+            self[subject_id] = {}
 
-        self.subject_risks[subject_id][index] = SubjectPredictedRisk(
+        self[subject_id][index] = SubjectPredictedRisk(
             admission_id=admission_id,
             index=index,
             prediction=prediction,
@@ -65,8 +58,8 @@ class BatchPredictedRisks:
             **other_attrs)
 
     def get_subjects(self):
-        return sorted(self.subject_risks)
+        return sorted(self.keys())
 
     def get_risks(self, subject_id):
-        risks = self.subject_risks[subject_id]
+        risks = self[subject_id]
         return list(map(risks.get, sorted(risks)))
