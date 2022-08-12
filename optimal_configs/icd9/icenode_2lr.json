@@ -5,7 +5,7 @@
     },
     "emb": {
         "dx": {
-            "embeddings_dim": 300
+            "embeddings_dim": 150
         },
         "kind": "matrix"
     },
@@ -29,12 +29,5 @@
         "lr1": 7.156197978746877e-05,
         "lr2": 0.0011484691965460785,
         "optimizer": "adam"
-    },
-    "meta": {
-    	"github_tag": "v0.2.20.dyn",
-    	"data_tag": "M3",
-    	"model": "icenode_2lr",
-    	"emb_kind": "matrix",
-    	"optuna_trial_number": 97
     }
 }
