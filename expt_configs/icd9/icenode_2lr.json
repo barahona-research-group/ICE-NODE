@@ -5,7 +5,7 @@
     },
     "emb": {
         "dx": {
-            "embeddings_dim": 300
+            "embeddings_dim": 150
         },
         "kind": "matrix"
     },
@@ -17,7 +17,7 @@
         "timescale": 7
     },
     "training": {
-        "batch_size": 64,
+        "batch_size": 16,
         "decay_rate1": 0.27729587471948475,
         "decay_rate2": 0.3293406876704547,
         "epochs": 60,
