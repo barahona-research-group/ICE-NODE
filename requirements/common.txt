@@ -1,5 +1,5 @@
 absl-py==1.0.0
-dm-haiku==0.0.5
+dm-haiku==0.0.7
 jax==0.3.13
 jaxlib==0.3.10
 jaxopt==0.4.2

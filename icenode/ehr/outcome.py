@@ -11,8 +11,10 @@ _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 
-outcome_conf_files = {'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
-                      'dx_icd9_filter_v1': 'dx_icd9_v1.json'}
+outcome_conf_files = {
+    'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
+    'dx_icd9_filter_v1': 'dx_icd9_v1.json'
+}
 
 
 class DxOutcome(AbstractScheme):
@@ -25,9 +27,10 @@ class DxOutcome(AbstractScheme):
         assert self._mapper is not None, (
             f'None mapper: {input_dx_scheme}->{conf["code_scheme"]}')
 
-        base_codes = sorted(self.mapper.t_index)
-
-        codes = [c for c in base_codes if c not in conf['exclude_codes']]
+        codes = [
+            c for c in sorted(self.mapper.t_index)
+            if c not in conf['exclude_codes']
+        ]
         index = dict(zip(codes, range(len(codes))))
         desc = {c: self._mapper.t_desc[c] for c in codes}
         super().__init__(codes=codes, index=index, desc=desc, name=conf)
@@ -41,9 +44,9 @@ class DxOutcome(AbstractScheme):
         return codeset & set(self.codes)
 
     def codeset2vec(self, codeset: Set[str]):
-        vec = np.zeros(len(self.index))
+        vec = np.zeros(len(self.index), dtype=bool)
         for c in self.map_codeset(codeset):
-            vec[self.index[c]] = 1
+            vec[self.index[c]] = True
         return vec
 
     @staticmethod

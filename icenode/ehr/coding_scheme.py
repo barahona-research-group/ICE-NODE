@@ -222,10 +222,10 @@ class CodeMapper(defaultdict):
 
     def codeset2vec(self, codeset: Set[str]):
         index = self.t_index
-        vec = np.zeros(len(self.t_index))
+        vec = np.zeros(len(self.t_index), dtype=bool)
         try:
             for c in codeset:
-                vec[index[c]] = 1
+                vec[index[c]] = True
         except KeyError as missing:
             logging.error(
                 f'Code {missing} is missing. Accepted keys: {index.keys()}')

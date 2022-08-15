@@ -12,7 +12,7 @@ from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global interface, interface_icd10, interface_icd9, splits, code_groups
+    global interface, interface_icd10, interface_icd9, splits, code_groups, dataset
     dataset = ehr.MIMICDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
     interface = ehr.Subject_JAX.from_dataset(
@@ -50,7 +50,8 @@ class DxCommonTests(object):
     def setUp(self):
         self.models = []
         for config in self.configs:
-            model = self.model_cls.create_model(config, interface, splits[0])
+            model = self.model_cls.create_model(config, self.interface,
+                                                splits[0])
             state = model.init(config)
 
             self.assertTrue(callable(model), msg=f"config: {config}")
@@ -94,6 +95,7 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
             cls.configs.append(config)
 
         cls.model_cls = ml.WLR
+        cls.interface = interface
 
 
 class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
@@ -105,6 +107,7 @@ class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_winlogreg.json')
         ]
         cls.model_cls = ml.WLR_SK
+        cls.interface = interface
 
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):
@@ -116,6 +119,7 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_gru_m.json')
         ]
         cls.model_cls = ml.GRU
+        cls.interface = interface
 
 
 class TestDxGRU_G(DxCommonTests, unittest.TestCase):
@@ -127,6 +131,7 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_gru_g.json')
         ]
         cls.model_cls = ml.GRU
+        cls.interface = interface
 
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):
@@ -138,6 +143,7 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_retain_m.json')
         ]
         cls.model_cls = ml.RETAIN
+        cls.interface = interface
 
 
 class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
@@ -150,6 +156,37 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_2LR
+        cls.interface = interface
+
+
+class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.env_patcher = unittest.mock.patch.dict(
+            os.environ, {"ICENODE_INTERFACE_MAX_SIZE_GB": "0.0"})
+        cls.env_patcher.start()
+
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
+            )
+        ]
+        cls.model_cls = ml.ICENODE_2LR
+        cls.interface = ehr.Subject_JAX.from_dataset(
+            dataset, {
+                'dx': 'dx_ccs',
+                'dx_outcome': 'dx_flatccs_filter_v1'
+            })
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+
+        cls.env_patcher.stop()
+
+    def test_env_effect(self):
+        self.assertEqual(self.interface.data_max_size_gb, 0.0)
 
 
 class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
@@ -162,6 +199,7 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_2LR
+        cls.interface = interface
 
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
@@ -174,6 +212,7 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_UNIFORM_2LR
+        cls.interface = interface
 
 
 class TestGlove(unittest.TestCase):
@@ -193,15 +232,12 @@ class TestGlove(unittest.TestCase):
                                          iterations=30,
                                          window_size_days=730)
 
-
         glove_E = E.glove_representation(category='dx',
                                          subject_interface=interface_icd9,
                                          train_ids=splits[0],
                                          vector_size=150,
                                          iterations=30,
                                          window_size_days=730)
-
-
 
 
 if __name__ == '__main__':

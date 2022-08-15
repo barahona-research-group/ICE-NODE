@@ -5,6 +5,7 @@ from collections import defaultdict
 import random
 from typing import List, Optional, Dict
 from datetime import datetime
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,7 @@ class Admission_JAX:
 
     def __init__(self, adm: Admission, first_adm_date: datetime,
                  dx_mapper: CodeMapper, dx_outcome: DxOutcome,
-                 pr_mapper: Optional[CodeMapper]):
+                 pr_mapper: CodeMapper):
         # Time as days since the first admission
         self.admission_time = adm.admission_day(first_adm_date)
         self.los = adm.length_of_stay
@@ -33,6 +34,13 @@ class Admission_JAX:
         self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
 
         self.dx_outcome = jnp.array(dx_outcome.codeset2vec(adm.dx_codes))
+
+    @staticmethod
+    def probe_data_size_gb(dx_mapper: CodeMapper, dx_outcome: DxOutcome,
+                           pr_mapper: CodeMapper):
+        n_bytes = len(dx_mapper.t_index) + len(pr_mapper.t_index) + len(
+            dx_outcome.index)
+        return n_bytes * 2**-30
 
 
 class WindowFeatures:
@@ -54,7 +62,18 @@ class Subject_JAX(dict):
     are discarded.
     """
 
-    def __init__(self, subjects: List[Subject], code_scheme: Dict[str, str]):
+    def __init__(self,
+                 subjects: List[Subject],
+                 code_scheme: Dict[str, str],
+                 data_max_size_gb=None):
+        # If the data size on the JAX device will exceed this preset variable,
+        # let the interface contain subject data amounting to that limit, and the
+        # remaining subjects will be loaded to the device everytime one of these
+        # subjects is requested.
+        # This will rectify the memory consumption, but will lead to time
+        # consumption for data loading between host/device memories.
+        self._data_max_size_gb = data_max_size_gb or float(
+            os.environ.get('ICENODE_INTERFACE_MAX_SIZE_GB', 2))
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
@@ -68,11 +87,19 @@ class Subject_JAX(dict):
                                      conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
-        self.update(
-            self.jaxify_subject_admissions(subjects,
-                                           dx_mapper=self.dx_mapper,
-                                           dx_outcome=self.dx_outcome,
-                                           pr_mapper=self.pr_mapper))
+        self._jaxify_subject_admissions()
+
+    def __getitem__(self, k):
+        v = super().__getitem__(k)
+        # If value is callable, then
+        if callable(v):
+            return v()
+        return v
+
+    def get(self, k, default=None):
+        if k in self:
+            return self.__getitem__(k)
+        return default
 
     @property
     def subjects(self):
@@ -93,6 +120,10 @@ class Subject_JAX(dict):
     @property
     def dx_index(self) -> Dict[str, int]:
         return self.dx_mapper.t_index
+
+    @property
+    def data_max_size_gb(self) -> float:
+        return self._data_max_size_gb
 
     def dx_make_ancestors_mat(self):
         return self.dx_mapper.t_scheme.make_ancestors_mat()
@@ -223,21 +254,33 @@ class Subject_JAX(dict):
                 nth_admission[n][subject_id] = adm
         return nth_admission
 
-    @staticmethod
-    def subject_to_admissions(subject: Subject,
-                              **kwargs) -> Dict[int, Admission_JAX]:
-        return [
-            Admission_JAX(adm, first_adm_date=subject.first_adm_date, **kwargs)
-            for adm in subject.admissions
-        ]
+    def _jaxify_subject_admissions(self):
 
-    @staticmethod
-    def jaxify_subject_admissions(subjects, **kwargs):
-        return {
-            subject.subject_id:
-            Subject_JAX.subject_to_admissions(subject, **kwargs)
-            for subject in subjects
-        }
+        def _jaxify_adms(subj):
+            return [
+                Admission_JAX(adm,
+                              first_adm_date=subj.first_adm_date,
+                              dx_mapper=self.dx_mapper,
+                              dx_outcome=self.dx_outcome,
+                              pr_mapper=self.pr_mapper)
+                for adm in subj.admissions
+            ]
+
+        def _lazy_load(subj):
+            return lambda: _jaxify_adms(subj)
+
+        acc_size_gb = 0.0
+        adm_data_size_gb = Admission_JAX.probe_data_size_gb(
+            dx_mapper=self.dx_mapper,
+            dx_outcome=self.dx_outcome,
+            pr_mapper=self.pr_mapper)
+
+        for subject_id, subject in self.subjects.items():
+            acc_size_gb += len(subject.admissions) * adm_data_size_gb
+            if acc_size_gb < self.data_max_size_gb:
+                self[subject_id] = _jaxify_adms(subject)
+            else:
+                self[subject_id] = _lazy_load(subject)
 
     @classmethod
     def from_dataset(cls, dataset: AbstractEHRDataset, *args, **kwargs):
