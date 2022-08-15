@@ -7,6 +7,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import os
 
+from absl import logging
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
@@ -270,6 +271,7 @@ class Subject_JAX(dict):
             return lambda: _jaxify_adms(subj)
 
         acc_size_gb = 0.0
+        n_subject_loaded = 0
         adm_data_size_gb = Admission_JAX.probe_data_size_gb(
             dx_mapper=self.dx_mapper,
             dx_outcome=self.dx_outcome,
@@ -279,8 +281,13 @@ class Subject_JAX(dict):
             acc_size_gb += len(subject.admissions) * adm_data_size_gb
             if acc_size_gb < self.data_max_size_gb:
                 self[subject_id] = _jaxify_adms(subject)
+                n_subject_loaded += 1
             else:
                 self[subject_id] = _lazy_load(subject)
+
+        logging.info(
+            f'Data of {n_subject_loaded}/{len(self.subjects)} subjects are loaded to device, rest are lazily loaded.'
+        )
 
     @classmethod
     def from_dataset(cls, dataset: AbstractEHRDataset, *args, **kwargs):
