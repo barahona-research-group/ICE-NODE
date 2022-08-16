@@ -225,13 +225,13 @@ def glove_representation(category: str,
 
     if category == 'dx':
         code_scheme = ehr.code_scheme[subject_interface.dx_scheme.name]
-        index = subject_interface.dx_index
-        get_codes = lambda adm: adm.dx_codes
+        index = code_scheme.dag_index
+        get_codes = lambda adm: set(map(code_scheme.code2dag.get, adm.dx_codes))
         code_ancestors = lambda c: code_scheme.code_ancestors_bfs(c, True)
     elif category == 'pr':
         code_scheme = ehr.code_scheme[subject_interface.pr_scheme.name]
-        index = subject_interface.pr_index
-        get_codes = lambda adm: adm.pr_codes
+        index = code_scheme.dag_index
+        get_codes = lambda adm: set(map(code_scheme.code2dag.get, adm.pr_codes))
         code_ancestors = lambda c: code_scheme.code_ancestors_bfs(c, True)
 
     cooc = build_coocur(subjects=list(map(subject_interface.get, train_ids)),
