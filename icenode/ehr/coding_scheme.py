@@ -220,6 +220,12 @@ class CodeMapper(defaultdict):
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
 
+    def t_code_ancestors(self, code: str, include_itself=True):
+        if self._t_dag_space == False:
+            code = self.t_scheme.code2dag[code]
+        return self.t_scheme.code_ancestors_bfs(code,
+                                                include_itself=include_itself)
+
     def codeset2vec(self, codeset: Set[str]):
         index = self.t_index
         vec = np.zeros(len(self.t_index), dtype=bool)
@@ -234,6 +240,7 @@ class CodeMapper(defaultdict):
 
 
 class IdentityCodeMapper(CodeMapper):
+
     def __init__(self, scheme, *args):
         super().__init__(s_scheme=scheme,
                          t_scheme=scheme,
@@ -246,6 +253,7 @@ class IdentityCodeMapper(CodeMapper):
 
 
 class NullCodeMapper(CodeMapper):
+
     def __init__(self, *args):
         super().__init__(s_scheme=code_scheme['none'],
                          t_scheme=code_scheme['none'],
@@ -263,6 +271,7 @@ class NullCodeMapper(CodeMapper):
 
 
 class AbstractScheme:
+
     def __init__(self, codes, index, desc, name):
         logging.info(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
@@ -324,11 +333,13 @@ class AbstractScheme:
 
 
 class NullScheme(AbstractScheme):
+
     def __init__(self, name):
         super().__init__([], {}, {}, name)
 
 
 class HierarchicalScheme(AbstractScheme):
+
     def __init__(self,
                  dag_codes=None,
                  dag_index=None,
@@ -533,6 +544,7 @@ class HierarchicalScheme(AbstractScheme):
 
 
 class ICDCommons(HierarchicalScheme):
+
     @staticmethod
     def add_dot(code):
         raise OOPError('Should be overriden')
@@ -661,6 +673,7 @@ class DxICD10(ICDCommons):
         - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
+
     @staticmethod
     def add_dot(code):
         if '.' in code:
@@ -741,6 +754,7 @@ class DxICD10(ICDCommons):
 
 
 class PrICD10(ICDCommons):
+
     @staticmethod
     def add_dot(code):
         # No decimal point in ICD10-PCS
@@ -922,6 +936,7 @@ class DxICD9(ICDCommons):
 
 
 class PrICD9(ICDCommons):
+
     @staticmethod
     def add_dot(code):
         if '.' in code:
