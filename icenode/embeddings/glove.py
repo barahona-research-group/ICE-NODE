@@ -230,15 +230,12 @@ def glove_representation(category: str,
         m = subject_interface.pr_mapper
         get_codes = lambda adm: adm.pr_codes
 
-    index = m.t_scheme.dag_index
-    code_ancestors = lambda c: m.t_code_ancestors_bfs(c, True)
-
     cooc = build_coocur(subjects=list(map(subject_interface.get, train_ids)),
-                        index=index,
+                        index=m.t_scheme.dag_index,
                         get_codes=get_codes,
-                        code_ancestors=code_ancestors,
+                        code_ancestors=m.t_code_ancestors,
                         window_size_days=window_size_days)
-    return train_glove(index=index,
+    return train_glove(index=m.t_scheme.dag_index,
                        cooccurrences=cooc,
                        vector_size=vector_size,
                        iterations=iterations,
