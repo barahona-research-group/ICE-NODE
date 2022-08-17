@@ -12,7 +12,7 @@ from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global interface, interface_icd10, interface_icd9, splits, code_groups, dataset
+    global interface, interface_icd10, interface_icd9, interface_icd9_dagvec, splits, code_groups, dataset
     dataset = ehr.MIMICDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
     interface = ehr.Subject_JAX.from_dataset(
@@ -24,14 +24,22 @@ def setUpModule():
     interface_icd10 = ehr.Subject_JAX.from_dataset(
         dataset, {
             'dx': 'dx_icd10',
-            'dx_outcome': 'dx_flatccs_filter_v1'
+            'dx_outcome': 'dx_icd9_filter_v1'
         })
 
     interface_icd9 = ehr.Subject_JAX.from_dataset(
         dataset, {
             'dx': 'dx_icd9',
-            'dx_outcome': 'dx_flatccs_filter_v1'
+            'dx_outcome': 'dx_icd9_filter_v1'
         })
+
+    interface_icd9_dagvec = ehr.Subject_JAX.from_dataset(
+        dataset, {
+            'dx': 'dx_icd9',
+            'dx_dagvec': True,
+            'dx_outcome': 'dx_icd9_filter_v1'
+        })
+
     splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)
     code_groups = interface.dx_outcome_by_percentiles(20)
 
@@ -132,6 +140,18 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
         ]
         cls.model_cls = ml.GRU
         cls.interface = interface
+
+
+class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/icd9_dx_gru_g.json')
+        ]
+        cls.model_cls = ml.GRU
+        cls.interface = interface_icd9_dagvec
 
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):

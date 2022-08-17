@@ -20,19 +20,32 @@ from .outcome import DxOutcome
 
 class Admission_JAX:
 
-    def __init__(self, adm: Admission, first_adm_date: datetime,
-                 dx_mapper: CodeMapper, dx_outcome: DxOutcome,
-                 pr_mapper: CodeMapper):
+    def __init__(self,
+                 adm: Admission,
+                 first_adm_date: datetime,
+                 dx_mapper: CodeMapper,
+                 dx_outcome: DxOutcome,
+                 pr_mapper: CodeMapper,
+                 dx_dagvec=False,
+                 pr_dagvec=False):
         # Time as days since the first admission
         self.admission_time = adm.admission_day(first_adm_date)
         self.los = adm.length_of_stay
         self.admission_id = adm.admission_id
 
         self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
-        self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
+
+        if dx_dagvec:
+            self.dx_vec = jnp.array(dx_mapper.codeset2dagvec(self.dx_codes))
+        else:
+            self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
 
         self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
-        self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
+
+        if pr_dagvec:
+            self.pr_vec = jnp.array(pr_mapper.codeset2dagvec(self.pr_codes))
+        else:
+            self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
 
         self.dx_outcome = jnp.array(dx_outcome.codeset2vec(adm.dx_codes))
 
@@ -88,7 +101,8 @@ class Subject_JAX(dict):
                                      conf=code_scheme['dx_outcome'])
 
         self._subjects = {s.subject_id: s for s in subjects}
-        self._jaxify_subject_admissions()
+        self._jaxify_subject_admissions(code_scheme.get('dx_dagvec', False),
+                                        code_scheme.get('pr_dagvec', False))
 
     def __getitem__(self, k):
         v = super().__getitem__(k)
@@ -255,7 +269,7 @@ class Subject_JAX(dict):
                 nth_admission[n][subject_id] = adm
         return nth_admission
 
-    def _jaxify_subject_admissions(self):
+    def _jaxify_subject_admissions(self, dx_dagvec, pr_dagvec):
 
         def _jaxify_adms(subj):
             return [
@@ -263,8 +277,9 @@ class Subject_JAX(dict):
                               first_adm_date=subj.first_adm_date,
                               dx_mapper=self.dx_mapper,
                               dx_outcome=self.dx_outcome,
-                              pr_mapper=self.pr_mapper)
-                for adm in subj.admissions
+                              pr_mapper=self.pr_mapper,
+                              dx_dagvec=dx_dagvec,
+                              pr_dagvec=pr_dagvec) for adm in subj.admissions
             ]
 
         def _lazy_load(subj):

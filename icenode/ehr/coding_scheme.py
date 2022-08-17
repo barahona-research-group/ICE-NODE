@@ -238,6 +238,22 @@ class CodeMapper(defaultdict):
 
         return vec
 
+    def codeset2dagvec(self, codeset: Set[str]):
+        if self._t_dag_space == False:
+            index = self.t_scheme.dag_index
+            codeset = set(self.t_scheme.code2dag[c] for c in codeset)
+        else:
+            index = self.t_index
+        vec = np.zeros(len(index), dtype=bool)
+        try:
+            for c in codeset:
+                vec[index[c]] = True
+        except KeyError as missing:
+            logging.error(
+                f'Code {missing} is missing. Accepted keys: {index.keys()}')
+
+        return vec
+
 
 class IdentityCodeMapper(CodeMapper):
 

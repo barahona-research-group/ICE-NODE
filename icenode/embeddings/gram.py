@@ -114,7 +114,7 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
                                f'Got {attention_method}. Expected either of'
                                f'{", ".join(["tanh", "l2"])}.')
 
-        self.code_branch = self._code_branch_mat(ancestors_mat)
+        self.code_ancestry = self._code_ancestry_mat(ancestors_mat)
         self.index = jnp.arange(len(ancestors_mat))
 
         self.init_att, fwd_att = hk.without_apply_rng(
@@ -125,7 +125,7 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
         self.fwd_att = jax.jit(fwd_att)
 
     @staticmethod
-    def _code_branch_mat(ancestors_mat: jnp.ndarray):
+    def _code_ancestry_mat(ancestors_mat: jnp.ndarray):
         """
         This function returns an array, where each row correspond to one code.
         Each row includes the ancestor indices of the corresponding code,
@@ -135,23 +135,23 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
         entire row, the row is padded with the code index repetitions.
         """
         max_ancestors = ancestors_mat.sum(axis=1).max()
-        code_branch = []
+        code_ancestry = []
         for i, ancestors_i in enumerate(ancestors_mat):
             ancestors_i = onp.nonzero(ancestors_i)[0]
             fill_size = max_ancestors + 1 - len(ancestors_i)
             fill = onp.zeros(fill_size, dtype=int) + i
-            code_branch.append(onp.hstack((ancestors_i, fill)))
+            code_ancestry.append(onp.hstack((ancestors_i, fill)))
 
-        return jnp.vstack(code_branch)
+        return jnp.vstack(code_ancestry)
 
     def init_params(self, rng_key):
         raise RuntimeError(f'Should be overriden')
 
     @partial(jax.jit, static_argnums=(0, ))
-    def _self_attention(self, params: Any, E: jnp.ndarray, branch: jnp.ndarray,
+    def _self_attention(self, params: Any, E: jnp.ndarray, ancestry: jnp.ndarray,
                         e_i: jnp.ndarray):
         # E: basic embeddings of ancestors
-        E = E.at[branch].get()
+        E = E.at[ancestry].get()
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
         return jnp.average(E, axis=0, weights=unnormalized_softmax(A_att))
 
@@ -159,7 +159,7 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
     def _compute_embeddings_mat(self, params):
         E, att_params = params
         return jax.vmap(partial(self._self_attention, att_params,
-                                E))(self.code_branch, E)
+                                E))(self.code_ancestry, E)
 
     # This can be overriden.
     def compute_embeddings_mat(self, params):
@@ -212,13 +212,13 @@ class GRAM(AbstractGRAM):
             **self.glove_config)
 
         if self.category == 'dx':
-            code2index = self.subject_interface.dx_index
+            t_scheme = self.subject_interface.dx_mapper.t_scheme
         else:
-            code2index = self.subject_interface.pr_index
+            t_scheme = self.subject_interface.pr_mapper.t_scheme
 
-        index2code = {i: c for c, i in code2index.items()}
-        codes_ordered = map(index2code.get, range(len(index2code)))
-        initial_E = jnp.vstack(map(glove_E.get, codes_ordered))
+        index2code = {i: c for c, i in t_scheme.dag_index.items()}
+        codes_ordered = list(index2code[i] for i in range(len(index2code)))
+        initial_E = jnp.vstack([glove_E[c] for c in codes_ordered])
 
         e = initial_E[0, :]
         return initial_E, self.init_att(rng_key, e, e)
