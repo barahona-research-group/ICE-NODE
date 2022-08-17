@@ -87,7 +87,7 @@ class Subject_JAX(dict):
         # This will rectify the memory consumption, but will lead to time
         # consumption for data loading between host/device memories.
         self._data_max_size_gb = data_max_size_gb or float(
-            os.environ.get('ICENODE_INTERFACE_MAX_SIZE_GB', 2))
+            os.environ.get('ICENODE_INTERFACE_MAX_SIZE_GB', 1))
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
