@@ -220,10 +220,10 @@ class CodeMapper(defaultdict):
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
 
-    def t_code_ancestors(self, code: str, include_itself=True):
+    def t_code_ancestors(self, t_code: str, include_itself=True):
         if self._t_dag_space == False:
-            code = self.t_scheme.code2dag[code]
-        return self.t_scheme.code_ancestors_bfs(code,
+            t_code = self.t_scheme.code2dag[t_code]
+        return self.t_scheme.code_ancestors_bfs(t_code,
                                                 include_itself=include_itself)
 
     def codeset2vec(self, codeset: Set[str]):

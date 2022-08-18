@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from .concept import Subject, Admission
 from .dataset import AbstractEHRDataset
-from .coding_scheme import CodeMapper
+from .coding_scheme import CodeMapper, code_scheme as C, AbstractScheme
 from .outcome import DxOutcome
 
 
@@ -23,9 +23,9 @@ class Admission_JAX:
     def __init__(self,
                  adm: Admission,
                  first_adm_date: datetime,
-                 dx_mapper: CodeMapper,
-                 dx_outcome: DxOutcome,
-                 pr_mapper: CodeMapper,
+                 dx_scheme: str,
+                 dx_outcome: str,
+                 pr_scheme: str,
                  dx_dagvec=False,
                  pr_dagvec=False):
         # Time as days since the first admission
@@ -92,10 +92,10 @@ class Subject_JAX(dict):
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
 
-        self._dx_mapper = CodeMapper.get_mapper(subjects[0].dx_scheme,
-                                                code_scheme['dx'])
-        self._pr_mapper = CodeMapper.get_mapper(subjects[0].pr_scheme,
-                                                code_scheme.get('pr', 'none'))
+        self._dx_scheme = C[code_scheme['dx']]# CodeMapper.get_mapper(subjects[0].dx_scheme,
+                                               # code_scheme['dx'])
+        self._pr_scheme = C[code_scheme.get('pr', 'none')]#CodeMapper.get_mapper(subjects[0].pr_scheme,
+                                                #code_scheme.get('pr', 'none'))
 
         self._dx_outcome = DxOutcome(input_dx_scheme=subjects[0].dx_scheme,
                                      conf=code_scheme['dx_outcome'])
@@ -121,54 +121,22 @@ class Subject_JAX(dict):
         return self._subjects
 
     @property
-    def dx_mapper(self):
-        return self._dx_mapper
-
-    @property
-    def dx_source_scheme(self) -> str:
-        return self.dx_mapper.s_scheme
-
-    @property
-    def dx_scheme(self) -> str:
-        return self.dx_mapper.t_scheme
-
-    @property
-    def dx_index(self) -> Dict[str, int]:
-        return self.dx_mapper.t_index
+    def dx_scheme(self) -> AbstractScheme:
+        return self._dx_scheme
 
     @property
     def data_max_size_gb(self) -> float:
         return self._data_max_size_gb
 
     def dx_make_ancestors_mat(self):
-        return self.dx_mapper.t_scheme.make_ancestors_mat()
-
-    @property
-    def dx_dim(self):
-        return len(self.dx_index)
-
-    @property
-    def pr_mapper(self):
-        return self._pr_mapper
-
-    @property
-    def pr_source_scheme(self) -> str:
-        return self.pr_mapper.s_scheme
+        return self.dx_scheme.make_ancestors_mat()
 
     @property
     def pr_scheme(self) -> str:
-        return self.pr_mapper.t_scheme
-
-    @property
-    def pr_index(self) -> Dict[str, int]:
-        return self.pr_mapper.t_index
+        return self._pr_scheme
 
     def pr_make_ancestors_mat(self):
-        return self.pr_mapper.t_scheme.make_ancestors_mat()
-
-    @property
-    def pr_dim(self):
-        return len(self.pr_index)
+        return self.pr_scheme.make_ancestors_mat()
 
     @property
     def dx_outcome(self):
@@ -275,8 +243,8 @@ class Subject_JAX(dict):
             return [
                 Admission_JAX(adm,
                               first_adm_date=subj.first_adm_date,
-                              dx_mapper=self.dx_mapper,
-                              dx_outcome=self.dx_outcome,
+                              dx_scheme=self.dx_mapper,
+                              dx_scheme=self.dx_outcome,
                               pr_mapper=self.pr_mapper,
                               dx_dagvec=dx_dagvec,
                               pr_dagvec=pr_dagvec) for adm in subj.admissions

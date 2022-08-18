@@ -1,8 +1,8 @@
-#PBS -lselect=1:ncpus=8:mem=96gb
+#PBS -lselect=1:ncpus=160:mem=2400gb
 
-#PBS -lwalltime=500:0:0
+#PBS -lwalltime=72:0:0
 
-
+#PBS -J 1-5
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -44,10 +44,10 @@ $HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---trials-time-limit 500 \
---num-processes 4 \
+--trials-time-limit 72 \
+--num-processes 80 \
 --num-trials 30 \
---training-time-limit 400 \
+--training-time-limit 48 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
 
 

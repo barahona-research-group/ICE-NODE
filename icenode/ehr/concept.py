@@ -10,7 +10,7 @@ import numpy as np
 
 from .coding_scheme import AbstractScheme, CodeMapper
 from .outcome import DxOutcome
-from .dataset import AbstractEHRDataset
+from .dataset import SingleSchemeEHRDataset
 
 
 class AbstractAdmission:
@@ -95,9 +95,7 @@ class Subject:
                                          adm.discharge_day(first_adm_date))
         return history
 
-    def dx_outcome_history(self,
-                           dx_outcome: DxOutcome,
-                           absolute_dates=False):
+    def dx_outcome_history(self, dx_outcome: DxOutcome, absolute_dates=False):
 
         m = dx_outcome
         assert self.dx_scheme == m.mapper.s_scheme.name, (f"""
@@ -119,28 +117,6 @@ class Subject:
         return self._event_history(self.admissions,
                                    lambda adm: m.map_codeset(adm.pr_codes),
                                    absolute_dates)
-
-    @staticmethod
-    def _dx_scheme(admissions):
-        s = admissions[0].dx_scheme
-        assert all(a.dx_scheme == s
-                   for a in admissions), "Scheme inconsistency"
-        return s
-
-    @property
-    def dx_scheme(self):
-        return self._dx_scheme(self.admissions)
-
-    @staticmethod
-    def _pr_scheme(admissions):
-        s = admissions[0].pr_scheme
-        assert all(a.pr_scheme == s
-                   for a in admissions), "Scheme inconsistency"
-        return s
-
-    @property
-    def pr_scheme(self):
-        return self._pr_scheme(self.admissions)
 
     @staticmethod
     def _event_frequency(subjects: List[Subject],
@@ -196,15 +172,13 @@ class Subject:
     @staticmethod
     def merge_overlaps(admissions):
         admissions = sorted(admissions, key=lambda adm: adm.admission_dates[0])
-        dx_scheme = Subject._dx_scheme(admissions)
-        pr_scheme = Subject._pr_scheme(admissions)
-
         super_admissions = [admissions[0]]
         for adm in admissions[1:]:
             s_adm = super_admissions[-1]
             (s_admittime, s_dischtime) = s_adm.admission_dates
 
             assert s_admittime <= s_dischtime, "Precedence of admittime violated!"
+            assert s_adm.dx_scheme == adm.dx_scheme and s_adm.pr_scheme == adm.pr_scheme, "Inconsistent coding schemes!"
 
             admittime, dischtime = adm.admission_dates
             if admittime <= s_dischtime:
@@ -216,9 +190,9 @@ class Subject:
                 s_adm = Admission(admission_id=s_adm.admission_id,
                                   admission_dates=s_interval,
                                   dx_codes=s_dx_codes,
-                                  dx_scheme=dx_scheme,
+                                  dx_scheme=s_adm.dx_scheme,
                                   pr_codes=s_pr_codes,
-                                  pr_scheme=pr_scheme)
+                                  pr_scheme=s_adm.pr_scheme)
                 super_admissions.append(s_adm)
             else:
                 super_admissions.append(adm)

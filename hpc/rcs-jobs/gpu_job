@@ -1,6 +1,6 @@
-#PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=RTX6000
+#PBS -lselect=1:ncpus=16:mem=96gb:ngpus=1:gpu_type=RTX6000
 
-#PBS -lwalltime=24:0:0
+#PBS -lwalltime=72:0:0
 
 #PBS -J 1-10
 
@@ -45,10 +45,10 @@ $HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
 --model $MODEL \
 --optuna-store $OPTUNA_STORE \
 --mlflow-store $MLFLOW_STORE \
---trials-time-limit 24 \
+--trials-time-limit 72 \
 --num-processes 1 \
 --num-trials 30 \
---training-time-limit 12 \
+--training-time-limit 48 \
 --job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
 
 

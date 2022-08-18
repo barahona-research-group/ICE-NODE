@@ -1,8 +1,8 @@
-#PBS -lselect=1:ncpus=48:mem=124gb
+#PBS -lselect=1:ncpus=160:mem=2400gb
 
-#PBS -lwalltime=24:0:0
+#PBS -lwalltime=72:0:0
 
-#PBS -J 1-5
+
 
 # Setup environement using .bashrc
 source $HOME/.bashrc
@@ -10,7 +10,9 @@ source $HOME/.bashrc
 # Input Environment Variables:
 # $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
 # $DATA_TAG: Name of the data tag. Example: M3
-# $EMB: Embedding module label. Example: gram
+# $CONFIG: Path (absolute or relative) to JSON config file for the experiment settings. Example: ~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json
+# $CONFIG_TAG: Textual tag attributing the config JSON file, to be used for the experiment output directory name. Example: Cv0.2.25
+# $MODEL: Model label to be used in the experiment. Example: dx_icenode_2lr
 
 # Clone repository and checkout to the given tag name.
 git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
@@ -36,19 +38,13 @@ fi
 
 export JAX_PLATFORM_NAME="cpu"
 
-$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
+$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.train_app \
+--config $CONFIG \
+--study-tag $STUDY_TAG \
+--config-tag $CONFIG_TAG \
 --output-dir $OUTPUT_DIR \
 --dataset $DATA_TAG \
---study-tag $STUDY_TAG \
---emb $EMB \
---model $MODEL \
---optuna-store $OPTUNA_STORE \
---mlflow-store $MLFLOW_STORE \
---trials-time-limit 24 \
---num-processes 4 \
---num-trials 30 \
---training-time-limit 12 \
---job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
+--model $MODEL
 
 
 #mkdir $PBS_O_WORKDIR/$PBS_JOBID
