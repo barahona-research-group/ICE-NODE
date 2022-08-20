@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from .concept import Subject, Admission
 from .dataset import AbstractEHRDataset
 from .coding_scheme import CodeMapper, code_scheme as C, AbstractScheme
-from .outcome import DxOutcome
+from .outcome import OutcomeExtractor
 
 
 class Admission_JAX:
@@ -24,7 +24,7 @@ class Admission_JAX:
                  adm: Admission,
                  first_adm_date: datetime,
                  dx_scheme: str,
-                 dx_outcome: str,
+                 dx_outcome_extractor: OutcomeExtractor,
                  pr_scheme: str,
                  dx_dagvec=False,
                  pr_dagvec=False):
@@ -33,8 +33,12 @@ class Admission_JAX:
         self.los = adm.length_of_stay
         self.admission_id = adm.admission_id
 
-        self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
+        dx_mapper = CodeMapper.get_mapper(adm.dx_scheme, dx_scheme)
+        pr_mapper = CodeMapper.get_mapper(adm.pr_scheme, pr_scheme)
+        self.dx_mapper = dx_mapper
+        self.pr_mapper = pr_mapper
 
+        self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
         if dx_dagvec:
             self.dx_vec = jnp.array(dx_mapper.codeset2dagvec(self.dx_codes))
         else:
@@ -47,14 +51,8 @@ class Admission_JAX:
         else:
             self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
 
-        self.dx_outcome = jnp.array(dx_outcome.codeset2vec(adm.dx_codes))
-
-    @staticmethod
-    def probe_data_size_gb(dx_mapper: CodeMapper, dx_outcome: DxOutcome,
-                           pr_mapper: CodeMapper):
-        n_bytes = len(dx_mapper.t_index) + len(pr_mapper.t_index) + len(
-            dx_outcome.index)
-        return n_bytes * 2**-30
+        self.dx_outcome = jnp.array(
+            dx_outcome_extractor.codeset2vec(adm.dx_codes, adm.dx_scheme))
 
 
 class WindowFeatures:
@@ -91,18 +89,60 @@ class Subject_JAX(dict):
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
-
-        self._dx_scheme = C[code_scheme['dx']]# CodeMapper.get_mapper(subjects[0].dx_scheme,
-                                               # code_scheme['dx'])
-        self._pr_scheme = C[code_scheme.get('pr', 'none')]#CodeMapper.get_mapper(subjects[0].pr_scheme,
-                                                #code_scheme.get('pr', 'none'))
-
-        self._dx_outcome = DxOutcome(input_dx_scheme=subjects[0].dx_scheme,
-                                     conf=code_scheme['dx_outcome'])
-
         self._subjects = {s.subject_id: s for s in subjects}
-        self._jaxify_subject_admissions(code_scheme.get('dx_dagvec', False),
-                                        code_scheme.get('pr_dagvec', False))
+
+        self._dx_scheme = code_scheme['dx']
+        self._pr_scheme = code_scheme.get('pr', 'none')
+
+        self._dx_outcome_extractor = OutcomeExtractor(
+            code_scheme['dx_outcome'])
+
+        # The interface will map all Dx/Pr codes to DAG space if:
+        # 1. The experiment explicitly requests so through (dx|pr)_dagvec
+        # 2. At least one code mapper maps to DAG space. Note that there might
+        # be multiple code mappers whenthe dataset have mixed coding schemes
+        # for either Pr/Dx. For example, MIMIC-IV have mixed schemes of
+        # ICD9/ICD10 for both Dx/Pr codes.
+        self._dx_dagvec = code_scheme.get('dx_dagvec', False) or any(
+            m.t_dag_space for m in self.dx_mappers)
+        self._pr_dagvec = code_scheme.get('pr_dagvec', False) or any(
+            m.t_dag_space for m in self.pr_mappers)
+
+        self._jaxify_subject_admissions()
+
+    @property
+    def dx_dim(self):
+        if self._dx_dagvec:
+            return len(C[self.dx_scheme].dag_index)
+        else:
+            return len(C[self.dx_scheme].index)
+
+    @property
+    def pr_dim(self):
+        if self._pr_dagvec:
+            return len(C[self.pr_scheme].dag_index)
+        else:
+            return len(C[self.pr_scheme].index)
+
+    @staticmethod
+    def probe_admission_size_gb(dx_scheme: str, dx_dagvec: bool,
+                                pr_scheme: str, pr_dagvec: bool,
+                                outcome_extractor: OutcomeExtractor):
+        dx_scheme = C[dx_scheme]
+        pr_scheme = C[pr_scheme]
+
+        if dx_dagvec:
+            dx_index = dx_scheme.dag_index
+        else:
+            dx_index = dx_scheme.index
+
+        if pr_dagvec:
+            pr_index = pr_scheme.dag_index
+        else:
+            pr_index = pr_scheme.index
+
+        n_bytes = len(dx_index) + len(pr_index) + len(outcome_extractor.index)
+        return n_bytes * 2**-30
 
     def __getitem__(self, k):
         v = super().__getitem__(k)
@@ -121,6 +161,22 @@ class Subject_JAX(dict):
         return self._subjects
 
     @property
+    def dx_mappers(self):
+        mappers = set()
+        s_schemes = Subject.dx_schemes(self._subjects.values())
+        for s in s_schemes:
+            mappers.add(CodeMapper.get_mapper(s, self.dx_scheme))
+        return mappers
+
+    @property
+    def pr_mappers(self):
+        mappers = set()
+        s_schemes = Subject.pr_schemes(self._subjects.values())
+        for s in s_schemes:
+            mappers.add(CodeMapper.get_mapper(s, self.pr_scheme))
+        return mappers
+
+    @property
     def dx_scheme(self) -> AbstractScheme:
         return self._dx_scheme
 
@@ -129,30 +185,22 @@ class Subject_JAX(dict):
         return self._data_max_size_gb
 
     def dx_make_ancestors_mat(self):
-        return self.dx_scheme.make_ancestors_mat()
+        return C[self.dx_scheme].make_ancestors_mat()
 
     @property
     def pr_scheme(self) -> str:
         return self._pr_scheme
 
     def pr_make_ancestors_mat(self):
-        return self.pr_scheme.make_ancestors_mat()
+        return C[self.pr_scheme].make_ancestors_mat()
 
     @property
-    def dx_outcome(self):
-        return self._dx_outcome
-
-    @property
-    def dx_outcome_index(self) -> Dict[str, int]:
-        return self.dx_outcome.index
-
-    @property
-    def dx_outcome_desc(self) -> Dict[str, str]:
-        return self.dx_outcome.desc
+    def dx_outcome_extractor(self):
+        return self._dx_outcome_extractor
 
     @property
     def dx_outcome_dim(self):
-        return len(self.dx_outcome.index)
+        return len(self.dx_outcome_extractor.index)
 
     def random_splits(self,
                       split1: float,
@@ -171,24 +219,21 @@ class Subject_JAX(dict):
         return train_ids, valid_ids, test_ids
 
     def dx_history(self, subject_id, absolute_dates=False):
-        return self.subjects[subject_id].dx_history(self.dx_scheme.name,
+        return self.subjects[subject_id].dx_history(self.dx_scheme,
                                                     absolute_dates)
 
     def dx_outcome_history(self, subject_id, absolute_dates=False):
         return self.subjects[subject_id].dx_outcome_history(
-            self.dx_outcome, absolute_dates)
+            self.dx_outcome_extractor, absolute_dates)
 
     def adm_times(self, subject_id):
         adms_info = self[subject_id]
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def dx_frequency_vec(self, subjects: List[Subject]):
-        np_res = Subject.dx_frequency_vec(subjects, self.dx_scheme.name)
-        return jnp.array(np_res)
-
     def dx_outcome_frequency_vec(self, subjects: List[Subject]):
-        np_res = Subject.dx_outcome_frequency_vec(subjects, self.dx_outcome)
+        np_res = Subject.dx_outcome_frequency_vec(subjects,
+                                                  self.dx_outcome_extractor)
         return jnp.array(np_res)
 
     @staticmethod
@@ -215,13 +260,6 @@ class Subject_JAX(dict):
 
         return codes_by_percentiles
 
-    def dx_by_percentiles(self,
-                          percentile_range: float = 20,
-                          subjects: List[int] = []):
-        subjects = [self._subjects[i] for i in subjects or self._subjects]
-        return self._code_frequency_partitions(percentile_range,
-                                               self.dx_frequency_vec(subjects))
-
     def dx_outcome_by_percentiles(self,
                                   percentile_range: float = 20,
                                   subjects: List[int] = []):
@@ -237,17 +275,18 @@ class Subject_JAX(dict):
                 nth_admission[n][subject_id] = adm
         return nth_admission
 
-    def _jaxify_subject_admissions(self, dx_dagvec, pr_dagvec):
+    def _jaxify_subject_admissions(self):
 
         def _jaxify_adms(subj):
             return [
                 Admission_JAX(adm,
                               first_adm_date=subj.first_adm_date,
-                              dx_scheme=self.dx_mapper,
-                              dx_scheme=self.dx_outcome,
-                              pr_mapper=self.pr_mapper,
-                              dx_dagvec=dx_dagvec,
-                              pr_dagvec=pr_dagvec) for adm in subj.admissions
+                              dx_scheme=self.dx_scheme,
+                              dx_outcome_extractor=self.dx_outcome_extractor,
+                              pr_scheme=self.pr_scheme,
+                              dx_dagvec=self._dx_dagvec,
+                              pr_dagvec=self._pr_dagvec)
+                for adm in subj.admissions
             ]
 
         def _lazy_load(subj):
@@ -255,10 +294,12 @@ class Subject_JAX(dict):
 
         acc_size_gb = 0.0
         n_subject_loaded = 0
-        adm_data_size_gb = Admission_JAX.probe_data_size_gb(
-            dx_mapper=self.dx_mapper,
-            dx_outcome=self.dx_outcome,
-            pr_mapper=self.pr_mapper)
+        adm_data_size_gb = Subject_JAX.probe_admission_size_gb(
+            dx_scheme=self.dx_scheme,
+            dx_dagvec=self._dx_dagvec,
+            pr_scheme=self.pr_scheme,
+            pr_dagvec=self._pr_dagvec,
+            outcome_extractor=self.dx_outcome_extractor)
 
         for subject_id, subject in self.subjects.items():
             acc_size_gb += len(subject.admissions) * adm_data_size_gb
@@ -281,9 +322,7 @@ class Subject_JAX(dict):
 class WindowedInterface_JAX(Subject_JAX):
 
     def __init__(self, interface: Subject_JAX):
-        self._dx_mapper = interface._dx_mapper
-        self._pr_mapper = interface._pr_mapper
-        self._dx_outcome = interface._dx_outcome
+        self._interface_ = interface
         self._subjects = interface._subjects
         self.update(interface)
         self.features = self._compute_window_features(interface)
@@ -322,8 +361,8 @@ class WindowedInterface_JAX(Subject_JAX):
 
     @property
     def n_features(self):
-        return self.dx_dim
+        return self._interface_.dx_dim
 
     @property
     def n_targets(self):
-        return self.dx_outcome_dim
+        return self._interface_.dx_outcome_dim

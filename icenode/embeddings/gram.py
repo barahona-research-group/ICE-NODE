@@ -212,9 +212,9 @@ class GRAM(AbstractGRAM):
             **self.glove_config)
 
         if self.category == 'dx':
-            t_scheme = self.subject_interface.dx_mapper.t_scheme
+            t_scheme = ehr.code_scheme[self.subject_interface.dx_scheme]
         else:
-            t_scheme = self.subject_interface.pr_mapper.t_scheme
+            t_scheme = ehr.code_scheme[self.subject_interface.pr_scheme]
 
         index2code = {i: c for c, i in t_scheme.dag_index.items()}
         codes_ordered = list(index2code[i] for i in range(len(index2code)))

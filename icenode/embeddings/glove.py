@@ -19,7 +19,7 @@ CooccurrencesType = Dict[Tuple[int, int], int]
 def build_coocur(subjects: List[List[ehr.Admission_JAX]],
                  index: Mapping[str, int],
                  get_codes: Callable[[ehr.Admission_JAX], Set[str]],
-                 code_ancestors: Callable[[str], Set[str]],
+                 code_ancestors: Callable[[ehr.Admission, str], Set[str]],
                  window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
     Build cooccurrence matrix from timestamped CCS codes.
@@ -40,7 +40,7 @@ def build_coocur(subjects: List[List[ehr.Admission_JAX]],
             aug_codes = []
             codes = get_codes(adm)
             for c in codes:
-                aug_codes.extend(code_ancestors(c))
+                aug_codes.extend(code_ancestors(adm, c))
 
             subj_aug_adms.append((adm.admission_time, aug_codes))
 
@@ -224,18 +224,21 @@ def glove_representation(category: str,
     """
 
     if category == 'dx':
-        m = subject_interface.dx_mapper
+        m = lambda adm: adm.dx_mapper
+        t_scheme = ehr.code_scheme[subject_interface.dx_scheme]
         get_codes = lambda adm: adm.dx_codes
     elif category == 'pr':
-        m = subject_interface.pr_mapper
+        m = lambda adm: adm.pr_mapper
+        t_scheme = ehr.code_scheme[subject_interface.pr_scheme]
         get_codes = lambda adm: adm.pr_codes
 
-    cooc = build_coocur(subjects=list(map(subject_interface.get, train_ids)),
-                        index=m.t_scheme.dag_index,
-                        get_codes=get_codes,
-                        code_ancestors=m.t_code_ancestors,
-                        window_size_days=window_size_days)
-    return train_glove(index=m.t_scheme.dag_index,
+    cooc = build_coocur(
+        subjects=list(map(subject_interface.get, train_ids)),
+        index=t_scheme.dag_index,
+        get_codes=get_codes,
+        code_ancestors=lambda adm, c: m(adm).t_code_ancestors(c),
+        window_size_days=window_size_days)
+    return train_glove(index=t_scheme.dag_index,
                        cooccurrences=cooc,
                        vector_size=vector_size,
                        iterations=iterations,

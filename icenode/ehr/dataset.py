@@ -15,11 +15,16 @@ _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
 _META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 
+StrDict = Dict[str, str]
 
-class AbstractSchemeEHRDataset:
 
-    def __init__(self, df, code_scheme, target_scheme, code_colname,
-                 code_scheme_colname, adm_colname, name, **kwargs):
+class AbstractEHRDataset:
+
+    def __init__(self, df: Dict[str, pd.DataFrame],
+                 code_scheme: Dict[str, StrDict], target_scheme: StrDict,
+                 code_colname: StrDict, code_scheme_colname: StrDict,
+                 adm_colname: StrDict, name: str, **kwargs):
+
         for info_type, scheme_map in code_scheme.items():
             if info_type not in df or df[info_type] is None:
                 continue
@@ -43,6 +48,35 @@ class AbstractSchemeEHRDataset:
         self.code_colname = code_colname
         self.code_scheme_colname = code_scheme_colname
         self.df = df
+
+    @staticmethod
+    def load_dataframes(meta):
+        m = meta
+        files = m['files']
+        base_dir = m['base_dir']
+        adm_colname = m['adm_colname']
+        code_colname = m['code_colname']
+
+        adm_df = pd.read_csv(os.path.join(base_dir, files['adm']))
+
+        # Cast columns of dates to datetime64
+        adm_df[adm_colname['admittime']] = pd.to_datetime(
+            adm_df[adm_colname['admittime']],
+            infer_datetime_format=True).dt.normalize()
+        adm_df[adm_colname['dischtime']] = pd.to_datetime(
+            adm_df[adm_colname['dischtime']],
+            infer_datetime_format=True).dt.normalize()
+
+        dx_df = pd.read_csv(os.path.join(base_dir, files['dx']),
+                            dtype={code_colname['dx']: str})
+
+        if 'pr' in files and files['pr'] is not None:
+            pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
+                                dtype={code_colname['pr']: str})
+        else:
+            pr_df = None
+
+        return {'dx': dx_df, 'pr': pr_df, 'adm': adm_df}
 
     @staticmethod
     def _validate_codes(df, code_col, scheme_col, scheme_map):
@@ -77,7 +111,11 @@ class AbstractSchemeEHRDataset:
                 adm_id = adm_row[adm_id_col]
                 subj_adms[adm_id] = {
                     'admission_id': adm_id,
-                    'admission_dates': (adm_row[admt_col], adm_row[dist_col])
+                    'admission_dates': (adm_row[admt_col], adm_row[dist_col]),
+                    'dx_codes': set(),
+                    'pr_codes': set(),
+                    'dx_scheme': 'none',
+                    'pr_scheme': 'none'
                 }
             adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}
 
@@ -110,80 +148,45 @@ class AbstractSchemeEHRDataset:
 
         return adms
 
+    @classmethod
+    def from_meta_json(cls, meta_fpath):
+        meta = load_config(meta_fpath)
+        meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        meta['df'] = cls.load_dataframes(meta)
+        return cls(**meta)
 
-class ConsistentSchemeEHRDataset(AbstractSchemeEHRDataset):
+
+class ConsistentSchemeEHRDataset(AbstractEHRDataset):
 
     def __init__(self, df, code_scheme, code_colname, adm_colname, name,
                  **kwargs):
+        target_scheme = {}
+        code_scheme_colname = {}
+        code_scheme_map = {}
 
-        for info_type, scheme_name in code_scheme.items():
-
+        for info_type in ['dx', 'pr']:
             if info_type not in df or df[info_type] is None:
                 continue
+            scheme = code_scheme[info_type]
+            target_scheme[info_type] = scheme
+            code_scheme_colname[info_type] = scheme
+            code_scheme_map[info_type] = {scheme: scheme}
+            df[info_type][scheme] = scheme
 
-            s_scheme = C[scheme_name]
-
-            # 1. Add ICD dots if they are absent.
-            if isinstance(s_scheme, ICDCommons):
-                col = code_colname[info_type]
-                _df = df[info_type]
-                _df[col] = _df[col].apply(s_scheme.add_dot)
-                df[info_type] = _df
-
-            # 2. Validate codes
-            df[info_type] = SingleSchemeEHRDataset._validate_codes(
-                df[info_type], code_colname[info_type], code_scheme[info_type])
-
-        self.name = name
-        self.code_scheme = code_scheme
-        self.adm_colname = adm_colname
-        self.code_colname = code_colname
-        self.df = df
-
-
-class MIMIC3Dataset(SingleSchemeEHRDataset):
-
-    def __init__(self, base_dir: str, files: Dict[str, str],
-                 adm_colname: Dict[str, str], code_scheme: Dict[str, str],
-                 code_colname: Dict[str, str], **kwargs):
-
-        adm_df = pd.read_csv(os.path.join(base_dir, files['adm']))
-
-        # Cast columns of dates to datetime64
-        adm_df[adm_colname['admittime']] = pd.to_datetime(
-            adm_df[adm_colname['admittime']],
-            infer_datetime_format=True).dt.normalize()
-        adm_df[adm_colname['dischtime']] = pd.to_datetime(
-            adm_df[adm_colname['dischtime']],
-            infer_datetime_format=True).dt.normalize()
-
-        dx_df = pd.read_csv(os.path.join(base_dir, files['dx']),
-                            dtype={code_colname['dx']: str})
-
-        if 'pr' in files:
-            pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
-                                dtype={code_colname['pr']: str})
-        else:
-            pr_df = None
-
-        super().__init__(code_scheme=code_scheme,
-                         adm_colname=adm_colname,
+        super().__init__(df=df,
+                         code_scheme=code_scheme_map,
+                         target_scheme=target_scheme,
                          code_colname=code_colname,
-                         adm_df=adm_df,
-                         dx_df=dx_df,
-                         pr_df=pr_df,
+                         code_scheme_colname=code_scheme_colname,
+                         adm_colname=adm_colname,
+                         name=name,
                          **kwargs)
-
-    @staticmethod
-    def from_meta_json(meta_fpath):
-        meta = load_config(meta_fpath)
-        meta['base_dir'] = os.path.expandvars(meta['base_dir'])
-        return MIMIC3Dataset(**meta)
 
 
 datasets = LazyDict({
     'M3':
-    lambda: MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json'),
-    'M4v2.0':
-    lambda: MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic4v2.0_meta.json')
+    lambda: ConsistentSchemeEHRDataset.from_meta_json(
+        f'{_META_DIR}/mimic3_meta.json'),
+    'M4':
+    lambda: AbstractEHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
 })

@@ -12,36 +12,41 @@ from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global interface, interface_icd10, interface_icd9, interface_icd9_dagvec, splits, code_groups, dataset
-    dataset = ehr.MIMICDataset.from_meta_json(
-        'test/integration/fixtures/synthetic_mimic/mimic_syn_meta.json')
-    interface = ehr.Subject_JAX.from_dataset(
-        dataset, {
+    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset
+
+    m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+        'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
+    m4_dataset = ehr.AbstractEHRDataset.from_meta_json(
+        'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
+    m3_interface = ehr.Subject_JAX.from_dataset(
+        m3_dataset, {
             'dx': 'dx_ccs',
             'dx_outcome': 'dx_flatccs_filter_v1'
         })
 
-    interface_icd10 = ehr.Subject_JAX.from_dataset(
-        dataset, {
+    m3_interface_icd10 = ehr.Subject_JAX.from_dataset(
+        m3_dataset, {
             'dx': 'dx_icd10',
             'dx_outcome': 'dx_icd9_filter_v1'
         })
 
-    interface_icd9 = ehr.Subject_JAX.from_dataset(
-        dataset, {
+    m3_interface_icd9 = ehr.Subject_JAX.from_dataset(
+        m3_dataset, {
             'dx': 'dx_icd9',
             'dx_outcome': 'dx_icd9_filter_v1'
         })
 
-    interface_icd9_dagvec = ehr.Subject_JAX.from_dataset(
-        dataset, {
+    m3_interface_icd9_dagvec = ehr.Subject_JAX.from_dataset(
+        m3_dataset, {
             'dx': 'dx_icd9',
             'dx_dagvec': True,
             'dx_outcome': 'dx_icd9_filter_v1'
         })
 
-    splits = interface.random_splits(split1=0.7, split2=0.85, random_seed=42)
-    code_groups = interface.dx_outcome_by_percentiles(20)
+    m3_splits = m3_interface.random_splits(split1=0.7,
+                                           split2=0.85,
+                                           random_seed=42)
+    m3_code_groups = m3_interface.dx_outcome_by_percentiles(20)
 
 
 def tearDownModule():
@@ -59,7 +64,7 @@ class DxCommonTests(object):
         self.models = []
         for config in self.configs:
             model = self.model_cls.create_model(config, self.interface,
-                                                splits[0])
+                                                m3_splits[0])
             state = model.init(config)
 
             self.assertTrue(callable(model), msg=f"config: {config}")
@@ -71,12 +76,12 @@ class DxCommonTests(object):
             results = model.get_trainer()(model=model,
                                           m_state=state,
                                           config=config,
-                                          splits=splits,
+                                          splits=self.splits,
                                           rng_seed=42,
                                           reporters=[ml.MinibatchLogger()])
             model_, state_ = results['model']
             test_out1 = model_(model_.get_params(state_),
-                               splits[2])['risk_prediction']
+                               self.splits[2])['risk_prediction']
             param_fname = f'test_{hash(str(config))}.pickle'
             model_.write_params(state_, param_fname)
             params = load_params(param_fname)
@@ -84,7 +89,7 @@ class DxCommonTests(object):
 
             state_ = model_.init_with_params(config, params)
             test_out2 = model_(model_.get_params(state_),
-                               splits[2])['risk_prediction']
+                               self.splits[2])['risk_prediction']
 
             self.assertEqual(test_out1, test_out2, msg=f"config: {config}")
 
@@ -103,7 +108,8 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
             cls.configs.append(config)
 
         cls.model_cls = ml.WLR
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
@@ -115,7 +121,8 @@ class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_winlogreg.json')
         ]
         cls.model_cls = ml.WLR_SK
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):
@@ -127,7 +134,8 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_gru_m.json')
         ]
         cls.model_cls = ml.GRU
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxGRU_G(DxCommonTests, unittest.TestCase):
@@ -139,7 +147,8 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_gru_g.json')
         ]
         cls.model_cls = ml.GRU
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
@@ -151,7 +160,8 @@ class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/icd9_dx_gru_g.json')
         ]
         cls.model_cls = ml.GRU
-        cls.interface = interface_icd9_dagvec
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):
@@ -163,7 +173,8 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
                 'test/integration/fixtures/model_configs/dx_retain_m.json')
         ]
         cls.model_cls = ml.RETAIN
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
@@ -176,7 +187,8 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_2LR
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
@@ -194,10 +206,11 @@ class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
         ]
         cls.model_cls = ml.ICENODE_2LR
         cls.interface = ehr.Subject_JAX.from_dataset(
-            dataset, {
+            m3_dataset, {
                 'dx': 'dx_ccs',
                 'dx_outcome': 'dx_flatccs_filter_v1'
             })
+        cls.splits = m3_splits
 
     @classmethod
     def tearDownClass(cls):
@@ -219,7 +232,8 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_2LR
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
@@ -232,29 +246,30 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
             )
         ]
         cls.model_cls = ml.ICENODE_UNIFORM_2LR
-        cls.interface = interface
+        cls.interface = m3_interface
+        cls.splits = m3_splits
 
 
 class TestGlove(unittest.TestCase):
 
     def test_glove(self):
         glove_E = E.glove_representation(category='dx',
-                                         subject_interface=interface,
-                                         train_ids=splits[0],
+                                         subject_interface=m3_interface,
+                                         train_ids=m3_splits[0],
                                          vector_size=150,
                                          iterations=30,
                                          window_size_days=730)
 
         glove_E = E.glove_representation(category='dx',
-                                         subject_interface=interface_icd10,
-                                         train_ids=splits[0],
+                                         subject_interface=m3_interface_icd10,
+                                         train_ids=m3_splits[0],
                                          vector_size=150,
                                          iterations=30,
                                          window_size_days=730)
 
         glove_E = E.glove_representation(category='dx',
-                                         subject_interface=interface_icd9,
-                                         train_ids=splits[0],
+                                         subject_interface=m3_interface_icd9,
+                                         train_ids=m3_splits[0],
                                          vector_size=150,
                                          iterations=30,
                                          window_size_days=730)

@@ -66,6 +66,9 @@ class CodeMapper(defaultdict):
     def __str__(self):
         return f'{self.s_scheme.name}->{self.t_scheme.name}'
 
+    def __hash__(self):
+        return hash(str(self))
+
     def log_unrecognised_range(self, json_fname):
         if self._unrecognised_range:
             write_config(
@@ -190,6 +193,10 @@ class CodeMapper(defaultdict):
     def t_scheme(self):
         return self._t_scheme
 
+    @property
+    def t_dag_space(self):
+        return self._t_dag_space
+
     @staticmethod
     def get_mapper(s_scheme: str, t_scheme: str):
         if any(s == 'none' or s is None for s in (s_scheme, t_scheme)):
@@ -214,6 +221,8 @@ class CodeMapper(defaultdict):
         mapper = CodeMapper.maps.get(key)
         if mapper:
             mapper.report_discrepancy()
+        else:
+            logging.warning(f'Mapping {key} is not available')
 
         return mapper
 

@@ -5,7 +5,7 @@ import numpy as np
 
 from ..utils import load_config
 
-from .coding_scheme import AbstractScheme, CodeMapper
+from .coding_scheme import AbstractScheme, CodeMapper, code_scheme as C
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -17,35 +17,36 @@ outcome_conf_files = {
 }
 
 
-class DxOutcome(AbstractScheme):
+class OutcomeExtractor(AbstractScheme):
 
-    def __init__(self, input_dx_scheme: str, conf='dx_flatccs_filter_v1'):
-        conf = self.conf_from_json(outcome_conf_files[conf])
-        self._mapper = CodeMapper.get_mapper(input_dx_scheme,
-                                             conf['code_scheme'])
-
-        assert self._mapper is not None, (
-            f'None mapper: {input_dx_scheme}->{conf["code_scheme"]}')
-
+    def __init__(self, outcome_space='dx_flatccs_filter_v1'):
+        conf = self.conf_from_json(outcome_conf_files[outcome_space])
+        self._t_scheme = conf['code_scheme']
         codes = [
-            c for c in sorted(self.mapper.t_index)
+            c for c in sorted(self.t_scheme.index)
             if c not in conf['exclude_codes']
         ]
         index = dict(zip(codes, range(len(codes))))
-        desc = {c: self._mapper.t_desc[c] for c in codes}
+        desc = {c: self.t_scheme.desc[c] for c in codes}
         super().__init__(codes=codes, index=index, desc=desc, name=conf)
 
     @property
-    def mapper(self):
-        return self._mapper
+    def t_scheme(self):
+        return C[self._t_scheme]
 
-    def map_codeset(self, codeset: Set[str]):
-        codeset = self.mapper.map_codeset(codeset)
+    def map_codeset(self, codeset: Set[str], s_scheme: str):
+        m = CodeMapper.get_mapper(s_scheme, self._t_scheme)
+        codeset = m.map_codeset(codeset)
+
+        if m.t_dag_space:
+            codeset &= set(m.t_scheme.dag2code)
+            codeset = set(m.t_scheme.dag2code[c] for c in codeset)
+
         return codeset & set(self.codes)
 
-    def codeset2vec(self, codeset: Set[str]):
+    def codeset2vec(self, codeset: Set[str], s_scheme: str):
         vec = np.zeros(len(self.index), dtype=bool)
-        for c in self.map_codeset(codeset):
+        for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True
         return vec
 

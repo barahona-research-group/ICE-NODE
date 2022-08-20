@@ -3,14 +3,13 @@
 from __future__ import annotations
 from datetime import date
 from collections import defaultdict
-from typing import List, Tuple, Set, Optional, Callable, Dict
+from typing import List, Tuple, Set, Callable, Dict
 from absl import logging
 
 import numpy as np
 
-from .coding_scheme import AbstractScheme, CodeMapper
-from .outcome import DxOutcome
-from .dataset import SingleSchemeEHRDataset
+from .outcome import OutcomeExtractor
+from .dataset import AbstractEHRDataset
 
 
 class AbstractAdmission:
@@ -95,28 +94,35 @@ class Subject:
                                          adm.discharge_day(first_adm_date))
         return history
 
-    def dx_outcome_history(self, dx_outcome: DxOutcome, absolute_dates=False):
+    def dx_outcome_history(self,
+                           dx_outcome: OutcomeExtractor,
+                           absolute_dates=False):
 
         m = dx_outcome
-        assert self.dx_scheme == m.mapper.s_scheme.name, (f"""
-            Source scheme of admission info ({self.dx_scheme}) != Source
-            scheme of filter mapper {m.mapper.s_scheme.name}
-            """)
-        return self._event_history(self.admissions,
-                                   lambda adm: m.map_codeset(adm.dx_codes),
-                                   absolute_dates)
+        return self._event_history(
+            self.admissions,
+            lambda adm: m.map_codeset(adm.dx_codes, adm.dx_scheme),
+            absolute_dates)
 
-    def dx_history(self, dx_scheme=None, absolute_dates=False):
-        m = CodeMapper.get_mapper(self.dx_scheme, dx_scheme)
-        return self._event_history(self.admissions,
-                                   lambda adm: m.map_codeset(adm.dx_codes),
-                                   absolute_dates)
+    @staticmethod
+    def dx_schemes(subjects: List[Subject]):
+        # This function handles the case when coding schemes are not consistent
+        # across admissions.
+        schemes = set()
+        for s in subjects:
+            for a in s.admissions:
+                schemes.add(a.dx_scheme)
+        return schemes
 
-    def pr_history(self, pr_scheme=None, absolute_dates=False):
-        m = CodeMapper.get_mapper(self.pr_scheme, pr_scheme)
-        return self._event_history(self.admissions,
-                                   lambda adm: m.map_codeset(adm.pr_codes),
-                                   absolute_dates)
+    @staticmethod
+    def pr_schemes(subjects: List[Subject]):
+        # This function handles the case when coding schemes are not consistent
+        # across admissions.
+        schemes = set()
+        for s in subjects:
+            for a in s.admissions:
+                schemes.add(a.pr_scheme)
+        return schemes
 
     @staticmethod
     def _event_frequency(subjects: List[Subject],
@@ -145,28 +151,12 @@ class Subject:
         return vec
 
     @staticmethod
-    def dx_frequency_vec(subjects: List[Subject], dx_scheme: str):
-        src_scheme = subjects[0].dx_scheme
-        assert all(s.dx_scheme == src_scheme
-                   for s in subjects), "Scheme inconsistency"
-        m = CodeMapper.get_mapper(src_scheme, dx_scheme)
-
-        return Subject._event_frequency_vec(
-            subjects=subjects,
-            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
-            index=m.t_index)
-
-    @staticmethod
     def dx_outcome_frequency_vec(subjects: List[Subject],
-                                 dx_outcome: DxOutcome):
+                                 dx_outcome: OutcomeExtractor):
         m = dx_outcome
-        assert subjects[0].dx_scheme == m.mapper.s_scheme.name, (f"""
-            Source scheme of admission info ({subjects[0].dx_scheme}) != Source
-            scheme of filter mapper {m.mapper.s_scheme.name}
-            """)
         return Subject._event_frequency_vec(
             subjects=subjects,
-            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes),
+            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes, adm.dx_scheme),
             index=m.index)
 
     @staticmethod
@@ -178,10 +168,21 @@ class Subject:
             (s_admittime, s_dischtime) = s_adm.admission_dates
 
             assert s_admittime <= s_dischtime, "Precedence of admittime violated!"
-            assert s_adm.dx_scheme == adm.dx_scheme and s_adm.pr_scheme == adm.pr_scheme, "Inconsistent coding schemes!"
-
             admittime, dischtime = adm.admission_dates
             if admittime <= s_dischtime:
+                if len(s_adm.dx_codes) == 0:
+                    s_adm.dx_scheme = adm.dx_scheme
+
+                if len(s_adm.pr_codes) == 0:
+                    s_adm.pr_scheme = adm.pr_scheme
+
+                assert len(
+                    adm.dx_codes
+                ) == 0 or s_adm.dx_scheme == adm.dx_scheme, f"Inconsistent coding schemes ({s_adm.dx_scheme}, {adm.dx_scheme})"
+                assert len(
+                    adm.pr_codes
+                ) == 0 or s_adm.pr_scheme == adm.pr_scheme, f"Inconsistent coding schemes ({s_adm.pr_scheme}, {adm.pr_scheme})"
+
                 super_admissions.pop()
                 s_interval = (s_admittime, max(dischtime, s_dischtime))
                 s_dx_codes = set().union(s_adm.dx_codes, adm.dx_codes)
