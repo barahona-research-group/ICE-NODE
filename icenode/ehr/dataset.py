@@ -115,8 +115,8 @@ class AbstractEHRDataset:
                     'admission_dates': (adm_row[admt_col], adm_row[dist_col]),
                     'dx_codes': set(),
                     'pr_codes': set(),
-                    'dx_scheme': 'none',
-                    'pr_scheme': 'none'
+                    'dx_scheme': self.target_scheme['dx'],
+                    'pr_scheme': self.target_scheme['pr']
                 }
             adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}
 
@@ -130,23 +130,19 @@ class AbstractEHRDataset:
             code_col = self.code_colname[info]
             scheme_col = self.code_scheme_colname[info]
             scheme_map = self.code_scheme[info]
+            t_sch = self.target_scheme[info]
             code_att = codes_attribute[info]
             scheme_att = scheme_attribute[info]
             df = self.df[info]
 
             for subj_id, subj_df in df.groupby(col["subject_id"]):
                 for adm_id, codes_df in subj_df.groupby(adm_id_col):
-                    scheme = set(scheme_map[str(s)]
-                                 for s in codes_df[scheme_col])
-                    assert len(
-                        scheme
-                    ) == 1, "Inconsistent code scheme for one admission!"
-                    scheme = scheme.pop()
-                    codeset = set(codes_df[code_col])
-                    _adm = adms[subj_id]['admissions'][adm_id]
-                    _adm[code_att] = codeset
-                    _adm[scheme_att] = scheme
-
+                    codeset = set()
+                    for sch_key, sch_codes_df in codes_df.groupby(scheme_col):
+                        s_sch = scheme_map[sch_key]
+                        mapper = CodeMapper.get_mapper(s_sch, t_sch)
+                        codeset |= mapper.map_codeset(sch_codes_df[code_col])
+                    adms[subj_id]['admissions'][adm_id][code_att] = codeset
         return adms
 
     @classmethod
