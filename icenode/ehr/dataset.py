@@ -35,7 +35,7 @@ class AbstractEHRDataset:
             for sch_key, sch_name in scheme_map.items():
                 s_scheme = C[sch_name]
                 if isinstance(s_scheme, ICDCommons):
-                    sch_mask = df[info_type][c_code] == sch_key
+                    sch_mask = df[info_type][c_scheme].astype(str) == sch_key
                     df[info_type].loc[sch_mask, c_code] = df[info_type].loc[
                         sch_mask, c_code].apply(s_scheme.add_dot)
 
