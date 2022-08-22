@@ -57,6 +57,7 @@ class AbstractEHRDataset:
         base_dir = m['base_dir']
         adm_colname = m['adm_colname']
         code_colname = m['code_colname']
+        code_sch_colname = m.get('code_scheme_colname')
 
         adm_df = pd.read_csv(os.path.join(base_dir, files['adm']))
 
@@ -68,16 +69,19 @@ class AbstractEHRDataset:
             adm_df[adm_colname['dischtime']],
             infer_datetime_format=True).dt.normalize()
 
-        dx_df = pd.read_csv(os.path.join(base_dir, files['dx']),
-                            dtype={code_colname['dx']: str})
+        res = {'adm': adm_df}
 
-        if 'pr' in files and files['pr'] is not None:
-            pr_df = pd.read_csv(os.path.join(base_dir, files['pr']),
-                                dtype={code_colname['pr']: str})
-        else:
-            pr_df = None
+        for info_t in ['dx', 'pr']:
+            if info_t not in files or files[info_t] is None:
+                res[info_t] = None
+                continue
+            dtype = {code_colname[info_t]: str}
+            if code_sch_colname:
+                dtype[code_sch_colname[info_t]] = str
+            res[info_t] = pd.read_csv(os.path.join(base_dir, files[info_t]),
+                                      dtype=dtype)
 
-        return {'dx': dx_df, 'pr': pr_df, 'adm': adm_df}
+        return res
 
     @staticmethod
     def _validate_codes(df, code_col, scheme_col, scheme_map):
