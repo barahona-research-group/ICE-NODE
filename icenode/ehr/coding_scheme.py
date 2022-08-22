@@ -620,7 +620,7 @@ class ICDCommons(HierarchicalScheme):
                             {sorted(unrecognised_source)[:20]}...""")
 
         df = df[valid_target & valid_source]
-        df['target'] = df['target'].map(t_scheme.code2dag)
+        # df['target'] = df['target'].map(t_scheme.code2dag)
 
         return {
             "df": df,
@@ -651,16 +651,16 @@ class ICDCommons(HierarchicalScheme):
     @staticmethod
     def register_mappings(s_scheme, t_scheme, conv_fname):
         # For choice_list, represent each group by there common ancestor
-        def _resolve_choice_list(df):
-            represent = set()
-            for _, choice_list_df in df.groupby('choice_list'):
-                choice_list = list(choice_list_df['target'])
-                if len(choice_list) > 1:
-                    lca = t_scheme.least_common_ancestor(choice_list)
-                    represent.add(lca)
-                elif len(choice_list) == 1:
-                    represent.add(choice_list[0])
-            return represent
+        # def _resolve_choice_list(df):
+        #     represent = set()
+        #     for _, choice_list_df in df.groupby('choice_list'):
+        #         choice_list = list(choice_list_df['target'])
+        #         if len(choice_list) > 1:
+        #             lca = t_scheme.least_common_ancestor(choice_list)
+        #             represent.add(lca)
+        #         elif len(choice_list) == 1:
+        #             represent.add(choice_list[0])
+        #     return represent
 
         res = ICDCommons.load_conv_table(s_scheme, t_scheme, conv_fname)
         conv_df = res["df"]
@@ -668,26 +668,29 @@ class ICDCommons(HierarchicalScheme):
                                                    conv_fname)
         map_kind = dict(zip(status_df['code'], status_df['status']))
 
-        mapping = CodeMapper(s_scheme,
-                             t_scheme,
-                             t_dag_space=True,
-                             unrecognised_source=res["unrecognised_source"],
-                             unrecognised_target=res["unrecognised_target"],
-                             conv_file=res["conv_file"])
+        mapping = CodeMapper(
+            s_scheme,
+            t_scheme,
+            # t_dag_space=True,
+            t_dag_space=False,
+            unrecognised_source=res["unrecognised_source"],
+            unrecognised_target=res["unrecognised_target"],
+            conv_file=res["conv_file"])
 
         for code, df in conv_df.groupby('source'):
             kind = map_kind[code]
             if kind == 'no_map':
                 continue
-            elif kind == '11_map' or kind == '1n_map':
-                mapping[code] = set(df['target'])
-            elif kind == '1n_map(resolved)':
-                mapping[code] = _resolve_choice_list(df)
-            elif kind == 'ambiguous':
-                represent = set()
-                for _, scenario_df in df.groupby('scenario'):
-                    represent.update(_resolve_choice_list(scenario_df))
-                mapping[code] = represent
+            mapping[code] = set(df['target'])
+            # elif kind == '11_map' or kind == '1n_map':
+            #     mapping[code] = set(df['target'])
+            # elif kind == '1n_map(resolved)':
+            #     mapping[code] = _resolve_choice_list(df)
+            # elif kind == 'ambiguous':
+            #     represent = set()
+            #     for _, scenario_df in df.groupby('scenario'):
+            #         represent.update(_resolve_choice_list(scenario_df))
+            #     mapping[code] = represent
 
 
 class DxICD10(ICDCommons):
