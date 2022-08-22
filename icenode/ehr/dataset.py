@@ -32,11 +32,12 @@ class AbstractEHRDataset:
             c_code = code_colname[info_type]
             c_scheme = code_scheme_colname[info_type]
 
-            for sch_name in scheme_map.values():
+            for sch_key, sch_name in scheme_map.items():
                 s_scheme = C[sch_name]
                 if isinstance(s_scheme, ICDCommons):
-                    df[info_type][c_code] = df[info_type][c_code].apply(
-                        s_scheme.add_dot)
+                    sch_mask = df[info_type][c_code] == sch_key
+                    df[info_type].loc[sch_mask, c_code] = df[info_type].loc[
+                        sch_mask, c_code].apply(s_scheme.add_dot)
 
             df[info_type] = self._validate_codes(df[info_type], c_code,
                                                  c_scheme, scheme_map)
