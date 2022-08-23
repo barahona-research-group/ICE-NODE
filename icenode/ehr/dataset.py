@@ -120,7 +120,7 @@ class AbstractEHRDataset:
                     'dx_codes': set(),
                     'pr_codes': set(),
                     'dx_scheme': self.target_scheme['dx'],
-                    'pr_scheme': self.target_scheme['pr']
+                    'pr_scheme': self.target_scheme.get('pr', 'none')
                 }
             adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}
 
@@ -144,8 +144,8 @@ class AbstractEHRDataset:
                     codeset = set()
                     for sch_key, sch_codes_df in codes_df.groupby(scheme_col):
                         s_sch = scheme_map[sch_key]
-                        mapper = CodeMapper.get_mapper(s_sch, t_sch)
-                        codeset |= mapper.map_codeset(sch_codes_df[code_col])
+                        m = CodeMapper.get_mapper(s_sch, t_sch)
+                        codeset.update(m.map_codeset(sch_codes_df[code_col]))
                     adms[subj_id]['admissions'][adm_id][code_att] = codeset
         return adms
 
