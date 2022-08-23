@@ -1,5 +1,5 @@
 {
-    "base_dir": "$DATA_DIR/mimic4v2.0-cohort",
+    "base_dir": "$DATA_DIR/mimic4-cohort",
     "code_colname": {
         "dx": "icd_code",
         "pr": "icd_code"
