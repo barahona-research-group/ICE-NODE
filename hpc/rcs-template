@@ -5,7 +5,7 @@ $temp_spec
 $temp_array_place
 
 # Setup environement using .bashrc
-source $HOME/.bashrc
+source $HOME/.stores.sh
 
 $temp_doc
 
@@ -13,8 +13,6 @@ $temp_doc
 git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $env_study_tag --single-branch  --depth 1 
 
 cd $TMPDIR/ICE-NODE
-
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-dev
 
 # Load modules
 $temp_modules_place

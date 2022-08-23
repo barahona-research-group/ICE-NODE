@@ -5,7 +5,7 @@
 
 
 # Setup environement using .bashrc
-source $HOME/.bashrc
+source $HOME/.stores.sh
 
 # Input Environment Variables:
 # $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
@@ -18,8 +18,6 @@ source $HOME/.bashrc
 git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
 
 cd $TMPDIR/ICE-NODE
-
-$HOME/anaconda3/condabin/conda activate $HOME/GP/env/icenode-dev
 
 # Load modules
 
