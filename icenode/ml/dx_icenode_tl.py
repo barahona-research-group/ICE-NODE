@@ -192,14 +192,14 @@ class ICENODE(AbstractModel):
         return s, r, n
 
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
-                  emb: jnp.ndarray) -> jnp.ndarray:
+                  **kwargs) -> jnp.ndarray:
         new_state = {}
-        for i in emb:
-            emb_nominal = emb[i]
-            state, emb_pred = self.split_state_emb(state_e[i])
-            state = self.f_update(params['f_update'], state, emb_pred,
-                                  emb_nominal)
-            new_state[i] = self.join_state_emb(state, emb_nominal)
+        for i in state_e.keys():
+            dx_emb = kwargs['dx_emb'][i]
+            state, dx_emb_hat = self.split_state_emb(state_e[i])
+            state = self.f_update(params['f_update'], state, dx_emb_hat,
+                                  dx_emb)
+            new_state[i] = self.join_state_emb(state, dx_emb)
         return new_state
 
     def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
@@ -258,7 +258,6 @@ class ICENODE(AbstractModel):
             adm_id = adm_n['admission_id']
             adm_los = adm_n['los']  # length of stay
             adm_time = adm_n['admission_time']
-            emb = adm_n['dx_emb']
             dx = adm_n['dx_outcome']
 
             adm_counts.append(len(adm_id))
@@ -294,7 +293,7 @@ class ICENODE(AbstractModel):
             total_nfe += sum(nfe.values())
 
             # Update state at discharge
-            state_e = nn_update(state_e, emb)
+            state_e = nn_update(state_e, **adm_n)
 
             # Update the states:
             for subject_id, new_state in state_e.items():
