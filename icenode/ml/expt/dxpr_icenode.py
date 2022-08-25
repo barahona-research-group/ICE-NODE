@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from functools import partial
 from typing import Any, Dict, TYPE_CHECKING
 
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax import lax
+from absl import logging
 
 if TYPE_CHECKING:
     import optuna
@@ -38,13 +37,6 @@ class ICENODE(DX_ICENODE):
                                   name='f_update')))
         self.f_update = jax.jit(f_update)
         self.initializers['f_update'] = f_update_init
-        self.init_data = self._initialization_data()
-
-    def init_params(self, prng_seed=0):
-        ret = super(ICENODE, self).init_params(prng_seed)
-        rng_key = jax.random.PRNGKey(prng_seed)
-        ret['pr_emb'] = self.pr_emb.init_params(rng_key)
-        return ret
 
     def _initialization_data(self):
         """
@@ -59,6 +51,13 @@ class ICENODE(DX_ICENODE):
 
         return ret
 
+    def init_params(self, prng_seed=0):
+        ret = super(ICENODE, self).init_params(prng_seed=prng_seed)
+        rng_key = jax.random.PRNGKey(prng_seed)
+        ret['pr_emb'] = self.pr_emb.init_params(rng_key)
+        logging.warning(f'initialized params')
+        return ret
+
     def _extract_nth_admission(self, params: Any,
                                batch: Dict[int, Dict[int, ehr.Admission_JAX]],
                                n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
@@ -66,12 +65,11 @@ class ICENODE(DX_ICENODE):
                                                           batch=batch,
                                                           n=n)
         adms = batch[n]
-        pr_G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
-        pr_emb = {
+        pr_G = self.pr_emb.compute_embeddings_mat(params["pr_emb"])
+        ret['pr_emb'] = {
             i: self.pr_emb.encode(pr_G, adm.pr_vec)
             for i, adm in adms.items()
         }
-        ret['pr_emb'] = pr_emb
         return ret
 
     def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
@@ -85,3 +83,51 @@ class ICENODE(DX_ICENODE):
                                   dx_emb, pr_emb)
             new_state[i] = self.join_state_emb(state, dx_emb)
         return new_state
+
+    @classmethod
+    def sample_embeddings_config(cls, trial: optuna.Trial, emb_kind: str):
+        if emb_kind == 'matrix':
+            dx_emb_config = E.MatrixEmbeddings.sample_model_config('dx', trial)
+            pr_emb_config = E.MatrixEmbeddings.sample_model_config('pr', trial)
+        elif emb_kind == 'gram':
+            dx_emb_config = E.GRAM.sample_model_config('dx', trial)
+            pr_emb_config = E.GRAM.sample_model_config('pr', trial)
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+
+        return {'dx': dx_emb_config, 'pr': pr_emb_config, 'kind': emb_kind}
+
+    @classmethod
+    def create_embedding(cls, category, emb_config, emb_kind,
+                         subject_interface, train_ids):
+        if emb_kind == 'matrix':
+            if category == 'dx':
+                input_dim = subject_interface.dx_dim
+            else:
+                input_dim = subject_interface.pr_dim
+            return E.MatrixEmbeddings(input_dim=input_dim, **emb_config)
+
+        if emb_kind == 'gram':
+            return E.GRAM(category=category,
+                          subject_interface=subject_interface,
+                          train_ids=train_ids,
+                          **emb_config)
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+
+    @classmethod
+    def create_model(cls, config, subject_interface, train_ids):
+        dx_emb = cls.create_embedding(category='dx',
+                                      emb_config=config['emb']['dx'],
+                                      emb_kind=config['emb']['kind'],
+                                      subject_interface=subject_interface,
+                                      train_ids=train_ids)
+        pr_emb = cls.create_embedding(category='pr',
+                                      emb_config=config['emb']['pr'],
+                                      emb_kind=config['emb']['kind'],
+                                      subject_interface=subject_interface,
+                                      train_ids=train_ids)
+        return cls(subject_interface=subject_interface,
+                   dx_emb=dx_emb,
+                   pr_emb=pr_emb,
+                   **config['model'])

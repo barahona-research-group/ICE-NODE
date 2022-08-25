@@ -108,7 +108,6 @@ class ICENODE(AbstractModel):
             'f_update': f_update_init,
             'f_dec': f_dec_init
         }
-        self.init_data = self._initialization_data()
 
     def join_state_emb(self, state, emb):
         if state is None:
@@ -120,10 +119,11 @@ class ICENODE(AbstractModel):
 
     def init_params(self, prng_seed=0):
         rng_key = jax.random.PRNGKey(prng_seed)
+        init_data = self._initialization_data()
         return {
             "dx_emb": self.dx_emb.init_params(rng_key),
             **{
-                label: init(rng_key, *self.init_data[label])
+                label: init(rng_key, *init_data[label])
                 for label, init in self.initializers.items()
             }
         }

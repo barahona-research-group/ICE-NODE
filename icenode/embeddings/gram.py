@@ -148,8 +148,8 @@ class AbstractGRAM(AbstractEmbeddingsLayer):
         raise RuntimeError(f'Should be overriden')
 
     @partial(jax.jit, static_argnums=(0, ))
-    def _self_attention(self, params: Any, E: jnp.ndarray, ancestry: jnp.ndarray,
-                        e_i: jnp.ndarray):
+    def _self_attention(self, params: Any, E: jnp.ndarray,
+                        ancestry: jnp.ndarray, e_i: jnp.ndarray):
         # E: basic embeddings of ancestors
         E = E.at[ancestry].get()
         A_att = jax.vmap(partial(self.fwd_att, params, e_i))(E)
@@ -191,7 +191,6 @@ class GRAM(AbstractGRAM):
             ancestors_mat = subject_interface.dx_make_ancestors_mat()
         else:
             ancestors_mat = subject_interface.pr_make_ancestors_mat()
-
         super().__init__(attention_dim=attention_dim,
                          attention_method=attention_method,
                          ancestors_mat=ancestors_mat,

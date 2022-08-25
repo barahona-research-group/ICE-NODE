@@ -45,7 +45,6 @@ class Admission_JAX:
             self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
 
         self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
-
         if pr_dagvec:
             self.pr_vec = jnp.array(pr_mapper.codeset2dagvec(self.pr_codes))
         else:

@@ -25,11 +25,7 @@ class ICENODE_2LR_MIXIN:
         opt1 = (opt_state, opt_update, get_params)
 
         opt_init, opt_update, get_params = opt_cls(step_size=lr2)
-        opt_state = opt_init({
-            'f_dec': params['f_dec'],
-            'dx_emb': params['dx_emb'],
-            'f_update': params.get('f_update')
-        })
+        opt_state = opt_init({k: params[k] for k in set(params) - {'f_n_ode'}})
         opt2 = (opt_state, opt_update, get_params)
         return opt1, opt2
 
@@ -56,11 +52,7 @@ class ICENODE_2LR_MIXIN:
         grads = jax.grad(loss_)(params, batch)
 
         grads1 = {'f_n_ode': grads['f_n_ode']}
-        grads2 = {
-            'f_dec': grads['f_dec'],
-            'f_update': grads.get('f_update'),
-            'dx_emb': grads['dx_emb']
-        }
+        grads2 = {k: grads[k] for k in set(grads) - {'f_n_ode'}}
 
         opt1_state = opt1_update(step, grads1, opt1_state)
         opt2_state = opt2_update(step, grads2, opt2_state)

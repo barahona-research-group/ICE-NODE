@@ -10,7 +10,7 @@
             "attention_method": "tanh",
             "embeddings_dim": 300,
             "glove_config": {
-                "iterations": 30,
+                "iterations": 5,
                 "window_size_days": 730
             }
         },

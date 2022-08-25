@@ -12,7 +12,7 @@ from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset
+    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_splits, m4_code_groups
 
     m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
@@ -48,6 +48,20 @@ def setUpModule():
                                            random_seed=42)
     m3_code_groups = m3_interface.dx_outcome_by_percentiles(20)
 
+    m4_interface = ehr.Subject_JAX.from_dataset(
+        m4_dataset, {
+            'dx': 'dx_icd9',
+            'dx_dagvec': True,
+            'pr': 'pr_icd9',
+            'pr_dagvec': True,
+            'dx_outcome': 'dx_icd9_filter_v1'
+        })
+
+    m4_splits = m4_interface.random_splits(split1=0.7,
+                                           split2=0.85,
+                                           random_seed=42)
+    m4_code_groups = m4_interface.dx_outcome_by_percentiles(20)
+
 
 def tearDownModule():
     pass
@@ -64,7 +78,7 @@ class DxCommonTests(object):
         self.models = []
         for config in self.configs:
             model = self.model_cls.create_model(config, self.interface,
-                                                m3_splits[0])
+                                                self.splits[0])
             state = model.init(config)
 
             self.assertTrue(callable(model), msg=f"config: {config}")
@@ -248,6 +262,20 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
         cls.model_cls = ml.ICENODE_UNIFORM_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
+
+
+class TestDxPrICENODE_G(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dxpr_icenode_2lr_g.json'
+            )
+        ]
+        cls.model_cls = ml.PR_ICENODE
+        cls.interface = m4_interface
+        cls.splits = m4_splits
 
 
 class TestGlove(unittest.TestCase):
