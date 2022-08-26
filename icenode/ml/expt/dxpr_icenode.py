@@ -108,10 +108,10 @@ class ICENODE(DX_ICENODE):
             return E.MatrixEmbeddings(input_dim=input_dim, **emb_config)
 
         if emb_kind == 'gram':
-            return E.GRAM(category=category,
-                          subject_interface=subject_interface,
-                          train_ids=train_ids,
-                          **emb_config)
+            return E.CachedGRAM(category=category,
+                                subject_interface=subject_interface,
+                                train_ids=train_ids,
+                                **emb_config)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 

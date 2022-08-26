@@ -1,4 +1,4 @@
-from .gram import MatrixEmbeddings, GRAM, AbstractEmbeddingsLayer
+from .gram import MatrixEmbeddings, GRAM, AbstractEmbeddingsLayer, CachedGRAM
 from .glove import glove_representation
 
 embedding_cls = AbstractEmbeddingsLayer.embedding_cls

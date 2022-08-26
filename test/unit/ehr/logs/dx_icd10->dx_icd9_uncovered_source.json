@@ -23999,7 +23999,6 @@
         "Z3A.09",
         "Z3A.1",
         "Z3A.10",
-        "Z3A.11",
         "Z3A.12",
         "Z3A.13",
         "Z3A.14",
@@ -48415,7 +48414,6 @@
         "Z3A.09": "9 weeks gestation of pregnancy",
         "Z3A.1": "Weeks of gestation of pregnancy, weeks 10-19",
         "Z3A.10": "10 weeks gestation of pregnancy",
-        "Z3A.11": "11 weeks gestation of pregnancy",
         "Z3A.12": "12 weeks gestation of pregnancy",
         "Z3A.13": "13 weeks gestation of pregnancy",
         "Z3A.14": "14 weeks gestation of pregnancy",
@@ -48831,6 +48829,6 @@
         "Z99.1": "Dependence on respirator",
         "Z99.8": "Dependence on other enabling machines and devices"
     },
-    "n": 24413,
-    "p": 0.5322330986069023
+    "n": 24412,
+    "p": 0.5322112973903944
 }

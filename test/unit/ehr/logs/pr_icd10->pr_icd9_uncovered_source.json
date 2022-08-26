@@ -1275,7 +1275,6 @@
         "0D5Q0Z3",
         "0D5Q3Z3",
         "0D5Q4Z3",
-        "0DB64Z3",
         "0DH601Z",
         "0DH631Z",
         "0DH641Z",
@@ -1861,7 +1860,6 @@
         "30243U2",
         "30243U3",
         "30243U4",
-        "30283B1",
         "3E0102A",
         "3E0132A",
         "3E02340",
@@ -3662,7 +3660,6 @@
         "0D5Q0Z3": "Destruction of Anus using Laser Interstitial Thermal Therapy, Open Approach",
         "0D5Q3Z3": "Destruction of Anus using Laser Interstitial Thermal Therapy, Percutaneous Approach",
         "0D5Q4Z3": "Destruction of Anus using Laser Interstitial Thermal Therapy, Percutaneous Endoscopic Approach",
-        "0DB64Z3": "Excision of Stomach, Percutaneous Endoscopic Approach, Vertical",
         "0DH601Z": "Insertion of Radioactive Element into Stomach, Open Approach",
         "0DH631Z": "Insertion of Radioactive Element into Stomach, Percutaneous Approach",
         "0DH641Z": "Insertion of Radioactive Element into Stomach, Percutaneous Endoscopic Approach",
@@ -4248,7 +4245,6 @@
         "30243U2": "Transfusion of Allogeneic Related T-cell Depleted Hematopoietic Stem Cells into Central Vein, Percutaneous Approach",
         "30243U3": "Transfusion of Allogeneic Unrelated T-cell Depleted Hematopoietic Stem Cells into Central Vein, Percutaneous Approach",
         "30243U4": "Transfusion of Allogeneic Unspecified T-cell Depleted Hematopoietic Stem Cells into Central Vein, Percutaneous Approach",
-        "30283B1": "Transfusion of Nonautologous 4-Factor Prothrombin Complex Concentrate into Vein, Percutaneous Approach",
         "3E0102A": "Introduction of Anti-Infective Envelope into Subcutaneous Tissue, Open Approach",
         "3E0132A": "Introduction of Anti-Infective Envelope into Subcutaneous Tissue, Percutaneous Approach",
         "3E02340": "Introduction of Influenza Vaccine into Muscle, Percutaneous Approach",
@@ -4773,6 +4769,6 @@
         "XY0YX28": "Extracorporeal Introduction of Taurolidine Anti-infective and Heparin Anticoagulant, New Technology Group 8",
         "XY0YX37": "Extracorporeal Introduction of Nafamostat Anticoagulant, New Technology Group 7"
     },
-    "n": 2384,
-    "p": 0.03037097431716266
+    "n": 2382,
+    "p": 0.030345495311863025
 }

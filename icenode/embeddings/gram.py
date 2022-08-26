@@ -10,7 +10,7 @@ by Asem Alaa (asem.a.abdelaziz@gmail.com)
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Optional, Tuple, TYPE_CHECKING
 
 import numpy as onp
 import jax
@@ -236,6 +236,45 @@ class GRAM(AbstractGRAM):
             'attention_dim':
             trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
+
+
+class CachedEmbeddingsMatrix(dict):
+
+    def __init__(self, params, code_ancestry, att_f):
+        self.E, self.att_params = params
+        self.code_ancestry = code_ancestry
+        self.att_f = att_f
+
+    def multiply(self, x: jnp.ndarray):
+        index = onp.nonzero(x)[0]
+        if len(index) == 0:
+            return jnp.zeros_like(self.E[0])
+        return sum(self[i.item()] for i in index)
+
+    def __getitem__(self, idx):
+        if idx in self:
+            return super().__getitem__(idx)
+        else:
+            gi = self.att_f(self.att_params, self.E, self.code_ancestry[idx],
+                            self.E[idx])
+            super().__setitem__(idx, gi)
+            return gi
+
+    def get(self, k, default=None):
+        if k in self:
+            return self.__getitem__(k)
+        return default
+
+
+class CachedGRAM(GRAM):
+
+    def compute_embeddings_mat(self, params):
+        return CachedEmbeddingsMatrix(params,
+                                      code_ancestry=self.code_ancestry,
+                                      att_f=self._self_attention)
+
+    def encode(self, G: CachedEmbeddingsMatrix, x: jnp.ndarray) -> jnp.ndarray:
+        return jnp.tanh(G.multiply(x))
 
 
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
