@@ -1,0 +1,37 @@
+{
+    "code_scheme": {
+        "dx": "dx_icd9",
+	"pr": "pr_icd9",
+        "dx_outcome": "dx_icd9_filter_v3_groups"
+    },
+    "emb": {
+        "dx": {
+            "embeddings_dim": 300
+        },
+        "pr": {
+            "embeddings_dim": 150
+        },
+        "kind": "matrix"
+    },
+    "model": {
+        "ode_dyn": "mlp3",
+        "ode_init_var": 1.0776395319697402e-07,
+        "ode_with_bias": false,
+        "state_size": 30,
+        "timescale": 7
+    },
+    "training": {
+        "batch_size": 256,
+        "decay_rate1": 0.27729587471948475,
+        "decay_rate2": 0.3293406876704547,
+        "epochs": 60,
+        "loss_mixing": {
+            "L_dyn": 1000.0,
+            "L_l1": 0,
+            "L_l2": 0
+        },
+        "lr1": 7.156197978746877e-05,
+        "lr2": 0.0011484691965460785,
+        "optimizer": "adam"
+    }
+}

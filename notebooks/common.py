@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 sys.path.append('..')
 from icenode.ml import ICENODE_2LR, ICENODE_UNIFORM_2LR, GRU, RETAIN, WLR
-from icenode.ehr import MIMICDataset, Subject_JAX, code_scheme, datasets
+from icenode.ehr import AbstractEHRDataset, ConsistentSchemeEHRDataset, Subject_JAX, code_scheme, datasets
 from icenode.utils import load_config, load_params, write_params, write_config, modified_environ
 
 model_cls = {

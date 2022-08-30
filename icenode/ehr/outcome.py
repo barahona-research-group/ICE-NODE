@@ -13,7 +13,9 @@ _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 
 outcome_conf_files = {
     'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
-    'dx_icd9_filter_v1': 'dx_icd9_v1.json'
+    'dx_icd9_filter_v1': 'dx_icd9_v1.json',
+    'dx_icd9_filter_v2_groups': 'dx_icd9_v2_groups.json',
+    'dx_icd9_filter_v3_groups': 'dx_icd9_v3_groups.json'
 }
 
 
@@ -26,6 +28,7 @@ class OutcomeExtractor(AbstractScheme):
             c for c in sorted(self.t_scheme.index)
             if c not in conf['exclude_codes']
         ]
+
         index = dict(zip(codes, range(len(codes))))
         desc = {c: self.t_scheme.desc[c] for c in codes}
         super().__init__(codes=codes, index=index, desc=desc, name=conf)
@@ -61,5 +64,11 @@ class OutcomeExtractor(AbstractScheme):
         elif 'select_branches' in conf:
             # TODO
             return None
+        elif 'selected_codes' in conf:
+            t_scheme = C[conf['code_scheme']]
+            conf['exclude_codes'] = [
+                c for c in t_scheme.codes if c not in conf['selected_codes']
+            ]
+            return conf
         elif 'exclude_codes' in conf:
             return conf
