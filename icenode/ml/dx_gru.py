@@ -47,12 +47,13 @@ class GRU(AbstractModel):
 
         self.initializers = {'gru': gru_init, 'out': out_init}
 
-    def init_params(self, rng_key):
+    def init_params(self, prng_seed=0):
+        rng_key = jax.random.PRNGKey(prng_seed)
         state = jnp.zeros(self.dimensions['state'])
         dx_emb = jnp.zeros(self.dimensions['dx_emb'])
 
         return {
-            "dx_emb": self.dx_emb.init_params(rng_key),
+            "dx_emb": self.dx_emb.init_params(prng_seed),
             "gru": self.initializers['gru'](rng_key, dx_emb, state),
             "out": self.initializers['out'](rng_key, state)
         }

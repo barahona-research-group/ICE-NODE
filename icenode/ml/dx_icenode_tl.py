@@ -121,7 +121,7 @@ class ICENODE(AbstractModel):
         rng_key = jax.random.PRNGKey(prng_seed)
         init_data = self._initialization_data()
         return {
-            "dx_emb": self.dx_emb.init_params(rng_key),
+            "dx_emb": self.dx_emb.init_params(prng_seed),
             **{
                 label: init(rng_key, *init_data[label])
                 for label, init in self.initializers.items()

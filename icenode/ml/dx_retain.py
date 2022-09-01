@@ -43,33 +43,38 @@ class RETAIN(AbstractModel):
 
         gru_a_init, gru_a = hk.without_apply_rng(
             hk.transform(
-                utils.wrap_module(hk.GRU, hidden_size=state_a_size, name='gru_a')))
+                utils.wrap_module(hk.GRU,
+                                  hidden_size=state_a_size,
+                                  name='gru_a')))
         self.gru_a = jax.jit(gru_a)
 
         gru_b_init, gru_b = hk.without_apply_rng(
             hk.transform(
-                utils.wrap_module(hk.GRU, hidden_size=state_b_size, name='gru_b')))
+                utils.wrap_module(hk.GRU,
+                                  hidden_size=state_b_size,
+                                  name='gru_b')))
         self.gru_b = jax.jit(gru_b)
 
         # Followed by a softmax on e1, e2, ..., -> alpha1, alpha2, ...
         att_layer_a_init, att_layer_a = hk.without_apply_rng(
             hk.transform(
-                utils.wrap_module(hk.Linear, output_size=1, name='att_layer_a')))
+                utils.wrap_module(hk.Linear, output_size=1,
+                                  name='att_layer_a')))
         self.att_layer_a = jax.jit(att_layer_a)
 
         # followed by a tanh
         att_layer_b_init, att_layer_b = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(hk.Linear,
-                            output_size=self.dimensions['dx_emb'],
-                            name='att_layer_b')))
+                                  output_size=self.dimensions['dx_emb'],
+                                  name='att_layer_b')))
         self.att_layer_b = jax.jit(att_layer_b)
 
         decode_init, decode = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(hk.Linear,
-                            output_size=self.dimensions['dx_outcome'],
-                            name='decoder')))
+                                  output_size=self.dimensions['dx_outcome'],
+                                  name='decoder')))
         self.decode = jax.jit(decode)
 
         self.initializers = {
@@ -80,14 +85,15 @@ class RETAIN(AbstractModel):
             'decode': decode_init
         }
 
-    def init_params(self, prng_key):
+    def init_params(self, prng_seed=0):
+        rng_key = jax.random.PRNGKey(prng_seed)
         state_a = jnp.zeros(self.dimensions['state_a'])
         state_b = jnp.zeros(self.dimensions['state_b'])
 
         dx_emb = jnp.zeros(self.dimensions['dx_emb'])
 
         return {
-            "dx_emb": self.dx_emb.init_params(prng_key),
+            "dx_emb": self.dx_emb.init_params(prng_seed),
             "gru_a": self.initializers['gru_a'](prng_key, dx_emb, state_a),
             "gru_b": self.initializers['gru_b'](prng_key, dx_emb, state_b),
             "att_layer_a": self.initializers['att_layer_a'](prng_key, state_a),
