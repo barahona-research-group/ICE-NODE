@@ -1,8 +1,8 @@
 """GloVe for initializing the basic embeddings for the GRAM method"""
 
 import math
+import random
 from collections import defaultdict
-from random import shuffle
 from typing import List, Dict, Mapping, Tuple, Callable, Set
 from absl import logging
 import numpy as np
@@ -101,7 +101,7 @@ def run_iter(data, learning_rate=0.05, x_max=100, alpha=0.75):
 
     # We want to iterate over data randomly so as not to unintentionally
     # bias the word vector contents
-    shuffle(data)
+    random.shuffle(data)
 
     for (v_main, v_context, b_main, b_context, gradsq_W_main, gradsq_W_context,
          gradsq_b_main, gradsq_b_context, cooccurrence) in data:
@@ -156,6 +156,7 @@ def train_glove(index: Mapping[str, int],
                 cooccurrences: Mapping[Tuple[int, int], int],
                 vector_size=100,
                 iterations=25,
+                rng_key=0,
                 **kwargs) -> Mapping[str, np.ndarray]:
     """
     Train GloVe vectors on the given `cooccurrences`, where
@@ -171,6 +172,9 @@ def train_glove(index: Mapping[str, int],
     """
 
     size = len(index)
+
+    np.random.seed(rng_key)
+    random.seed(rng_key)
 
     W = (np.random.rand(size * 2, vector_size) - 0.5) / float(vector_size + 1)
     biases = (np.random.rand(size * 2) - 0.5) / float(vector_size + 1)

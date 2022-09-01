@@ -208,6 +208,7 @@ class GRAM(AbstractGRAM):
             subject_interface=self.subject_interface,
             train_ids=self.train_ids,
             vector_size=self.embeddings_dim,
+            rng_key=rng_key,
             **self.glove_config)
 
         if self.category == 'dx':
