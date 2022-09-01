@@ -202,13 +202,13 @@ class GRAM(AbstractGRAM):
         self.category = category
         self.glove_config = glove_config
 
-    def init_params(self, rng_key):
+    def init_params(self, prng_seed):
         glove_E = glove_representation(
             category=self.category,
             subject_interface=self.subject_interface,
             train_ids=self.train_ids,
             vector_size=self.embeddings_dim,
-            rng_key=rng_key,
+            prng_seed=prng_seed,
             **self.glove_config)
 
         if self.category == 'dx':
@@ -221,6 +221,7 @@ class GRAM(AbstractGRAM):
         initial_E = jnp.vstack([glove_E[c] for c in codes_ordered])
 
         e = initial_E[0, :]
+        rng_key = jax.random.PRNGKey(prng_seed)
         return initial_E, self.init_att(rng_key, e, e)
 
     @staticmethod

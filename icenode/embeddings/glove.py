@@ -156,7 +156,7 @@ def train_glove(index: Mapping[str, int],
                 cooccurrences: Mapping[Tuple[int, int], int],
                 vector_size=100,
                 iterations=25,
-                rng_key=0,
+                prng_seed=0,
                 **kwargs) -> Mapping[str, np.ndarray]:
     """
     Train GloVe vectors on the given `cooccurrences`, where
@@ -173,8 +173,8 @@ def train_glove(index: Mapping[str, int],
 
     size = len(index)
 
-    np.random.seed(rng_key)
-    random.seed(rng_key)
+    np.random.seed(prng_seed)
+    random.seed(prng_seed)
 
     W = (np.random.rand(size * 2, vector_size) - 0.5) / float(vector_size + 1)
     biases = (np.random.rand(size * 2) - 0.5) / float(vector_size + 1)
