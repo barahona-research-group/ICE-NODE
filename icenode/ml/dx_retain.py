@@ -94,11 +94,11 @@ class RETAIN(AbstractModel):
 
         return {
             "dx_emb": self.dx_emb.init_params(prng_seed),
-            "gru_a": self.initializers['gru_a'](prng_key, dx_emb, state_a),
-            "gru_b": self.initializers['gru_b'](prng_key, dx_emb, state_b),
-            "att_layer_a": self.initializers['att_layer_a'](prng_key, state_a),
-            "att_layer_b": self.initializers['att_layer_b'](prng_key, state_b),
-            "decode": self.initializers["decode"](prng_key, dx_emb)
+            "gru_a": self.initializers['gru_a'](rng_key, dx_emb, state_a),
+            "gru_b": self.initializers['gru_b'](rng_key, dx_emb, state_b),
+            "att_layer_a": self.initializers['att_layer_a'](rng_key, state_a),
+            "att_layer_b": self.initializers['att_layer_b'](rng_key, state_b),
+            "decode": self.initializers["decode"](rng_key, dx_emb)
         }
 
     def state_size(self):
