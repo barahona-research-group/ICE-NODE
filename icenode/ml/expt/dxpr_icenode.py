@@ -53,8 +53,7 @@ class ICENODE(DX_ICENODE):
 
     def init_params(self, prng_seed=0):
         ret = super(ICENODE, self).init_params(prng_seed=prng_seed)
-        rng_key = jax.random.PRNGKey(prng_seed)
-        ret['pr_emb'] = self.pr_emb.init_params(rng_key)
+        ret['pr_emb'] = self.pr_emb.init_params(prng_seed)
         logging.warning(f'initialized params')
         return ret
 
