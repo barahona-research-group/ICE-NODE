@@ -208,7 +208,7 @@ class FastDeLongTest:
     @staticmethod
     def compute_ground_truth_statistics(ground_truth):
         assert np.array_equal(np.unique(ground_truth), [0, 1])
-        order = (-ground_truth).argsort()
+        order = (-1 * ground_truth).argsort()
         label_1_count = int(ground_truth.sum())
         return order, label_1_count
 

@@ -231,8 +231,8 @@ class Subject_JAX(dict):
                 for adm in adms_info]
 
     def dx_outcome_frequency_vec(self, subjects: List[Subject]):
-        np_res = Subject.dx_outcome_frequency_vec(subjects,
-                                                  self.dx_outcome_extractor)
+        np_res = Subject.dx_outcome_frequency_vec(
+            map(self._subjects.get, subjects), self.dx_outcome_extractor)
         return jnp.array(np_res)
 
     @staticmethod

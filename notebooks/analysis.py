@@ -98,7 +98,7 @@ def relative_performance_upset(auc_tests,
                                min_auc,
                                interface,
                                code_attrs=None):
-    outcome = interface.dx_outcome
+    outcome = interface.dx_outcome_extractor
     idx2code = outcome.idx2code
 
     auc_tests['DESC'] = auc_tests['CODE_INDEX'].apply(idx2code.get)
