@@ -262,9 +262,7 @@ class Subject_JAX(dict):
     def dx_outcome_by_percentiles(self,
                                   percentile_range: float = 20,
                                   subjects: List[int] = []):
-        subjects = [self._subjects[i] for i in subjects or self._subjects]
-        return self._code_frequency_partitions(
-            percentile_range, self.dx_outcome_frequency_vec(subjects))
+        return self._code_frequency_partitions(percentile_range, subjects)
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
