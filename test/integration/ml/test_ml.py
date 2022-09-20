@@ -12,7 +12,7 @@ from icenode.utils import load_config, load_params
 
 
 def setUpModule():
-    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_splits, m4_code_groups
+    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_interface_ccs, m4_splits, m4_code_groups
 
     m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
@@ -55,6 +55,12 @@ def setUpModule():
             'pr': 'pr_icd9',
             'pr_dagvec': True,
             'dx_outcome': 'dx_icd9_filter_v1'
+        })
+
+    m4_interface_ccs = ehr.Subject_JAX.from_dataset(
+        m4_dataset, {
+            'dx': 'dx_ccs',
+            'dx_outcome': 'dx_flatccs_filter_v1'
         })
 
     m4_splits = m4_interface.random_splits(split1=0.7,
@@ -150,6 +156,19 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
         cls.model_cls = ml.GRU
         cls.interface = m3_interface
         cls.splits = m3_splits
+
+
+class TestDxGRU_M4CCS_M(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_gru_m.json')
+        ]
+        cls.model_cls = ml.GRU
+        cls.interface = m4_interface_ccs
+        cls.splits = m4_splits
 
 
 class TestDxGRU_G(DxCommonTests, unittest.TestCase):

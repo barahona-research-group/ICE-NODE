@@ -1217,6 +1217,14 @@ class PrFlatCCS(FlatCCSCommons):
                          name=name)
 
 
+def register_chained_map(s_scheme, t_scheme, inter_scheme):
+    inter_mapping = CodeMapper.get_mapper(s_scheme, inter_scheme)
+    assert inter_mapping.t_dag_space == False
+    s_codes = set(s_scheme.codes) & set(inter_mapping)
+    m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    m.update({c: inter_mapping[c] for c in s_codes})
+
+
 # Singleton instance. Lazy on-demand loading.
 _C = LazyDict({})
 _C['none'] = lambda: NullScheme('none')
@@ -1229,6 +1237,15 @@ _C['pr_ccs'] = lambda: PrCCS(_C['pr_icd9'], 'pr_ccs')
 _C['pr_icd9'] = lambda: PrICD9('pr_icd9')
 _C['pr_icd10'] = lambda: PrICD10('pr_icd10')
 code_scheme = _C
+
+
+def reg_dx_icd9_chained_map(s_scheme, t_scheme):
+    return register_chained_map(s_scheme, t_scheme, _C['dx_icd9'])
+
+
+def reg_pr_icd9_chained_map(s_scheme, t_scheme):
+    return register_chained_map(s_scheme, t_scheme, _C['pr_icd9'])
+
 
 # Possible Mappings
 load_maps = {
@@ -1246,18 +1263,34 @@ load_maps = {
                                          '2018_gem_pcs_I9I10.txt.gz'),
     (DxCCS, DxICD9):
     lambda: CCSCommons.register_mappings(_C['dx_ccs'], _C['dx_icd9']),
+    (DxCCS, DxICD10):
+    lambda: reg_dx_icd9_chained_map(_C['dx_ccs'], _C['dx_icd10']),
     (DxICD9, DxCCS):
     lambda: CCSCommons.register_mappings(_C['dx_ccs'], _C['dx_icd9']),
+    (DxICD10, DxCCS):
+    lambda: reg_dx_icd9_chained_map(_C['dx_icd10'], _C['dx_ccs']),
     (PrCCS, PrICD9):
     lambda: CCSCommons.register_mappings(_C['pr_ccs'], _C['pr_icd9']),
     (PrICD9, PrCCS):
     lambda: CCSCommons.register_mappings(_C['pr_ccs'], _C['pr_icd9']),
+    (PrCCS, PrICD10):
+    lambda: reg_pr_icd9_chained_map(_C['pr_ccs'], _C['pr_icd10']),
+    (PrICD10, PrCCS):
+    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_ccs']),
     (DxFlatCCS, DxICD9):
     lambda: FlatCCSCommons.register_mappings(_C['dx_flatccs'], _C['dx_icd9']),
+    (DxFlatCCS, DxICD10):
+    lambda: reg_dx_icd9_chained_map(_C['dx_flatccs'], _C['dx_icd10']),
     (DxICD9, DxFlatCCS):
     lambda: FlatCCSCommons.register_mappings(_C['dx_flatccs'], _C['dx_icd9']),
+    (DxICD10, DxFlatCCS):
+    lambda: reg_dx_icd9_chained_map(_C['dx_icd10'], _C['dx_flatccs']),
     (PrFlatCCS, PrICD9):
     lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9']),
+    (PrFlatCCS, PrICD10):
+    lambda: reg_pr_icd9_chained_map(_C['pr_flatccs'], _C['pr_icd10']),
     (PrICD9, PrFlatCCS):
-    lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9'])
+    lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9']),
+    (PrICD10, PrFlatCCS):
+    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_flatccs'])
 }
