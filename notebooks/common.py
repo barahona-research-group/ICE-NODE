@@ -23,12 +23,15 @@ model_cls = {
 
 lsr_model_cls = {
     'dx_icenode_M': ICENODE_2LR,
+    'dx_icenode_uniform_M': ICENODE_UNIFORM_2LR,
     'dx_icenode_G': ICENODE_2LR,
+    'dx_icenode_uniform_G': ICENODE_UNIFORM_2LR,
     'dxpr_icenode_M': PR_ICENODE,
     'dxpr_icenode_G': PR_ICENODE,
     'dx_gru_M': GRU,
     'dx_gru_G': GRU,
-    'dx_retain': RETAIN
+    'dx_retain': RETAIN,
+    'dx_window_logreg': WLR
 }
 
 

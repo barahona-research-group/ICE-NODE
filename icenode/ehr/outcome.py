@@ -12,6 +12,7 @@ _RSC_DIR = os.path.join(_DIR, 'resources')
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
 
 outcome_conf_files = {
+    'dx_flatccs_mlhc_groups': 'dx_flatccs_mlhc_groups.json',
     'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
     'dx_icd9_filter_v1': 'dx_icd9_v1.json',
     'dx_icd9_filter_v2_groups': 'dx_icd9_v2_groups.json',
