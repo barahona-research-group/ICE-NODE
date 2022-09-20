@@ -264,6 +264,34 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
+class TestDxICENODE_M_UNIFORM1(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
+            )
+        ]
+        cls.model_cls = ml.ICENODE_UNIFORM1D_2LR
+        cls.interface = m3_interface
+        cls.splits = m3_splits
+
+
+class TestDxICENODE_M_UNIFORM0(DxCommonTests, unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.configs = [
+            load_config(
+                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
+            )
+        ]
+        cls.model_cls = ml.ICENODE_UNIFORM0D_2LR
+        cls.interface = m3_interface
+        cls.splits = m3_splits
+
+
 class TestDxPrICENODE_G(DxCommonTests, unittest.TestCase):
 
     @classmethod

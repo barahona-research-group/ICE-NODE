@@ -6,6 +6,9 @@ from .dx_icenode_2lr import ICENODE as ICENODE_2LR
 
 from .dx_icenode_uniform import ICENODE as ICENODE_UNIFORM
 from .dx_icenode_uniform2lr import ICENODE as ICENODE_UNIFORM_2LR
+from .dx_icenode_uniform1d2lr import ICENODE as ICENODE_UNIFORM1D_2LR
+from .dx_icenode_uniform0d2lr import ICENODE as ICENODE_UNIFORM0D_2LR
+
 from .dx_retain import RETAIN
 from .dx_window_logreg import (WindowLogReg as WLR, WindowLogReg_Sklearn as
                                WLR_SK, logreg_loss_multinomial_mode)
@@ -18,8 +21,12 @@ from .trainer import (AbstractReporter, MinibatchLogger, EvaluationDiskWriter,
 GRU.register_model('dx_gru')
 ICENODE.register_model('dx_icenode')
 ICENODE_2LR.register_model('dx_icenode_2lr')
+
 ICENODE_UNIFORM.register_model('dx_icenode_uniform')
 ICENODE_UNIFORM_2LR.register_model('dx_icenode_uniform2lr')
+ICENODE_UNIFORM1D_2LR.register_model('dx_icenode_uniform1d2lr')
+ICENODE_UNIFORM0D_2LR.register_model('dx_icenode_uniform0d2lr')
+
 RETAIN.register_model('dx_retain')
 WLR.register_model('dx_window_logreg')
 WLR_SK.register_model('dx_window_logreg_sklearn')
