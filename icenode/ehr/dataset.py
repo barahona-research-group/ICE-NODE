@@ -7,7 +7,7 @@ from absl import logging
 
 import pandas as pd
 
-from ..utils import load_config, LazyDict, translate_path
+from ..utils import load_config, LazyDict, translate_path, OOPError
 
 from .coding_scheme import code_scheme as C, ICDCommons, CodeMapper
 
@@ -17,8 +17,21 @@ _META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 
 StrDict = Dict[str, str]
 
-
 class AbstractEHRDataset:
+    @staticmethod
+    def load_dataframes(meta):
+        raise OOPError('Should be overriden')
+
+    @classmethod
+    def from_meta_json(cls, meta_fpath):
+        raise OOPError('Should be overriden')
+
+    def to_dict(self):
+        raise OOPError('Should be overrden')
+
+
+
+class MIMIC4EHRDataset(AbstractEHRDataset):
 
     def __init__(self, df: Dict[str, pd.DataFrame],
                  code_scheme: Dict[str, StrDict], target_scheme: StrDict,
@@ -157,7 +170,7 @@ class AbstractEHRDataset:
         return cls(**meta)
 
 
-class ConsistentSchemeEHRDataset(AbstractEHRDataset):
+class MIMIC3EHRDataset(GenericEHRDataset):
 
     def __init__(self, df, code_scheme, code_colname, adm_colname, name,
                  **kwargs):
@@ -183,11 +196,16 @@ class ConsistentSchemeEHRDataset(AbstractEHRDataset):
                          name=name,
                          **kwargs)
 
+class CPRDEHRDataset(AbstractEHRDataset):
+    def __init__(self, df, colnames):
+
+
+
 
 datasets = LazyDict({
     'M3':
     lambda: ConsistentSchemeEHRDataset.from_meta_json(
         f'{_META_DIR}/mimic3_meta.json'),
     'M4':
-    lambda: AbstractEHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
+    lambda: GenericEHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
 })
