@@ -213,10 +213,12 @@ class CPRDEHRDataset(AbstractEHRDataset):
         # Admissions
         for subj_id, subj_df in self.df.groupby(col["subject_id"]):
 
+            assert len(subj_df) == 1, "Each patient should have a single row"
+
             subj_adms = {}
 
-            codes = listify(subj_df[col["dx"]])
-            year_month = listify(subj_df[col["year_month"]])
+            codes = listify(subj_df.iloc[0][col["dx"]])
+            year_month = listify(subj_df.iloc[0][col["year_month"]])
             _adms = defaultdict(set)
             for code, ym in zip(codes, year_month):
                 ym = pd.to_datetime(ym, infer_datetime_format=True).normalize()
@@ -228,14 +230,15 @@ class CPRDEHRDataset(AbstractEHRDataset):
                 disch_date = adm_date + pd.DateOffset(days=1)
                 adm_codes = _adms[adm_date]
 
-                m = CodeMapper.get_mapper(self.code_scheme, self.target_scheme)
+                m = CodeMapper.get_mapper(self.code_scheme["dx"],
+                                          self.target_scheme["dx"])
                 codeset = m.map_codeset(adm_codes)
                 subj_adms[idx] = {
                     'admission_id': idx,
                     'admission_dates': (adm_date, disch_date),
                     'dx_codes': codeset,
                     'pr_codes': set(),
-                    'dx_scheme': self.target_scheme['dx'],
+                    'dx_scheme': self.target_scheme["dx"],
                     'pr_scheme': 'none'
                 }
             adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}

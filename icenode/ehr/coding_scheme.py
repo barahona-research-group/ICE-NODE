@@ -1353,8 +1353,8 @@ _C['pr_ccs'] = lambda: PrCCS(_C['pr_icd9'], 'pr_ccs')
 _C['pr_icd9'] = lambda: PrICD9('pr_icd9')
 _C['pr_icd10'] = lambda: PrICD10('pr_icd10')
 
-_C['dx_cpdr_ltc212'] = lambda: DxLTC212FlatCodes('dx_cpdr_ltc212')
-_C['dx_cpdr_ltc9809'] = lambda: DxLTC9809FlatMedcodes('dx_cpdr_ltc9809')
+_C['dx_cprd_ltc212'] = lambda: DxLTC212FlatCodes('dx_cprd_ltc212')
+_C['dx_cprd_ltc9809'] = lambda: DxLTC9809FlatMedcodes('dx_cprd_ltc9809')
 code_scheme = _C
 
 
@@ -1413,6 +1413,6 @@ load_maps = {
     (PrICD10, PrFlatCCS):
     lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_flatccs']),
     (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
-    lambda: register_medcode_mapping(_C['dx_cpdr_ltc9809'], _C['dx_cpdr_ltc212'
+    lambda: register_medcode_mapping(_C['dx_cprd_ltc9809'], _C['dx_cprd_ltc212'
                                                                ])
 }

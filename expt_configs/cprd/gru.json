@@ -1,0 +1,34 @@
+{
+    "code_scheme": {
+        "dx": "dx_cprd_ltc9809",
+        "dx_outcome": "dx_cprd_ltc9809",
+        "pr": "none"
+    },
+    "emb": {
+        "dx": {
+            "embeddings_dim": 300
+        },
+        "kind": "matrix"
+    },
+    "model": {
+        "state_size": 350
+    },
+    "training": {
+        "batch_size": 17,
+        "decay_rate": null,
+        "epochs": 60,
+        "loss_mixing": {
+            "L_l1": 0,
+            "L_l2": 0
+        },
+        "lr": 0.0010161679708784964,
+        "optimizer": "adam"
+    },
+    "meta": {
+    	"github_tag": "v0.2.20",
+    	"data_tag": "M3",
+    	"model": "gru",
+    	"emb_kind": "matrix",
+    	"optuna_trial_number": 649
+    }
+}

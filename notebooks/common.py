@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 sys.path.append('..')
 from icenode.ml import (ICENODE_2LR, ICENODE_UNIFORM_2LR, GRU, RETAIN, WLR,
                         PR_ICENODE)
-from icenode.ehr import (AbstractEHRDataset, ConsistentSchemeEHRDataset,
-                         Subject_JAX, code_scheme, datasets)
+from icenode.ehr import (AbstractEHRDataset, MIMIC3EHRDataset,
+                         MIMIC4EHRDataset, Subject_JAX, code_scheme, datasets)
 from icenode.utils import (load_config, load_params, write_params,
                            write_config, modified_environ)
 
