@@ -1,30 +1,21 @@
 {
-    "base_dir": "$DATA_DIR/cprd-cohort",
-    "code_colname": {
-        "dx": "",
-        "pr": "icd_code"
+    "filepath": "$DATA_FILE",
+    "colname": {
+        "dx": "medcode_list",
+	"subject_id": "patid",
+	"year_month": "year_month_list",
+	"age": "age_list",
+	"gender": "gender",
+	"ethnicity": "ethnicity",
+	"imd_decile": "imd_decile"
     },
-    "code_scheme_colname": {"dx": "icd_version", "pr": "icd_version"},
     "code_scheme": {
-        "dx": {"9": "dx_icd9", "10": "dx_icd10"},
-        "pr": {"9": "pr_icd9", "10": "pr_icd10"}
+        "dx": "dx_cprd_ltc9809"
     },
     "target_scheme": {
-        "dx": "dx_icd9",
-        "pr": "pr_icd9"
+        "dx": "dx_cprd_ltc9809"
     },
-    "adm_colname": {
-        "admittime": "admittime",
-        "dischtime": "dischtime",
-        "subject_id": "subject_id",
-        "admission_id": "hadm_id"
-    },
-    "files": {
-        "adm": "adm_df.csv.gz",
-        "dx": "dx_df.csv.gz",
-        "pr": "pr_df.csv.gz"
-    },
-    "name": "MIMIC-IV",
-    "python_class": "MIMIC4Dataset",
-    "version": "v2.0"
+    "name": "CPRD-Cohort",
+    "python_class": "CPRDEHRDataset",
+    "version": "v0.1"
 }

@@ -45,6 +45,14 @@ class CodeMapper(defaultdict):
     maps = {}
 
     def __init__(self, s_scheme, t_scheme, t_dag_space, *args, **kwargs):
+        """
+        Constructor of CodeMapper object.
+        Args:
+            s_scheme: source scheme object.
+            t_scheme: target scheme object.
+            t_dag_space: flag to enforce mapping to Directed Acyclic Graph
+            (DAG) space instead of the leaf node set (i.e. flat space).
+        """
         super(CodeMapper, self).__init__(*(args or (set, )))
 
         self._s_scheme = s_scheme
@@ -1217,6 +1225,114 @@ class PrFlatCCS(FlatCCSCommons):
                          name=name)
 
 
+class DxLTC212FlatCodes(AbstractScheme):
+    _SCHEME_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
+
+    def __init__(self, name):
+        df = pd.read_csv(self._SCHEME_FILE, dtype=str)
+
+        medcode_cname = 'medcodeid'
+        disease_num_cname = 'disease_num'
+        disease_cname = 'disease'
+
+        system_cname = 'system'
+        system_num_cname = 'system_num'
+
+        desc = dict()
+        system = dict()
+        medcodes = dict()
+        for disease_num, disease_df in df.groupby(disease_num_cname):
+            disease_set = set(disease_df[disease_cname])
+            assert len(disease_set) == 1, "Disease name should be unique"
+            (disease_name, ) = disease_set
+
+            system_set = set(disease_df[system_cname])
+            system_num_set = set(disease_df[system_num_cname])
+            assert len(system_set) == 1, "System name sould be unique"
+            assert len(system_num_cname) == 1, "System num sould be unique"
+
+            (system_name, ) = system_set
+            (system_num, ) = system_num_set
+
+            medcodes_list = sorted(set(disease_df[medcode_cname]))
+
+            desc[disease_num] = disease_name + ' - ' + '|'.join(medcodes_list)
+            system[disease_num] = system_num
+            medcodes[disease_num] = medcodes_list
+
+        codes = sorted(set(df[disease_num_cname]))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name=name)
+        self._system = system
+        self._medcodes = medcodes
+
+        @property
+        def medcodes(self):
+            return self._medcodes
+
+        @property
+        def system(self):
+            return self._system
+
+
+class DxLTC9809FlatMedcodes(AbstractScheme):
+    _SCHEME_FILE = 'CPRD_212_LTC_ALL.csv.gz'
+
+    def __init__(self, name):
+        filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
+        df = pd.read_csv(filepath, dtype=str)
+
+        medcode_cname = 'medcodeid'
+        disease_num_cname = 'disease_num'
+        disease_cname = 'disease'
+
+        system_cname = 'system'
+        system_num_cname = 'system_num'
+
+        desc = dict()
+        systems = dict()
+        diseases = dict()
+        for medcodeid, medcode_df in df.groupby(medcode_cname):
+            disease_num_list = sorted(set(medcode_df[disease_num_cname]))
+            system_num_list = sorted(set(medcode_df[system_num_cname]))
+
+            disease_list = sorted(set(medcode_df[disease_cname]))
+            system_list = sorted(set(medcode_df[system_cname]))
+
+            desc[medcodeid] = ' | '.join(disease_list) + ' - ' + '|'.join(
+                system_list)
+            systems[medcodeid] = system_num_list
+            diseases[medcodeid] = disease_num_list
+
+        codes = sorted(set(df[disease_cname]))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name=name)
+
+        self._systems = systems
+        self._diseases = diseases
+
+        @property
+        def systems(self):
+            return self._systems
+
+        @property
+        def diseases(self):
+            return self._diseases
+
+
+def register_medcode_mapping(self, s_scheme: DxLTC9809FlatMedcodes,
+                             t_scheme: DxLTC212FlatCodes):
+    m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    for medcodeid, disease_nums in s_scheme.diseases.items():
+        m[medcodeid] = set(disease_nums)
+
+
 def register_chained_map(s_scheme, t_scheme, inter_scheme):
     inter_mapping = CodeMapper.get_mapper(s_scheme, inter_scheme)
     assert inter_mapping.t_dag_space == False
@@ -1236,6 +1352,9 @@ _C['pr_flatccs'] = lambda: PrFlatCCS(_C['pr_icd9'], 'pr_flatccs')
 _C['pr_ccs'] = lambda: PrCCS(_C['pr_icd9'], 'pr_ccs')
 _C['pr_icd9'] = lambda: PrICD9('pr_icd9')
 _C['pr_icd10'] = lambda: PrICD10('pr_icd10')
+
+_C['dx_cpdr_ltc212'] = lambda: DxLTC212FlatCodes('dx_cpdr_ltc212')
+_C['dx_cpdr_ltc9809'] = lambda: DxLTC9809FlatMedcodes('dx_cpdr_ltc9809')
 code_scheme = _C
 
 
@@ -1292,5 +1411,8 @@ load_maps = {
     (PrICD9, PrFlatCCS):
     lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9']),
     (PrICD10, PrFlatCCS):
-    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_flatccs'])
+    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_flatccs']),
+    (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
+    lambda: register_medcode_mapping(_C['dx_cpdr_ltc9809'], _C['dx_cpdr_ltc212'
+                                                               ])
 }
