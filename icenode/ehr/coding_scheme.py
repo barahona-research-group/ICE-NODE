@@ -1269,13 +1269,13 @@ class DxLTC212FlatCodes(AbstractScheme):
         self._system = system
         self._medcodes = medcodes
 
-        @property
-        def medcodes(self):
-            return self._medcodes
+    @property
+    def medcodes(self):
+        return self._medcodes
 
-        @property
-        def system(self):
-            return self._system
+    @property
+    def system(self):
+        return self._system
 
 
 class DxLTC9809FlatMedcodes(AbstractScheme):
@@ -1307,7 +1307,7 @@ class DxLTC9809FlatMedcodes(AbstractScheme):
             systems[medcodeid] = system_num_list
             diseases[medcodeid] = disease_num_list
 
-        codes = sorted(set(df[disease_cname]))
+        codes = sorted(set(df[medcode_cname]))
 
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
@@ -1317,16 +1317,16 @@ class DxLTC9809FlatMedcodes(AbstractScheme):
         self._systems = systems
         self._diseases = diseases
 
-        @property
-        def systems(self):
-            return self._systems
+    @property
+    def systems(self):
+        return self._systems
 
-        @property
-        def diseases(self):
-            return self._diseases
+    @property
+    def diseases(self):
+        return self._diseases
 
 
-def register_medcode_mapping(self, s_scheme: DxLTC9809FlatMedcodes,
+def register_medcode_mapping(s_scheme: DxLTC9809FlatMedcodes,
                              t_scheme: DxLTC212FlatCodes):
     m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     for medcodeid, disease_nums in s_scheme.diseases.items():
