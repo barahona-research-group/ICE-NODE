@@ -6,12 +6,13 @@ sys.path.append(['.', '..'])
 import common as C
 
 from icenode.ml import (MinibatchLogger, EvaluationDiskWriter,
-                        ParamsDiskWriter)
+                        ParamsDiskWriter, ConfigDiskWriter)
 
 
 def make_reporters(clfs, clf_dir):
     return {
         clf: [
+            ConfigDiskWriter(output_dir=clf_dir[clf]),
             MinibatchLogger(),
             EvaluationDiskWriter(output_dir=clf_dir[clf]),
             ParamsDiskWriter(output_dir=clf_dir[clf])

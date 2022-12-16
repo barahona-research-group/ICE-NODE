@@ -340,6 +340,8 @@ class ICENODE(AbstractModel):
         nn_decode = partial(self._f_dec, params)
 
         def timesamples(tf, dt):
+            if dt < 0:
+                dt = tf
             return jnp.linspace(0, tf - tf % dt,
                                 round((tf - tf % dt) / dt + 1))
 
@@ -351,12 +353,12 @@ class ICENODE(AbstractModel):
 
         trajectory_samples = {}
         new_se = {}
-        for i, ti in t.items():
-            t_samples = timesamples(ti, sampling_rate) + t_offset[i]
-            current_se, se_samples = lax.scan(odeint_samples, state_e[i],
+        for subj_i, ti in t.items():
+            t_samples = timesamples(ti, sampling_rate) + t_offset[subj_i]
+            current_se, se_samples = lax.scan(odeint_samples, state_e[subj_i],
                                               t_samples[1:])
-            new_se[i] = current_se
-            s, e = self.split_state_emb(state_e[i])
+            new_se[subj_i] = current_se
+            s, e = self.split_state_emb(state_e[subj_i])
             s_samples = [s]
             e_samples = [e]
             for se_sample in se_samples:
@@ -381,7 +383,7 @@ class ICENODE(AbstractModel):
             # 2nd-order derivative of d_samples
             d2d_samples = grad(d1d_samples)
 
-            trajectory_samples[i] = {
+            trajectory_samples[subj_i] = {
                 't': t_samples,
                 's': s_samples,
                 'e': e_samples,
