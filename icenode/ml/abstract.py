@@ -27,6 +27,14 @@ class AbstractModel:
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
         raise utils.OOPError('Should be overriden')
 
+    def subject_embeddings(self, opt_obj: Any, batch: List[int]):
+        params = self.get_params(opt_obj)
+        out = self(params, batch, return_embeddings=True)
+        return {
+            i: out['risk_prediction'].get_subject_embeddings(i)
+            for i in batch
+        }
+
     def detailed_loss(self, loss_mixing, params, res):
         raise utils.OOPError('Should be overriden')
 

@@ -61,7 +61,11 @@ class GRU(AbstractModel):
     def state_size(self):
         return self.dimensions['state']
 
-    def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
+    def __call__(self,
+                 params: Any,
+                 subjects_batch: List[int],
+                 return_embeddings=False,
+                 **kwargs):
 
         G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
         emb = partial(self.dx_emb.encode, G)
@@ -94,6 +98,9 @@ class GRU(AbstractModel):
                                     index=i,
                                     prediction=logits,
                                     ground_truth=y_i)
+                if return_embeddings:
+                    risk_prediction.set_subject_embeddings(
+                        subject_id=subject_id, embeddings=state)
 
                 loss[subject_id].append(dx_loss(y_i, logits))
 

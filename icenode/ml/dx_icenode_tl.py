@@ -226,7 +226,8 @@ class ICENODE(AbstractModel):
     def __call__(self,
                  params: Any,
                  subjects_batch: List[int],
-                 count_nfe: bool = False):
+                 count_nfe: bool = False,
+                 return_embeddings: bool = False):
         batch = self.subject_interface.batch_nth_admission(subjects_batch)
         nth_adm = partial(self._extract_nth_admission, params, batch)
         nn_ode = partial(self._f_n_ode, params, count_nfe)
@@ -284,6 +285,11 @@ class ICENODE(AbstractModel):
                                     adm_los[subject_id],
                                     los=adm_los[subject_id],
                                     nfe=nfe[subject_id])
+
+                if return_embeddings:
+                    risk_prediction.set_subject_embeddings(
+                        subject_id=subject_id, embeddings=state_e[subject_id])
+
             odeint_time.append(sum(d2d_time.values()))
             dyn_loss += sum(r.values())
 

@@ -104,7 +104,10 @@ class RETAIN(AbstractModel):
     def state_size(self):
         return self.dimensions['state']
 
-    def __call__(self, params: Any, subjects_batch: List[int]):
+    def __call__(self,
+                 params: Any,
+                 subjects_batch: List[int],
+                 return_embeddings=False):
         G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
         emb = jax.vmap(partial(self.dx_emb.encode, G))
 
@@ -172,6 +175,9 @@ class RETAIN(AbstractModel):
                                     index=i,
                                     prediction=logits,
                                     ground_truth=dx_outcome[i])
+
+                risk_prediction.set_subject_embeddings(subject_id=subj_id,
+                                                       embeddings=c_context)
 
                 loss[subj_id].append(dx_loss(dx_outcome[i], logits))
 
