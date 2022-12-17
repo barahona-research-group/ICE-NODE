@@ -33,6 +33,9 @@ class SubjectPredictedRisk:
 
 class BatchPredictedRisks(dict):
 
+    def __init__(self):
+        self.embeddings = dict()
+
     def __str__(self):
         subjects_str = []
         for subj_id, _risks in self.items():
@@ -42,7 +45,10 @@ class BatchPredictedRisks(dict):
         return '\n========\n'.join(subjects_str)
 
     def set_subject_embeddings(self, subject_id, embeddings):
-        self[subject_id]['embeddings'] = embeddings
+        self.embeddings[subject_id] = embeddings
+
+    def get_subject_embeddings(self, subject_id):
+        return self.embeddings[subject_id]
 
     def add(self,
             subject_id,
@@ -67,6 +73,3 @@ class BatchPredictedRisks(dict):
     def get_risks(self, subject_id):
         risks = self[subject_id]
         return list(map(risks.get, sorted(risks)))
-
-    def get_subject_embeddings(self, subject_id):
-        return self[subject_id]['embeddings']

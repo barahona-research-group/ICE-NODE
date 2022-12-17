@@ -175,9 +175,9 @@ class RETAIN(AbstractModel):
                                     index=i,
                                     prediction=logits,
                                     ground_truth=dx_outcome[i])
-
-                risk_prediction.set_subject_embeddings(subject_id=subj_id,
-                                                       embeddings=c_context)
+                if return_embeddings:
+                    risk_prediction.set_subject_embeddings(
+                        subject_id=subj_id, embeddings=c_context)
 
                 loss[subj_id].append(dx_loss(dx_outcome[i], logits))
 
