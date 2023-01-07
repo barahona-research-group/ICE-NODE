@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Dict
 from collections import defaultdict
 from absl import logging
+from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
 
-from ..utils import load_config, LazyDict, translate_path, OOPError
+from ..utils import load_config, LazyDict, translate_path
 
 from .coding_scheme import code_scheme as C, ICDCommons, CodeMapper
+from .concept import StaticInfo, Subject, Admission
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -19,14 +21,16 @@ _META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 StrDict = Dict[str, str]
 
 
-class AbstractEHRDataset:
+class AbstractEHRDataset(metaclass=ABCMeta):
 
     @classmethod
+    @abstractmethod
     def from_meta_json(cls, meta_fpath):
-        raise OOPError('Should be overriden')
+        pass
 
-    def to_dict(self):
-        raise OOPError('Should be overrden')
+    @abstractmethod
+    def to_subjects(self):
+        pass
 
 
 class MIMIC4EHRDataset(AbstractEHRDataset):
@@ -113,12 +117,12 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
         return df.drop(index=drop_idx)
 
-    def to_dict(self):
+    def to_subjects(self):
         col = self.adm_colname
         adm_id_col = col["admission_id"]
         admt_col = col["admittime"]
         dist_col = col["dischtime"]
-        adms = {}
+        subjects = {}
         # Admissions
         for subj_id, subj_adms_df in self.df['adm'].groupby(col["subject_id"]):
             subj_adms = {}
@@ -133,7 +137,10 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                     'dx_scheme': self.target_scheme['dx'],
                     'pr_scheme': self.target_scheme.get('pr', 'none')
                 }
-            adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}
+            subjects[subj_id] = {
+                'subject_id': subj_id,
+                'admissions': subj_adms
+            }
 
         codes_attribute = {'dx': 'dx_codes', 'pr': 'pr_codes'}
         scheme_attribute = {'dx': 'dx_scheme', 'pr': 'pr_scheme'}
@@ -157,8 +164,8 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                         s_sch = scheme_map[sch_key]
                         m = CodeMapper.get_mapper(s_sch, t_sch)
                         codeset.update(m.map_codeset(sch_codes_df[code_col]))
-                    adms[subj_id]['admissions'][adm_id][code_att] = codeset
-        return adms
+                    subjects[subj_id]['admissions'][adm_id][code_att] = codeset
+        return subjects
 
     @classmethod
     def from_meta_json(cls, meta_fpath):
@@ -206,44 +213,55 @@ class CPRDEHRDataset(AbstractEHRDataset):
         self.colname = colname
         self.df = df
 
-    def to_dict(self):
+    def to_subjects(self):
+
+        dx_mapper = CodeMapper.get_mapper(self.code_scheme["dx"],
+                                          self.target_scheme["dx"])
         listify = lambda s: list(map(lambda e: e.strip(), s.split(',')))
         col = self.colname
-        adms = {}
+        subjects = {}
         # Admissions
         for subj_id, subj_df in self.df.groupby(col["subject_id"]):
 
             assert len(subj_df) == 1, "Each patient should have a single row"
 
-            subj_adms = {}
-
             codes = listify(subj_df.iloc[0][col["dx"]])
             year_month = listify(subj_df.iloc[0][col["year_month"]])
-            _adms = defaultdict(set)
+
+            # To infer date-of-birth
+            age0 = int(float(listify(subj_df.iloc[0][col["age"]])[0]))
+            year_month0 = pd.to_datetime(
+                year_month[0], infer_datetime_format=True).normalize()
+            year_of_birth = year_month0 + pd.DateOffset(years=-age0)
+            gender = subj_df.iloc[0][col["gender"]]
+            imd = float(subj_df.iloc[0][col["imd_decile"]])
+            static_info = StaticInfo(age=age0,
+                                     year_of_birth=year_of_birth,
+                                     gender=gender,
+                                     idx_deprivation=imd)
+
+            # codes aggregated by year-month.
+            dx_codes_ym_agg = defaultdict(set)
             for code, ym in zip(codes, year_month):
                 ym = pd.to_datetime(ym, infer_datetime_format=True).normalize()
-                _adms[ym].add(code)
+                dx_codes_ym_agg[ym].add(code)
 
-            adm_dates = sorted(_adms.keys())
-
-            for idx, adm_date in enumerate(adm_dates):
+            admissions = []
+            for adm_idx, adm_date in enumerate(sorted(dx_codes_ym_agg.keys())):
                 disch_date = adm_date + pd.DateOffset(days=1)
-                adm_codes = _adms[adm_date]
+                dx_codes = dx_codes_ym_agg[adm_date]
+                admissions.append(
+                    Admission(admission_id=adm_idx,
+                              admission_dates=(adm_date, disch_date),
+                              dx_codes=dx_mapper.map_codeset(dx_codes),
+                              pr_codes=set(),
+                              dx_scheme=self.target_scheme["dx"],
+                              pr_scheme='none'))
+            subjects[subj_id] = Subject(subject_id=subj_id,
+                                        admissions=admissions,
+                                        static_info=static_info)
 
-                m = CodeMapper.get_mapper(self.code_scheme["dx"],
-                                          self.target_scheme["dx"])
-                codeset = m.map_codeset(adm_codes)
-                subj_adms[idx] = {
-                    'admission_id': idx,
-                    'admission_dates': (adm_date, disch_date),
-                    'dx_codes': codeset,
-                    'pr_codes': set(),
-                    'dx_scheme': self.target_scheme["dx"],
-                    'pr_scheme': 'none'
-                }
-            adms[subj_id] = {'subject_id': subj_id, 'admissions': subj_adms}
-
-        return adms
+        return subjects
 
     @classmethod
     def from_meta_json(cls, meta_fpath):

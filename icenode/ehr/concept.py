@@ -3,20 +3,19 @@
 from __future__ import annotations
 from datetime import date
 from collections import defaultdict
-from typing import List, Tuple, Set, Callable, Dict
+from typing import List, Tuple, Set, Callable, Dict, Optional
 from absl import logging
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .outcome import OutcomeExtractor
-from .dataset import AbstractEHRDataset
 
 
+@dataclass
 class AbstractAdmission:
-
-    def __init__(self, admission_id: int, admission_dates: Tuple[date, date]):
-        self.admission_id = admission_id
-        self.admission_dates = admission_dates
+    admission_id: int
+    admission_dates: Tuple[date, date]
 
     @staticmethod
     def days(d1, d2):
@@ -40,16 +39,20 @@ class AbstractAdmission:
                          self.admission_dates[0]) + 0.5
 
 
+@dataclass
 class Admission(AbstractAdmission):
+    dx_codes: Set[str]
+    pr_codes: Set[str]
+    dx_scheme: str
+    pr_scheme: str
 
-    def __init__(self, admission_id: int, admission_dates: Tuple[date, date],
-                 dx_codes: Set[str], pr_codes: Set[str], dx_scheme: str,
-                 pr_scheme: str):
-        super().__init__(admission_id, admission_dates)
-        self.dx_codes = dx_codes
-        self.dx_scheme = dx_scheme
-        self.pr_codes = pr_codes
-        self.pr_scheme = pr_scheme
+
+@dataclass
+class StaticInfo:
+    gender: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    idx_deprivation: Optional[str] = None
+    ethnicity: Optional[str] = None
 
 
 class Subject:
@@ -61,8 +64,12 @@ class Subject:
     For these cases the one with earlier DISCHTIME will be merged to the other.
     """
 
-    def __init__(self, subject_id: int, admissions: List[Admission]):
+    def __init__(self,
+                 subject_id: int,
+                 admissions: List[Admission],
+                 static_info: StaticInfo):
         self.subject_id = subject_id
+        self.static_info = static_info
 
         admissions_disjoint = self.merge_overlaps(admissions)
 
@@ -201,10 +208,12 @@ class Subject:
         return super_admissions
 
     @classmethod
-    def from_dataset(cls, dataset: AbstractEHRDataset):
-        adms = dataset.to_dict()
+    def from_dataset(cls, dataset: "AbstractEHRDataset"):
+        adms, static_info = dataset.to_dict()
         for subject_id in adms.keys():
             adms[subject_id]['admissions'] = list(
                 map(lambda kwargs: Admission(**kwargs),
                     adms[subject_id]['admissions'].values()))
+            adms[subject_id]['static_info'] = static_info[subject_id]
+
         return list(map(lambda kwargs: cls(**kwargs), adms.values()))
