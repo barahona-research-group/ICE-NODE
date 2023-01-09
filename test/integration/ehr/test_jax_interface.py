@@ -10,9 +10,9 @@ class TestSubject_JAX(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+        m3_dataset = ehr.MIMIC3EHRDataset.from_meta_json(
             'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-        m4_dataset = ehr.AbstractEHRDataset.from_meta_json(
+        m4_dataset = ehr.MIMIC4EHRDataset.from_meta_json(
             'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
 
         cls.interfaces = []

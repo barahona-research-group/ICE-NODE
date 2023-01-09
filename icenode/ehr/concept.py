@@ -5,7 +5,7 @@ from datetime import date
 from collections import defaultdict
 from typing import List, Tuple, Set, Callable, Dict, Optional
 from absl import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -208,12 +208,6 @@ class Subject:
         return super_admissions
 
     @classmethod
-    def from_dataset(cls, dataset: "AbstractEHRDataset"):
-        adms, static_info = dataset.to_dict()
-        for subject_id in adms.keys():
-            adms[subject_id]['admissions'] = list(
-                map(lambda kwargs: Admission(**kwargs),
-                    adms[subject_id]['admissions'].values()))
-            adms[subject_id]['static_info'] = static_info[subject_id]
+    def from_dataset(cls, dataset: "icenode.ehr.dataset.AbstractEHRDataset"):
+        return dataset.to_subjects()
 
-        return list(map(lambda kwargs: cls(**kwargs), adms.values()))

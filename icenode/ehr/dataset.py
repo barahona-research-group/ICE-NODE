@@ -122,6 +122,9 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
         adm_id_col = col["admission_id"]
         admt_col = col["admittime"]
         dist_col = col["dischtime"]
+        dx_scheme = self.target_scheme['dx']
+        pr_scheme = self.target_scheme.get('pr', 'none')
+
         subjects = {}
         # Admissions
         for subj_id, subj_adms_df in self.df['adm'].groupby(col["subject_id"]):
@@ -129,43 +132,51 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
             for idx, adm_row in subj_adms_df.iterrows():
                 adm_id = adm_row[adm_id_col]
-                subj_adms[adm_id] = {
-                    'admission_id': adm_id,
-                    'admission_dates': (adm_row[admt_col], adm_row[dist_col]),
-                    'dx_codes': set(),
-                    'pr_codes': set(),
-                    'dx_scheme': self.target_scheme['dx'],
-                    'pr_scheme': self.target_scheme.get('pr', 'none')
-                }
-            subjects[subj_id] = {
-                'subject_id': subj_id,
-                'admissions': subj_adms
-            }
+                subj_adms[adm_id] = dict(admission_id=adm_id,
+                                         admission_dates=(adm_row[admt_col],
+                                                          adm_row[dist_col]),
+                                         dx_scheme=dx_scheme,
+                                         pr_scheme=pr_scheme)
+            subjects[subj_id] = dict(subject_id=subj_id,
+                                     admissions=subj_adms,
+                                     static_info=StaticInfo())
 
-        codes_attribute = {'dx': 'dx_codes', 'pr': 'pr_codes'}
-        scheme_attribute = {'dx': 'dx_scheme', 'pr': 'pr_scheme'}
+        for subj_id, adm_id, dx_codes in self.codes_extractor("dx"):
+            subjects[subj_id]["admissions"][adm_id]["dx_codes"] = dx_codes
 
-        for info in ["dx", "pr"]:
-            if any(info not in d
-                   for d in (self.code_colname, self.code_scheme, self.df)):
-                continue
-            code_col = self.code_colname[info]
-            scheme_col = self.code_scheme_colname[info]
-            scheme_map = self.code_scheme[info]
-            t_sch = self.target_scheme[info]
-            code_att = codes_attribute[info]
-            scheme_att = scheme_attribute[info]
-            df = self.df[info]
+        for subj_id, adm_id, pr_codes in self.codes_extractor("pr"):
+            subjects[subj_id]["admissions"][adm_id]["pr_codes"] = pr_codes
 
-            for subj_id, subj_df in df.groupby(col["subject_id"]):
-                for adm_id, codes_df in subj_df.groupby(adm_id_col):
-                    codeset = set()
-                    for sch_key, sch_codes_df in codes_df.groupby(scheme_col):
-                        s_sch = scheme_map[sch_key]
-                        m = CodeMapper.get_mapper(s_sch, t_sch)
-                        codeset.update(m.map_codeset(sch_codes_df[code_col]))
-                    subjects[subj_id]['admissions'][adm_id][code_att] = codeset
-        return subjects
+        for subj_id in subjects.keys():
+            subjects['admissions'] = [
+                Admission(**adm) for adm in subjects['admissions'].values()
+            ]
+        return {subj_id: Subject(**subj) for subj_id, subj in subjects.items()}
+
+    def codes_extractor(self, code_type):
+        if any(code_type not in d
+               for d in (self.code_colname, self.code_scheme, self.df)):
+            return
+        if self.target_scheme.get(code_type, 'none') == 'none':
+            return
+
+        adm_id_col = self.adm_colname["admission_id"]
+        subject_id_col = self.adm_colname["subject_id"]
+
+        code_col = self.code_colname[code_type]
+        scheme_col = self.code_scheme_colname[code_type]
+        scheme_map = self.code_scheme[code_type]
+        t_sch = self.target_scheme[code_type]
+        df = self.df[code_type]
+        for subj_id, subj_df in df.groupby(subject_id_col):
+            for adm_id, codes_df in subj_df.groupby(adm_id_col):
+                codeset = set()
+                for sch_key, sch_codes_df in codes_df.groupby(scheme_col):
+                    s_sch = scheme_map[sch_key]
+                    m = CodeMapper.get_mapper(s_sch, t_sch)
+                    codeset.update(m.map_codeset(sch_codes_df[code_col]))
+
+                yield subj_id, adm_id, codeset
 
     @classmethod
     def from_meta_json(cls, meta_fpath):
