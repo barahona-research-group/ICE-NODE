@@ -135,6 +135,8 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                 subj_adms[adm_id] = dict(admission_id=adm_id,
                                          admission_dates=(adm_row[admt_col],
                                                           adm_row[dist_col]),
+                                         dx_codes=set(),
+                                         pr_codes=set(),
                                          dx_scheme=dx_scheme,
                                          pr_scheme=pr_scheme)
             subjects[subj_id] = dict(subject_id=subj_id,
@@ -147,11 +149,11 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
         for subj_id, adm_id, pr_codes in self.codes_extractor("pr"):
             subjects[subj_id]["admissions"][adm_id]["pr_codes"] = pr_codes
 
-        for subj_id in subjects.keys():
-            subjects['admissions'] = [
-                Admission(**adm) for adm in subjects['admissions'].values()
+        for subj in subjects.values():
+            subj['admissions'] = [
+                Admission(**adm) for adm in subj['admissions'].values()
             ]
-        return {subj_id: Subject(**subj) for subj_id, subj in subjects.items()}
+        return [Subject(**subj) for subj in subjects.values()]
 
     def codes_extractor(self, code_type):
         if any(code_type not in d
@@ -272,7 +274,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
                                         admissions=admissions,
                                         static_info=static_info)
 
-        return subjects
+        return list(subjects.values())
 
     @classmethod
     def from_meta_json(cls, meta_fpath):

@@ -2,13 +2,14 @@
 from __future__ import annotations
 from functools import partial
 from typing import Any, Dict, List, TYPE_CHECKING
+import re
 
 from tqdm import tqdm
-import haiku as hk
 import jax
 from jax import lax
 import jax.numpy as jnp
 import numpy as onp
+import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
@@ -21,6 +22,24 @@ from .. import embeddings as E
 from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
                           EmbeddingsDecoder_Logits, StateUpdate)
 from .abstract import AbstractModel
+
+
+def dyn_cls(label):
+    if 'mlp' in label:
+        depth = int(re.findall(r'\d+\b', label)[0])
+        return lambda state_size, **kwargs: eqx.MLP(
+            in_size=state_size,
+            out_size=state_size,
+            width_size=state_size,
+            depth=depth,
+            activation=jax.nn.tanh,
+            final_activation=jax.nn.tanh,
+            **kwargs
+        )
+    else:
+        return {
+        'res': ResDynamics,
+        'gru': GRUDynamics}[label]
 
 
 class ICENODEResult(dict):
@@ -45,34 +64,23 @@ class ICENODEResult(dict):
 
 
 class ICENODE(AbstractModel):
+    dx_emb: E.AbstractEmbeddingsLayer
+    dx_dec: E.AbstractEmbeddingsLayer
+    n_ode: eqx.Module
 
-    def __init__(self, subject_interface: ehr.Subject_JAX,
-                 dx_emb: E.AbstractEmbeddingsLayer, ode_dyn: str,
+    ode_dyn: str
+    ode_with_bias: bool
+    ode_init_var: float
+    state_size: int
+    timescale: float
+
+    def __init__(self, dx_emb: E.AbstractEmbeddingsLayer,
+                 dx_dec: E.AbstractEmbeddingsLayer, ode_dyn: str,
                  ode_with_bias: bool, ode_init_var: float, state_size: int,
                  timescale: float):
-        self.subject_interface = subject_interface
         self.dx_emb = dx_emb
         self.timescale = timescale
-        self.dimensions = {
-            'dx_emb': dx_emb.embeddings_dim,
-            'dx_outcome': subject_interface.dx_outcome_dim,
-            'state': state_size
-        }
-        depth = 2
-        if ode_dyn == 'gru':
-            ode_dyn_cls = GRUDynamics
-        elif ode_dyn == 'res':
-            ode_dyn_cls = ResDynamics
-        elif ode_dyn == 'mlp2':
-            ode_dyn_cls = MLPDynamics
-            depth = 2
-        elif ode_dyn == 'mlp3':
-            ode_dyn_cls = MLPDynamics
-            depth = 3
-        else:
-            raise RuntimeError(f"Unrecognized dynamics class: {ode_dyn}")
-        state_emb_size = self.dimensions['dx_emb'] + state_size
-
+        self.n_ode = NeuralODE(
         f_n_ode_init, f_n_ode = hk.without_apply_rng(
             hk.transform(
                 utils.wrap_module(NeuralODE,
@@ -116,34 +124,6 @@ class ICENODE(AbstractModel):
 
     def split_state_emb(self, state_emb):
         return jnp.split(state_emb, (self.dimensions['state'], ))
-
-    def init_params(self, prng_seed=0):
-        rng_key = jax.random.PRNGKey(prng_seed)
-        init_data = self._initialization_data()
-        return {
-            "dx_emb": self.dx_emb.init_params(prng_seed),
-            **{
-                label: init(rng_key, *init_data[label])
-                for label, init in self.initializers.items()
-            }
-        }
-
-    def state_size(self):
-        return self.dimensions['state']
-
-    def _initialization_data(self):
-        """
-        Creates data for initializing each of the
-        modules based on the shapes of init_data.
-        """
-        emb = jnp.zeros(self.dimensions['dx_emb'])
-        state = jnp.zeros(self.dimensions['state'])
-        state_emb = jnp.hstack((state, emb))
-        return {
-            "f_n_ode": [2, True, state_emb, 0.1],
-            "f_update": [state, emb, emb],
-            "f_dec": [emb],
-        }
 
     def _extract_nth_admission(self, params: Any,
                                batch: Dict[int, Dict[int, ehr.Admission_JAX]],

@@ -1,5 +1,7 @@
 absl-py==1.0.0
-dm-haiku==0.0.7
+diffrax==0.2.2
+equinox==0.9.2
+optax==0.1.4
 jax==0.3.13
 jaxlib==0.3.10
 jaxopt==0.4.2

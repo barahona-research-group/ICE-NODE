@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 from typing import Dict, List, Any, TYPE_CHECKING
+from abc import ABC, abstractmethod, ABCMeta
+
 from functools import partial
 from absl import logging
 import jax
-from jax.example_libraries import optimizers
+import equinox as eqx
+import optax
 
 if TYPE_CHECKING:
     import optuna
@@ -17,15 +20,16 @@ from .. import metric
 from .trainer import minibatch_trainer
 
 
-class AbstractModel:
+class AbstractModel(eqx.Module, metaclass=ABCMeta):
     model_cls = {}
 
     @classmethod
     def register_model(cls, label):
         cls.model_cls[label] = cls
 
+    @abstractmethod
     def __call__(self, params: Any, subjects_batch: List[int], **kwargs):
-        raise utils.OOPError('Should be overriden')
+        pass
 
     def subject_embeddings(self, opt_obj: Any, batch: List[int]):
         params = self.get_params(opt_obj)
@@ -35,11 +39,13 @@ class AbstractModel:
             for i in batch
         }
 
+    @abstractmethod
     def detailed_loss(self, loss_mixing, params, res):
-        raise utils.OOPError('Should be overriden')
+        pass
 
+    @abstractmethod
     def eval_stats(self, res):
-        raise utils.OOPError('Should be overriden')
+        pass
 
     def eval(self, opt_obj: Any, batch: List[int]) -> Dict[str, float]:
         loss_mixing = opt_obj[-1]
@@ -67,25 +73,22 @@ class AbstractModel:
         res = self(params, batch, **kwargs)
         return self.detailed_loss(loss_mixing, params, res)['loss']
 
-    def init_params(self, prng_seed: int = 0):
-        raise utils.OOPError('Should be ovreriden')
-
     @staticmethod
     def optimizer_class(label: str):
         if label == 'adam':
-            return optimizers.adam
+            return optax.adam
         if label == 'sgd':
-            return optimizers.sgd
+            return optax.sgd
         if label == 'adamax':
-            return optimizers.adamax
+            return optax.adamax
 
     @staticmethod
     def lr_schedule(lr, decay_rate):
         if decay_rate is None:
             return lr
-        return optimizers.exponential_decay(lr,
-                                            decay_steps=50,
-                                            decay_rate=decay_rate)
+        return optax.exponential_decay(lr,
+                                       decay_steps=50,
+                                       decay_rate=decay_rate)
 
     @classmethod
     def init_optimizer(cls, config, params):
@@ -115,27 +118,9 @@ class AbstractModel:
         return self.init_with_params(config, params)
 
     @classmethod
-    def get_params(cls, opt_object):
-        opt_state, _, get_params, _, _ = opt_object
-        return get_params(opt_state)
-
-    @classmethod
     def parameters_size(cls, opt_object):
         params = cls.get_params(opt_object)
         return utils.parameters_size(params)
-
-    @classmethod
-    def hasnan(cls, opt_obj):
-        params = cls.get_params(opt_obj)
-        if utils.tree_hasnan(params):
-            logging.warning(f'params with NaN: {utils.tree_lognan(params)}')
-            return True
-        return False
-
-    @classmethod
-    def write_params(cls, opt_obj, fname):
-        params = cls.get_params(opt_obj)
-        utils.write_params(params, fname)
 
     @classmethod
     def create_embedding(cls, emb_config, emb_kind, subject_interface,
@@ -156,10 +141,6 @@ class AbstractModel:
     def dx_outcome_partitions(subject_interface: ehr.Subject_JAX,
                               train_ids: List[int]):
         return subject_interface.dx_outcome_by_percentiles(20, train_ids)
-
-    @classmethod
-    def create_model(cls, config, subject_interface, train_ids):
-        raise utils.OOPError('Should be overriden')
 
     @classmethod
     def select_loss(cls, loss_label: str, subject_interface: ehr.Subject_JAX,

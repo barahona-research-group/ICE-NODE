@@ -1,119 +1,56 @@
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
                     Optional, Tuple, Union)
 
-import haiku as hk
 import jax
 import jax.numpy as jnp
+import jax.random as jrandom
+import eqionox as eqx
+
+from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
+                     NoAdjoint)
+
 from jax.experimental.jet import jet
-from jax.experimental.ode import odeint
 from jax.nn import softplus, sigmoid, leaky_relu
 
-from ..ode.odeint_nfe import odeint as odeint_nfe
 
-class MLPDynamics(hk.Module):
-    """
-    Dynamics for ODE as an MLP.
-    """
+class ControlledDynamics(eqx.Module):
+    f: Callable
+    c: jnp.ndarray = eqx.static_field()
 
-    def __init__(self,
-                 state_size: int,
-                 depth: int,
-                 with_bias: bool,
-                 w_init: hk.initializers.Initializer,
-                 b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.lin = [
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name=f'lin_{i}') for i in range(depth)
-        ]
-
-    def __call__(self, h, c):
-        out = jnp.hstack((h, c))
-
-        for lin in self.lin[:-1]:
-            out = jnp.tanh(lin(out))
-            out = jnp.hstack((out, c))
-
-        out = self.lin[-1](out)
-        return jnp.tanh(out)
+    def __init__(self, t, x, args):
+        return self.f(t, jnp.concatenate((self.c, x)), args)
 
 
-class ResDynamics(hk.Module):
-    """
-    Dynamics for ODE as an MLP.
-    """
-
-    def __init__(self,
-                 state_size: int,
-                 depth: int,
-                 with_bias: bool,
-                 w_init: hk.initializers.Initializer,
-                 b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.lin = [
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name=f'lin_{i}') for i in range(depth)
-        ]
-
-    def __call__(self, h, c):
-        out = jnp.hstack((h, c))
-        res = jnp.zeros_like(h)
-        for lin in self.lin[:-1]:
-            out = lin(out)
-            out = jnp.tanh(out) + res
-            res = out
-            out = jnp.hstack((out, c))
-
-        out = self.lin[-1](out)
-        return out
-
-
-class GRUDynamics(hk.Module):
+class GRUDynamics(eqx.Module):
     """
     Modified GRU unit to deal with latent state ``h(t)``.
     """
 
-    def __init__(self,
-                 state_size: int,
-                 with_bias: bool,
-                 w_init: hk.initializers.Initializer,
-                 b_init: hk.initializers.Initializer,
-                 name: Optional[str] = None,
-                 **ignored_kwargs):
-        super().__init__(name=name)
-        self.h_r = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='hc_r'), sigmoid
+    x_r: eqx.Module
+    x_z: eqx.Module
+    rx_g: eqx.Module
+
+    def __init__(self, hidden_size: int, state_size: int, use_bias: bool,
+                 key: "jax.random.PRNGKey"):
+        super().__init__()
+        k1, k2, k3, k4, k5, k6 = jrandom.split(key, 6)
+        self.x_r = self.shallow_net(state_size, hidden_size, jax.nn.relu,
+                                    jax.nn.sigmoid, k1, k2)
+        self.x_z = self.shallow_net(state_size, hidden_size, jax.nn.relu,
+                                    jax.nn.sigmoid, k3, k4)
+        self.rx_g = self.shallow_net(state_size, hidden_size, jax.nn.relu,
+                                     jax.nn.tanh, k5, k6)
+
+    @staticmethod
+    def shallow_net(state_size, hidden_size, act1, key1, use_bias=True):
+        return eqx.nn.Sequential([
+            eqx.nn.Linear(hidden_size, state_size, use_bias=use_bias,
+                          key=key2),
+            eqx.nn.Lambda(act2)
         ])
 
-        self.h_z = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='hc_z'), sigmoid
-        ])
-
-        self.rh_g = hk.Sequential([
-            hk.Linear(state_size,
-                      with_bias=with_bias,
-                      w_init=w_init,
-                      b_init=b_init,
-                      name='rhc_g'), jnp.tanh
-        ])
-
-    def __call__(self, h: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray,
+                 key: "jax.random.PRNGKey") -> jnp.ndarray:
         """
         Returns a change due to one step of using GRU-ODE for all h.
         Args:
@@ -122,21 +59,17 @@ class GRUDynamics(hk.Module):
         Returns:
             dh/dt
         """
-        hc = jnp.hstack((h, c))
-        r = self.h_r(hc)
-        z = self.h_z(hc)
-        g = self.rh_g(r * h)
-        return (1 - z) * (g - h)
+        r = self.x_r(x)
+        z = self.x_z(x)
+        g = self.rx_g(r * x)
+        return (1 - z) * (g - x)
 
 
-class TaylorAugmented(hk.Module):
+class TaylorAugmented(eqx.Module):
+    f: Callable
+    order: int = 0
 
-    def __init__(self, order, dynamics_cls, **dynamics_kwargs):
-        super().__init__(name=f"{dynamics_kwargs.get('name')}_augment")
-        self.order = order or 0
-        self.f = dynamics_cls(**dynamics_kwargs)
-
-    def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
+    def sol_recursive(self, t, x, args=None):
         """
         https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
         By Jacob Kelly
@@ -164,192 +97,146 @@ class TaylorAugmented(hk.Module):
         # SOFTWARE.
         """
         if self.order < 2:
-            return self.f(h, c), jnp.zeros_like(h)
+            return self.f(t, x, args), jnp.zeros_like(x)
 
-        h_shape = h.shape
+        x_shape = x.shape
 
-        def g(h_t):
+        def g(t_x):
             """
             Closure to expand z.
             """
-            _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
-            dh = jnp.ravel(self.f(_h, c))
+            _t, _x = t_x[0], jnp.reshape(t_x[1:], x_shape)
+            dx = jnp.ravel(self.f(_t, _x, args))
             dt = jnp.array([1.])
-            dh_t = jnp.concatenate((dh, dt))
-            return dh_t
+            dt_dx = jnp.concatenate((dt, dx))
+            return dt_dx
 
-        h_t = jnp.concatenate((jnp.ravel(h), jnp.array([t])))
+        t_x = jnp.concatenate((jnp.array([t]), jnp.ravel(x)))
 
-        (y0, [*yns]) = jet(g, (h_t, ), ((jnp.ones_like(h_t), ), ))
+        (y0, [*yns]) = jet(g, (t_x, ), ((jnp.ones_like(t_x), ), ))
         for _ in range(self.order - 1):
-            (y0, [*yns]) = jet(g, (h_t, ), ((y0, *yns), ))
+            (y0, [*yns]) = jet(g, (t_x, ), ((y0, *yns), ))
 
-        return (jnp.reshape(y0[:-1],
-                            h_shape), jnp.reshape(yns[-2][:-1], h_shape))
+        return (jnp.reshape(y0[1:],
+                            x_shape), jnp.reshape(yns[-2][1:], x_shape))
 
-    def __call__(self, h_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
-                 c: jnp.ndarray):
-        h, _ = h_r
+    def __call__(self, t, x_r: Tuple[jnp.ndarray, jnp.ndarray], args):
+        x, _ = x_r
 
-        dydt, drdt = self.sol_recursive(h, t, c)
+        dydt, drdt = self.sol_recursive(t, x, args)
 
         return dydt, jnp.mean(drdt**2)
 
 
-class NeuralODE(hk.Module):
+class VectorField(eqx.Module):
+    f_dyn: eqx.Module
 
-    def __init__(self,
-                 ode_dyn_cls: Any,
-                 state_size: int,
-                 depth: int,
-                 tay_reg: int,
-                 with_bias: True,
-                 timescale: float,
-                 init_var: float,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
+    def __call__(self, t, x, args):
+        return self.f_dyn(x)
+
+
+class NeuralODE(eqx.Module):
+    timescale: float = eqx.static_field()
+    ode_dyn: Callable
+
+    def __init__(self, f: Callable, tay_reg: int, timescale: float):
         self.timescale = timescale
-        init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
-        init_kwargs = {'with_bias': with_bias, 'b_init': None, 'w_init': init}
-        self.ode_dyn = TaylorAugmented(order=tay_reg,
-                                       dynamics_cls=ode_dyn_cls,
-                                       state_size=state_size,
-                                       depth=depth,
-                                       name='ode_dyn',
-                                       **init_kwargs)
+        self.ode_dyn = TaylorAugmented(tay_reg, f)
 
-    def __call__(self, n_samples, count_nfe, h, t, c=None):
-        if c is None:
-            c = jnp.array([])
-
+    def __call__(self, t, x, args=dict()):
+        dt0 = self.initial_step_size(t[0], x[0, :], 4, 1.4e-8, 1.4e-8,
+                                     self.f_dyn(x[0, :]))
+        n_samples = args.get('n_samples', 2)
         t = jnp.linspace(0.0, t / self.timescale, n_samples)
-        if hk.running_init():
-            h, r = self.ode_dyn((h, jnp.zeros(1)), t[0], c)
-            h = jnp.broadcast_to(h, (len(t), len(h)))
-            return h, jnp.zeros(1), 0
-        if count_nfe:
-            (h, r), nfe = odeint_nfe(self.ode_dyn, (h, jnp.zeros(1)), t, c)
+        x0 = self.get_x0(x, args)
+        term = self.ode_term(self.ode_dyn, args)
+        saveat = SaveAt(ts=t)
+        solver = Dopri5()
+
+        eval_only = args.get('eval_only', False)
+        if eval_only:
+            adjoint = NoAdjoint()
         else:
-            h, r = odeint(self.ode_dyn, (h, jnp.zeros(1)), t, c)
-            nfe = 0
-        return h, r[-1], nfe
+            adjoint = BacksolveAdjoint(solver=Dopri5())
+        return diffeqsolve(term,
+                           solver,
+                           t[0],
+                           t[-1],
+                           dt0=dt0,
+                           y0=x0,
+                           adjoint=adjoint,
+                           saveat=saveat,
+                           max_steps=2**20).ys
 
-
-class TaylorAndLossAugmentedDynamics(hk.Module):
-
-    def __init__(self, loss_f: Callable[[jnp.ndarray], float], order: int,
-                 dynamics_cls, **dynamics_kwargs):
-        super().__init__(name=f"{dynamics_kwargs.get('name')}_augment")
-        self.order = order or 0
-        self.f = dynamics_cls(**dynamics_kwargs)
-        self.loss_f = loss_f
-
-    def sol_recursive(self, h: jnp.ndarray, t: float, c: jnp.ndarray):
-        """
-        https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
-        By Jacob Kelly
-        Recursively compute higher order derivatives of dynamics of ODE.
-        """
-        if self.order < 2:
-            return self.f(h, t), jnp.zeros_like(h)
-
-        h_shape = h.shape
-
-        def g(h_t):
-            """
-            Closure to expand z.
-            """
-            _h, _t = jnp.reshape(h_t[:-1], h_shape), h_t[-1]
-            dh = jnp.ravel(self.f(_h, c))
-            dt = jnp.array([1.])
-            dh_t = jnp.concatenate((dh, dt))
-            return dh_t
-
-        h_t = jnp.concatenate((jnp.ravel(h), jnp.array([t])))
-
-        (h0, [*hns]) = jet(g, (h_t, ), ((jnp.ones_like(h_t), ), ))
-        for _ in range(self.order - 1):
-            (h0, [*hns]) = jet(g, (h_t, ), ((h0, *hns), ))
-
-        return (jnp.reshape(h0[:-1],
-                            h_shape), jnp.reshape(hns[-2][:-1], h_shape))
-
-    def __call__(self, h_l_r: Tuple[jnp.ndarray, jnp.ndarray], t: float,
-                 c: jnp.ndarray, *loss_args):
-        h, _, _ = h_l_r
-
-        dhdt, _drdt = self.sol_recursive(h, t, c)
-
-        dLdt = self.loss_f(h, dhdt, t, *loss_args)
-        return dhdt, dLdt, jnp.mean(_drdt**2)
-
-
-class NeuralODE_IL(hk.Module):
-
-    def __init__(self,
-                 ode_dyn_cls: Any,
-                 state_size: int,
-                 depth: int,
-                 loss_f: Callable[[jnp.ndarray], float],
-                 tay_reg: int,
-                 with_bias: bool,
-                 init_var: float,
-                 timescale: float,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        init = hk.initializers.VarianceScaling(init_var, mode='fan_avg')
-        init_kwargs = {'with_bias': with_bias, 'b_init': None, 'w_init': init}
-        self.ode_dyn = TaylorAndLossAugmentedDynamics(loss_f=loss_f,
-                                                      order=tay_reg,
-                                                      dynamics_cls=ode_dyn_cls,
-                                                      state_size=state_size,
-                                                      depth=depth,
-                                                      name='ode_dyn',
-                                                      **init_kwargs)
-        self.timescale = timescale
-
-    def __call__(self, count_nfe: bool, h: jnp.ndarray, tf, c, *loss_args):
-        if c is None:
-            c = jnp.array([])
-
-        t = jnp.array([0.0, tf / self.timescale])
-
-        if hk.running_init():
-            h, l, r = self.ode_dyn((h, 0.0, 0.0), t[0], c, *loss_args)
-            return h, 0.0, 0.0, 0
-        if count_nfe:
-            (h, l, r), nfe = odeint_nfe(self.ode_dyn, (h, 0.0, 0.0), t, c,
-                                        *loss_args)
+    def get_x0(self, x0, args):
+        if args.get('tay_reg', 0) > 0:
+            return (x0, jnp.zeros(1))
         else:
-            h, l, r = odeint(self.ode_dyn, (h, 0.0, 0.0), t, c, *loss_args)
-            nfe = 0
-        return h[-1, :], l[-1], r[-1], nfe
+            return x0
+
+    def ode_term(self, args):
+        term = VectorField(self.f_dyn)
+        if args.get('control', None) is not None:
+            term = ControlledDynamics(term, args['control'])
+        if args.get('tay_reg', 0) > 0:
+            term = TaylorAugmented(term, args['tay_reg'])
+
+        return ODETerm(term)
+
+    def initial_step_size(self, t0, y0, order, rtol, atol, f0):
+        # Algorithm from:
+        # E. Hairer, S. P. Norsett G. Wanner,
+        # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
+        # Code from: https://github.com/google/jax/blob/main/jax/experimental/ode.py
+        dtype = y0.dtype
+
+        scale = atol + jnp.abs(y0) * rtol
+        d0 = jnp.linalg.norm(y0 / scale.astype(dtype))
+        d1 = jnp.linalg.norm(f0 / scale.astype(dtype))
+
+        h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
+        y1 = y0 + h0.astype(dtype) * f0
+        f1 = self.f_dyn(y1)
+        d2 = jnp.linalg.norm((f1 - f0) / scale.astype(dtype)) / h0
+
+        h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
+                       jnp.maximum(1e-6, h0 * 1e-3),
+                       (0.01 / jnp.max(d1 + d2))**(1. / (order + 1.)))
+
+        return jnp.minimum(100. * h0, h1)
 
 
-class StateUpdate(hk.Module):
+class StateUpdate(eqx.Module):
     """Implements discrete update based on the received observations."""
+    f_project_error = Callable
+    f_update = Callable
 
-    def __init__(self,
-                 state_size: int,
-                 embeddings_size: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.__project = hk.Sequential([
-            hk.Linear(embeddings_size, with_bias=True, name=f'{name}_prep'),
-            jnp.tanh
+    def __init__(self, state_size: int, embeddings_size: int,
+                 key: "jax.random.PRNGKey"):
+        key1, key2 = jrandom.split(key, 2)
+        self.f_project_error = eqx.nn.Sequential([
+            eqx.nn.Linear(embeddings_size * 2,
+                          embeddings_size,
+                          use_bias=True,
+                          key=key1),
+            eqx.nn.Lambda(jnp.tanh)
         ])
+        self.f_update = eqx.nn.GRUCell(state_size + embeddings_size,
+                                       state_size,
+                                       use_bias=True,
+                                       key=key2)
 
-        self.__gru = hk.GRU(state_size)
-
-    def __call__(self, state: jnp.ndarray, emb: jnp.ndarray,
+    def __call__(self, state: jnp.ndarray, predicted_emb: jnp.ndarray,
                  nominal_emb: jnp.ndarray) -> jnp.ndarray:
 
-        gru_input = self.__project(jnp.hstack((emb, nominal_emb)))
-        _, updated_state = self.__gru(gru_input, state)
-        return updated_state
+        projected_error = self.f_project_error(
+            jnp.hstack((predicted_emb, nominal_emb)))
+        gru_input = jnp.hstack((projected_error, state))
+
+        return self.f_update(gru_input)
 
 
-class StateInitializer(hk.Module):
+class StateInitializer(eqx.Module):
 
     def __init__(self,
                  hidden_size: int,

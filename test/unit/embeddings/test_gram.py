@@ -1,17 +1,17 @@
 import unittest
 import random
 
-
 import numpy as np
 from jax.tree_util import tree_leaves
 
 from icenode import ehr
 from icenode.embeddings import GRAM, CachedGRAM
 
+
 def setUpModule():
     global m3_interface, gram_config, subjects_sample
 
-    m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+    m3_dataset = ehr.MIMIC3EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
 
     m3_interface = ehr.Subject_JAX.from_dataset(
