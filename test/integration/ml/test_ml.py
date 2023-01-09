@@ -14,9 +14,9 @@ from icenode.utils import load_config, load_params
 def setUpModule():
     global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_interface_ccs, m4_splits, m4_code_groups
 
-    m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+    m3_dataset = ehr.MIMIC3EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-    m4_dataset = ehr.AbstractEHRDataset.from_meta_json(
+    m4_dataset = ehr.MIMIC4EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
     m3_interface = ehr.Subject_JAX.from_dataset(
         m3_dataset, {

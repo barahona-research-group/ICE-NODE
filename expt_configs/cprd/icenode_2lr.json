@@ -14,7 +14,7 @@
         "ode_init_var": 1.0776395319697402e-07,
         "ode_with_bias": false,
         "state_size": 30,
-        "timescale": 7
+        "timescale": 30
     },
     "training": {
         "batch_size": 256,

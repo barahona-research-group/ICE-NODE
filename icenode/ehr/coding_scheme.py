@@ -1248,8 +1248,8 @@ class DxLTC212FlatCodes(AbstractScheme):
 
             system_set = set(disease_df[system_cname])
             system_num_set = set(disease_df[system_num_cname])
-            assert len(system_set) == 1, "System name sould be unique"
-            assert len(system_num_cname) == 1, "System num sould be unique"
+            assert len(system_set) == 1, "System name should be unique"
+            assert len(system_num_set) == 1, "System num should be unique"
 
             (system_name, ) = system_set
             (system_num, ) = system_num_set
