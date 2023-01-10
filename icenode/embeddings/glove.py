@@ -16,21 +16,33 @@ http://www.foldl.me/2014/glove-python/
 CooccurrencesType = Dict[Tuple[int, int], int]
 
 
-def build_coocur(subjects: List[List[ehr.Admission_JAX]],
-                 index: Mapping[str, int],
-                 get_codes: Callable[[ehr.Admission_JAX], Set[str]],
-                 code_ancestors: Callable[[ehr.Admission, str], Set[str]],
-                 window_size_days: int = 1) -> Tuple[CooccurrencesType]:
+def augmented_coocurrence(
+        code_type: str,
+        subjects: List[List[ehr.Admission_JAX]],
+        window_size_days: int = 1) -> Tuple[CooccurrencesType]:
     """
     Build cooccurrence matrix from timestamped CCS codes.
 
     Args:
+        code_type: the code type to consider for the coocurrences. 'dx' is for diagnostic codes, 'pr' for procedure codes.
         subjects: a list of subjects (patients) from which diagnosis codes are extracted for GloVe initialization.
         dx_idx: a mapping between CCS diagnosis codes as strings to integer indices.
         proc_idx: a mapping between CCS procedure codes as strings to integer indices.
         ccs_dag: CCSDAG object that supports DAG operations on ICD9 codes in their hierarchical organization within CCS.
         window_size_days: the moving time window of the context.
     """
+    if code_type == 'dx':
+        get_codes = lambda adm: adm.dx_codes
+        code_ancestors = lambda adm, c: adm.dx_mapper.t_code_ancestors(c)
+        index =
+    elif code_type == 'pr':
+        get_codes = lambda adm: adm.pr_codes
+        code_ancestors = lambda adm, c: adm.pr_mapper.t_code_ancestors(c)
+    else:
+        raise RuntimeError('Unexpected category')
+
+
+
     # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
     # As described in the paper of GRAM, ancestors duplications are allowed and informative.
     aug_adms = []
@@ -226,22 +238,12 @@ def glove_representation(category: str,
     Returns:
         Two dictionaries (tuple) for the GloVe vector representation for diagnoses codes and procedure codes, respectively.
     """
-
-    if category == 'dx':
-        m = lambda adm: adm.dx_mapper
-        t_scheme = ehr.code_scheme[subject_interface.dx_scheme]
-        get_codes = lambda adm: adm.dx_codes
-    elif category == 'pr':
-        m = lambda adm: adm.pr_mapper
-        t_scheme = ehr.code_scheme[subject_interface.pr_scheme]
-        get_codes = lambda adm: adm.pr_codes
-
-    cooc = build_coocur(
-        subjects=list(map(subject_interface.get, train_ids)),
-        index=t_scheme.dag_index,
-        get_codes=get_codes,
-        code_ancestors=lambda adm, c: m(adm).t_code_ancestors(c),
-        window_size_days=window_size_days)
+    cooc = augmented_coocurrence(category=category,
+                                 subjects=list(
+                                     map(subject_interface.get, train_ids)),
+                                 index=t_scheme.dag_index,
+                                 get_codes=get_codes,
+                                 window_size_days=window_size_days)
     return train_glove(index=t_scheme.dag_index,
                        cooccurrences=cooc,
                        vector_size=vector_size,

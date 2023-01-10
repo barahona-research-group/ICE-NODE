@@ -236,32 +236,6 @@ class StateUpdate(eqx.Module):
         return self.f_update(gru_input)
 
 
-class StateInitializer(eqx.Module):
-
-    def __init__(self,
-                 hidden_size: int,
-                 state_size: int,
-                 depth: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-        self.hidden_size = hidden_size
-        self.lin = [
-            hk.Linear(hidden_size, name=f'lin_{i}') for i in range(depth)
-        ]
-        self.lin_out = hk.Linear(state_size, name='lin_out')
-
-    def __call__(self, state_init: jnp.ndarray):
-        out = state_init
-        res = jnp.zeros(self.hidden_size, dtype=out.dtype)
-
-        for lin in self.lin:
-            out = lin(out)
-            out = leaky_relu(out, negative_slope=2e-1) + res
-            res = out
-
-        return jnp.tanh(self.lin_out(out))
-
-
 class StateDiagnosesDecoder(hk.Module):
 
     def __init__(self,
@@ -319,33 +293,6 @@ class EmbeddingsDecoder(hk.Module):
         dec_diag = self.__dec(emb)
         return jax.nn.softmax(dec_diag)
 
-
-class EmbeddingsDecoder_Logits(hk.Module):
-
-    def __init__(self,
-                 n_layers: int,
-                 embeddings_size: int,
-                 diag_size: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-
-        def build_layers(n_layers, output_size):
-            layers = [
-                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
-                for i in range(n_layers - 2)
-            ]
-            if n_layers >= 2:
-                layers.append(
-                    lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
-            layers.append(hk.Linear(output_size))
-
-            return layers
-
-        self.__dec = hk.Sequential(build_layers(n_layers, diag_size),
-                                   name='dec')
-
-    def __call__(self, emb: jnp.ndarray):
-        return self.__dec(emb)
 
 
 class DiagnosticSamplesCombine(hk.Module):

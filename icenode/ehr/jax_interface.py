@@ -5,17 +5,79 @@ from collections import defaultdict
 import random
 from typing import List, Optional, Dict
 from datetime import datetime
+from dataclasses import dataclass
 import os
-
 from absl import logging
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 
-from .concept import Subject, Admission
+from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
-from .coding_scheme import CodeMapper, code_scheme as C, AbstractScheme
+from .coding_scheme import AbstractScheme, NullScheme
 from .outcome import OutcomeExtractor
+
+
+@dataclass
+class StaticInfo_JAX:
+    static_info: StaticInfo
+    flags: StaticInfoFlags
+    static_control_vec: Optional[jnp.ndarray]
+
+    def __init__(self, static_info, flags):
+        self.static_info = static_info
+        self.flags = flags
+        self.static_control_vec = self._static_control_vector()
+
+    def _static_control_vector(self):
+        vec = []
+
+        # Ethnicity
+        if isinstance(
+                self.static_info.ethnicity_scheme,
+                AbstractScheme) and self.flags.ethnicity is not NullScheme():
+            assert self.static_info.ethnicity_scheme is not NullScheme(
+            ), "Ethnicity info requested while it is not provided in the dataset."
+            m = self.static_info.ethnicity_scheme.mapper(self.flags.ethnicity)
+            codeset = m.map_codeset({self.static_info.ethnicity})
+            vec.append(m.codeset2vec(codeset))
+
+        # Gender
+        if self.flags.gender:
+            assert self.static_info.gender is not None, "Gender info requested while it is not provided in the dataset."
+            vec.append(np.array(self.static_info.gender, dtype=float))
+
+        # IMD
+        if self.flags.idx_deprivation:
+            assert self.static_info.idx_deprivation is not None, "IMD info requested while it is not provided in the dataset."
+            vec.append(np.array(self.static_info.idx_deprivation, dtype=float))
+
+        if len(vec) > 0:
+            return jnp.hstack(vec)
+        else:
+            return None
+
+    def _dynamic_control_vector(self, current_date):
+        vec = []
+        if self.flags.age:
+            assert self.static_info.date_of_birth is not None, "Age is requested while date of birth is not provided in the dataset."
+            vec.append(
+                np.array(self.static_info.age(current_date), dtype=float))
+
+        if len(vec) > 0:
+            return jnp.hstack(vec)
+        else:
+            return None
+
+    def control_vector(self, current_date):
+        if self.flags.age:
+            d_vec = self._dynamic_control_vector(current_date)
+            if self.static_control_vec is not None:
+                return jnp.hstack((d_vec, self.static_control_vec))
+            else:
+                return d_vec
+        else:
+            return self.static_control_vec
 
 
 class Admission_JAX:
@@ -33,8 +95,8 @@ class Admission_JAX:
         self.los = adm.length_of_stay
         self.admission_id = adm.admission_id
 
-        dx_mapper = CodeMapper.get_mapper(adm.dx_scheme, dx_scheme)
-        pr_mapper = CodeMapper.get_mapper(adm.pr_scheme, pr_scheme)
+        dx_mapper = adm.dx_scheme.mapper(dx_scheme)
+        pr_mapper = adm.pr_scheme.mapper(pr_scheme)
         self.dx_mapper = dx_mapper
         self.pr_mapper = pr_mapper
 
@@ -75,7 +137,8 @@ class Subject_JAX(dict):
 
     def __init__(self,
                  subjects: List[Subject],
-                 code_scheme: Dict[str, str],
+                 code_scheme: Dict[str, AbstractScheme],
+                 static_info_flags: StaticInfoFlags = StaticInfoFlags(),
                  data_max_size_gb=None):
         # If the data size on the JAX device will exceed this preset variable,
         # let the interface contain subject data amounting to that limit, and the
@@ -89,9 +152,13 @@ class Subject_JAX(dict):
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
         self._subjects = {s.subject_id: s for s in subjects}
+        self._static_info = {
+            i: StaticInfo_JAX(subj.static_info, static_info_flags)
+            for i, subj in self._subjects.items()
+        }
 
         self._dx_scheme = code_scheme['dx']
-        self._pr_scheme = code_scheme.get('pr', 'none')
+        self._pr_scheme = code_scheme.get('pr', NullScheme())
 
         self._dx_outcome_extractor = OutcomeExtractor(
             code_scheme['dx_outcome'])
@@ -112,23 +179,34 @@ class Subject_JAX(dict):
     @property
     def dx_dim(self):
         if self._dx_dagvec:
-            return len(C[self.dx_scheme].dag_index)
+            return len(self.dx_scheme.dag_index)
         else:
-            return len(C[self.dx_scheme].index)
+            return len(self.dx_scheme.index)
 
     @property
     def pr_dim(self):
         if self._pr_dagvec:
-            return len(C[self.pr_scheme].dag_index)
+            return len(self.pr_scheme.dag_index)
         else:
-            return len(C[self.pr_scheme].index)
+            return len(self.pr_scheme.index)
+
+    @property
+    def control_dim(self):
+        ctrl = self.subject_control(
+            list(self._static_info.keys())[0], datetime.today())
+        if ctrl is None:
+            return 0
+        else:
+            return len(ctrl)
+
+    def subject_control(self, subject_id, current_date):
+        static_info = self._static_info[subject_id]
+        return static_info.control_vector(current_date)
 
     @staticmethod
-    def probe_admission_size_gb(dx_scheme: str, dx_dagvec: bool,
-                                pr_scheme: str, pr_dagvec: bool,
+    def probe_admission_size_gb(dx_scheme: AbstractScheme, dx_dagvec: bool,
+                                pr_scheme: AbstractScheme, pr_dagvec: bool,
                                 outcome_extractor: OutcomeExtractor):
-        dx_scheme = C[dx_scheme]
-        pr_scheme = C[pr_scheme]
 
         if dx_dagvec:
             dx_index = dx_scheme.dag_index
@@ -164,7 +242,7 @@ class Subject_JAX(dict):
         mappers = set()
         s_schemes = Subject.dx_schemes(self._subjects.values())
         for s in s_schemes:
-            mappers.add(CodeMapper.get_mapper(s, self.dx_scheme))
+            mappers.add(s.mapper(self.dx_scheme))
         return mappers
 
     @property
@@ -172,7 +250,7 @@ class Subject_JAX(dict):
         mappers = set()
         s_schemes = Subject.pr_schemes(self._subjects.values())
         for s in s_schemes:
-            mappers.add(CodeMapper.get_mapper(s, self.pr_scheme))
+            mappers.add(s.mapper(self.pr_scheme))
         return mappers
 
     @property
@@ -184,14 +262,14 @@ class Subject_JAX(dict):
         return self._data_max_size_gb
 
     def dx_make_ancestors_mat(self):
-        return C[self.dx_scheme].make_ancestors_mat()
+        return self.dx_scheme.make_ancestors_mat()
 
     @property
     def pr_scheme(self) -> str:
         return self._pr_scheme
 
     def pr_make_ancestors_mat(self):
-        return C[self.pr_scheme].make_ancestors_mat()
+        return self.pr_scheme.make_ancestors_mat()
 
     @property
     def dx_outcome_extractor(self):

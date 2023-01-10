@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from datetime import date
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from typing import List, Tuple, Set, Callable, Dict, Optional
 from absl import logging
 from dataclasses import dataclass
@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .outcome import OutcomeExtractor
+from .coding_scheme import AbstractScheme, NullScheme
 
 
 @dataclass
@@ -43,16 +44,26 @@ class AbstractAdmission:
 class Admission(AbstractAdmission):
     dx_codes: Set[str]
     pr_codes: Set[str]
-    dx_scheme: str
-    pr_scheme: str
+    dx_scheme: AbstractScheme
+    pr_scheme: AbstractScheme
 
 
 @dataclass
 class StaticInfo:
-    gender: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    idx_deprivation: Optional[str] = None
+    gender: Optional[float] = None
+    date_of_birth: Optional[date] = None
+    idx_deprivation: Optional[float] = None
     ethnicity: Optional[str] = None
+    ethnicity_scheme: AbstractScheme = NullScheme()
+
+    def age(self, current_date: date):
+        return (current_date.to_pydatetime() -
+                self.date_of_birth.to_pydatetime()).days / 365.25
+
+
+StaticInfoFlags = namedtuple("StaticInfoFlags",
+                             ["gender", "age", "idx_deprivation", "ethnicity"],
+                             defaults=(False, False, False, NullScheme()))
 
 
 class Subject:
@@ -64,9 +75,7 @@ class Subject:
     For these cases the one with earlier DISCHTIME will be merged to the other.
     """
 
-    def __init__(self,
-                 subject_id: int,
-                 admissions: List[Admission],
+    def __init__(self, subject_id: int, admissions: List[Admission],
                  static_info: StaticInfo):
         self.subject_id = subject_id
         self.static_info = static_info
@@ -210,4 +219,3 @@ class Subject:
     @classmethod
     def from_dataset(cls, dataset: "icenode.ehr.dataset.AbstractEHRDataset"):
         return dataset.to_subjects()
-

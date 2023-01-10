@@ -69,7 +69,6 @@ class ICENODE(AbstractModel):
     n_ode: eqx.Module
 
     ode_dyn: str
-    ode_with_bias: bool
     ode_init_var: float
     state_size: int
     timescale: float

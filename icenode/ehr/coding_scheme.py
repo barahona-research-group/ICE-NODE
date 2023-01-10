@@ -3,6 +3,7 @@ data structures to support conversion between CCS and ICD9."""
 
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
+
 import re
 import os
 import gzip
@@ -40,20 +41,34 @@ Ideas in mapping
 - Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
 """
 
+_singleton_register = {}
 
-class CodeMapper(defaultdict):
+
+def singleton(cls):
+
+    def wrapper(*args, **kw):
+        if cls not in _singleton_register:
+            instance = cls(*args, **kw)
+            _singleton_register[cls] = instance
+        return _singleton_register[cls]
+
+    wrapper.__name__ = cls.__name__
+    return wrapper
+
+
+class _CodeMapper(defaultdict):
     maps = {}
 
     def __init__(self, s_scheme, t_scheme, t_dag_space, *args, **kwargs):
         """
-        Constructor of CodeMapper object.
+        Constructor of _CodeMapper object.
         Args:
             s_scheme: source scheme object.
             t_scheme: target scheme object.
             t_dag_space: flag to enforce mapping to Directed Acyclic Graph
             (DAG) space instead of the leaf node set (i.e. flat space).
         """
-        super(CodeMapper, self).__init__(*(args or (set, )))
+        super(_CodeMapper, self).__init__(*(args or (set, )))
 
         self._s_scheme = s_scheme
         self._t_scheme = t_scheme
@@ -69,7 +84,7 @@ class CodeMapper(defaultdict):
         self._unrecognised_range = kwargs.get('unrecognised_target', set())
         self._unrecognised_domain = kwargs.get('unrecognised_source', set())
         self._conv_file = kwargs.get('conv_file', '')
-        CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
+        _CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
 
     def __str__(self):
         return f'{self.s_scheme.name}->{self.t_scheme.name}'
@@ -207,26 +222,20 @@ class CodeMapper(defaultdict):
 
     @staticmethod
     def get_mapper(s_scheme: str, t_scheme: str):
-        if any(s == 'none' or s is None for s in (s_scheme, t_scheme)):
-            return NullCodeMapper()
-
-        if isinstance(s_scheme, str):
-            s_scheme = code_scheme[s_scheme]
-        if isinstance(t_scheme, str):
-            t_scheme = code_scheme[t_scheme]
-
+        if any(s is NullScheme() for s in (s_scheme, t_scheme)):
+            return _NullCodeMapper()
         key = (type(s_scheme), type(t_scheme))
 
-        if key in CodeMapper.maps:
-            return CodeMapper.maps[key]
+        if key in _CodeMapper.maps:
+            return _CodeMapper.maps[key]
 
         if key[0] == key[1]:
-            return IdentityCodeMapper(s_scheme)
+            return _IdentityCodeMapper(s_scheme)
 
         if key in load_maps:
             load_maps[key]()
 
-        mapper = CodeMapper.maps.get(key)
+        mapper = _CodeMapper.maps.get(key)
         if mapper:
             mapper.report_discrepancy()
         else:
@@ -272,7 +281,7 @@ class CodeMapper(defaultdict):
         return vec
 
 
-class IdentityCodeMapper(CodeMapper):
+class _IdentityCodeMapper(_CodeMapper):
 
     def __init__(self, scheme, *args):
         super().__init__(s_scheme=scheme,
@@ -285,11 +294,11 @@ class IdentityCodeMapper(CodeMapper):
         return codeset
 
 
-class NullCodeMapper(CodeMapper):
+class _NullCodeMapper(_CodeMapper):
 
     def __init__(self, *args):
-        super().__init__(s_scheme=code_scheme['none'],
-                         t_scheme=code_scheme['none'],
+        super().__init__(s_scheme=NullScheme(),
+                         t_scheme=NullScheme(),
                          t_dag_space=False,
                          *args)
 
@@ -317,7 +326,7 @@ class AbstractScheme:
                 type(c) == str
                 for c in collection), f"{self}: All name types should be str."
 
-        IdentityCodeMapper(self)
+        _IdentityCodeMapper(self)
 
     def __bool__(self):
         return len(self.codes) > 0
@@ -364,11 +373,15 @@ class AbstractScheme:
             filter(lambda c: re.match(query, self._desc[c], flags=regex_flags),
                    self.codes))
 
+    def mapper(self, target_scheme):
+        return _CodeMapper.get_mapper(self, target_scheme)
 
+
+@singleton
 class NullScheme(AbstractScheme):
 
-    def __init__(self, name):
-        super().__init__([], {}, {}, name)
+    def __init__(self):
+        super().__init__([], {}, {}, 'none')
 
 
 class HierarchicalScheme(AbstractScheme):
@@ -676,7 +689,7 @@ class ICDCommons(HierarchicalScheme):
                                                    conv_fname)
         map_kind = dict(zip(status_df['code'], status_df['status']))
 
-        mapping = CodeMapper(
+        mapping = _CodeMapper(
             s_scheme,
             t_scheme,
             # t_dag_space=True,
@@ -701,6 +714,7 @@ class ICDCommons(HierarchicalScheme):
             #     mapping[code] = represent
 
 
+@singleton
 class DxICD10(ICDCommons):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
@@ -782,13 +796,14 @@ class DxICD10(ICDCommons):
             'pt2ch': pt2ch
         }
 
-    def __init__(self, name):
+    def __init__(self):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
         super().__init__(**self.distill_icd10_xml(
             'icd10cm_tabular_2023.xml.gz'),
-                         name=name)
+                         name='dx_icd10')
 
 
+@singleton
 class PrICD10(ICDCommons):
 
     @staticmethod
@@ -850,12 +865,13 @@ class PrICD10(ICDCommons):
             'pt2ch': pt2ch
         }
 
-    def __init__(self, name):
+    def __init__(self):
         super().__init__(**self.distill_icd10_xml(
             'icd10pcs_codes_2023.txt.gz'),
-                         name=name)
+                         name='pr_icd10')
 
 
+@singleton
 class DxICD9(ICDCommons):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
     _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
@@ -945,7 +961,7 @@ class DxICD9(ICDCommons):
             'dag_desc': dag_desc
         }
 
-    def __init__(self, name):
+    def __init__(self):
         df = pd.DataFrame(self.icd9_columns())
         pt2ch = self.parent_child_mappings(df)
 
@@ -968,9 +984,10 @@ class DxICD9(ICDCommons):
                          codes=d['icd_codes'],
                          index=d['icd_index'],
                          desc=d['icd_desc'],
-                         name=name)
+                         name='dx_icd9')
 
 
+@singleton
 class PrICD9(ICDCommons):
 
     @staticmethod
@@ -983,7 +1000,7 @@ class PrICD9(ICDCommons):
         else:
             return code
 
-    def __init__(self, name):
+    def __init__(self):
         df = pd.DataFrame(DxICD9.icd9_columns())
         pt2ch = DxICD9.parent_child_mappings(df)
 
@@ -1006,7 +1023,7 @@ class PrICD9(ICDCommons):
                          codes=d['icd_codes'],
                          index=d['icd_index'],
                          desc=d['icd_desc'],
-                         name=name)
+                         name='pr_icd9')
 
 
 class CCSCommons(HierarchicalScheme):
@@ -1042,16 +1059,16 @@ class CCSCommons(HierarchicalScheme):
     def register_mappings(ccs_scheme, icd9_scheme):
         res = ccs_scheme.ccs_columns(icd9_scheme)
 
-        icd92ccs = CodeMapper(icd9_scheme,
-                              ccs_scheme,
-                              t_dag_space=False,
-                              unrecognised_source=res["unrecognised_icd9"],
-                              conv_file=res["conv_file"])
-        ccs2icd9 = CodeMapper(ccs_scheme,
-                              icd9_scheme,
-                              t_dag_space=False,
-                              unrecognised_target=res["unrecognised_icd9"],
-                              conv_file=res["conv_file"])
+        icd92ccs = _CodeMapper(icd9_scheme,
+                               ccs_scheme,
+                               t_dag_space=False,
+                               unrecognised_source=res["unrecognised_icd9"],
+                               conv_file=res["conv_file"])
+        ccs2icd9 = _CodeMapper(ccs_scheme,
+                               icd9_scheme,
+                               t_dag_space=False,
+                               unrecognised_target=res["unrecognised_icd9"],
+                               conv_file=res["conv_file"])
         cols = res["cols"]
         n_rows = len(cols['ICD'])
         for i in range(n_rows):
@@ -1111,12 +1128,13 @@ class CCSCommons(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
+@singleton
 class DxCCS(CCSCommons):
     _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
     _N_LEVELS = 4
 
-    def __init__(self, icd9_scheme, name):
-        cols = self.ccs_columns(icd9_scheme)["cols"]
+    def __init__(self):
+        cols = self.ccs_columns(DxICD9())["cols"]
         df = pd.DataFrame(cols)
         pt2ch = self.parent_child_mappings(df)
         desc = self.desc_mappings(df)
@@ -1126,15 +1144,16 @@ class DxCCS(CCSCommons):
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
-                         name=name)
+                         name='dx_ccs')
 
 
+@singleton
 class PrCCS(CCSCommons):
     _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
     _N_LEVELS = 3
 
-    def __init__(self, icd9_scheme, name):
-        cols = self.ccs_columns(icd9_scheme)["cols"]
+    def __init__(self):
+        cols = self.ccs_columns(PrICD9())["cols"]
         df = pd.DataFrame(cols)
         pt2ch = self.parent_child_mappings(df)
         desc = self.desc_mappings(df)
@@ -1144,7 +1163,7 @@ class PrCCS(CCSCommons):
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
-                         name=name)
+                         name='pr_ccs')
 
 
 class FlatCCSCommons(AbstractScheme):
@@ -1181,16 +1200,18 @@ class FlatCCSCommons(AbstractScheme):
     def register_mappings(flatccs_scheme, icd9_scheme):
         res = flatccs_scheme.flatccs_columns(icd9_scheme)
 
-        flatccs2icd9 = CodeMapper(flatccs_scheme,
-                                  icd9_scheme,
-                                  t_dag_space=False,
-                                  unrecognised_target=res["unrecognised_icd9"],
-                                  conv_file=res["conv_file"])
-        icd92flatccs = CodeMapper(icd9_scheme,
-                                  flatccs_scheme,
-                                  t_dag_space=False,
-                                  unrecognised_source=res["unrecognised_icd9"],
-                                  conv_file=res["conv_file"])
+        flatccs2icd9 = _CodeMapper(
+            flatccs_scheme,
+            icd9_scheme,
+            t_dag_space=False,
+            unrecognised_target=res["unrecognised_icd9"],
+            conv_file=res["conv_file"])
+        icd92flatccs = _CodeMapper(
+            icd9_scheme,
+            flatccs_scheme,
+            t_dag_space=False,
+            unrecognised_source=res["unrecognised_icd9"],
+            conv_file=res["conv_file"])
 
         map_n1 = dict(zip(res['icd9'], res['code']))
         assert len(map_n1) == len(res['icd9']), "1toN mapping expected"
@@ -1200,35 +1221,38 @@ class FlatCCSCommons(AbstractScheme):
             icd92flatccs[icode].add(ccode)
 
 
+@singleton
 class DxFlatCCS(FlatCCSCommons):
 
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
-    def __init__(self, icd9_scheme, name):
-        cols = self.flatccs_columns(icd9_scheme)
+    def __init__(self):
+        cols = self.flatccs_columns(DxICD9())
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=dict(zip(cols['code'], cols['desc'])),
-                         name=name)
+                         name='dx_flatccs')
 
 
+@singleton
 class PrFlatCCS(FlatCCSCommons):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
-    def __init__(self, icd9_scheme, name):
-        cols = self.flatccs_columns(icd9_scheme)
+    def __init__(self):
+        cols = self.flatccs_columns(PrICD9())
         codes = sorted(set(cols['code']))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=dict(zip(cols['code'], cols['desc'])),
-                         name=name)
+                         name='pr_flatccs')
 
 
+@singleton
 class DxLTC212FlatCodes(AbstractScheme):
     _SCHEME_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 
-    def __init__(self, name):
+    def __init__(self):
         df = pd.read_csv(self._SCHEME_FILE, dtype=str)
 
         medcode_cname = 'medcodeid'
@@ -1265,7 +1289,7 @@ class DxLTC212FlatCodes(AbstractScheme):
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
-                         name=name)
+                         name='dx_cprd_ltc212')
         self._system = system
         self._medcodes = medcodes
 
@@ -1278,10 +1302,11 @@ class DxLTC212FlatCodes(AbstractScheme):
         return self._system
 
 
+@singleton
 class DxLTC9809FlatMedcodes(AbstractScheme):
     _SCHEME_FILE = 'CPRD_212_LTC_ALL.csv.gz'
 
-    def __init__(self, name):
+    def __init__(self):
         filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
         df = pd.read_csv(filepath, dtype=str)
 
@@ -1312,7 +1337,7 @@ class DxLTC9809FlatMedcodes(AbstractScheme):
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
-                         name=name)
+                         name='dx_cprd_ltc9809')
 
         self._systems = systems
         self._diseases = diseases
@@ -1326,12 +1351,14 @@ class DxLTC9809FlatMedcodes(AbstractScheme):
         return self._diseases
 
 
+@singleton
 class EthCPRD16(AbstractScheme):
     _SCHEME_FILE = 'cprd_eth.csv'
+    NAME = 'eth_cprd_16'
     ETH_CODE_CNAME = 'eth16'
     ETH_DESC_CNAME = 'eth16_desc'
 
-    def __init__(self, name):
+    def __init__(self):
         filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
         df = pd.read_csv(filepath, dtype=str)
         desc = dict()
@@ -1346,10 +1373,12 @@ class EthCPRD16(AbstractScheme):
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
-                         name=name)
+                         name=self.NAME)
 
 
+@singleton
 class EthCPRD5(EthCPRD16):
+    NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'
 
@@ -1357,53 +1386,32 @@ class EthCPRD5(EthCPRD16):
 def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
-    m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     for eth16, eth_df in df.groupby(s_scheme.ETH_CODE_CNAME):
         m[eth16] = set(eth_df[t_scheme.ETH_CODE_CNAME])
 
 
 def register_medcode_mapping(s_scheme: DxLTC9809FlatMedcodes,
                              t_scheme: DxLTC212FlatCodes):
-    m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     for medcodeid, disease_nums in s_scheme.diseases.items():
         m[medcodeid] = set(disease_nums)
 
 
 def register_chained_map(s_scheme, t_scheme, inter_scheme):
-    inter_mapping = CodeMapper.get_mapper(s_scheme, inter_scheme)
+    inter_mapping = _CodeMapper.get_mapper(s_scheme, inter_scheme)
     assert inter_mapping.t_dag_space == False
     s_codes = set(s_scheme.codes) & set(inter_mapping)
-    m = CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     m.update({c: inter_mapping[c] for c in s_codes})
 
 
-# Singleton instance. Lazy on-demand loading.
-_C = LazyDict({})
-_C['none'] = lambda: NullScheme('none')
-_C['dx_flatccs'] = lambda: DxFlatCCS(_C['dx_icd9'], 'dx_flatccs')
-_C['dx_ccs'] = lambda: DxCCS(_C['dx_icd9'], 'dx_ccs')
-_C['dx_icd9'] = lambda: DxICD9('dx_icd9')
-_C['dx_icd10'] = lambda: DxICD10('dx_icd10')
-_C['pr_flatccs'] = lambda: PrFlatCCS(_C['pr_icd9'], 'pr_flatccs')
-_C['pr_ccs'] = lambda: PrCCS(_C['pr_icd9'], 'pr_ccs')
-_C['pr_icd9'] = lambda: PrICD9('pr_icd9')
-_C['pr_icd10'] = lambda: PrICD10('pr_icd10')
-
-_C['dx_cprd_ltc212'] = lambda: DxLTC212FlatCodes('dx_cprd_ltc212')
-_C['dx_cprd_ltc9809'] = lambda: DxLTC9809FlatMedcodes('dx_cprd_ltc9809')
-
-_C['eth_cprd_16'] = lambda: EthCPRD16('eth_cprd_16')
-_C['eth_cprd_5'] = lambda: EthCPRD5('eth_cprd_5')
-
-code_scheme = _C
-
-
 def reg_dx_icd9_chained_map(s_scheme, t_scheme):
-    return register_chained_map(s_scheme, t_scheme, _C['dx_icd9'])
+    return register_chained_map(s_scheme, t_scheme, DxICD9())
 
 
 def reg_pr_icd9_chained_map(s_scheme, t_scheme):
-    return register_chained_map(s_scheme, t_scheme, _C['pr_icd9'])
+    return register_chained_map(s_scheme, t_scheme, PrICD9())
 
 
 # Possible Mappings, Lazy-loaded maps.
@@ -1412,57 +1420,57 @@ load_maps = {}
 # ICD9 <-> ICD10
 load_maps.update({
     (DxICD10, DxICD9):
-    lambda: ICDCommons.register_mappings(_C['dx_icd10'], _C['dx_icd9'],
+    lambda: ICDCommons.register_mappings(DxICD10(), DxICD9(),
                                          '2018_gem_cm_I10I9.txt.gz'),
     (DxICD9, DxICD10):
-    lambda: ICDCommons.register_mappings(_C['dx_icd9'], _C['dx_icd10'],
+    lambda: ICDCommons.register_mappings(DxICD9(), DxICD10(),
                                          '2018_gem_cm_I9I10.txt.gz'),
     (PrICD10, PrICD9):
-    lambda: ICDCommons.register_mappings(_C['pr_icd10'], _C['pr_icd9'],
+    lambda: ICDCommons.register_mappings(PrICD10(), PrICD9(),
                                          '2018_gem_pcs_I10I9.txt.gz'),
     (PrICD9, PrICD10):
-    lambda: ICDCommons.register_mappings(_C['pr_icd9'], _C['pr_icd10'],
+    lambda: ICDCommons.register_mappings(PrICD9(), PrICD10(),
                                          '2018_gem_pcs_I9I10.txt.gz')
 })
 
 # ICD9 <-> CCS
 load_maps.update({
     (DxCCS, DxICD9):
-    lambda: CCSCommons.register_mappings(_C['dx_ccs'], _C['dx_icd9']),
+    lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
     (DxICD9, DxCCS):
-    lambda: CCSCommons.register_mappings(_C['dx_ccs'], _C['dx_icd9']),
+    lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
     (PrCCS, PrICD9):
-    lambda: CCSCommons.register_mappings(_C['pr_ccs'], _C['pr_icd9']),
+    lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
     (PrICD9, PrCCS):
-    lambda: CCSCommons.register_mappings(_C['pr_ccs'], _C['pr_icd9']),
+    lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
     (DxFlatCCS, DxICD9):
-    lambda: FlatCCSCommons.register_mappings(_C['dx_flatccs'], _C['dx_icd9']),
+    lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
     (DxICD9, DxFlatCCS):
-    lambda: FlatCCSCommons.register_mappings(_C['dx_flatccs'], _C['dx_icd9']),
+    lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
     (PrFlatCCS, PrICD9):
-    lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9']),
+    lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
     (PrICD9, PrFlatCCS):
-    lambda: FlatCCSCommons.register_mappings(_C['pr_flatccs'], _C['pr_icd9']),
+    lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
 })
 
 # ICD10 <-> CCS (Through ICD9 as an intermediate scheme)
 load_maps.update({
     (DxCCS, DxICD10):
-    lambda: reg_dx_icd9_chained_map(_C['dx_ccs'], _C['dx_icd10']),
+    lambda: reg_dx_icd9_chained_map(DxCCS(), DxICD10()),
     (DxICD10, DxCCS):
-    lambda: reg_dx_icd9_chained_map(_C['dx_icd10'], _C['dx_ccs']),
+    lambda: reg_dx_icd9_chained_map(DxICD10(), DxCCS()),
     (PrCCS, PrICD10):
-    lambda: reg_pr_icd9_chained_map(_C['pr_ccs'], _C['pr_icd10']),
+    lambda: reg_pr_icd9_chained_map(PrCCS(), PrICD10()),
     (PrICD10, PrCCS):
-    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_ccs']),
+    lambda: reg_pr_icd9_chained_map(PrICD10(), PrCCS()),
     (DxFlatCCS, DxICD10):
-    lambda: reg_dx_icd9_chained_map(_C['dx_flatccs'], _C['dx_icd10']),
+    lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxICD10()),
     (DxICD10, DxFlatCCS):
-    lambda: reg_dx_icd9_chained_map(_C['dx_icd10'], _C['dx_flatccs']),
+    lambda: reg_dx_icd9_chained_map(DxICD10(), DxFlatCCS()),
     (PrFlatCCS, PrICD10):
-    lambda: reg_pr_icd9_chained_map(_C['pr_flatccs'], _C['pr_icd10']),
+    lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrICD10()),
     (PrICD10, PrFlatCCS):
-    lambda: reg_pr_icd9_chained_map(_C['pr_icd10'], _C['pr_flatccs'])
+    lambda: reg_pr_icd9_chained_map(PrICD10(), PrFlatCCS())
 })
 
 # CPRD conversions
@@ -1471,8 +1479,8 @@ load_maps.update({
 
 load_maps.update({
     (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
-    lambda: register_medcode_mapping(_C['dx_cprd_ltc9809'], _C['dx_cprd_ltc212'
-                                                               ]),
+    lambda: register_medcode_mapping(DxLTC9809FlatMedcodes(),
+                                     DxLTC212FlatCodes()),
     (EthCPRD16, EthCPRD5):
-    lambda: register_cprd_eth_mapping(_C['eth_cprd_16'], _C['eth_cprd_5'])
+    lambda: register_cprd_eth_mapping(EthCPRD16(), EthCPRD5())
 })
