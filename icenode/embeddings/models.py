@@ -52,10 +52,10 @@ class DAGAttention(eqx.Module):
 
     def __call__(self, ei: jnp.ndarray, ej: jnp.ndarray) -> jnp.ndarray:
         ei_ej = jnp.hstack((ei, ej))
-        return self.weight(jnp.tanh(self.linear(ei_ej))).squeeze()
+        return self.weighted_sum(jnp.tanh(self.project(ei_ej))).squeeze()
 
 
-class DAGL2Attention(eqx.nn.Module):
+class DAGL2Attention(eqx.Module):
     """
     The Lipschitz Constant of Self-Attention:
     https://arxiv.org/abs/2006.04710
@@ -88,7 +88,7 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def encode(self, x: jnp.ndarray) -> jnp.ndarray:
+    def encode(self, G: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
         pass
 
     @staticmethod
@@ -108,9 +108,9 @@ class GRAM(AbstractEmbeddingsLayer):
 
     code_ancestry: jnp.ndarray = eqx.static_field()
     code_ancestry_mask: jnp.ndarray = eqx.static_field()
-    index: jnp.ndarray = eqx.static_array()
+    index: jnp.ndarray = eqx.static_field()
 
-    def __init__(self, basic_embeddings: jnp.ndarray, attention_dim: int,
+    def __init__(self, basic_embeddings: jnp.ndarray, attention_size: int,
                  attention_method: str, ancestors_mat: jnp.ndarray,
                  embeddings_size: int, key: "jax.random.PRNGKey"):
         super().__init__(input_size=len(basic_embeddings),
@@ -130,7 +130,7 @@ class GRAM(AbstractEmbeddingsLayer):
             ancestors_mat)
         self.index = jnp.arange(len(ancestors_mat))
         self.f_att = attention_cls(embeddings_size=embeddings_size,
-                                   attention_dim=attention_dim,
+                                   attention_size=attention_size,
                                    key=key)
 
     @staticmethod
@@ -202,11 +202,11 @@ class GRAM(AbstractEmbeddingsLayer):
                 'iterations': 30,
                 'window_size_days': 2 * 365
             },
-            'embeddings_dim':
+            'embeddings_size':
             trial.suggest_int(f'{prefix}_k', 30, 300, 30),
             'attention_method':
             trial.suggest_categorical(f'{prefix}_att_f', ['tanh', 'l2']),
-            'attention_dim':
+            'attention_size':
             trial.suggest_int(f'{prefix}_att_d', 30, 300, 30),
         }
 
@@ -261,9 +261,6 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
                                     use_bias=True,
                                     key=key)
 
-    def init_params(self, prng_key):
-        return self.init_emb(prng_key, jnp.zeros((self.input_dim, )))
-
     def compute_embeddings_mat(self, params):
         return self
 
@@ -274,7 +271,7 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         return {
-            'embeddings_dim': trial.suggest_int(f'{prefix}_k', 30, 300, 30)
+            'embeddings_size': trial.suggest_int(f'{prefix}_k', 30, 300, 30)
         }
 
 
@@ -285,21 +282,13 @@ class LogitsDecoder(eqx.Module):
 
     def __init__(self, n_layers: int, embeddings_size: int, output_size: int,
                  key: "jax.random.PRNGKey"):
-
-        def _act(index):
-            if index < n_layers - 2:
-                return jax.nn.leaky_relu
-            else:
-                return jnp.tanh
-
         layers = []
         for i, k in enumerate(jrandom.split(key, n_layers)):
+            out_size = output_size if i == n_layers - 1 else embeddings_size
+            act = jax.nn.leaky_relu if i < n_layers - 2 else jnp.tanh
             layers.append(
-                eqx.nn.Linear(embeddings_size,
-                              embeddings_size,
-                              use_bias=True,
-                              key=k))
-            layers.append(eqx.nn.Lambda(_act(i)))
+                eqx.nn.Linear(embeddings_size, out_size, use_bias=True, key=k))
+            layers.append(eqx.nn.Lambda(act))
 
         self.f_dec = eqx.nn.Sequential(layers[:-1])
 

@@ -4,20 +4,20 @@ from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-import eqionox as eqx
+from jax.experimental.jet import jet
+from jax.nn import sigmoid
+
+import equinox as eqx
 
 from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
                      NoAdjoint)
-
-from jax.experimental.jet import jet
-from jax.nn import softplus, sigmoid, leaky_relu
 
 
 class ControlledDynamics(eqx.Module):
     f: Callable
     c: jnp.ndarray = eqx.static_field()
 
-    def __init__(self, t, x, args):
+    def __call__(self, t, x, args):
         return self.f(t, jnp.concatenate((self.c, x)), args)
 
 
@@ -33,20 +33,16 @@ class GRUDynamics(eqx.Module):
     def __init__(self, hidden_size: int, state_size: int, use_bias: bool,
                  key: "jax.random.PRNGKey"):
         super().__init__()
-        k1, k2, k3, k4, k5, k6 = jrandom.split(key, 6)
-        self.x_r = self.shallow_net(state_size, hidden_size, jax.nn.relu,
-                                    jax.nn.sigmoid, k1, k2)
-        self.x_z = self.shallow_net(state_size, hidden_size, jax.nn.relu,
-                                    jax.nn.sigmoid, k3, k4)
-        self.rx_g = self.shallow_net(state_size, hidden_size, jax.nn.relu,
-                                     jax.nn.tanh, k5, k6)
+        k1, k2, k3 = jrandom.split(key, 3)
+        self.x_r = self.shallow_net(state_size, hidden_size, sigmoid, k1)
+        self.x_z = self.shallow_net(state_size, hidden_size, sigmoid, k2)
+        self.rx_g = self.shallow_net(state_size, hidden_size, jax.nn.tanh, k3)
 
     @staticmethod
-    def shallow_net(state_size, hidden_size, act1, key1, use_bias=True):
+    def shallow_net(state_size, hidden_size, act, key, use_bias=True):
         return eqx.nn.Sequential([
-            eqx.nn.Linear(hidden_size, state_size, use_bias=use_bias,
-                          key=key2),
-            eqx.nn.Lambda(act2)
+            eqx.nn.Linear(hidden_size, state_size, use_bias=use_bias, key=key),
+            eqx.nn.Lambda(act)
         ])
 
     def __call__(self, x: jnp.ndarray,
@@ -145,11 +141,11 @@ class NeuralODE(eqx.Module):
 
     def __call__(self, t, x, args=dict()):
         dt0 = self.initial_step_size(t[0], x[0, :], 4, 1.4e-8, 1.4e-8,
-                                     self.f_dyn(x[0, :]))
+                                     self.ode_dyn(x[0, :]))
         n_samples = args.get('n_samples', 2)
         t = jnp.linspace(0.0, t / self.timescale, n_samples)
         x0 = self.get_x0(x, args)
-        term = self.ode_term(self.ode_dyn, args)
+        term = self.ode_term(args)
         saveat = SaveAt(ts=t)
         solver = Dopri5()
 
@@ -175,7 +171,7 @@ class NeuralODE(eqx.Module):
             return x0
 
     def ode_term(self, args):
-        term = VectorField(self.f_dyn)
+        term = VectorField(self.ode_dyn)
         if args.get('control', None) is not None:
             term = ControlledDynamics(term, args['control'])
         if args.get('tay_reg', 0) > 0:
@@ -196,7 +192,7 @@ class NeuralODE(eqx.Module):
 
         h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
         y1 = y0 + h0.astype(dtype) * f0
-        f1 = self.f_dyn(y1)
+        f1 = self.ode_dyn(y1)
         d2 = jnp.linalg.norm((f1 - f0) / scale.astype(dtype)) / h0
 
         h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
@@ -234,92 +230,3 @@ class StateUpdate(eqx.Module):
         gru_input = jnp.hstack((projected_error, state))
 
         return self.f_update(gru_input)
-
-
-class StateDiagnosesDecoder(hk.Module):
-
-    def __init__(self,
-                 n_layers_d1: int,
-                 n_layers_d2: int,
-                 embeddings_size: int,
-                 diag_size: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-
-        def build_layers(n_layers, output_size):
-            layers = [
-                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
-                for i in range(n_layers - 2)
-            ]
-            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
-            layers.append(hk.Linear(output_size))
-
-            return layers
-
-        self.__dec1 = hk.Sequential(build_layers(n_layers_d1, embeddings_size),
-                                    name='dec_1')
-        self.__dec2 = hk.Sequential(build_layers(n_layers_d2, diag_size),
-                                    name='dec_2')
-
-    def __call__(self, h: jnp.ndarray):
-        dec_emb = self.__dec1(h)
-        dec_diag = self.__dec2(dec_emb)
-        return dec_emb, jax.nn.softmax(dec_diag)
-
-
-class EmbeddingsDecoder(hk.Module):
-
-    def __init__(self,
-                 n_layers: int,
-                 embeddings_size: int,
-                 diag_size: int,
-                 name: Optional[str] = None):
-        super().__init__(name=name)
-
-        def build_layers(n_layers, output_size):
-            layers = [
-                lambda x: leaky_relu(hk.Linear(embeddings_size)(x), 0.2)
-                for i in range(n_layers - 2)
-            ]
-            layers.append(lambda x: jnp.tanh(hk.Linear(embeddings_size)(x)))
-            layers.append(hk.Linear(output_size))
-
-            return layers
-
-        self.__dec = hk.Sequential(build_layers(n_layers, diag_size),
-                                   name='dec')
-
-    def __call__(self, emb: jnp.ndarray):
-        dec_diag = self.__dec(emb)
-        return jax.nn.softmax(dec_diag)
-
-
-
-class DiagnosticSamplesCombine(hk.Module):
-
-    def __init__(self, embeddings_size: int, name: Optional[str] = None):
-        super().__init__(name=name)
-        self.__gru_e = hk.GRU(embeddings_size // 2, name='gru_1')
-        self.__gru_d = hk.GRU(embeddings_size // 2, name='gru_2')
-        self.__att_e = hk.Linear(1)
-        self.__att_d = hk.Linear(1)
-
-    def __call__(self, emb_seq: jnp.ndarray, diag_seq):
-        initial_state = self.__gru_e.initial_state(1).squeeze()
-        rnn_states_e, _ = hk.dynamic_unroll(self.__gru_e,
-                                            emb_seq,
-                                            initial_state,
-                                            reverse=True)
-        att_weights_e = jax.vmap(self.__att_e)(rnn_states_e)
-        att_weights_e = jax.nn.tanh(att_weights_e)
-
-        initial_state = self.__gru_d.initial_state(1).squeeze()
-        rnn_states_d, _ = hk.dynamic_unroll(self.__gru_d,
-                                            emb_seq,
-                                            initial_state,
-                                            reverse=True)
-        att_weights_d = jax.vmap(self.__att_d)(rnn_states_d)
-        att_weights_d = jax.nn.softmax(att_weights_d)
-
-        return (sum(a * e for a, e in zip(att_weights_e, emb_seq)),
-                sum(a * d for a, d in zip(att_weights_d, diag_seq)))

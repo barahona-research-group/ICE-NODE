@@ -1,16 +1,18 @@
 """JAX implementation of RETAIN algorithm."""
 from __future__ import annotations
 from functools import partial
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List, TYPE_CHECKING, Callable
 
-import haiku as hk
 import jax
+import jax.random as jrandom
 import jax.numpy as jnp
+
+import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
 
-from .. import ehr
+from ..ehr import Subject_JAX
 from .. import embeddings as E
 from .. import metric
 from .. import utils
@@ -25,99 +27,51 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 
 class RETAIN(AbstractModel):
+    state_a_size: int
+    state_b_size: int
 
-    def __init__(self, subject_interface: ehr.Subject_JAX,
-                 dx_emb: E.AbstractEmbeddingsLayer, state_a_size: int,
-                 state_b_size: int):
+    gru_a: Callable
+    gru_b: Callable
+    att_a: Callable
+    att_b: Callable
 
-        self.subject_interface = subject_interface
-        self.dx_emb = dx_emb
+    def __init__(self, state_a_size: int, state_b_size: int,
+                 key: "jax.random.PRNGKey", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.state_a_size
+        self.state_b_size
 
-        self.dimensions = {
-            'dx_emb': dx_emb.embeddings_dim,
-            'dx_in': subject_interface.dx_dim,
-            'dx_outcome': subject_interface.dx_outcome_dim,
-            'state_a': state_a_size,
-            'state_b': state_b_size
-        }
+        k1, k2, k3, k4 = jrandom.split(key, 4)
+        self.gru_a = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
+                                    self.control_size,
+                                    state_a_size,
+                                    use_bias=True,
+                                    key=k1)
+        self.gru_b = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
+                                    self.control_size,
+                                    state_b_size,
+                                    use_bias=True,
+                                    key=k2)
 
-        gru_a_init, gru_a = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(hk.GRU,
-                                  hidden_size=state_a_size,
-                                  name='gru_a')))
-        self.gru_a = jax.jit(gru_a)
+        self.att_a = eqx.nn.Linear(state_a_size, 1, use_bias=True, key=k3)
+        self.att_b = eqx.nn.Linear(state_b_size,
+                                   self.dx_emb.embeddings_size,
+                                   use_bias=True,
+                                   key=k3)
 
-        gru_b_init, gru_b = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(hk.GRU,
-                                  hidden_size=state_b_size,
-                                  name='gru_b')))
-        self.gru_b = jax.jit(gru_b)
-
-        # Followed by a softmax on e1, e2, ..., -> alpha1, alpha2, ...
-        att_layer_a_init, att_layer_a = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(hk.Linear, output_size=1,
-                                  name='att_layer_a')))
-        self.att_layer_a = jax.jit(att_layer_a)
-
-        # followed by a tanh
-        att_layer_b_init, att_layer_b = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(hk.Linear,
-                                  output_size=self.dimensions['dx_emb'],
-                                  name='att_layer_b')))
-        self.att_layer_b = jax.jit(att_layer_b)
-
-        decode_init, decode = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(hk.Linear,
-                                  output_size=self.dimensions['dx_outcome'],
-                                  name='decoder')))
-        self.decode = jax.jit(decode)
-
-        self.initializers = {
-            'gru_a': gru_a_init,
-            'gru_b': gru_b_init,
-            'att_layer_a': att_layer_a_init,
-            'att_layer_b': att_layer_b_init,
-            'decode': decode_init
-        }
-
-    def init_params(self, prng_seed=0):
-        rng_key = jax.random.PRNGKey(prng_seed)
-        state_a = jnp.zeros(self.dimensions['state_a'])
-        state_b = jnp.zeros(self.dimensions['state_b'])
-
-        dx_emb = jnp.zeros(self.dimensions['dx_emb'])
-
-        return {
-            "dx_emb": self.dx_emb.init_params(prng_seed),
-            "gru_a": self.initializers['gru_a'](rng_key, dx_emb, state_a),
-            "gru_b": self.initializers['gru_b'](rng_key, dx_emb, state_b),
-            "att_layer_a": self.initializers['att_layer_a'](rng_key, state_a),
-            "att_layer_b": self.initializers['att_layer_b'](rng_key, state_b),
-            "decode": self.initializers["decode"](rng_key, dx_emb)
-        }
-
-    def state_size(self):
-        return self.dimensions['state']
-
-    def __call__(self,
-                 params: Any,
-                 subjects_batch: List[int],
-                 return_embeddings=False):
-        G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
+    def __call__(self, subject_interface: Subject_JAX,
+                 subjects_batch: List[int], args):
+        G = self.dx_emb.compute_embeddings_mat()
         emb = jax.vmap(partial(self.dx_emb.encode, G))
 
         loss = {}
         risk_prediction = metric.BatchPredictedRisks()
-        state_a0 = jnp.zeros(self.dimensions['state_a'])
-        state_b0 = jnp.zeros(self.dimensions['state_b'])
+        state_a0 = jnp.zeros(self.state_a_size)
+        state_b0 = jnp.zeros(self.state_b_size)
 
         for subj_id in subjects_batch:
-            adms = self.subject_interface[subj_id]
+            adms = subject_interface[subj_id]
+            get_ctrl = partial(subject_interface.subject_control, subj_id)
 
             dx_vec = jnp.vstack([adm.dx_vec for adm in adms])
             dx_outcome = [adm.dx_outcome for adm in adms]
@@ -127,6 +81,12 @@ class RETAIN(AbstractModel):
 
             # v1, v2, ..., vT
             v_seq = emb(dx_vec)
+
+            # c1, c2, ..., cT. <- controls
+            c_seq = jnp.vstack([get_ctrl(adm.admission_date) for adm in adms])
+
+            # Merge controls with embeddings
+            v_seq = jnp.hstack([c_seq, v_seq])
 
             loss[subj_id] = []
 
@@ -141,18 +101,16 @@ class RETAIN(AbstractModel):
                 state_b = state_b0
                 for j in reversed(range(i)):
                     # step 2 @RETAIN paper
-                    g_j, state_a = self.gru_a(params['gru_a'], v_seq[j],
-                                              state_a)
-                    e_j = self.att_layer_a(params['att_layer_a'], g_j)
+                    g_j = state_a = self.gru_a(v_seq[j], state_a)
+                    e_j = self.att_a(g_j)
                     # After the for-loop apply softmax on e_seq to get
                     # alpha_seq
 
                     e_seq.append(e_j)
 
                     # step 3 @RETAIN paper
-                    h_j, state_b = self.gru_b(params['gru_b'], v_seq[j],
-                                              state_b)
-                    b_j = self.att_layer_b(params['att_layer_b'], h_j)
+                    h_j = state_b = self.gru_b(v_seq[j], state_b)
+                    b_j = self.att_b(h_j)
 
                     b_seq.append(jnp.tanh(b_j))
 
@@ -169,13 +127,13 @@ class RETAIN(AbstractModel):
                                 for a, b, v in zip(a_seq, b_seq, v_context))
 
                 # step 5 @RETAIN paper
-                logits = self.decode(params['decode'], c_context)
+                logits = self.dx_dec(c_context)
                 risk_prediction.add(subject_id=subj_id,
                                     admission_id=admission_id,
                                     index=i,
                                     prediction=logits,
                                     ground_truth=dx_outcome[i])
-                if return_embeddings:
+                if args.get('return_embeddings', False):
                     risk_prediction.set_subject_embeddings(
                         subject_id=subj_id, embeddings=c_context)
 

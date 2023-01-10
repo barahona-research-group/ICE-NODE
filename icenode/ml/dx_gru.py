@@ -1,16 +1,17 @@
-from functools import partial
-from typing import Any, List
+"""."""
 
-import haiku as hk
+from functools import partial
+from typing import Any, List, Callable
+
+import equinox as eqx
 import jax
+import jax.random as jrandom
 import jax.numpy as jnp
 
-from .. import ehr
-from .. import embeddings as E
 from .. import metric
-from ..utils import wrap_module
 
 from .abstract import AbstractModel
+from ..ehr import Subject_JAX
 
 
 @jax.jit
@@ -20,65 +21,36 @@ def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
 
 
 class GRU(AbstractModel):
+    f_update: Callable
 
-    def __init__(self, subject_interface: ehr.Subject_JAX,
-                 dx_emb: E.AbstractEmbeddingsLayer, state_size: int):
+    def __init__(self, key, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.f_update = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
+                                       self.control_size,
+                                       self.state_size,
+                                       use_bias=True,
+                                       key=key)
 
-        self.subject_interface = subject_interface
-        self.dx_emb = dx_emb
+    def __call__(self, subject_interface: Subject_JAX,
+                 subjects_batch: List[int], args):
 
-        self.dimensions = {
-            'dx_emb': dx_emb.embeddings_dim,
-            'dx_outcome': subject_interface.dx_outcome_dim,
-            'state': state_size
-        }
-
-        gru_init, gru = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(hk.GRU, hidden_size=state_size, name='gru')))
-        self.gru = jax.jit(gru)
-
-        out_init, out = hk.without_apply_rng(
-            hk.transform(
-                wrap_module(hk.Linear,
-                            output_size=self.dimensions['dx_outcome'],
-                            name='out')))
-        self.out = jax.jit(out)
-
-        self.initializers = {'gru': gru_init, 'out': out_init}
-
-    def init_params(self, prng_seed=0):
-        rng_key = jax.random.PRNGKey(prng_seed)
-        state = jnp.zeros(self.dimensions['state'])
-        dx_emb = jnp.zeros(self.dimensions['dx_emb'])
-
-        return {
-            "dx_emb": self.dx_emb.init_params(prng_seed),
-            "gru": self.initializers['gru'](rng_key, dx_emb, state),
-            "out": self.initializers['out'](rng_key, state)
-        }
-
-    def state_size(self):
-        return self.dimensions['state']
-
-    def __call__(self,
-                 params: Any,
-                 subjects_batch: List[int],
-                 return_embeddings=False,
-                 **kwargs):
-
-        G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
+        G = self.dx_emb.compute_embeddings_mat()
         emb = partial(self.dx_emb.encode, G)
 
         loss = {}
         risk_prediction = metric.BatchPredictedRisks()
-        state0 = jnp.zeros(self.dimensions['state'])
+        state0 = jnp.zeros(self.state_size)
         for subject_id in subjects_batch:
-            adms = self.subject_interface.batch_nth_admission([subject_id])
+            get_ctrl = partial(subject_interface.subject_control, subject_id)
+
+            adms = subject_interface.batch_nth_admission([subject_id])
             adms = [adms[n_i][subject_id] for n_i in sorted(adms)]
 
             # Exclude last input for irrelevance (not more future predictions)
             dx_vec = [adm.dx_vec for adm in adms[:-1]]
+
+            # Control inputs
+            ctrl = [get_ctrl(adm.admission_date) for adm in adms[:-1]]
 
             # Exclude first one, we need to predict them for a future step.
             dx_outcome = [adm.dx_outcome for adm in adms[1:]]
@@ -89,16 +61,17 @@ class GRU(AbstractModel):
 
             loss[subject_id] = []
             state = state0
-            for i, dx_emb in enumerate(emb_seqs):
+            for i, (dx_emb_i, ctrl_i) in enumerate(zip(emb_seqs, ctrl)):
                 y_i = dx_outcome[i]
-                output, state = self.gru(params['gru'], dx_emb, state)
-                logits = self.out(params['out'], output)
+
+                state = self.f_update(jnp.hstack((dx_emb_i, ctrl_i)), state)
+                logits = self.dx_dec(state)
                 risk_prediction.add(subject_id=subject_id,
                                     admission_id=admission_id,
                                     index=i,
                                     prediction=logits,
                                     ground_truth=y_i)
-                if return_embeddings:
+                if args.get('return_embeddings', False):
                     risk_prediction.set_subject_embeddings(
                         subject_id=subject_id, embeddings=state)
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 from collections import defaultdict
 import random
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Set
 from datetime import datetime
 from dataclasses import dataclass
 import os
@@ -22,7 +22,7 @@ from .outcome import OutcomeExtractor
 class StaticInfo_JAX:
     static_info: StaticInfo
     flags: StaticInfoFlags
-    static_control_vec: Optional[jnp.ndarray]
+    static_control_vec: jnp.ndarray
 
     def __init__(self, static_info, flags):
         self.static_info = static_info
@@ -55,7 +55,7 @@ class StaticInfo_JAX:
         if len(vec) > 0:
             return jnp.hstack(vec)
         else:
-            return None
+            return jnp.array([])
 
     def _dynamic_control_vector(self, current_date):
         vec = []
@@ -67,20 +67,25 @@ class StaticInfo_JAX:
         if len(vec) > 0:
             return jnp.hstack(vec)
         else:
-            return None
+            return jnp.array([])
 
     def control_vector(self, current_date):
-        if self.flags.age:
-            d_vec = self._dynamic_control_vector(current_date)
-            if self.static_control_vec is not None:
-                return jnp.hstack((d_vec, self.static_control_vec))
-            else:
-                return d_vec
-        else:
-            return self.static_control_vec
+        d_vec = self._dynamic_control_vector(current_date)
+        return jnp.hstack((d_vec, self.static_control_vec))
 
 
+@dataclass
 class Admission_JAX:
+    admission_time: int
+    los: int
+    admission_id: int
+    admission_date: datetime
+    dx_mapper: Any
+    pr_mapper: Any
+    dx_codes: Set[str]
+    pr_codes: Set[str]
+    dx_vec: jnp.ndarray
+    pr_vec: jnp.ndarray
 
     def __init__(self,
                  adm: Admission,
@@ -94,6 +99,7 @@ class Admission_JAX:
         self.admission_time = adm.admission_day(first_adm_date)
         self.los = adm.length_of_stay
         self.admission_id = adm.admission_id
+        self.admission_date = adm.admission_dates[0]
 
         dx_mapper = adm.dx_scheme.mapper(dx_scheme)
         pr_mapper = adm.pr_scheme.mapper(pr_scheme)

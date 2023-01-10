@@ -1,7 +1,7 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import Dict, List, Any, TYPE_CHECKING
+from typing import Dict, List, Any, TYPE_CHECKING, Callable
 from abc import ABC, abstractmethod, ABCMeta
 
 from functools import partial
@@ -22,6 +22,12 @@ from .trainer import minibatch_trainer
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
     model_cls = {}
+
+    dx_emb: Callable
+    dx_dec: Callable
+
+    state_size: int
+    control_size: int
 
     @classmethod
     def register_model(cls, label):
