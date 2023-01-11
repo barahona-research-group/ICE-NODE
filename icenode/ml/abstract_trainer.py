@@ -1,11 +1,9 @@
-import os
 import copy
-import random
 from typing import List, Any, Dict, Type, Tuple
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
 
-from absl import logging
+import pandas as pd
 from tqdm import tqdm
 import jax
 import jax.numpy as jnp
@@ -18,7 +16,7 @@ from .abstract_model import AbstractModel
 
 from .reporters import AbstractReporter
 from ..ehr import Subject_JAX
-from ..metric import BatchPredictedRisks, admissions_auc_scores, codes_auc_scores
+from .. import metric as M
 from ..utils import params_size, tree_hasnan
 
 opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
@@ -96,12 +94,7 @@ class AbstractTrainer(eqx.Module):
         args['eval_only'] = True
         _, loss, preds = self.unreg_loss(model, subject_interface, batch, args)
 
-        return {
-            'loss': loss,
-            'adm_scores': admissions_auc_scores(preds),
-            'code_scores': codes_auc_scores(preds),
-            'predictions': preds
-        }
+        return loss, preds
 
     @staticmethod
     def lr_schedule(lr, decay_rate):
@@ -125,6 +118,55 @@ class AbstractTrainer(eqx.Module):
         new_model = eqx.apply_updates(model, updates)
 
         return (opt, opt_state), new_model, aux
+
+    def evaluations(self,
+                    split_predictions: Dict[str, M.BatchPredictedRisks],
+                    split_loss: Dict[str, Dict[str, float]],
+                    code_frequency_groups=None,
+                    top_k_list=[20]):
+        evals = {split: {} for split in split_predictions}
+
+        for split, loss in split_loss.items():
+            for key, val in loss.items():
+                evals[split][key] = val
+
+        for split, preds in split_predictions.items():
+
+            # General confusion matrix statistics (after rounding risk-vals).
+            cm = M.compute_confusion_matrix(preds)
+            cm_scores = M.confusion_matrix_scores(cm)
+            for stat, val in cm_scores.items():
+                evals[split][stat] = val
+
+            for stat, val in M.auc_scores(preds).items():
+                evals[split][stat] = val
+
+            if code_frequency_groups is not None:
+                det_topk_scores = M.top_k_detectability_scores(
+                    code_frequency_groups, preds, top_k_list)
+                for k in top_k_list:
+                    for stat, val in det_topk_scores[k].items():
+                        evals[split][stat] = val
+
+            evals[split] = {
+                rowname: float(val)
+                for rowname, val in evals[split].items()
+            }
+
+        flat_evals = {}
+        for split in evals:
+            flat_evals.update(
+                {f'{split}_{key}': val
+                 for key, val in evals[split].items()})
+
+        for split, preds in split_predictions.items():
+            _, code_auc_dict = M.code_auc_scores(preds, split)
+            _, code_occ1_auc_dict = M.first_occurrence_auc_scores(preds, split)
+
+            flat_evals.update(code_auc_dict)
+            flat_evals.update(code_occ1_auc_dict)
+
+        return flat_evals
 
     @classmethod
     def sample_reg_hyperparams(cls, trial: optuna.Trial):
@@ -159,6 +201,7 @@ class AbstractTrainer(eqx.Module):
         batch_size = min(self.batch_size, len(train_ids))
         iters = round(self.epochs * len(train_ids) / batch_size)
         opt_state = self.init_opt(model)
+        key = jrandom.PRNGKey(prng_seed)
 
         for r in reporters:
             r.report_config()
@@ -167,6 +210,8 @@ class AbstractTrainer(eqx.Module):
 
         auc = 0.0
         best_score = 0.0
+        history = M.MetricsHistory()
+
         for i in tqdm(range(iters)):
             eval_step = round((i + 1) * 100 / iters)
             last_step = round(i * 100 / iters)
@@ -180,7 +225,7 @@ class AbstractTrainer(eqx.Module):
             train_batch = train_ids[:batch_size]
 
             try:
-                opt_state, model, aux = self.step_optimizer(
+                opt_state, model, _ = self.step_optimizer(
                     opt_state, model, subject_interface, train_batch, k2)
 
             except RuntimeError as e:
@@ -199,35 +244,37 @@ class AbstractTrainer(eqx.Module):
 
             [r.report_progress(eval_step) for r in reporters]
 
+            trn_loss, trn_preds = self.eval(model, subject_interface,
+                                            train_batch)
+            val_loss, val_preds = self.eval(model, subject_interface,
+                                            valid_ids)
+            split_preds = {'TRN': trn_preds, 'VAL': val_preds}
+            split_loss = {'TRN': trn_loss, 'VAL': val_loss}
             if i == iters - 1:
-                raw_res = {
-                    'TRN': self.eval(model, subject_interface, train_batch),
-                    'VAL': self.eval(model, subject_interface, valid_ids),
-                    'TST': self.eval(model, subject_interface, test_ids)
-                }
-            else:
-                raw_res = {
-                    'TRN': self.eval(model, subject_interface, train_batch),
-                    'VAL': self.eval(model, subject_interface, valid_ids)
-                }
+                tst_loss, tst_preds = self.eval(model, subject_interface,
+                                                test_ids)
+                split_preds['TST'] = tst_preds
+                split_loss['TST'] = tst_loss
 
-            eval_df, eval_flat = metric.evaluation_table(
-                raw_res, code_frequency_groups)
+            evals_dict = self.evaluations(split_preds, split_loss,
+                                          code_frequency_groups)
+            history.append_iteration(evals_dict)
 
-            auc = eval_df.loc['MICRO-AUC', 'VAL']
+            auc = evals_dict['VAL_MICRO-AUC']
 
             for r in reporters:
-                r.report_evaluation(eval_step, auc, eval_df, eval_flat)
-                r.report_params(eval_step,
-                                model,
-                                m_state,
-                                last_iter=i == iters - 1,
-                                current_best=auc > best_score)
+
+                r.report_evaluation(eval_step=eval_step,
+                                    objective_v=auc,
+                                    evals_df=history.to_df())
+
+                if auc > best_score:
+                    r.report_params(eval_step, model)
 
             if auc > best_score:
                 best_score = auc
 
-        return {'objective': auc, 'model': (model, m_state)}
+        return {'objective': auc, 'model': model}
 
 
 def onestep_trainer(model,

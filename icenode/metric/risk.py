@@ -13,6 +13,10 @@ class SubjectPredictedRisk:
     prediction: jnp.ndarray
     trajectory: Optional[jnp.ndarray] = None
 
+    @property
+    def ground_truth(self):
+        return self.admission.dx_outcome
+
     def __str__(self):
         return f"""
                 adm_id: {self.admission.admission_id}\n

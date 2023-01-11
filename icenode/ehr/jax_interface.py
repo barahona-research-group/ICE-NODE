@@ -314,6 +314,19 @@ class Subject_JAX(dict):
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
+    def code_first_occurrence(self, subject_id, exclude_first_admission=True):
+
+        adms_info = self[subject_id]
+        if exclude_first_admission:
+            adms_info = adms_info[1:]
+
+        first_occurrence = np.empty_like(adms_info[0].dx_outcome, dtype=int)
+        first_occurrence[:] = -1
+        for adm in adms_info:
+            update_mask = (first_occurrence < 0) & adm.dx_outcome
+            first_occurrence[update_mask] = adm.admission_id
+        return first_occurrence
+
     def dx_outcome_frequency_vec(self, subjects: List[Subject]):
         np_res = Subject.dx_outcome_frequency_vec(
             map(self._subjects.get, subjects), self.dx_outcome_extractor)

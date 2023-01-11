@@ -1,7 +1,7 @@
 """Performance metrics and loss functions."""
 
 from enum import Flag, auto
-from typing import Dict
+from typing import Dict, Optional, List
 
 from absl import logging
 from tqdm import tqdm
@@ -88,12 +88,13 @@ def auc_scores(risk_prediction: BatchPredictedRisks):
     return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
 
 
-def codes_auc_scores(risk_prediction: BatchPredictedRisks):
+def code_auc_scores(risk_prediction: BatchPredictedRisks, key_prefix=''):
     ground_truth = []
     predictions = []
 
-    for subject_risks in risk_prediction.values():
-        for risk in subject_risks.values():
+    for subj_id, admission_risks in risk_prediction.items():
+        for admission_idx in sorted(admission_risks):
+            risk = admission_risks[admission_idx]
             ground_truth.append(risk.ground_truth)
             predictions.append(jit_sigmoid(risk.prediction))
 
@@ -111,7 +112,51 @@ def codes_auc_scores(risk_prediction: BatchPredictedRisks):
 
     data = {'CODE_INDEX': range(len(auc)), 'N_CODES': n_codes, 'AUC': auc}
 
-    return pd.DataFrame(data)
+    auc_dict = {
+        f'{key_prefix}_AUC_{code_idx}': aucval
+        for code_idx, aucval in enumerate(auc)
+    }
+
+    return pd.DataFrame(data), auc_dict
+
+
+def first_occurrence_auc_scores(risk_prediction: BatchPredictedRisks,
+                          first_occurrence_adm: Dict[int, jnp.ndarray],
+                          key_prefix=''):
+    ground_truth = []
+    predictions = []
+    masks = []
+
+    for subj_id, admission_risks in risk_prediction.items():
+        subj_first_occurrence = first_occurrence_adm[subj_id]
+        for admission_id in sorted(admission_risks):
+            mask = (admission_id <= subj_first_occurrence)
+            risk = admission_risks[admission_id]
+            ground_truth.append(risk.ground_truth)
+            predictions.append(jit_sigmoid(risk.prediction))
+            masks.append(mask)
+
+    ground_truth_mat = onp.vstack(ground_truth)
+    predictions_mat = onp.vstack(predictions)
+    mask_mat = onp.vstack(masks).astype(bool)
+
+    n_codes = []
+    auc = []
+    for code_index in range(ground_truth_mat.shape[1]):
+        code_mask = mask_mat[:, code_index]
+        code_ground_truth = ground_truth_mat[code_mask, code_index]
+        code_predictions = predictions_mat[code_mask, code_index]
+        n_codes.append(code_mask.sum())
+
+        auc.append(compute_auc(code_ground_truth, code_predictions))
+
+    data = {'CODE_INDEX': range(len(auc)), 'N_CODES': n_codes, 'AUC': auc}
+    auc_dict = {
+        f'{key_prefix}_AUC_first_occ_{code_idx}': aucval
+        for code_idx, aucval in enumerate(auc)
+    }
+
+    return pd.DataFrame(data), auc_dict
 
 
 def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
@@ -120,13 +165,7 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
     admission_ids = []
     # Admission order mostly
     admission_indexes = []
-    # Time as days since first discharge
-    time = []
-    los = []
-    n_codes = []
     adm_auc = []
-    nfe = []
-    intervals = []
 
     for subject_id, subject_risks in risk_prediction.items():
         for i, admission_index in enumerate(sorted(subject_risks.keys())):
@@ -134,21 +173,6 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
             # If ground truth has no clinical codes, skip.
             if set(onp.unique(risk.ground_truth)) != {0, 1}:
                 continue
-
-            if 'time' in risk.other_attrs:
-                time.append(risk.other_attrs['time'])
-
-                # Record intervals between two discharges
-                if i == 0:
-                    intervals.append(time[-1])
-                else:
-                    intervals.append(risk.other_attrs['time'] - time[-2])
-
-            if 'nfe' in risk.other_attrs:
-                nfe.append(risk.other_attrs['nfe'])
-
-            if 'los' in risk.other_attrs:
-                los.append(risk.other_attrs['los'])
 
             admission_indexes.append(i)
             admission_ids.append(risk.admission_id)
@@ -158,20 +182,13 @@ def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
             diag_score = jit_sigmoid(risk.prediction)
             auc_score = compute_auc(true_diag, diag_score)
             adm_auc.append(auc_score)
-            n_codes.append(true_diag.sum())
 
     data = {
         'SUBJECT_ID': subject_ids,
         'HADM_ID': admission_ids,
         'HADM_IDX': admission_indexes,
         'AUC': adm_auc,
-        'N_CODES': n_codes
     }
-    if all(map(len, (time, intervals, los, nfe))):
-        data['TIME'] = time
-        data['INTERVALS'] = intervals
-        data['LOS'] = los
-        data['NFE'] = nfe
     return pd.DataFrame(data)
 
 
@@ -187,7 +204,9 @@ def compute_confusion_matrix(risk_prediction: BatchPredictedRisks):
         return onp.zeros((2, 2)) + onp.nan
 
 
-def top_k_detectability_scores(code_groups, risk_predictions, top_k_list):
+def top_k_detectability_scores(code_groups: List[List[int]],
+                               risk_predictions: BatchPredictedRisks,
+                               top_k_list: List[int]):
     ground_truth = []
     risks = []
 
@@ -198,7 +217,7 @@ def top_k_detectability_scores(code_groups, risk_predictions, top_k_list):
 
     risks = onp.vstack(risks)
     ground_truth = onp.vstack(ground_truth).astype(bool)
-    topk_risks = onp.argpartition(-risks, top_k_list, axis=1)
+    topk_risks = onp.argpartition(risks * -1, top_k_list, axis=1)
 
     true_positive = {}
     for k in top_k_list:
@@ -224,41 +243,6 @@ class EvalFlag(Flag):
     @staticmethod
     def has(flag, attr):
         return (flag & attr).value != 0
-
-
-def evaluation_table(raw_results, code_frequency_groups=None, top_k_list=[20]):
-    evals = {colname: {} for colname in raw_results}
-    flat_evals = {}
-    for colname, res in raw_results.items():
-        for rowname, val in res['loss'].items():
-            evals[colname][rowname] = val
-        for rowname, val in res['stats'].items():
-            evals[colname][rowname] = val
-
-        cm = compute_confusion_matrix(res['risk_prediction'])
-        cm_scores = confusion_matrix_scores(cm)
-        for rowname, val in cm_scores.items():
-            evals[colname][rowname] = val
-
-        for rowname, val in auc_scores(res['risk_prediction']).items():
-            evals[colname][rowname] = val
-
-        if code_frequency_groups is not None:
-            det_topk_scores = top_k_detectability_scores(
-                code_frequency_groups, res['risk_prediction'], top_k_list)
-            for k in top_k_list:
-                for rowname, val in det_topk_scores[k].items():
-                    evals[colname][rowname] = val
-
-        evals[colname] = {
-            rowname: float(val)
-            for rowname, val in evals[colname].items()
-        }
-        flat_evals.update({
-            f'{colname}_{rowname}': val
-            for rowname, val in evals[colname].items()
-        })
-    return pd.DataFrame(evals), flat_evals
 
 
 def codes_auc_pairwise_tests(results: Dict[str, BatchPredictedRisks],
