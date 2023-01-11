@@ -1,34 +1,23 @@
 """Encapsulation of predicted risk for a dictionary of subjects."""
 
+from dataclasses import dataclass
+from typing import Optional
 import jax.numpy as jnp
 
+from ..ehr import Admission_JAX
 
+
+@dataclass
 class SubjectPredictedRisk:
-
-    def __init__(self,
-                 admission_id,
-                 index,
-                 prediction,
-                 ground_truth=None,
-                 **other_attrs):
-        self.admission_id = admission_id
-        self.index = index
-        self.prediction = prediction
-        self.ground_truth = ground_truth
-        self.other_attrs = other_attrs
+    admission: Admission_JAX
+    prediction: jnp.ndarray
+    trajectory: Optional[jnp.ndarray] = None
 
     def __str__(self):
         return f"""
-    adm_id (i: {self.index}): {self.admission_id}\n
-    prediction: {self.prediction}\n
-    ground_truth: {self.ground_truth}
-    """
-
-    def __eq__(self, other):
-        id_attrs = lambda x: (x.admission_id, x.index)
-        arr_attrs = lambda x: (x.prediction, x.ground_truth)
-        return id_attrs(self) == id_attrs(other) and \
-            all(map(jnp.array_equal, arr_attrs(self), arr_attrs(other)))
+                adm_id: {self.admission.admission_id}\n
+                prediction: {self.prediction}\n
+                """
 
 
 class BatchPredictedRisks(dict):
@@ -51,21 +40,16 @@ class BatchPredictedRisks(dict):
         return self.embeddings[subject_id]
 
     def add(self,
-            subject_id,
-            admission_id,
-            index,
-            prediction,
-            ground_truth=None,
-            **other_attrs):
+            subject_id: int,
+            admission: Admission_JAX,
+            prediction: jnp.ndarray,
+            trajectory: Optional[jnp.ndarray] = None):
+
         if subject_id not in self:
             self[subject_id] = {}
 
-        self[subject_id][index] = SubjectPredictedRisk(
-            admission_id=admission_id,
-            index=index,
-            prediction=prediction,
-            ground_truth=ground_truth,
-            **other_attrs)
+        self[subject_id][admission.admission_id] = SubjectPredictedRisk(
+            admission=admission, prediction=prediction, trajectory=trajectory)
 
     def get_subjects(self):
         return sorted(self.keys())
@@ -73,3 +57,17 @@ class BatchPredictedRisks(dict):
     def get_risks(self, subject_id):
         risks = self[subject_id]
         return list(map(risks.get, sorted(risks)))
+
+    def subject_prediction_loss(self, subject_id, loss_f):
+        loss = [
+            loss_f(r.admission.dx_outcome, r.prediction)
+            for r in self[subject_id].values()
+        ]
+        return sum(loss) / len(loss)
+
+    def prediction_loss(self, loss_f):
+        loss = [
+            self.subject_prediction_loss(subject_id, loss_f)
+            for subject_id in self.keys()
+        ]
+        return sum(loss) / len(loss)

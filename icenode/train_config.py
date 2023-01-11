@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Iterable, Dict, Any
 from absl import logging
 from tqdm import tqdm
-
 import jax
 
 from .metrics import evaluation_table

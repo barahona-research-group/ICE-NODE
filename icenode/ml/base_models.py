@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jax.experimental.jet import jet
 from jax.nn import sigmoid
-
+import jax.tree_util as jtu
 import equinox as eqx
 
 from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
@@ -26,24 +26,30 @@ class GRUDynamics(eqx.Module):
     Modified GRU unit to deal with latent state ``h(t)``.
     """
 
+    x_x: eqx.Module
     x_r: eqx.Module
     x_z: eqx.Module
     rx_g: eqx.Module
 
-    def __init__(self, hidden_size: int, state_size: int, use_bias: bool,
+    def __init__(self, input_size: int, state_size: int, use_bias: bool,
                  key: "jax.random.PRNGKey"):
-        super().__init__()
-        k1, k2, k3 = jrandom.split(key, 3)
-        self.x_r = self.shallow_net(state_size, hidden_size, sigmoid, k1)
-        self.x_z = self.shallow_net(state_size, hidden_size, sigmoid, k2)
-        self.rx_g = self.shallow_net(state_size, hidden_size, jax.nn.tanh, k3)
+        k0, k1, k2, k3 = jrandom.split(key, 4)
+        self.x_x = self.shallow_net(input_size, state_size, lambda x: x, k0)
+        self.x_r = self.shallow_net(input_size, state_size, sigmoid, k1)
+        self.x_z = self.shallow_net(input_size, state_size, sigmoid, k2)
+        self.rx_g = self.shallow_net(input_size, state_size, jax.nn.tanh, k3)
 
     @staticmethod
-    def shallow_net(state_size, hidden_size, act, key, use_bias=True):
+    def shallow_net(input_size, state_size, act, key, use_bias=True):
         return eqx.nn.Sequential([
-            eqx.nn.Linear(hidden_size, state_size, use_bias=use_bias, key=key),
+            eqx.nn.Linear(input_size, state_size, use_bias=use_bias, key=key),
             eqx.nn.Lambda(act)
         ])
+
+    def weights(self):
+        weights = eqx.filter(self, lambda m: m.weight)
+        weights, _ = jtu.tree_flatten(weights)
+        return weights
 
     def __call__(self, x: jnp.ndarray,
                  key: "jax.random.PRNGKey") -> jnp.ndarray:
@@ -55,6 +61,7 @@ class GRUDynamics(eqx.Module):
         Returns:
             dh/dt
         """
+        x = self.x_x(x)
         r = self.x_r(x)
         z = self.x_z(x)
         g = self.rx_g(r * x)
@@ -132,18 +139,25 @@ class VectorField(eqx.Module):
 
 
 class NeuralODE(eqx.Module):
-    timescale: float = eqx.static_field()
     ode_dyn: Callable
+    timescale: float = eqx.static_field()
 
-    def __init__(self, f: Callable, tay_reg: int, timescale: float):
-        self.timescale = timescale
-        self.ode_dyn = TaylorAugmented(tay_reg, f)
+    @staticmethod
+    def timesamples(int_time, dt):
+        if dt < 0:
+            dt = int_time
+        return jnp.linspace(0, int_time - int_time % dt,
+                            round((int_time - int_time % dt) / dt + 1))
 
     def __call__(self, t, x, args=dict()):
         dt0 = self.initial_step_size(t[0], x[0, :], 4, 1.4e-8, 1.4e-8,
                                      self.ode_dyn(x[0, :]))
-        n_samples = args.get('n_samples', 2)
-        t = jnp.linspace(0.0, t / self.timescale, n_samples)
+        sampling_rate = args.get('sampling_rate', None)
+        if sampling_rate:
+            t = self.timesamples(t, sampling_rate)
+        else:
+            t = jnp.linspace(0.0, t / self.timescale, 2)
+
         x0 = self.get_x0(x, args)
         term = self.ode_term(args)
         saveat = SaveAt(ts=t)
@@ -172,7 +186,7 @@ class NeuralODE(eqx.Module):
 
     def ode_term(self, args):
         term = VectorField(self.ode_dyn)
-        if args.get('control', None) is not None:
+        if len(args.get('control', jnp.array([]))) > 0:
             term = ControlledDynamics(term, args['control'])
         if args.get('tay_reg', 0) > 0:
             term = TaylorAugmented(term, args['tay_reg'])
@@ -227,6 +241,5 @@ class StateUpdate(eqx.Module):
 
         projected_error = self.f_project_error(
             jnp.hstack((predicted_emb, nominal_emb)))
-        gru_input = jnp.hstack((projected_error, state))
 
-        return self.f_update(gru_input)
+        return self.f_update(projected_error, state)

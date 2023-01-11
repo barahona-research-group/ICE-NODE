@@ -1,197 +1,124 @@
 """."""
 from __future__ import annotations
 from functools import partial
-from typing import Any, Dict, List, TYPE_CHECKING
+from collections import namedtuple
+from typing import Any, Dict, List
 import re
 
-from tqdm import tqdm
 import jax
-from jax import lax
 import jax.numpy as jnp
-import numpy as onp
+import jax.random as jrandom
 import equinox as eqx
+import optuna
 
-if TYPE_CHECKING:
-    import optuna
+from ..metric import balanced_focal_bce, BatchPredictedRisks
+from ..utils import model_params_scaler
+from ..ehr import Subject_JAX, Admission_JAX
 
-from .. import metric
-from .. import utils
-from .. import ehr
-from .. import embeddings as E
-
-from .base_models import (MLPDynamics, ResDynamics, GRUDynamics, NeuralODE,
-                          EmbeddingsDecoder_Logits, StateUpdate)
-from .abstract import AbstractModel
+from .base_models import (GRUDynamics, NeuralODE, StateUpdate)
+from .abstract_trainer import AbstractTrainer
+from .abstract_model import AbstractModel
 
 
-def dyn_cls(label):
+def ode_dyn(label, state_size, embeddings_size, control_size, key):
     if 'mlp' in label:
         depth = int(re.findall(r'\d+\b', label)[0])
-        return lambda state_size, **kwargs: eqx.MLP(
-            in_size=state_size,
-            out_size=state_size,
-            width_size=state_size,
-            depth=depth,
-            activation=jax.nn.tanh,
-            final_activation=jax.nn.tanh,
-            **kwargs
-        )
+        label = 'mlp'
     else:
-        return {
-        'res': ResDynamics,
-        'gru': GRUDynamics}[label]
+        depth = 0
+
+    dyn_state_size = state_size + embeddings_size
+    input_size = state_size + embeddings_size + control_size
+
+    nn_kwargs = {
+        'mlp':
+        dict(activation=jax.nn.tanh,
+             depth=depth,
+             in_size=input_size,
+             out_size=dyn_state_size),
+        'gru':
+        dict(input_size=input_size, state_size=dyn_state_size)
+    }
+
+    if label == 'mlp':
+        return eqx.nn.MLP(**nn_kwargs['mlp'], key=key)
+    if label == 'gru':
+        return GRUDynamics(**nn_kwargs['gru'], key=key)
+
+    raise RuntimeError(f'Unexpected dynamics label: {label}')
 
 
-class ICENODEResult(dict):
-
-    @staticmethod
-    def combine(res_list):
-        pred_loss = jnp.average(
-            jnp.array([r['prediction_loss'] for r in res_list]),
-            weights=jnp.array([r['admissions_count'] for r in res_list]))
-
-        risk_prediction = res_list[0]['risk_prediction'].copy()
-        for r in res_list[1:]:
-            risk_prediction.update(r['risk_prediction'])
-        return {
-            'prediction_loss': pred_loss,
-            'dyn_loss': sum(r['dyn_loss'] for r in res_list),
-            'odeint_weeks': sum(r['odeint_weeks'] for r in res_list),
-            'admissions_count': sum(r['admissions_count'] for r in res_list),
-            'nfe': sum(r['nfe'] for r in res_list),
-            'risk_prediction': risk_prediction
-        }
+SubjectState = namedtuple('SubjectState', ['state', 'time'])
 
 
 class ICENODE(AbstractModel):
-    dx_emb: E.AbstractEmbeddingsLayer
-    dx_dec: E.AbstractEmbeddingsLayer
-    n_ode: eqx.Module
+    ode_dyn: eqx.Module
+    f_update: eqx.Module
 
-    ode_dyn: str
-    ode_init_var: float
-    state_size: int
-    timescale: float
+    ode_init_var: float = eqx.static_field()
+    timescale: float = eqx.static_field()
 
-    def __init__(self, dx_emb: E.AbstractEmbeddingsLayer,
-                 dx_dec: E.AbstractEmbeddingsLayer, ode_dyn: str,
-                 ode_with_bias: bool, ode_init_var: float, state_size: int,
-                 timescale: float):
-        self.dx_emb = dx_emb
+    def __init__(self, ode_dyn_label: str, ode_init_var: float,
+                 timescale: float, key: "jax.random.PRNGKey", *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.timescale = timescale
-        self.n_ode = NeuralODE(
-        f_n_ode_init, f_n_ode = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(NeuralODE,
-                                  ode_dyn_cls=ode_dyn_cls,
-                                  state_size=state_emb_size,
-                                  depth=depth,
-                                  timescale=timescale,
-                                  with_bias=ode_with_bias,
-                                  init_var=ode_init_var,
-                                  name='f_n_ode',
-                                  tay_reg=3)))
-        self.f_n_ode = jax.jit(f_n_ode, static_argnums=(1, 2))
+        key1, key2 = jrandom.split(key, 2)
+        ode_dyn_f = ode_dyn(ode_dyn_label,
+                            state_size=self.state_size,
+                            embeddings_size=self.dx_emb.embeddings_size,
+                            control_size=self.control_size,
+                            key=key1)
+        ode_dyn_f = model_params_scaler(ode_dyn_f, ode_init_var,
+                                        eqx.is_inexact_array)
 
-        f_update_init, f_update = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(StateUpdate,
-                                  state_size=state_size,
-                                  embeddings_size=self.dimensions['dx_emb'],
-                                  name='f_update')))
-        self.f_update = jax.jit(f_update)
+        self.ode_dyn = NeuralODE(ode_dyn_f, timescale=timescale)
 
-        f_dec_init, f_dec = hk.without_apply_rng(
-            hk.transform(
-                utils.wrap_module(EmbeddingsDecoder_Logits,
-                                  n_layers=2,
-                                  embeddings_size=self.dimensions['dx_emb'],
-                                  diag_size=self.dimensions['dx_outcome'],
-                                  name='f_dec')))
-        self.f_dec = jax.jit(f_dec)
-
-        self.initializers = {
-            'f_n_ode': f_n_ode_init,
-            'f_update': f_update_init,
-            'f_dec': f_dec_init
-        }
+        self.f_update = StateUpdate(
+            state_size=self.state_size,
+            embeddings_size=self.dx_emb.embeddings_size,
+            key=key2)
 
     def join_state_emb(self, state, emb):
         if state is None:
-            state = jnp.zeros((self.dimensions['state'], ))
+            state = jnp.zeros((self.state_size, ))
         return jnp.hstack((state, emb))
 
-    def split_state_emb(self, state_emb):
-        return jnp.split(state_emb, (self.dimensions['state'], ))
+    def split_state_emb(self, state: SubjectState):
+        return jnp.split(state.state, (self.state_size, ), axis=-1)
 
-    def _extract_nth_admission(self, params: Any,
-                               batch: Dict[int, Dict[int, ehr.Admission_JAX]],
-                               n: int) -> Dict[str, Dict[int, jnp.ndarray]]:
-        adms = batch[n]
-        if len(adms) == 0:
-            return None
-
-        dx_G = self.dx_emb.compute_embeddings_mat(params["dx_emb"])
-        dx_emb = {
-            i: self.dx_emb.encode(dx_G, adm.dx_vec)
-            for i, adm in adms.items()
-        }
-        dx_outcome = {i: adm.dx_outcome for i, adm in adms.items()}
-        los = {i: adm.los for i, adm in adms.items()}
-        adm_id = {i: adm.admission_id for i, adm in adms.items()}
-        adm_time = {i: adm.admission_time for i, adm in adms.items()}
-
-        return {
-            'admission_time': adm_time,
-            'los': los,
-            'dx_emb': dx_emb,
-            'dx_outcome': dx_outcome,
-            'admission_id': adm_id
-        }
-
-    def _f_n_ode_nfe(self, params, count_nfe, emb, t, c):
-        if count_nfe:
-            return {
-                i: self.f_n_ode(params['f_n_ode'], 2, True, emb[i], t[i],
-                                c.get(i))[-1]
-                for i in t
-            }
+    @eqx.filter_jit
+    def _integrate_state(self, subject_state: SubjectState, int_time: float,
+                         ctrl: jnp.ndarray, args: Dict[str, Any]):
+        args = dict(control=ctrl, n_samples=2, **args)
+        out = self.ode_dyn(subject_state.state, int_time, args)
+        if args.get('tay_reg', 0) > 0:
+            state, r, traj = out[0][-1], out[1][-1], out[0]
         else:
-            return {i: 0 for i in t}
+            state, r, traj = out[-1], 0.0, out
 
-    def _f_n_ode(self, params, count_nfe, state, t, c={}):
-        s_r_nfe = {
-            i: self.f_n_ode(params['f_n_ode'], 2, False, state[i], t[i],
-                            c.get(i))
-            for i in t
-        }
-        n = self._f_n_ode_nfe(params, count_nfe, state, t, c)
-        r = {i: r.squeeze() for i, (_, r, _) in s_r_nfe.items()}
-        s = {i: s[-1, :] for i, (s, _, _) in s_r_nfe.items()}
-        return s, r, n
+        if args.get('sampling_rate', None) is None:
+            traj = None
 
-    def _f_update(self, params: Any, state_e: Dict[int, jnp.ndarray],
-                  **kwargs) -> jnp.ndarray:
-        new_state = {}
-        for i in state_e.keys():
-            dx_emb = kwargs['dx_emb'][i]
-            state, dx_emb_hat = self.split_state_emb(state_e[i])
-            state = self.f_update(params['f_update'], state, dx_emb_hat,
-                                  dx_emb)
-            new_state[i] = self.join_state_emb(state, dx_emb)
-        return new_state
+        return SubjectState(state, subject_state.time + int_time), r, traj
 
-    def _f_dec(self, params: Any, state_e: Dict[int, jnp.ndarray]):
-        emb = {i: self.split_state_emb(state_e[i])[1] for i in state_e}
-        return {i: self.f_dec(params['f_dec'], emb[i]) for i in emb}
+    @eqx.filter_jit
+    def _update_state(self, subject_state: SubjectState,
+                      adm_info: Admission_JAX,
+                      dx_emb: jnp.ndarray) -> jnp.ndarray:
+        state, dx_emb_hat = self.split_state_emb(subject_state)
+        state = self.f_update(state, dx_emb_hat, dx_emb)
+        return SubjectState(self.join_state_emb(state, dx_emb),
+                            adm_info.admission_time + adm_info.los)
 
-    def _dx_loss(self, dx: Dict[int, jnp.ndarray], dec_dx: Dict[int,
-                                                                jnp.ndarray]):
-        l = [
-            metric.balanced_focal_bce(dx[i], dec_dx[i])
-            for i in sorted(dx.keys())
-        ]
-        return sum(l) / len(l)
+    @eqx.filter_jit
+    def _decode(self, subject_state: SubjectState):
+        _, dx_emb_hat = self.split_state_emb(subject_state)
+        return self.dx_dec(dx_emb_hat)
+
+    @eqx.filter_jit
+    def _decode_trajectory(self, traj: SubjectState):
+        _, dx_emb_hat = self.split_state_emb(traj)
+        return jax.vmap(self.dx_dec)(dx_emb_hat)
 
     @staticmethod
     def _time_diff(t1, t2):
@@ -203,300 +130,116 @@ class ICENODE(AbstractModel):
         return t1 - t2
 
     def __call__(self,
-                 params: Any,
+                 subject_interface: Subject_JAX,
                  subjects_batch: List[int],
-                 count_nfe: bool = False,
-                 return_embeddings: bool = False):
-        batch = self.subject_interface.batch_nth_admission(subjects_batch)
-        nth_adm = partial(self._extract_nth_admission, params, batch)
-        nn_ode = partial(self._f_n_ode, params, count_nfe)
-        nn_update = partial(self._f_update, params)
-        nn_decode = partial(self._f_dec, params)
-        dx_loss = self._dx_loss
+                 args=dict()):
 
-        adm0 = nth_adm(0)
-        subject_state = {
-            i: {
-                'state_e': self.join_state_emb(None, adm0['dx_emb'][i]),
-                'time': adm0['admission_time'][i] + adm0['los'][i]
-            }
-            for i in adm0['admission_id']
-        }
+        dx_G = self.dx_emb.compute_embeddings_mat()
+        f_emb = partial(self.dx_emb, dx_G)
+        risk_prediction = BatchPredictedRisks()
+        dyn_loss = []
 
-        total_nfe = 0
+        for subj_i in subjects_batch:
+            adms = subject_interface[subj_i]
+            emb_seq = [f_emb(adm.dx_vec) for adm in adms]
+            ctrl_seq = [
+                subject_interface.subject_control(subj_i, adm.admission_date)
+                for adm in adms
+            ]
+            subject_state = SubjectState(self.join_state_emb(None, emb_seq[0]),
+                                         adms[0].admission_time + adms[0].los)
 
-        prediction_losses = []
-        risk_prediction = metric.BatchPredictedRisks()
-        adm_counts = []
-        odeint_time = []
-        dyn_loss = 0
+            for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[1:]):
 
-        for n in sorted(batch)[1:]:
-            adm_n = nth_adm(n)
-            if adm_n is None:
-                break
-            adm_id = adm_n['admission_id']
-            adm_los = adm_n['los']  # length of stay
-            adm_time = adm_n['admission_time']
-            dx = adm_n['dx_outcome']
+                # Discharge-to-discharge time.
+                d2d_time = self._time_diff(adm.time + adm.los,
+                                           subject_state.time)
 
-            adm_counts.append(len(adm_id))
+                # Integrate until next discharge
+                subject_state, r, traj = self._integrate_state(
+                    subject_state, d2d_time, ctrl, args)
+                dyn_loss.append(r)
 
-            state_e = {i: subject_state[i]['state_e'] for i in adm_id}
+                dec_dx = self._decode(subject_state)
 
-            d2d_time = {
-                i: self._time_diff(adm_time[i] + adm_los[i],
-                                   subject_state[i]['time'])
-                for i in adm_id
-            }
+                risk_prediction.add(subject_id=subj_i,
+                                    admission=adm,
+                                    prediction=dec_dx,
+                                    trajectory=traj)
 
-            # Integrate until next discharge
-            state_e, r, nfe = nn_ode(state_e, d2d_time)
-            dec_dx = nn_decode(state_e)
-
-            for subject_id in state_e.keys():
-                risk_prediction.add(subject_id=subject_id,
-                                    admission_id=adm_id[subject_id],
-                                    ground_truth=dx[subject_id],
-                                    prediction=dec_dx[subject_id],
-                                    index=n,
-                                    time=adm_time[subject_id] +
-                                    adm_los[subject_id],
-                                    los=adm_los[subject_id],
-                                    nfe=nfe[subject_id])
-
-                if return_embeddings:
+                if args.get('return_embeddings', False):
                     risk_prediction.set_subject_embeddings(
-                        subject_id=subject_id, embeddings=state_e[subject_id])
+                        subject_id=subj_i, embeddings=subject_state.state)
 
-            odeint_time.append(sum(d2d_time.values()))
-            dyn_loss += sum(r.values())
+                # Update state at discharge
+                subject_state = self._update_state(subject_state, adm, emb)
 
-            pred_loss = dx_loss(dx, dec_dx)
-            prediction_losses.append(pred_loss)
-
-            total_nfe += sum(nfe.values())
-
-            # Update state at discharge
-            state_e = nn_update(state_e, **adm_n)
-
-            # Update the states:
-            for subject_id, new_state in state_e.items():
-                subject_state[subject_id] = {
-                    'time': adm_time[subject_id] + adm_los[subject_id],
-                    'state_e': new_state
-                }
-
-        prediction_loss = jnp.average(jnp.array(prediction_losses),
-                                      weights=jnp.array(adm_counts))
-
-        ret = ICENODEResult({
-            'prediction_loss': prediction_loss,
-            'dyn_loss': dyn_loss,
-            'odeint_weeks': sum(odeint_time) / 7.0,
-            'admissions_count': sum(adm_counts),
-            'nfe': total_nfe,
-            'risk_prediction': risk_prediction
-        })
-
-        return ret
-
-    def eval(self, model_state: Any, batch: List[int]) -> Dict[str, float]:
-        loss_mixing = model_state[-1]
-        params = self.get_params(model_state)
-
-        # Due to memory constraint in evaluation (causes OoM crashes, divide the batches.
-        if len(batch) > 16:
-            res = []
-            n = len(batch) // 16
-            for _batch in [batch[i:i + n] for i in range(0, len(batch), n)]:
-                res.append(self(params, _batch, count_nfe=True))
-            res = ICENODEResult.combine(res)
-        else:
-            res = self(params, batch, count_nfe=True)
-
-        return {
-            'loss': self.detailed_loss(loss_mixing, params, res),
-            'stats': self.eval_stats(res),
-            'risk_prediction': res['risk_prediction']
-        }
-
-    def _f_n_ode_trajectory(self, params, sampling_rate, state_e, t_offset, t):
-        nn_decode = partial(self._f_dec, params)
-
-        def timesamples(tf, dt):
-            if dt < 0:
-                dt = tf
-            return jnp.linspace(0, tf - tf % dt,
-                                round((tf - tf % dt) / dt + 1))
-
-        def odeint_samples(current_state, t_ij):
-            h, _, _ = self.f_n_ode(params['f_n_ode'], 2, False, current_state,
-                                   sampling_rate)
-            next_state = h[-1, :]
-            return next_state, next_state
-
-        trajectory_samples = {}
-        new_se = {}
-        for subj_i, ti in t.items():
-            t_samples = timesamples(ti, sampling_rate) + t_offset[subj_i]
-            current_se, se_samples = lax.scan(odeint_samples, state_e[subj_i],
-                                              t_samples[1:])
-            new_se[subj_i] = current_se
-            s, e = self.split_state_emb(state_e[subj_i])
-            s_samples = [s]
-            e_samples = [e]
-            for se_sample in se_samples:
-                s, e = self.split_state_emb(se_sample)
-                s_samples.append(s)
-                e_samples.append(e)
-
-            # state samples
-            s_samples = jnp.vstack(s_samples)
-            # embedding samples
-            e_samples = jnp.vstack(e_samples)
-            # diagnostic samples
-            d_samples = jax.vmap(partial(self.f_dec,
-                                         params['f_dec']))(e_samples)
-            # convert from logits to probs.
-            d_samples = jax.vmap(jax.nn.sigmoid)(d_samples)
-
-            # 1st-order derivative of d_samples
-            grad = jax.vmap(lambda v: jnp.gradient(v, sampling_rate))
-            d1d_samples = grad(d_samples)
-
-            # 2nd-order derivative of d_samples
-            d2d_samples = grad(d1d_samples)
-
-            trajectory_samples[subj_i] = {
-                't': t_samples,
-                's': s_samples,
-                'e': e_samples,
-                'd': d_samples,
-                'd1d': d1d_samples,
-                'd2d': d2d_samples
-            }
-
-        return new_se, trajectory_samples
-
-    def sample_trajectory(self, model_state, subjects_batch: List[int],
-                          sample_rate: float):
-        params = self.get_params(model_state)
-        batch = self.subject_interface.batch_nth_admission(subjects_batch)
-        nth_adm = partial(self._extract_nth_admission, params, batch)
-        nn_ode = partial(self._f_n_ode_trajectory, params, sample_rate)
-        nn_update = partial(self._f_update, params)
-
-        adm0 = nth_adm(0)
-        subject_state = {
-            i: {
-                'state_e': self.join_state_emb(None, adm0['dx_emb'][i]),
-                'time': adm0['admission_time'][i] + adm0['los'][i]
-            }
-            for i in adm0['admission_id']
-        }
-
-        trajectory = {
-            i: {
-                't': [],
-                'e': [],
-                'd': [],
-                'tp10': [],
-                'fp10': [],
-                's': [],
-                'd1d': [],
-                'd2d': []
-            }
-            for i in subject_state
-        }
-
-        for n in tqdm(sorted(batch)[1:]):
-            adm_n = nth_adm(n)
-            if adm_n is None:
-                break
-            adm_id = adm_n['admission_id']
-            adm_los = adm_n['los']  # length of stay
-            adm_time = adm_n['admission_time']
-            emb = adm_n['dx_emb']
-            dx = adm_n['dx_outcome']
-
-            state_e = {i: subject_state[i]['state_e'] for i in adm_id}
-
-            d2d_time = {
-                i: adm_time[i] + adm_los[i] - subject_state[i]['time']
-                for i in adm_id
-            }
-
-            time_offset = {i: subject_state[i]['time'] for i in adm_id}
-
-            # Integrate until next discharge
-            state_e, traj_n = nn_ode(state_e, time_offset, d2d_time)
-
-            for subject_id, traj_ni in traj_n.items():
-                for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d'):
-                    trajectory[subject_id][symbol].append(traj_ni[symbol])
-
-                # For the last timestamp, get sorted indices for the predictions
-                top10_idx = jnp.argsort(-traj_ni['d'][-1, :])[:10]
-                pos = onp.zeros_like(dx[subject_id])
-                pos[[top10_idx]] = 1
-                tp = (pos == dx[subject_id]) * 1
-                fp = (pos != dx[subject_id]) * 1
-                trajectory[subject_id]['tp10'].append(tp)
-                trajectory[subject_id]['fp10'].append(fp)
-
-            # Update state at discharge
-            state_e = nn_update(state_e, emb)
-
-            # Update the states:
-            for subject_id, new_state in state_e.items():
-                subject_state[subject_id] = {
-                    'time': adm_time[subject_id] + adm_los[subject_id],
-                    'state_e': new_state
-                }
-
-        # for i, traj_i in trajectory.items():
-        #     for symbol in ('t', 's', 'e', 'd', 'd1d', 'd2d', 'tp10', 'fp10'):
-        #         traj_i[symbol] = jnp.concatenate(traj_i[symbol], axis=0)
-
-        return trajectory
-
-    def detailed_loss(self, loss_mixing, params, res):
-        prediction_loss = res['prediction_loss']
-        dyn_loss = res['dyn_loss']
-        dyn_alpha = loss_mixing['L_dyn']
-
-        loss = prediction_loss + (dyn_alpha * dyn_loss) / res['odeint_weeks']
-        return {
-            'loss': loss,
-            'prediction_loss': res['prediction_loss'],
-            'dyn_loss': dyn_loss,
-            'admissions_count': res['admissions_count'],
-            'odeint_weeks': res['odeint_weeks']
-        }
-
-    def eval_stats(self, res):
-        nfe = res['nfe']
-        return {
-            'admissions_count': res['admissions_count'],
-            'nfe_per_week': nfe / res['odeint_weeks'],
-            'Kfe': nfe / 1000
-        }
-
-    def admissions_auc_scores(self, model_state: Any, batch: List[int]):
-        params = self.get_params(model_state)
-        res = self(params, batch, count_nfe=True)
-        return metric.admissions_auc_scores(res['risk_prediction'])
+        return {'predictions': risk_prediction, 'dyn_loss': dyn_loss}
 
     @classmethod
-    def create_model(cls, config, subject_interface, train_ids):
-        dx_emb = cls.create_embedding(emb_config=config['emb']['dx'],
-                                      emb_kind=config['emb']['kind'],
-                                      subject_interface=subject_interface,
-                                      train_ids=train_ids)
-        return cls(subject_interface=subject_interface,
-                   dx_emb=dx_emb,
-                   **config['model'])
+    def sample_model_config(cls, trial: optuna.Trial):
+        return {
+            'ode_dyn':
+            trial.suggest_categorical('ode_dyn',
+                                      ['mlp1', 'mlp2', 'mlp3', 'gru']),
+            'ode_init_var':
+            trial.suggest_float('ode_i', 1e-8, 1e1, log=True),
+            'state_size':
+            trial.suggest_int('s', 10, 100, 10),
+            'timescale':
+            7
+        }
+
+
+class Trainer(AbstractTrainer):
+    tay_reg: int = 3
+
+    @classmethod
+    def odeint_time(cls, predictions: BatchPredictedRisks):
+        int_time = 0
+        for subj_id, preds in predictions.items():
+            adms = [preds[idx] for idx in sorted(preds)]
+            # Integration time from the first discharge (adm[0].(length of
+            # stay)) to last discarge (adm[-1].time + adm[-1].(length of stay)
+            int_time += adms[-1].time + adms[-1].los - adms[0].los
+        return int_time
+
+    @classmethod
+    def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
+        return balanced_focal_bce(y, dx_logits)
+
+    def reg_loss(self, model: AbstractModel, subject_interface: Subject_JAX,
+                 batch: List[int]):
+        args = dict(tay_reg=self.tay_reg)
+        res = model(subject_interface, batch, args)
+        preds = res['predictions']
+        l = preds.prediction_loss(self.dx_loss)
+
+        integration_weeks = self.odeint_time(preds) / 7
+        l1_loss = model.l1()
+        l2_loss = model.l2()
+        dyn_loss = res['dyn_loss'] / integration_weeks
+        l1_alpha = self.reg_hyperparams['L_l1']
+        l2_alpha = self.reg_hyperparams['L_l2']
+        dyn_alpha = self.reg_hyperparams['L_dyn']
+
+        loss = l + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha *
+                                                                  dyn_loss)
+
+        return loss, ({
+            'dx_loss': l,
+            'loss': loss,
+            'l1_loss': l1_loss,
+            'l2_loss': l2_loss,
+        }, preds)
+
+    @classmethod
+    def sample_reg_hyperparams(cls, trial: optuna.Trial):
+        return {
+            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+            'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+            'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+        }
 
     @classmethod
     def sample_training_config(cls, trial: optuna.Trial):
@@ -508,24 +251,8 @@ class ICENODE(AbstractModel):
             #trial.suggest_categorical('opt', ['adam', 'adamax']),
             'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
             'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
-            'loss_mixing': {
-                'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-                'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-                'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-            }
+            'reg_hyperparams': cls.sample_reg_hyperparams(trial)
         }
 
-    @classmethod
-    def sample_model_config(cls, trial: optuna.Trial):
-        return {
-            'ode_dyn':
-            trial.suggest_categorical('ode_dyn', ['mlp2', 'mlp3', 'gru']),
-            'ode_with_bias':
-            False,
-            'ode_init_var':
-            trial.suggest_float('ode_i', 1e-8, 1e1, log=True),
-            'state_size':
-            trial.suggest_int('s', 10, 100, 10),
-            'timescale':
-            7
-        }
+
+Trainer.register_trainer(ICENODE)

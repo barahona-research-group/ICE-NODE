@@ -1,52 +1,53 @@
 """Miscalleneous utility functions."""
+
 import os
 import contextlib
+import zipfile
 import json
-import pickle
+
+import numpy as np
+import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_leaves
+import equinox as eqx
 
 
-class OOPError(Exception):
-    """Object Oriented design Exception (e.g. calling abstract method)."""
-
-
-class Unsupported(Exception):
-    """Unsupported operation."""
-
-
-class LazyDict(dict):
-
-    def __getitem__(self, k):
-        v = super().__getitem__(k)
-        if callable(v):
-            v = v()
-            super().__setitem__(k, v)
-        return v
-
-    def get(self, k, default=None):
-        if k in self:
-            return self.__getitem__(k)
-        return default
-
-
-def parameters_size(t):
+def params_size(m):
     """Return the parameters count in a PyTree object."""
-    leaves, _ = tree_flatten(t)
+    leaves, _ = tree_flatten(eqx.filter(m, eqx.is_inexact_array))
     return sum(jnp.size(x) for x in leaves)
 
 
-def tree_hasnan(t):
+def tree_hasnan(m):
     """Retrun True if any paramter in t (PyTree object) is NaN."""
+    t = eqx.filter(m, eqx.is_inexact_array)
     return any(map(lambda x: jnp.any(jnp.isnan(x)), tree_leaves(t)))
 
 
-def tree_lognan(t):
+def tree_lognan(m):
     """Returns a PyTree object with the same structure of the
     input (PyTree object). For each leaf (i.e. jax.numpy object) in
     the input, assign True if that leaf has NaN value(s).
     """
+    t = eqx.filter(m, eqx.is_inexact_array)
     return tree_map(lambda x: jnp.any(jnp.isnan(x)).item(), t)
+
+
+def tree_add_scalar_mul(tree_x, scalar, tree_y):
+    """Compute tree_x + scalar * tree_y."""
+    tree_x = eqx.filter(tree_x, eqx.is_inexact_array)
+    tree_y = eqx.filter(tree_y, eqx.is_inexact_array)
+    return tree_map(lambda x, y: x + scalar * y, tree_x, tree_y)
+
+
+def model_params_scaler(model, scaler, filter_spec):
+    func_model = eqx.filter(model, filter_spec, inverse=True)
+    prms_model = eqx.filter(model, filter_spec, inverse=False)
+    return eqx.combine(func_model, tree_scalar(prms_model, scaler))
+
+def tree_scalar(tree, scalar):
+    """Compute tree_x + scalar * tree_y."""
+    return tree_map(lambda x: scalar * x, tree)
 
 
 def array_hasnan(arr):
@@ -54,42 +55,34 @@ def array_hasnan(arr):
     return jnp.any(jnp.isnan(arr) | jnp.isinf(arr))
 
 
-# TODO(Asem): Move to Haiku models.
-# TODO(Asem): remove any reference to the authors in the documentation.
-# For haiku-dm modules
-def wrap_module(module, *module_args, **module_kwargs):
-    """
-    Wrap the module in a function to be transformed.
-    """
-
-    def wrap(*args, **kwargs):
-        """
-        Wrapping of module.
-        """
-        model = module(*module_args, **module_kwargs)
-        return model(*args, **kwargs)
-
-    return wrap
-
 def translate_path(path):
     return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
 
 
-def write_params(params, params_file):
+def write_params(model, params_file):
     """
     Store the parameters (PyTree object) into a new file
     given by `params_file`.
     """
     with open(translate_path(params_file), 'wb') as file_rsc:
-        pickle.dump(params, file_rsc, protocol=pickle.HIGHEST_PROTOCOL)
+        eqx.tree_serialise_leaves(file_rsc, model)
 
 
-def load_params(params_file):
+def append_params_to_zip(model, params_name, zipfile_fname):
+    with zipfile.ZipFile(translate_path(zipfile_fname),
+                         compression=zipfile.ZIP_BZIP2,
+                         compresslevel=9,
+                         mode="a") as archive:
+        with archive.open(params_name, "w") as zip_member:
+            eqx.tree_serialise_leaves(zip_member, model)
+
+
+def load_params(model, params_file):
     """
     Load the parameters in `params_file` filepath and return as PyTree Object.
     """
     with open(translate_path(params_file), 'rb') as file_rsc:
-        return pickle.load(file_rsc)
+        return eqx.tree_deserialise_leaves(file_rsc, model)
 
 
 def load_config(config_file):
@@ -98,10 +91,18 @@ def load_config(config_file):
         return json.load(json_file)
 
 
+class NumpyEncoder(json.JSONEncoder):
+
+    def default(self, obj):
+        if isinstance(obj, np.ndarray) or isinstance(obj, jnp.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
+
+
 def write_config(data, config_file):
     """Write `data` (dict object) into the given filepath `config_file`."""
     with open(translate_path(config_file), 'w') as outfile:
-        json.dump(data, outfile, indent=4, sort_keys=True)
+        json.dump(data, outfile, indent=4, sort_keys=True, cls=NumpyEncoder)
 
 
 @contextlib.contextmanager
