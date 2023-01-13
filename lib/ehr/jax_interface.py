@@ -3,7 +3,7 @@
 from __future__ import annotations
 from collections import defaultdict
 import random
-from typing import List, Optional, Dict, Any, Set
+from typing import List, Optional, Dict, Any, Set, Callable, Union
 from datetime import datetime
 from dataclasses import dataclass
 import os
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
-from .coding_scheme import AbstractScheme, NullScheme
+from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 from .outcome import OutcomeExtractor
 
 
@@ -38,7 +38,8 @@ class StaticInfo_JAX:
                 AbstractScheme) and self.flags.ethnicity is not NullScheme():
             assert self.static_info.ethnicity_scheme is not NullScheme(
             ), "Ethnicity info requested while it is not provided in the dataset."
-            m = self.static_info.ethnicity_scheme.mapper(self.flags.ethnicity)
+            m = self.static_info.ethnicity_scheme.mapper_to(
+                self.flags.ethnicity)
             codeset = m.map_codeset({self.static_info.ethnicity})
             vec.append(m.codeset2vec(codeset))
 
@@ -101,22 +102,26 @@ class Admission_JAX:
         self.admission_id = adm.admission_id
         self.admission_date = adm.admission_dates[0]
 
-        dx_mapper = adm.dx_scheme.mapper(dx_scheme)
-        pr_mapper = adm.pr_scheme.mapper(pr_scheme)
+        dx_mapper = adm.dx_scheme.mapper_to(dx_scheme)
+        pr_mapper = adm.pr_scheme.mapper_to(pr_scheme)
         self.dx_mapper = dx_mapper
         self.pr_mapper = pr_mapper
 
-        self.dx_codes = dx_mapper.map_codeset(adm.dx_codes)
+        dx_codes = dx_mapper.map_codeset(adm.dx_codes)
         if dx_dagvec:
-            self.dx_vec = jnp.array(dx_mapper.codeset2dagvec(self.dx_codes))
+            self.dx_vec = jnp.array(dx_mapper.codeset2dagvec(dx_codes))
+            self.dx_codes = dx_mapper.codeset2dagset(dx_codes)
         else:
-            self.dx_vec = jnp.array(dx_mapper.codeset2vec(self.dx_codes))
+            self.dx_vec = jnp.array(dx_mapper.codeset2vec(dx_codes))
+            self.dx_codes = dx_codes
 
-        self.pr_codes = pr_mapper.map_codeset(adm.pr_codes)
+        pr_codes = pr_mapper.map_codeset(adm.pr_codes)
         if pr_dagvec:
-            self.pr_vec = jnp.array(pr_mapper.codeset2dagvec(self.pr_codes))
+            self.pr_vec = jnp.array(pr_mapper.codeset2dagvec(pr_codes))
+            self.pr_codes = pr_mapper.codeset2dagset(pr_codes)
         else:
-            self.pr_vec = jnp.array(pr_mapper.codeset2vec(self.pr_codes))
+            self.pr_vec = jnp.array(pr_mapper.codeset2vec(pr_codes))
+            self.pr_codes = pr_codes
 
         self.dx_outcome = jnp.array(
             dx_outcome_extractor.codeset2vec(adm.dx_codes, adm.dx_scheme))
@@ -166,8 +171,7 @@ class Subject_JAX(dict):
         self._dx_scheme = code_scheme['dx']
         self._pr_scheme = code_scheme.get('pr', NullScheme())
 
-        self._dx_outcome_extractor = OutcomeExtractor(
-            code_scheme['dx_outcome'])
+        self._dx_outcome_extractor = code_scheme['dx_outcome']
 
         # The interface will map all Dx/Pr codes to DAG space if:
         # 1. The experiment explicitly requests so through (dx|pr)_dagvec
@@ -248,7 +252,7 @@ class Subject_JAX(dict):
         mappers = set()
         s_schemes = Subject.dx_schemes(self._subjects.values())
         for s in s_schemes:
-            mappers.add(s.mapper(self.dx_scheme))
+            mappers.add(s.mapper_to(self.dx_scheme))
         return mappers
 
     @property
@@ -256,7 +260,7 @@ class Subject_JAX(dict):
         mappers = set()
         s_schemes = Subject.pr_schemes(self._subjects.values())
         for s in s_schemes:
-            mappers.add(s.mapper(self.pr_scheme))
+            mappers.add(s.mapper_to(self.pr_scheme))
         return mappers
 
     @property
@@ -271,7 +275,7 @@ class Subject_JAX(dict):
         return self.dx_scheme.make_ancestors_mat()
 
     @property
-    def pr_scheme(self) -> str:
+    def pr_scheme(self) -> AbstractScheme:
         return self._pr_scheme
 
     def pr_make_ancestors_mat(self):
@@ -369,6 +373,109 @@ class Subject_JAX(dict):
             for n, adm in enumerate(adms):
                 nth_admission[n][subject_id] = adm
         return nth_admission
+
+    def dx_augmented_coocurrence(self,
+                                 subjects: List[int],
+                                 window_size_days: int = 1):
+        assert isinstance(
+            self._dx_scheme, HierarchicalScheme
+        ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
+        return self._coocurrence(self._dx_scheme,
+                                 adm_codes_f=lambda adm: adm.dx_codes,
+                                 augmented=True,
+                                 subjects=subjects,
+                                 window_size_days=window_size_days)
+
+    def pr_augmented_coocurrence(self,
+                                 subjects: List[int],
+                                 window_size_days: int = 1):
+        assert isinstance(
+            self._pr_scheme, HierarchicalScheme
+        ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
+        return self._coocurrence(self._pr_scheme,
+                                 adm_codes_f=lambda adm: adm.pr_codes,
+                                 augmented=True,
+                                 subjects=subjects,
+                                 window_size_days=window_size_days)
+
+    def dx_coocurrence(self, subjects: List[int], window_size_days: int = 1):
+        return self._coocurrence(self._dx_scheme,
+                                 adm_codes_f=lambda adm: adm.dx_codes,
+                                 augmented=False,
+                                 subjects=subjects,
+                                 window_size_days=window_size_days)
+
+    def pr_coocurrence(self, subjects: List[int], window_size_days: int = 1):
+        return self._coocurrence(self._pr_scheme,
+                                 adm_codes_f=lambda adm: adm.pr_codes,
+                                 augmented=False,
+                                 subjects=subjects,
+                                 window_size_days=window_size_days)
+
+    def _coocurrence(self,
+                     scheme: Union[AbstractScheme, HierarchicalScheme],
+                     adm_codes_f: Callable[[Admission_JAX], Set[str]],
+                     augmented: bool,
+                     subjects: List[int],
+                     window_size_days: int = 1):
+        """
+        Build cooccurrence matrix from timestamped CCS codes.
+
+        Args:
+            code_type: the code type to consider for the coocurrences. 'dx' is for diagnostic codes, 'pr' for procedure codes.
+            subjects: a list of subjects (patients) from which diagnosis codes are extracted for GloVe initialization.
+            dx_idx: a mapping between CCS diagnosis codes as strings to integer indices.
+            proc_idx: a mapping between CCS procedure codes as strings to integer indices.
+            ccs_dag: CCSDAG object that supports DAG operations on ICD9 codes in their hierarchical organization within CCS.
+            window_size_days: the moving time window of the context.
+        """
+
+        # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
+        # As described in the paper of GRAM, ancestors duplications are allowed and informative.
+
+        def _augment_codes(codes):
+            _aug_codes = []
+            for c in codes:
+                _aug_codes.extend(scheme.code_ancestors_bfs(c, True))
+            return _aug_codes
+
+        adms_lists = []
+        for subj_id in subjects:
+            subject_adms = self[subj_id]
+            adms_list = []
+            for adm in subject_adms:
+                if augmented:
+                    codes = _augment_codes(adm_codes_f(adm))
+                else:
+                    codes = adm_codes_f(adm)
+                adms_list.append((adm.admission_time, codes))
+            adms_lists.append(adms_list)
+
+        index = scheme.dag_index if augmented else scheme.index
+        cooccurrences = defaultdict(int)
+        for subj_adms_list in adms_lists:
+            for adm_day, adm_codes in subj_adms_list:
+
+                def is_context(other_adm):
+                    # Symmetric context (left+right)
+                    return abs(adm_day - other_adm[0]) <= window_size_days
+
+                context_admissions = list(filter(is_context, subj_adms_list))
+                codes = [c for _, _codes in context_admissions for c in _codes]
+
+                code_count = defaultdict(int)
+                for c in codes:
+                    code_count[index[c]] += 1
+
+                for i, count_i in code_count.items():
+                    for j, count_j in code_count.items():
+                        cooccurrences[(i, j)] += count_i * count_j
+                        cooccurrences[(j, i)] += count_i * count_j
+
+        coocurrence_mat = np.zeros((len(index), len(index)))
+        for (i, j), count in cooccurrences.items():
+            coocurrence_mat[i, j] = count
+        return coocurrence_mat
 
     def _jaxify_subject_admissions(self):
 

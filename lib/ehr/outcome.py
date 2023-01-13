@@ -5,7 +5,7 @@ import numpy as np
 
 from ..utils import load_config
 
-from .coding_scheme import AbstractScheme, CodeMapper, code_scheme as C
+from . import coding_scheme as C
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -22,11 +22,12 @@ outcome_conf_files = {
 }
 
 
-class OutcomeExtractor(AbstractScheme):
+class OutcomeExtractor(C.AbstractScheme):
 
     def __init__(self, outcome_space='dx_flatccs_filter_v1'):
         conf = self.conf_from_json(outcome_conf_files[outcome_space])
-        self._t_scheme = conf['code_scheme']
+
+        self._t_scheme = eval(f"C.{conf['code_scheme']}")()
         codes = [
             c for c in sorted(self.t_scheme.index)
             if c not in conf['exclude_codes']
@@ -38,10 +39,10 @@ class OutcomeExtractor(AbstractScheme):
 
     @property
     def t_scheme(self):
-        return C[self._t_scheme]
+        return self._t_scheme
 
-    def map_codeset(self, codeset: Set[str], s_scheme: str):
-        m = CodeMapper.get_mapper(s_scheme, self._t_scheme)
+    def map_codeset(self, codeset: Set[str], s_scheme: C.AbstractScheme):
+        m = s_scheme.mapper_to(self._t_scheme)
         codeset = m.map_codeset(codeset)
 
         if m.t_dag_space:
@@ -68,7 +69,7 @@ class OutcomeExtractor(AbstractScheme):
             # TODO
             return None
         elif 'selected_codes' in conf:
-            t_scheme = C[conf['code_scheme']]
+            t_scheme = eval(f"C.{conf['code_scheme']}")()
             conf['exclude_codes'] = [
                 c for c in t_scheme.codes if c not in conf['selected_codes']
             ]

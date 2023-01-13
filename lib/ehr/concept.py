@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .outcome import OutcomeExtractor
-from .coding_scheme import AbstractScheme, NullScheme
+from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 
 
 @dataclass
@@ -217,5 +217,5 @@ class Subject:
         return super_admissions
 
     @classmethod
-    def from_dataset(cls, dataset: "icenode.ehr.dataset.AbstractEHRDataset"):
+    def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
         return dataset.to_subjects()

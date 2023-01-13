@@ -3,145 +3,101 @@ import random
 import os
 from pathlib import Path
 
-from icenode.ehr.coding_scheme import (DxCCS, DxFlatCCS, DxICD10, DxICD9,
-                                       PrCCS, PrFlatCCS, PrICD10, PrICD9,
-                                       HierarchicalScheme, CodeMapper,
-                                       code_scheme as C)
+from lib.ehr.coding_scheme import (load_maps, HierarchicalScheme)
 
 _DIR = os.path.dirname(__file__)
 
 
-class AbstractSchemeTests(object):
+class SchemeTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        raise RuntimeError('Unreachable')
+        scheme_cls_set = set(s for pair in load_maps for s in pair)
+        cls.scheme_set = set(s() for s in scheme_cls_set)
 
     def setUp(self):
         pass
 
     def test_codes_uniqueness(self):
-        codes = self.scheme.codes
-        self.assertCountEqual(codes, set(codes))
+        for scheme in self.scheme_set:
+            codes = scheme.codes
+            self.assertCountEqual(codes,
+                                  set(codes),
+                                  msg=f'Problematic Scheme: {scheme.name}')
 
     def test_codes_sorted(self: unittest.TestCase):
-        codes = self.scheme.codes
-        self.assertEqual(codes, sorted(codes))
+        for scheme in self.scheme_set:
+            codes = scheme.codes
+            self.assertEqual(codes,
+                             sorted(codes),
+                             msg=f'Problematic Scheme: {scheme.name}')
 
     def test_code_index_desc_support(self: unittest.TestCase):
-        self.maxDiff = None
-        index = self.scheme.index
-        codes = self.scheme.codes
-        desc = self.scheme.desc
+        for scheme in self.scheme_set:
 
-        self.assertTrue(len(codes) > 0)
-        self.assertCountEqual(codes, index.keys())
-        self.assertCountEqual(codes, desc.keys())
-        self.assertCountEqual(index.values(), list(range(len(index))))
+            index = scheme.index
+            codes = scheme.codes
+            desc = scheme.desc
+            msg = f'Problematic Scheme: {scheme.name}'
 
-
-class HierarchicalSchemeTests(AbstractSchemeTests):
-
-    @classmethod
-    def setUpClass(cls):
-        # Unreachable, should be overriden.
-        raise RuntimeError('Unreachable')
-
-    def setUp(self):
-        pass
+            self.assertTrue(len(codes) > 0, msg=msg)
+            self.assertCountEqual(codes, index.keys(), msg=msg)
+            self.assertCountEqual(codes, desc.keys(), msg=msg)
+            self.assertCountEqual(index.values(),
+                                  list(range(len(index))),
+                                  msg=msg)
 
     def test_codes_subsets_dag(self):
-        s = self.scheme
+        for s in self.scheme_set:
+            if not isinstance(s, HierarchicalScheme):
+                continue
 
-        self.assertTrue(len(s.codes) <= len(s.dag_codes))
-        self.assertTrue(
-            set(map(s.code2dag.get, s.codes)).issubset(set(s.dag_codes)))
-        self.assertEqual(list(map(s.code2dag.get, s.codes)),
-                         s.dag_codes[:len(s.codes)])
+            self.assertTrue(len(s.codes) <= len(s.dag_codes))
+            self.assertTrue(
+                set(map(s.code2dag.get, s.codes)).issubset(set(s.dag_codes)))
+            self.assertEqual(list(map(s.code2dag.get, s.codes)),
+                             s.dag_codes[:len(s.codes)])
 
     def test_bfs_vs_dfs(self):
-        s = self.scheme
-        rng = random.Random(42)
-        some_codes = rng.sample(s.dag_codes, 15)
+        for s in self.scheme_set:
 
-        for code in some_codes:
+            if not isinstance(s, HierarchicalScheme):
+                continue
 
-            ancestors_bfs = s.code_ancestors_bfs(code)
-            ancestors_dfs = s.code_ancestors_dfs(code)
+            rng = random.Random(42)
+            some_codes = rng.sample(s.dag_codes, 15)
 
-            self.assertCountEqual(ancestors_bfs, ancestors_dfs)
+            for code in some_codes:
 
-            successors_bfs = s.code_successors_bfs(code)
-            successors_dfs = s.code_successors_dfs(code)
+                ancestors_bfs = s.code_ancestors_bfs(code)
+                ancestors_dfs = s.code_ancestors_dfs(code)
 
-            self.assertCountEqual(successors_bfs, successors_dfs)
+                self.assertCountEqual(ancestors_bfs, ancestors_dfs)
 
+                successors_bfs = s.code_successors_bfs(code)
+                successors_dfs = s.code_successors_dfs(code)
 
-class TestDxFlatCCS(AbstractSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['dx_flatccs']
-
-
-class TestPrFlatCCS(AbstractSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['pr_flatccs']
-
-
-class TestDxCCS(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['dx_ccs']
-
-
-class TestPrCCS(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['pr_ccs']
-
-
-class TestDxICD9(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['dx_icd9']
-
-
-class TestPrICD9(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['pr_icd9']
-
-
-class TestDxICD10(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['dx_icd10']
-
-
-class TestPrICD10(HierarchicalSchemeTests, unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.scheme = C['pr_icd10']
-
-
-class TestCodeMappers(unittest.TestCase):
+                self.assertCountEqual(successors_bfs, successors_dfs)
 
     def test_code_mappers(self):
         log_dir = os.path.join(_DIR, 'logs')
         Path(log_dir).mkdir(parents=True, exist_ok=True)
-        for s1 in C:
-            for s2 in C:
-                m = CodeMapper.get_mapper(s1, s2)
-                if not m: continue
+        for s1 in self.scheme_set:
+            for s2 in self.scheme_set:
+
+                m = s1.mapper_to(s2)
+
+                if (type(s1),
+                        type(s2)) not in load_maps and type(s1) != type(s2):
+
+                    self.assertTrue(
+                        m is None,
+                        msg=
+                        f"Mapping {s1.name}->{s2.name} actually not included in load_maps dictionary then mapper should be None"
+                    )
+
+                if m is None: continue
+
                 with self.subTest(f"M: {m}"):
                     self.assertTrue(all(type(c) == str for c in m))
                     m_range = set().union(*m.values())

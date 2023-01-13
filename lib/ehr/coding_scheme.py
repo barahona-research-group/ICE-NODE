@@ -1,6 +1,7 @@
 """Extract diagnostic/procedure information of CCS files into new
 data structures to support conversion between CCS and ICD9."""
 
+from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
 
@@ -21,7 +22,7 @@ except ImportError:
 else:
     _has_networkx = True
 
-from ..utils import OOPError, LazyDict, write_config
+from ..utils import write_config
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -41,19 +42,16 @@ Ideas in mapping
 - Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
 """
 
-_singleton_register = {}
 
+class Singleton(object):
+    _instances = {}
 
-def singleton(cls):
+    def __new__(cls, *args, **kwargs):
+        if cls._instances.get(cls, None) is None:
+            cls._instances[cls] = super(Singleton,
+                                        cls).__new__(cls, *args, **kwargs)
 
-    def wrapper(*args, **kw):
-        if cls not in _singleton_register:
-            instance = cls(*args, **kw)
-            _singleton_register[cls] = instance
-        return _singleton_register[cls]
-
-    wrapper.__name__ = cls.__name__
-    return wrapper
+        return Singleton._instances[cls]
 
 
 class _CodeMapper(defaultdict):
@@ -221,7 +219,7 @@ class _CodeMapper(defaultdict):
         return self._t_dag_space
 
     @staticmethod
-    def get_mapper(s_scheme: str, t_scheme: str):
+    def get_mapper(s_scheme, t_scheme):
         if any(s is NullScheme() for s in (s_scheme, t_scheme)):
             return _NullCodeMapper()
         key = (type(s_scheme), type(t_scheme))
@@ -264,10 +262,16 @@ class _CodeMapper(defaultdict):
 
         return vec
 
+    def codeset2dagset(self, codeset: Set[str]):
+        if self._t_dag_space == False:
+            return set(self.t_scheme.code2dag[c] for c in codeset)
+        else:
+            return codeset
+
     def codeset2dagvec(self, codeset: Set[str]):
         if self._t_dag_space == False:
-            index = self.t_scheme.dag_index
             codeset = set(self.t_scheme.code2dag[c] for c in codeset)
+            index = self.t_scheme.dag_index
         else:
             index = self.t_index
         vec = np.zeros(len(index), dtype=bool)
@@ -373,12 +377,11 @@ class AbstractScheme:
             filter(lambda c: re.match(query, self._desc[c], flags=regex_flags),
                    self.codes))
 
-    def mapper(self, target_scheme):
+    def mapper_to(self, target_scheme):
         return _CodeMapper.get_mapper(self, target_scheme)
 
 
-@singleton
-class NullScheme(AbstractScheme):
+class NullScheme(AbstractScheme, Singleton):
 
     def __init__(self):
         super().__init__([], {}, {}, 'none')
@@ -589,11 +592,12 @@ class HierarchicalScheme(AbstractScheme):
         return dag
 
 
-class ICDCommons(HierarchicalScheme):
+class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
 
     @staticmethod
+    @abstractmethod
     def add_dot(code):
-        raise OOPError('Should be overriden')
+        pass
 
     @staticmethod
     def _deselect_subtree(pt2ch, sub_root):
@@ -714,8 +718,7 @@ class ICDCommons(HierarchicalScheme):
             #     mapping[code] = represent
 
 
-@singleton
-class DxICD10(ICDCommons):
+class DxICD10(ICDCommons, Singleton):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
         - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
@@ -803,8 +806,7 @@ class DxICD10(ICDCommons):
                          name='dx_icd10')
 
 
-@singleton
-class PrICD10(ICDCommons):
+class PrICD10(ICDCommons, Singleton):
 
     @staticmethod
     def add_dot(code):
@@ -871,8 +873,7 @@ class PrICD10(ICDCommons):
                          name='pr_icd10')
 
 
-@singleton
-class DxICD9(ICDCommons):
+class DxICD9(ICDCommons, Singleton):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
     _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
     _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
@@ -987,8 +988,7 @@ class DxICD9(ICDCommons):
                          name='dx_icd9')
 
 
-@singleton
-class PrICD9(ICDCommons):
+class PrICD9(ICDCommons, Singleton):
 
     @staticmethod
     def add_dot(code):
@@ -1128,8 +1128,7 @@ class CCSCommons(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
-@singleton
-class DxCCS(CCSCommons):
+class DxCCS(CCSCommons, Singleton):
     _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
     _N_LEVELS = 4
 
@@ -1147,8 +1146,7 @@ class DxCCS(CCSCommons):
                          name='dx_ccs')
 
 
-@singleton
-class PrCCS(CCSCommons):
+class PrCCS(CCSCommons, Singleton):
     _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
     _N_LEVELS = 3
 
@@ -1221,8 +1219,7 @@ class FlatCCSCommons(AbstractScheme):
             icd92flatccs[icode].add(ccode)
 
 
-@singleton
-class DxFlatCCS(FlatCCSCommons):
+class DxFlatCCS(FlatCCSCommons, Singleton):
 
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
@@ -1235,8 +1232,7 @@ class DxFlatCCS(FlatCCSCommons):
                          name='dx_flatccs')
 
 
-@singleton
-class PrFlatCCS(FlatCCSCommons):
+class PrFlatCCS(FlatCCSCommons, Singleton):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
     def __init__(self):
@@ -1248,8 +1244,7 @@ class PrFlatCCS(FlatCCSCommons):
                          name='pr_flatccs')
 
 
-@singleton
-class DxLTC212FlatCodes(AbstractScheme):
+class DxLTC212FlatCodes(AbstractScheme, Singleton):
     _SCHEME_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 
     def __init__(self):
@@ -1302,8 +1297,7 @@ class DxLTC212FlatCodes(AbstractScheme):
         return self._system
 
 
-@singleton
-class DxLTC9809FlatMedcodes(AbstractScheme):
+class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
     _SCHEME_FILE = 'CPRD_212_LTC_ALL.csv.gz'
 
     def __init__(self):
@@ -1351,12 +1345,11 @@ class DxLTC9809FlatMedcodes(AbstractScheme):
         return self._diseases
 
 
-@singleton
-class EthCPRD16(AbstractScheme):
+class EthCPRD(AbstractScheme):
     _SCHEME_FILE = 'cprd_eth.csv'
-    NAME = 'eth_cprd_16'
-    ETH_CODE_CNAME = 'eth16'
-    ETH_DESC_CNAME = 'eth16_desc'
+    NAME = None
+    ETH_CODE_CNAME = None
+    ETH_DESC_CNAME = None
 
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
@@ -1376,8 +1369,13 @@ class EthCPRD16(AbstractScheme):
                          name=self.NAME)
 
 
-@singleton
-class EthCPRD5(EthCPRD16):
+class EthCPRD16(EthCPRD, Singleton):
+    NAME = 'eth_cprd_16'
+    ETH_CODE_CNAME = 'eth16'
+    ETH_DESC_CNAME = 'eth16_desc'
+
+
+class EthCPRD5(EthCPRD, Singleton):
     NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'

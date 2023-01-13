@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
 
-from ..utils import load_config, LazyDict, translate_path
+from ..utils import load_config, translate_path
 
 from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
@@ -41,7 +41,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                  adm_colname: StrDict, name: str, **kwargs):
 
         normalised_scheme = {
-            code_type: eval(f"C.{scheme}")
+            code_type: eval(f"C.{scheme}")()
             for code_type, scheme in normalised_scheme.items()
         }
         code_scheme = {
@@ -188,7 +188,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                 codeset = set()
                 for version, version_df in codes_df.groupby(version_col):
                     s_sch = version_map[str(version)]
-                    m = C.CodeMapper.get_mapper(s_sch, t_sch)
+                    m = s_sch.mapper_to(t_sch)
                     codeset.update(m.map_codeset(version_df[code_col]))
 
                 yield subj_id, adm_id, codeset
@@ -201,9 +201,10 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
         return cls(**meta)
 
 
-class MIMIC3EHRDataset(AbstractEHRDataset):
+class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
-    def __init__(self, df, code_scheme, code_colname, adm_colname, name):
+    def __init__(self, df, code_scheme, code_colname, adm_colname, name,
+                 **kwargs):
         code_scheme = {
             code_type: eval(f"C.{scheme}")()
             for code_type, scheme in code_scheme.items()
@@ -363,11 +364,11 @@ class CPRDEHRDataset(AbstractEHRDataset):
         return cls(**meta)
 
 
-datasets = LazyDict({
-    'M3':
-    lambda: MIMIC3EHRDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json'),
-    'M4':
-    lambda: MIMIC4EHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json'),
-    'CPRD':
-    lambda: CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json')
-})
+def load_dataset(label):
+
+    if label == 'M3':
+        return MIMIC3EHRDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json')
+    if label == 'M4':
+        return MIMIC4EHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
+    if label == 'CPRD':
+        return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json')

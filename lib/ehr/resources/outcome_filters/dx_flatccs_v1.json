@@ -1,5 +1,5 @@
 {
-    "code_scheme": "dx_flatccs",
+    "code_scheme": "DxFlatCCS",
     "exclude_codes": [
         "2611",
         "662",
@@ -88,5 +88,5 @@
         "662": "Suicide and intentional self-inflicted in",
         "663": "Screening and history of mental health an"
     },
-    "outcome_scheme": "dx_flatccs"
+    "outcome_scheme": "DxFlatCCS"
 }

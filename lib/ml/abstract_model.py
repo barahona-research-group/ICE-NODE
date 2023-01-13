@@ -4,12 +4,9 @@ from __future__ import annotations
 from typing import Dict, List, Any, TYPE_CHECKING, Callable, Union, Tuple
 from abc import ABC, abstractmethod, ABCMeta
 
-from functools import partial
 from absl import logging
-import jax
 import jax.numpy as jnp
 import equinox as eqx
-import optax
 
 if TYPE_CHECKING:
     import optuna
@@ -118,10 +115,3 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         l2 = sum(jnp.square(w).sum() for w in self.weights)
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
 
-    # @classmethod
-    # def sample_experiment_config(cls, trial: optuna.Trial, emb_kind: str):
-    #     return {
-    #         'emb': cls.sample_embeddings_config(trial, emb_kind),
-    #         'model': cls.sample_model_config(trial),
-    #         'training': cls.sample_training_config(trial)
-    #     }

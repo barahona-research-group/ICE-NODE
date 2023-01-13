@@ -1,5 +1,5 @@
 {
-    "code_scheme": "dx_icd9",
+    "code_scheme": "DxICD9",
     "exclude_codes": [
         "800",
         "800.0",
@@ -11684,5 +11684,5 @@
         "V91.92": "Other specified multiple gestation, with two or more monoamniotic fetuses (V91.92)",
         "V91.99": "Other specified multiple gestation, unable to determine number of placenta and number of amniotic sacs (V91.99)"
     },
-    "outcome_scheme": "dx_icd9"
+    "outcome_scheme": "DxICD9"
 }
