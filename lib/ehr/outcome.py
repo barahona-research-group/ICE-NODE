@@ -5,7 +5,7 @@ import numpy as np
 
 from ..utils import load_config
 
-from .coding_scheme import AbstractScheme
+from . import coding_scheme as C
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -22,7 +22,7 @@ outcome_conf_files = {
 }
 
 
-class OutcomeExtractor(AbstractScheme):
+class OutcomeExtractor(C.AbstractScheme):
 
     def __init__(self, outcome_space='dx_flatccs_filter_v1'):
         conf = self.conf_from_json(outcome_conf_files[outcome_space])
@@ -45,7 +45,7 @@ class OutcomeExtractor(AbstractScheme):
     def outcome_dim(self):
         return len(self.index)
 
-    def map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
+    def map_codeset(self, codeset: Set[str], s_scheme: C.AbstractScheme):
         m = s_scheme.mapper_to(self._t_scheme)
         codeset = m.map_codeset(codeset)
 
@@ -55,7 +55,7 @@ class OutcomeExtractor(AbstractScheme):
 
         return codeset & set(self.codes)
 
-    def codeset2vec(self, codeset: Set[str], s_scheme: AbstractScheme):
+    def codeset2vec(self, codeset: Set[str], s_scheme: C.AbstractScheme):
         vec = np.zeros(len(self.index), dtype=bool)
         for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True

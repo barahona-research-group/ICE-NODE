@@ -6,9 +6,9 @@
     },
     "emb": {
         "dx": {
-            "embeddings_size": 300
-        },
-        "kind": "matrix"
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 300
+        }
     },
     "model": {
         "state_size": 350

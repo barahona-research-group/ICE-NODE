@@ -34,7 +34,8 @@ def setUpModule():
     subjects_sample = random.sample(m3_subjects, 5)
 
     gram_config = {
-        "attention_size": 20,
+        "classname": "CachedGRAM", 
+            "attention_size": 20,
         "attention_method": "tanh",
         "ancestors_mat": m3_ancestors_mat,
         "basic_embeddings": m3_glove,

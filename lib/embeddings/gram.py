@@ -9,8 +9,9 @@ by Asem Alaa (asem.a.abdelaziz@gmail.com)
 
 from __future__ import annotations
 
+import importlib
 from functools import partial
-from typing import Any, Dict, Iterable, Optional, Tuple, TYPE_CHECKING, Callable
+from typing import Any, Dict, Iterable, Optional, Tuple, TYPE_CHECKING, Callable, List, Union
 from abc import ABC, abstractmethod, ABCMeta
 
 import numpy as onp
@@ -23,6 +24,9 @@ import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
+
+from .glove import train_glove
+from ..ehr import Subject_JAX
 
 
 def unnormalized_softmax(x, axis=-1):
@@ -301,6 +305,67 @@ class LogitsDecoder(eqx.Module):
 
     def __call__(self, logits: jnp.ndarray):
         return self.f_dec(logits)
+
+
+def create_embeddings_model(code_type: str,
+                            emb_conf: Dict[str, Union[str, int, float]],
+                            subject_interface: Subject_JAX,
+                            train_ids: Optional[List[int]] = None):
+
+    classname = emb_conf['classname']
+    embeddings_size = emb_conf['embeddings_size']
+
+    if classname == 'MatrixEmbeddings':
+        if code_type == 'dx':
+            input_size = subject_interface.dx_dim
+        else:
+            input_size = subject_interface.pr_dim
+
+        return MatrixEmbeddings(embeddings_size=embeddings_size,
+                                input_size=input_size,
+                                key=jrandom.PRNGKey(0))
+
+    if classname in ['GRAM', 'CachedGRAM']:
+        emb_cls = globals()[classname]
+
+        if code_type == 'dx':
+            cooc_f = subject_interface.dx_augmented_coocurrence
+            ancestors_mat = subject_interface.dx_make_ancestors_mat()
+        else:
+            cooc_f = subject_interface.pr_augmented_coocurrence
+            ancestors_mat = subject_interface.pr_make_ancestors_mat()
+
+        win_size = emb_conf['cooc_window_size_days']
+
+        coocurrence_mat = cooc_f(train_ids, window_size_days=win_size)
+        glove = train_glove(cooccurrences=coocurrence_mat,
+                            embeddings_size=embeddings_size,
+                            iterations=emb_conf['glove_iterations'])
+        return emb_cls(basic_embeddings=glove,
+                       attention_method=emb_conf['attention_method'],
+                       attention_size=emb_conf['attention_size'],
+                       ancestors_mat=ancestors_mat,
+                       key=jrandom.PRNGKey(0))
+    else:
+        raise RuntimeError(f'Unrecognized Embedding class {classname}')
+
+
+def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
+                         subject_interface: Subject_JAX,
+                         train_ids: Optional[List[int]] = None):
+    models = {}
+    if conf.get('dx'):
+        models['dx_emb'] = create_embeddings_model('dx', conf['dx'],
+                                                   subject_interface,
+                                                   train_ids)
+        TODO: DECODER ADD
+
+    if conf.get('pr'):
+        models['pr_emb'] = create_embeddings_model('pr', conf['pr'],
+                                                   subject_interface,
+                                                   train_ids)
+
+    return models
 
 
 MatrixEmbeddings.register_embedding('matrix', 'M')

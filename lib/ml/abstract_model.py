@@ -12,9 +12,6 @@ import equinox as eqx
 if TYPE_CHECKING:
     import optuna
 
-from .. import utils
-from ..embeddings import (CachedGRAM, MatrixEmbeddings, train_glove,
-                          LogitsDecoder)
 from ..ehr import Subject_JAX, OutcomeExtractor
 from .. import metric
 
@@ -44,47 +41,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             i: out['risk_prediction'].get_subject_embeddings(i)
             for i in batch
         }
-
-    @classmethod
-    def create_embeddings_model(cls,
-                                code_type: str,
-                                emb_model: str,
-                                subject_interface: Subject_JAX,
-                                embeddings_size: int,
-                                train_ids: Optional[List[int]] = None,
-                                **emb_config):
-
-        if emb_model == 'matrix':
-            if code_type == 'dx':
-                input_size = subject_interface.dx_dim
-            else:
-                input_size = subject_interface.pr_dim
-
-            return MatrixEmbeddings(embeddings_size=embeddings_size,
-                                    input_size=input_size,
-                                    key=jrandom.PRNGKey(0))
-
-        if emb_model == 'gram':
-            if code_type == 'dx':
-                cooc_f = subject_interface.dx_augmented_coocurrence
-                ancestors_mat = subject_interface.dx_make_ancestors_mat()
-            else:
-                cooc_f = subject_interface.pr_augmented_coocurrence
-                ancestors_mat = subject_interface.pr_make_ancestors_mat()
-
-            win_size = emb_config['cooc_window_size_days']
-
-            coocurrence_mat = cooc_f(train_ids, window_size_days=win_size)
-            glove = train_glove(cooccurrences=coocurrence_mat,
-                                embeddings_size=embeddings_size,
-                                iterations=emb_config['glove_iterations'])
-            return CachedGRAM(basic_embeddings=glove,
-                              attention_method=emb_config['attention_method'],
-                              attention_size=emb_config['attention_size'],
-                              ancestors_mat=ancestors_mat,
-                              key=jrandom.PRNGKey(0))
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_model}')
 
     @classmethod
     def create_dx_embeddings_decoder(cls, outcome_extractor: OutcomeExtractor,

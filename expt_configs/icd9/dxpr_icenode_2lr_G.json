@@ -8,6 +8,7 @@
     },
     "emb": {
         "dx": {
+            "classname": "CachedGRAM", 
             "attention_size": 200,
             "attention_method": "tanh",
             "embeddings_size": 300,
@@ -15,13 +16,13 @@
             "cooc_window_size_days": 360
         },
         "pr": {
+            "classname": "CachedGRAM", 
             "attention_size": 100,
             "attention_method": "tanh",
             "embeddings_size": 150,
             "glove_iterations": 100, 
             "cooc_window_size_days": 360
-        },
-        "kind": "gram"
+        }
     },
     "model": {
         "ode_dyn": "mlp3",

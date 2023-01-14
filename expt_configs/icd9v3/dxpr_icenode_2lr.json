@@ -6,12 +6,13 @@
     },
     "emb": {
         "dx": {
-            "embeddings_size": 300
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 300
         },
         "pr": {
-            "embeddings_size": 150
-        },
-        "kind": "matrix"
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 150
+        }
     },
     "model": {
         "ode_dyn": "mlp3",

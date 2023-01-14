@@ -6,13 +6,13 @@
     },
     "emb": {
         "dx": {
+            "classname": "CachedGRAM", 
             "attention_size": 200,
             "attention_method": "tanh",
             "embeddings_size": 300,
             "glove_iterations": 100, 
             "cooc_window_size_days": 360
-        },
-        "kind": "gram"
+        }
     },
     "model": {
         "state_size": 350

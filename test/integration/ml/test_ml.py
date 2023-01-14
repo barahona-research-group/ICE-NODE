@@ -11,65 +11,44 @@ from lib.ehr.outcome import OutcomeExtractor
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
 from lib.embeddings import CachedGRAM, MatrixEmbeddings
-from icenode.utils import load_config, load_params
+from lib.utils import load_config, load_params
 
 
 def setUpModule():
-    global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_interface_ccs, m4_splits, m4_code_groups
+    global m3_interface, m4_interface, model_configs
 
     m3_dataset = MIMIC3EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
     m4_dataset = MIMIC4EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
-    m3_interface = Subject_JAX.from_dataset(
-        m3_dataset, {
-            'dx': DxCCS(),
-            'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
-        })
+    icd9_outcome = OutcomeExtractor('dx_icd9_filter_v1')
+    flatccs_outcome = OutcomeExtractor('dx_flatccs_filter_v1')
 
-    m3_interface_icd10 = Subject_JAX.from_dataset(
-        m3_dataset, {
-            'dx': DxICD10(),
-            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
-        })
+    if3_f = lambda scheme: Subject_JAX.from_dataset(m3_dataset, scheme)
+    if4_f = lambda scheme: Subject_JAX.from_dataset(m4_dataset, scheme)
 
-    m3_interface_icd9 = Subject_JAX.from_dataset(
-        m3_dataset, {
-            'dx': DxICD9(),
-            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
-        })
+    m3_interface = {
+        'ccs':
+        if3_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
+        'icd10':
+        if3_f(dict(dx=DxICD10(), dx_outcome=icd9_outcome)),
+        'icd9':
+        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome)),
+        'icd9dag':
+        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome, dx_dagvec=True))
+    }
 
-    m3_interface_icd9_dagvec = ehr.Subject_JAX.from_dataset(
-        m3_dataset, {
-            'dx': DxICD9(),
-            'dx_dagvec': True,
-            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
-        })
-
-    m3_splits = m3_interface.random_splits(split1=0.7,
-                                           split2=0.85,
-                                           random_seed=42)
-    m3_code_groups = m3_interface.dx_outcome_by_percentiles(20)
-
-    m4_interface = Subject_JAX.from_dataset(
-        m4_dataset, {
-            'dx': DxICD9(),
-            'dx_dagvec': True,
-            'pr': PrICD9(),
-            'pr_dagvec': True,
-            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
-        })
-
-    m4_interface_ccs = Subject_JAX.from_dataset(
-        m4_dataset, {
-            'dx': DxCCS(),
-            'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
-        })
-
-    m4_splits = m4_interface.random_splits(split1=0.7,
-                                           split2=0.85,
-                                           random_seed=42)
-    m4_code_groups = m4_interface.dx_outcome_by_percentiles(20)
+    m4_interface = {
+        'ccs': if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
+        'icd9': if4_f(dict(dx=DxICD9(), dx_dagvec=True, pr=PrICD9(), pr_dagvec=True, dx_outcome=icd9_outcome))
+    }
+    _loadconfig = lambda fname: load_config(
+        f'test/integration/fixtures/model_configs/{fname}.json')
+    fnames = [
+        'dx_winlogreg', 'dx_gru_m', 'dx_gru_g', 'icd9_dx_gru_g', 'dx_retain_m',
+        'dx_icenode_2lr_m'
+    ]
+    model_configs = {fname: _loadconfig(fname) for fname in fnames}
 
 
 def tearDownModule():
@@ -80,19 +59,16 @@ class DxCommonTests(object):
 
     @classmethod
     def setUpClass(cls):
-        # Unreachable, should be overriden.
-        raise RuntimeError('Unreachable')
+        pass
 
     def setUp(self):
-        self.models = []
-        for config in self.configs:
-            model = self.model_cls.create_model(config, self.interface,
-                                                self.splits[0])
-            state = model.init(config)
+        model = self.model_cls.create_model(config, self.interface,
+                                            self.splits[0])
+        state = model.init(config)
 
-            self.assertTrue(callable(model), msg=f"config: {config}")
-            self.assertTrue(state is not None, msg=f"config: {config}")
-            self.models.append((model, state))
+        self.assertTrue(callable(model), msg=f"config: {config}")
+        self.assertTrue(state is not None, msg=f"config: {config}")
+        self.models.append((model, state))
 
     def test_train_read_write_params(self):
         for (model, state), config in zip(self.models, self.configs):
@@ -119,11 +95,8 @@ class DxCommonTests(object):
 
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        c = load_config(
-            'test/integration/fixtures/model_configs/dx_winlogreg.json')
-
+    def setUp(self):
+        self.config = self.configs['dx_winlogreg']
         cls.configs = []
         for class_weight in ml.logreg_loss_multinomial_mode.keys():
             config = c.copy()
@@ -137,12 +110,8 @@ class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
 
 class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_winlogreg.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_winlogreg']
         cls.model_cls = ml.WLR_SK
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -150,12 +119,8 @@ class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
 
 class TestDxGRU_M(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_gru_m.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_gru_m']
         cls.model_cls = ml.GRU
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -163,12 +128,8 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
 
 class TestDxGRU_M4CCS_M(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_gru_m.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_gru_m']
         cls.model_cls = ml.GRU
         cls.interface = m4_interface_ccs
         cls.splits = m4_splits
@@ -176,12 +137,8 @@ class TestDxGRU_M4CCS_M(DxCommonTests, unittest.TestCase):
 
 class TestDxGRU_G(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_gru_g.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_gru_g']
         cls.model_cls = ml.GRU
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -189,12 +146,8 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
 
 class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/icd9_dx_gru_g.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['icd9_dx_gru_g']
         cls.model_cls = ml.GRU
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -202,12 +155,8 @@ class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
 
 class TestDxRETAIN(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_retain_m.json')
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_retain_m']
         cls.model_cls = ml.RETAIN
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -215,13 +164,8 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_m']
         cls.model_cls = ml.ICENODE_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -229,21 +173,16 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_m']
         cls.env_patcher = unittest.mock.patch.dict(
             os.environ, {"ICENODE_INTERFACE_MAX_SIZE_GB": "0.0"})
         cls.env_patcher.start()
 
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
-            )
-        ]
-        cls.model_cls = ml.ICENODE_2LR
-        cls.interface = ehr.Subject_JAX.from_dataset(
+        cls.model_cls = ICENODE_2LR
+        cls.interface = Subject_JAX.from_dataset(
             m3_dataset, {
-                'dx': 'DxCCS',
+                'dx': DxCCS(),
                 'dx_outcome': 'dx_flatccs_filter_v1'
             })
         cls.splits = m3_splits
@@ -260,13 +199,8 @@ class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_g.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_g']
         cls.model_cls = ml.ICENODE_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -274,13 +208,8 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_m']
         cls.model_cls = ml.ICENODE_UNIFORM_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -288,13 +217,8 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_M_UNIFORM1(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_m']
         cls.model_cls = ml.ICENODE_UNIFORM1D_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -302,13 +226,8 @@ class TestDxICENODE_M_UNIFORM1(DxCommonTests, unittest.TestCase):
 
 class TestDxICENODE_M_UNIFORM0(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dx_icenode_2lr_m.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dx_icenode_2lr_m']
         cls.model_cls = ml.ICENODE_UNIFORM0D_2LR
         cls.interface = m3_interface
         cls.splits = m3_splits
@@ -316,13 +235,8 @@ class TestDxICENODE_M_UNIFORM0(DxCommonTests, unittest.TestCase):
 
 class TestDxPrICENODE_G(DxCommonTests, unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.configs = [
-            load_config(
-                'test/integration/fixtures/model_configs/dxpr_icenode_2lr_g.json'
-            )
-        ]
+    def setUp(self):
+        self.config = self.configs['dxpr_icenode_2lr_g']
         cls.model_cls = ml.PR_ICENODE
         cls.interface = m4_interface
         cls.splits = m4_splits

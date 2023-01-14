@@ -7,24 +7,21 @@
     },
     "emb": {
         "dx": {
+            "classname": "CachedGRAM", 
             "attention_size": 10,
             "attention_method": "tanh",
             "embeddings_size": 10,
-            "glove_config": {
-                "iterations": 5,
-                "window_size_days": 730
-            }
+            "glove_iterations": 10, 
+            "cooc_window_size_days": 360
         },
         "pr": {
+            "classname": "CachedGRAM", 
             "attention_size": 5,
             "attention_method": "tanh",
             "embeddings_size": 5,
-            "glove_config": {
-                "iterations": 5,
-                "window_size_days": 730
-            }
-        },
-        "kind": "gram"
+            "glove_iterations": 10, 
+            "cooc_window_size_days": 360
+        }
     },
     "model": {
         "ode_dyn": "mlp3",
