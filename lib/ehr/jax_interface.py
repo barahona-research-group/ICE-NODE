@@ -87,6 +87,7 @@ class Admission_JAX:
     pr_codes: Set[str]
     dx_vec: jnp.ndarray
     pr_vec: jnp.ndarray
+    dx_outcome: jnp.ndarray
 
     def __init__(self,
                  adm: Admission,

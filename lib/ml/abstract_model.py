@@ -1,19 +1,21 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import Dict, List, Any, TYPE_CHECKING, Callable, Union, Tuple
+from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Optional
 from abc import ABC, abstractmethod, ABCMeta
 
 from absl import logging
 import jax.numpy as jnp
+import jax.random as jrandom
 import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
 
 from .. import utils
-from .. import embeddings as E
-from ..ehr import Subject_JAX
+from ..embeddings import (CachedGRAM, MatrixEmbeddings, train_glove,
+                          LogitsDecoder)
+from ..ehr import Subject_JAX, OutcomeExtractor
 from .. import metric
 
 
@@ -43,20 +45,55 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             for i in batch
         }
 
-    # @classmethod
-    # def create_embedding(cls, emb_config, emb_kind, subject_interface,
-    #                      train_ids):
-    #     if emb_kind == 'matrix':
-    #         return E.MatrixEmbeddings(input_size=subject_interface.dx_size,
-    #                                   **emb_config)
+    @classmethod
+    def create_embeddings_model(cls,
+                                code_type: str,
+                                emb_model: str,
+                                subject_interface: Subject_JAX,
+                                embeddings_size: int,
+                                train_ids: Optional[List[int]] = None,
+                                **emb_config):
 
-    #     if emb_kind == 'gram':
-    #         return E.GRAM(category='dx',
-    #                       subject_interface=subject_interface,
-    #                       train_ids=train_ids,
-    #                       **emb_config)
-    #     else:
-    #         raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+        if emb_model == 'matrix':
+            if code_type == 'dx':
+                input_size = subject_interface.dx_dim
+            else:
+                input_size = subject_interface.pr_dim
+
+            return MatrixEmbeddings(embeddings_size=embeddings_size,
+                                    input_size=input_size,
+                                    key=jrandom.PRNGKey(0))
+
+        if emb_model == 'gram':
+            if code_type == 'dx':
+                cooc_f = subject_interface.dx_augmented_coocurrence
+                ancestors_mat = subject_interface.dx_make_ancestors_mat()
+            else:
+                cooc_f = subject_interface.pr_augmented_coocurrence
+                ancestors_mat = subject_interface.pr_make_ancestors_mat()
+
+            win_size = emb_config['cooc_window_size_days']
+
+            coocurrence_mat = cooc_f(train_ids, window_size_days=win_size)
+            glove = train_glove(cooccurrences=coocurrence_mat,
+                                embeddings_size=embeddings_size,
+                                iterations=emb_config['glove_iterations'])
+            return CachedGRAM(basic_embeddings=glove,
+                              attention_method=emb_config['attention_method'],
+                              attention_size=emb_config['attention_size'],
+                              ancestors_mat=ancestors_mat,
+                              key=jrandom.PRNGKey(0))
+        else:
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_model}')
+
+    @classmethod
+    def create_dx_embeddings_decoder(cls, outcome_extractor: OutcomeExtractor,
+                                     embeddings_size: int, n_layers: int):
+        output_size = outcome_extractor.outcome_dim
+        return LogitsDecoder(n_layers=n_layers,
+                             embeddings_size=embeddings_size,
+                             output_size=output_size,
+                             key=jrandom.PRNGKey(0))
 
     @staticmethod
     def dx_outcome_partitions(subject_interface: Subject_JAX,
@@ -89,15 +126,16 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         }
 
     @classmethod
-    def sample_embeddings_config(cls, trial: optuna.Trial, emb_kind: str):
-        if emb_kind == 'matrix':
-            emb_config = E.MatrixEmbeddings.sample_model_config('dx', trial)
-        elif emb_kind == 'gram':
-            emb_config = E.GRAM.sample_model_config('dx', trial)
+    def sample_embeddings_config(cls, code_type: str, emb_model: str,
+                                 trial: optuna.Trial):
+        if emb_model == 'matrix':
+            emb_config = MatrixEmbeddings.sample_model_config(code_type, trial)
+        elif emb_model == 'gram':
+            emb_config = CachedGRAM.sample_model_config(code_type, trial)
         else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
+            raise RuntimeError(f'Unrecognized Embedding kind {emb_model}')
 
-        return {'dx': emb_config, 'kind': emb_kind}
+        return {code_type: emb_config, 'emb_model': emb_model}
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
@@ -114,4 +152,3 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def l2(self):
         l2 = sum(jnp.square(w).sum() for w in self.weights)
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
-

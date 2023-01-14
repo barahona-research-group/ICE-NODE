@@ -11,19 +11,15 @@
             "attention_size": 200,
             "attention_method": "tanh",
             "embeddings_size": 300,
-            "glove_config": {
-                "iterations": 30,
-                "window_size_days": 730
-            }
+            "glove_iterations": 100, 
+            "cooc_window_size_days": 360
         },
         "pr": {
             "attention_size": 100,
             "attention_method": "tanh",
             "embeddings_size": 150,
-            "glove_config": {
-                "iterations": 30,
-                "window_size_days": 730
-            }
+            "glove_iterations": 100, 
+            "cooc_window_size_days": 360
         },
         "kind": "gram"
     },

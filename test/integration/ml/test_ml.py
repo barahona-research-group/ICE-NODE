@@ -5,42 +5,45 @@ To execute this test from the root directory:
 
 import unittest
 import os
-from icenode import ml
-from icenode import ehr
-from icenode import embeddings as E
+from lib.ml import ml
+from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
+from lib.ehr.outcome import OutcomeExtractor
+from lib.ehr.jax_interface import Subject_JAX
+from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
+from lib.embeddings import CachedGRAM, MatrixEmbeddings
 from icenode.utils import load_config, load_params
 
 
 def setUpModule():
     global m3_interface, m3_interface_icd10, m3_interface_icd9, m3_interface_icd9_dagvec, m3_splits, m3_code_groups, m3_dataset, m4_interface, m4_interface_ccs, m4_splits, m4_code_groups
 
-    m3_dataset = ehr.MIMIC3EHRDataset.from_meta_json(
+    m3_dataset = MIMIC3EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-    m4_dataset = ehr.MIMIC4EHRDataset.from_meta_json(
+    m4_dataset = MIMIC4EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
-    m3_interface = ehr.Subject_JAX.from_dataset(
+    m3_interface = Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'DxCCS',
-            'dx_outcome': 'dx_flatccs_filter_v1'
+            'dx': DxCCS(),
+            'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
         })
 
-    m3_interface_icd10 = ehr.Subject_JAX.from_dataset(
+    m3_interface_icd10 = Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'DxICD10',
-            'dx_outcome': 'dx_icd9_filter_v1'
+            'dx': DxICD10(),
+            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
         })
 
-    m3_interface_icd9 = ehr.Subject_JAX.from_dataset(
+    m3_interface_icd9 = Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'dx_icd9',
-            'dx_outcome': 'dx_icd9_filter_v1'
+            'dx': DxICD9(),
+            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
         })
 
     m3_interface_icd9_dagvec = ehr.Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'dx_icd9',
+            'dx': DxICD9(),
             'dx_dagvec': True,
-            'dx_outcome': 'dx_icd9_filter_v1'
+            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
         })
 
     m3_splits = m3_interface.random_splits(split1=0.7,
@@ -48,19 +51,19 @@ def setUpModule():
                                            random_seed=42)
     m3_code_groups = m3_interface.dx_outcome_by_percentiles(20)
 
-    m4_interface = ehr.Subject_JAX.from_dataset(
+    m4_interface = Subject_JAX.from_dataset(
         m4_dataset, {
-            'dx': 'dx_icd9',
+            'dx': DxICD9(),
             'dx_dagvec': True,
-            'pr': 'pr_icd9',
+            'pr': PrICD9(),
             'pr_dagvec': True,
-            'dx_outcome': 'dx_icd9_filter_v1'
+            'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1')
         })
 
-    m4_interface_ccs = ehr.Subject_JAX.from_dataset(
+    m4_interface_ccs = Subject_JAX.from_dataset(
         m4_dataset, {
-            'dx': 'DxCCS',
-            'dx_outcome': 'dx_flatccs_filter_v1'
+            'dx': DxCCS(),
+            'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
         })
 
     m4_splits = m4_interface.random_splits(split1=0.7,
