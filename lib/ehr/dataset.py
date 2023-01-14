@@ -249,7 +249,6 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
         subject_id_col = self.adm_colname["subject_id"]
 
         code_col = self.code_colname[code_type]
-        scheme = self.code_scheme[code_type]
         df = self.df[code_type]
         for subj_id, subj_df in df.groupby(subject_id_col):
             for adm_id, codes_df in subj_df.groupby(adm_id_col):
@@ -296,7 +295,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
 class CPRDEHRDataset(AbstractEHRDataset):
 
-    def __init__(self, df, colname, code_scheme, target_scheme, name,
+    def __init__(self, df, colname, code_scheme, name,
                  **kwargs):
 
         self.name = name

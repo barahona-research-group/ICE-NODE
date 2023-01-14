@@ -9,7 +9,7 @@
         "dx": {"9": "DxICD9", "10": "DxICD10"},
         "pr": {"9": "PrICD9", "10": "PrICD10"}
     },
-    "target_scheme": {
+    "normalised_scheme": {
         "dx": "DxICD9",
         "pr": "PrICD9"
     },
