@@ -5,7 +5,7 @@
     },
     "emb": {
         "dx": {
-            "embeddings_dim": 270
+            "embeddings_size": 270
         },
         "kind": "matrix"
     },

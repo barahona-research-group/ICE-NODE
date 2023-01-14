@@ -88,7 +88,7 @@ def run_iter(data, learning_rate=0.05, x_max=100, alpha=0.75):
 
 
 def train_glove(cooccurrences: np.ndarray,
-                vector_size=100,
+                embeddings_size=100,
                 iterations=25,
                 prng_seed=0,
                 **kwargs) -> np.ndarray:
@@ -112,13 +112,13 @@ def train_glove(cooccurrences: np.ndarray,
     # nx: code space dim
     # ne: embedded space dim
     # (2nx, ne)
-    W = (np.random.rand(size * 2, vector_size) - 0.5) / float(vector_size + 1)
+    W = (np.random.rand(size * 2, embeddings_size) - 0.5) / float(embeddings_size + 1)
 
     # (2nx, )
-    biases = (np.random.rand(size * 2) - 0.5) / float(vector_size + 1)
+    biases = (np.random.rand(size * 2) - 0.5) / float(embeddings_size + 1)
 
     # (2nx, ne)
-    gradient_squared = np.ones((size * 2, vector_size), dtype=np.float64)
+    gradient_squared = np.ones((size * 2, embeddings_size), dtype=np.float64)
 
     # (2nx, ne)
     gradient_squared_biases = np.ones(size * 2, dtype=np.float64)

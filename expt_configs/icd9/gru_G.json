@@ -1,14 +1,14 @@
 {
     "code_scheme": {
-        "dx": "dx_icd9",
+        "dx": "DxICD9",
         "dx_dagvec": true,
         "dx_outcome": "dx_icd9_filter_v1"
     },
     "emb": {
         "dx": {
-            "attention_dim": 200,
+            "attention_size": 200,
             "attention_method": "tanh",
-            "embeddings_dim": 300,
+            "embeddings_size": 300,
             "glove_config": {
                 "iterations": 30,
                 "window_size_days": 730

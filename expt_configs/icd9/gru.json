@@ -1,12 +1,12 @@
 {
     "code_scheme": {
-        "dx": "dx_icd9",
+        "dx": "DxICD9",
         "dx_outcome": "dx_icd9_filter_v1",
         "pr": "none"
     },
     "emb": {
         "dx": {
-            "embeddings_dim": 300
+            "embeddings_size": 300
         },
         "kind": "matrix"
     },

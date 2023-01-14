@@ -25,7 +25,7 @@ class TestSubject_JAX(unittest.TestCase):
             interface = ehr.Subject_JAX.from_dataset(m3_dataset, code_scheme)
             cls.interfaces.append(interface)
 
-        for dx_scheme in ['dx_icd9', 'dx_icd10']:
+        for dx_scheme in ['dx_icd9', 'DxICD10']:
             code_scheme = {
                 'dx': dx_scheme,
                 'dx_outcome': 'dx_icd9_filter_v1',

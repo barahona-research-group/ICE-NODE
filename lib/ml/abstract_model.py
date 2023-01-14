@@ -47,7 +47,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     # def create_embedding(cls, emb_config, emb_kind, subject_interface,
     #                      train_ids):
     #     if emb_kind == 'matrix':
-    #         return E.MatrixEmbeddings(input_dim=subject_interface.dx_dim,
+    #         return E.MatrixEmbeddings(input_size=subject_interface.dx_size,
     #                                   **emb_config)
 
     #     if emb_kind == 'gram':

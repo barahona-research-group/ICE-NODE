@@ -29,7 +29,7 @@ def setUpModule():
     m3_subjects = list(m3_interface.keys())
     m3_coocurrence = m3_interface.dx_augmented_coocurrence(m3_subjects,
                                                            window_size_days=60)
-    m3_glove = train_glove(m3_coocurrence, vector_size=30, iterations=5)
+    m3_glove = train_glove(m3_coocurrence, embeddings_size=30, iterations=5)
     m3_ancestors_mat = m3_interface.dx_make_ancestors_mat()
     subjects_sample = random.sample(m3_subjects, 5)
 

@@ -20,13 +20,13 @@ def setUpModule():
         'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
     m3_interface = ehr.Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'dx_ccs',
+            'dx': 'DxCCS',
             'dx_outcome': 'dx_flatccs_filter_v1'
         })
 
     m3_interface_icd10 = ehr.Subject_JAX.from_dataset(
         m3_dataset, {
-            'dx': 'dx_icd10',
+            'dx': 'DxICD10',
             'dx_outcome': 'dx_icd9_filter_v1'
         })
 
@@ -59,7 +59,7 @@ def setUpModule():
 
     m4_interface_ccs = ehr.Subject_JAX.from_dataset(
         m4_dataset, {
-            'dx': 'dx_ccs',
+            'dx': 'DxCCS',
             'dx_outcome': 'dx_flatccs_filter_v1'
         })
 
@@ -240,7 +240,7 @@ class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
         cls.model_cls = ml.ICENODE_2LR
         cls.interface = ehr.Subject_JAX.from_dataset(
             m3_dataset, {
-                'dx': 'dx_ccs',
+                'dx': 'DxCCS',
                 'dx_outcome': 'dx_flatccs_filter_v1'
             })
         cls.splits = m3_splits
