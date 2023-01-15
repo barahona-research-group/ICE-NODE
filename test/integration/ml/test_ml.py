@@ -5,13 +5,15 @@ To execute this test from the root directory:
 
 import unittest
 import os
-from lib.ml import ml
+import jax.random as jrandom
+from typing import List, Tuple
+from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
 from lib.ehr.outcome import OutcomeExtractor
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
-from lib.embeddings import CachedGRAM, MatrixEmbeddings
 from lib.utils import load_config, load_params
+from lib.embeddings import embeddings_from_conf
 
 
 def setUpModule():
@@ -39,8 +41,15 @@ def setUpModule():
     }
 
     m4_interface = {
-        'ccs': if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
-        'icd9': if4_f(dict(dx=DxICD9(), dx_dagvec=True, pr=PrICD9(), pr_dagvec=True, dx_outcome=icd9_outcome))
+        'ccs':
+        if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
+        'icd9dag':
+        if4_f(
+            dict(dx=DxICD9(),
+                 dx_dagvec=True,
+                 pr=PrICD9(),
+                 pr_dagvec=True,
+                 dx_outcome=icd9_outcome))
     }
     _loadconfig = lambda fname: load_config(
         f'test/integration/fixtures/model_configs/{fname}.json')
@@ -59,19 +68,15 @@ class DxCommonTests(object):
 
     @classmethod
     def setUpClass(cls):
-        pass
-
-    def setUp(self):
-        model = self.model_cls.create_model(config, self.interface,
-                                            self.splits[0])
-        state = model.init(config)
-
-        self.assertTrue(callable(model), msg=f"config: {config}")
-        self.assertTrue(state is not None, msg=f"config: {config}")
-        self.models.append((model, state))
+        cls.model_if_pairs: List[Tuple[Type[ml.AbstractModel], Subject_JAX]] = []
+        cls.config = dict()
 
     def test_train_read_write_params(self):
-        for (model, state), config in zip(self.models, self.configs):
+        for (model_cls, IF) in self.model_if_pairs:
+            splits = IF.random_splits(0.7, 0.85, random_seed=42)
+
+            emb_models = embeddings_from_conf(self.config["emb"], IF, splits[0])
+            model =
             results = model.get_trainer()(model=model,
                                           m_state=state,
                                           config=config,
@@ -96,7 +101,7 @@ class DxCommonTests(object):
 class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
 
     def setUp(self):
-        self.config = self.configs['dx_winlogreg']
+        self.config = model_configs['dx_winlogreg']
         cls.configs = []
         for class_weight in ml.logreg_loss_multinomial_mode.keys():
             config = c.copy()

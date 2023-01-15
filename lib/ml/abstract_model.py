@@ -4,30 +4,22 @@ from __future__ import annotations
 from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Optional
 from abc import ABC, abstractmethod, ABCMeta
 
-from absl import logging
 import jax.numpy as jnp
-import jax.random as jrandom
 import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import Subject_JAX, OutcomeExtractor
+from ..ehr import Subject_JAX
 from .. import metric
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
-    model_cls = {}
-
     dx_emb: Callable
     dx_dec: Callable
 
     state_size: Union[int, Tuple[int, ...]]
-    control_size: int
-
-    @classmethod
-    def register_model(cls, label):
-        cls.model_cls[label] = cls
+    control_size: int = 0
 
     @abstractmethod
     def __call__(self, subject_interface: Subject_JAX,
@@ -41,15 +33,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             i: out['risk_prediction'].get_subject_embeddings(i)
             for i in batch
         }
-
-    @classmethod
-    def create_dx_embeddings_decoder(cls, outcome_extractor: OutcomeExtractor,
-                                     embeddings_size: int, n_layers: int):
-        output_size = outcome_extractor.outcome_dim
-        return LogitsDecoder(n_layers=n_layers,
-                             embeddings_size=embeddings_size,
-                             output_size=output_size,
-                             key=jrandom.PRNGKey(0))
 
     @staticmethod
     def dx_outcome_partitions(subject_interface: Subject_JAX,
@@ -80,18 +63,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
             'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
         }
-
-    @classmethod
-    def sample_embeddings_config(cls, code_type: str, emb_model: str,
-                                 trial: optuna.Trial):
-        if emb_model == 'matrix':
-            emb_config = MatrixEmbeddings.sample_model_config(code_type, trial)
-        elif emb_model == 'gram':
-            emb_config = CachedGRAM.sample_model_config(code_type, trial)
-        else:
-            raise RuntimeError(f'Unrecognized Embedding kind {emb_model}')
-
-        return {code_type: emb_config, 'emb_model': emb_model}
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):

@@ -1,8 +1,4 @@
 {
-    "code_scheme": {
-        "dx": "DxCCS",
-        "dx_outcome": "dx_flatccs_filter_v1"
-    },
     "model": {
         "alpha": 0.5,
         "beta": 0.5,

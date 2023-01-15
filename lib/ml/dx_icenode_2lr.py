@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any, Dict, TYPE_CHECKING
 
 import jax
+import equinox as eqx
 
 if TYPE_CHECKING:
     import optuna
@@ -66,7 +67,7 @@ class ICENODE_2LR_MIXIN:
         return {
             'epochs': 60,
             'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
-            'optimizer': 'adam',
+            'opt': 'adam',
             'lr1': trial.suggest_float('lr1', 1e-5, 1e-2, log=True),
             'lr2': trial.suggest_float('lr2', 1e-5, 1e-2, log=True),
             'decay_rate1': trial.suggest_float('dr1', 1e-1, 9e-1),

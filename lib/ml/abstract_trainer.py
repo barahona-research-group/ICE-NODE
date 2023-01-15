@@ -1,9 +1,8 @@
 import copy
-from typing import List, Any, Dict, Type, Tuple
+from typing import List, Any, Dict, Type, Tuple, Union
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
 
-import pandas as pd
 from tqdm import tqdm
 import jax
 import jax.numpy as jnp
@@ -24,22 +23,12 @@ opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
 class AbstractTrainer(eqx.Module):
 
-    opt: Any = eqx.static_field()
+    opt: str = eqx.static_field()
     reg_hyperparams: Dict[str, float]
-    model_cls: Type[AbstractModel]
     epochs: int
     batch_size: int
-    lr: float
-
-    trainer_registry = {}
-
-    @classmethod
-    def register_trainer(cls, model_cls):
-        cls.trainer_registry[model_cls] = cls
-
-    @classmethod
-    def get_trainer(cls, model_cls):
-        return cls.trainer_registry[model_cls]
+    lr: Union[float, Tuple[float, float]]
+    decay_rate: Union[float, Tuple[float, float]] = None
 
     @classmethod
     def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
@@ -181,7 +170,7 @@ class AbstractTrainer(eqx.Module):
         return {
             'epochs': 10,
             'batch_size': trial.suggest_int('B', 2, 27, 5),
-            'optimizer': 'adam',
+            'opt': 'adam',
             'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
             'decay_rate': None,
             'reg_hyperparams': cls.sample_reg_hyperparams(trial)

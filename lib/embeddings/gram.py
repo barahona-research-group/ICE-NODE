@@ -9,9 +9,8 @@ by Asem Alaa (asem.a.abdelaziz@gmail.com)
 
 from __future__ import annotations
 
-import importlib
 from functools import partial
-from typing import Any, Dict, Iterable, Optional, Tuple, TYPE_CHECKING, Callable, List, Union
+from typing import Dict, Optional, TYPE_CHECKING, Callable, List, Union
 from abc import ABC, abstractmethod, ABCMeta
 
 import numpy as onp
@@ -280,6 +279,7 @@ class LogitsDecoder(eqx.Module):
     f_dec: Callable
     embeddings_size: int
     output_size: int
+    n_layers: int
 
     def __init__(self, n_layers: int, embeddings_size: int, output_size: int,
                  key: "jax.random.PRNGKey"):
@@ -302,15 +302,18 @@ class LogitsDecoder(eqx.Module):
             layers.append(eqx.nn.Lambda(_act(i)))
 
         self.f_dec = eqx.nn.Sequential(layers[:-1])
+        self.n_layers = n_layers
+        self.embeddings_size = embeddings_size
+        self.output_size = output_size
 
     def __call__(self, logits: jnp.ndarray):
         return self.f_dec(logits)
 
 
-def create_embeddings_model(code_type: str,
-                            emb_conf: Dict[str, Union[str, int, float]],
+def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
+                                                                      float]],
                             subject_interface: Subject_JAX,
-                            train_ids: Optional[List[int]] = None):
+                            train_ids: List[int]):
 
     classname = emb_conf['classname']
     embeddings_size = emb_conf['embeddings_size']
@@ -351,14 +354,19 @@ def create_embeddings_model(code_type: str,
 
 
 def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
-                         subject_interface: Subject_JAX,
-                         train_ids: Optional[List[int]] = None):
+                         subject_interface: Subject_JAX, train_ids: List[int]):
     models = {}
     if conf.get('dx'):
         models['dx_emb'] = create_embeddings_model('dx', conf['dx'],
                                                    subject_interface,
                                                    train_ids)
-        TODO: DECODER ADD
+        dec_n_layers = conf['dx']['decoder_n_layers']
+        dec_output_size = subject_interface.dx_outcome_dim
+        embeddings_size = conf['dx']['embeddings_size']
+        models['dx_dec'] = LogitsDecoder(n_layers=dec_n_layers,
+                                         embeddings_size=embeddings_size,
+                                         output_size=dec_output_size,
+                                         key=jrandom.PRNGKey(0))
 
     if conf.get('pr'):
         models['pr_emb'] = create_embeddings_model('pr', conf['pr'],

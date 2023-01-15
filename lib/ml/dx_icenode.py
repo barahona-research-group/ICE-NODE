@@ -22,10 +22,10 @@ from .abstract_model import AbstractModel
 
 def ode_dyn(label, state_size, embeddings_size, control_size, key):
     if 'mlp' in label:
-        depth = int(re.findall(r'\d+\b', label)[0])
+        nlayers = int(re.findall(r'\d+\b', label)[0])
         label = 'mlp'
     else:
-        depth = 0
+        nlayers = 0
 
     dyn_state_size = state_size + embeddings_size
     input_size = state_size + embeddings_size + control_size
@@ -33,7 +33,7 @@ def ode_dyn(label, state_size, embeddings_size, control_size, key):
     nn_kwargs = {
         'mlp':
         dict(activation=jax.nn.tanh,
-             depth=depth,
+             depth=nlayers - 1,
              in_size=input_size,
              out_size=dyn_state_size),
         'gru':
@@ -247,7 +247,7 @@ class Trainer(AbstractTrainer):
             'epochs': 60,
             'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
             #trial.suggest_int('B', 2, 27, 5),
-            'optimizer': 'adam',
+            'opt': 'adam',
             #trial.suggest_categorical('opt', ['adam', 'adamax']),
             'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
             'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),

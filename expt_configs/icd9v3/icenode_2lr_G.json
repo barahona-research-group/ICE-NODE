@@ -6,6 +6,7 @@
     },
     "emb": {
         "dx": {
+           "decoder_n_layers": 2,
             "classname": "CachedGRAM", 
             "attention_size": 200,
             "attention_method": "tanh",
@@ -15,25 +16,22 @@
         }
     },
     "model": {
-        "ode_dyn": "mlp3",
+        "ode_dyn_label": "mlp3",
         "ode_init_var": 1.0776395319697402e-07,
-        "ode_with_bias": false,
         "state_size": 30,
         "timescale": 7
     },
     "training": {
         "batch_size": 256,
-        "decay_rate1": 0.27729587471948475,
-        "decay_rate2": 0.3293406876704547,
+        "decay_rate": [0.27729587471948475, 0.3293406876704547],
+        "lr": [7.156197978746877e-05,  0.0011484691965460785],
         "epochs": 60,
         "loss_mixing": {
             "L_dyn": 1000.0,
             "L_l1": 0,
             "L_l2": 0
         },
-        "lr1": 7.156197978746877e-05,
-        "lr2": 0.0011484691965460785,
-        "optimizer": "adam"
+        "opt": "adam"
     },
     "meta": {
     	"github_tag": "v0.2.20.dyn",

@@ -5,6 +5,7 @@
     },
     "emb": {
         "dx": {
+           "decoder_n_layers": 2,
            "classname":  "MatrixEmbeddings",      
            "embeddings_size": 270
         }
@@ -22,7 +23,7 @@
             "L_l2": 0
         },
         "lr": 0.0016534371369143167,
-        "optimizer": "adam"
+        "opt": "adam"
     },
     "meta": {
     	"github_tag": "v0.2.20",
