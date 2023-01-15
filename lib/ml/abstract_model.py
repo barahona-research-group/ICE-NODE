@@ -35,6 +35,28 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         }
 
     @staticmethod
+    def _emb_subtrees(pytree):
+        return (pytree.dx_emb, pytree.dx_dec)
+
+    @staticmethod
+    def emb_dyn_partition(pytree):
+        """
+        Separate the dynamics parameters from the embedding parameters.
+        Thanks to Patrick Kidger for the clever function of eqx.partition.
+        """
+        emb_nodes = AbstractModel._emb_subtrees(pytree)
+        emb_predicate = lambda _t: any(_t is t for t in emb_nodes)
+
+        emb_tree, dyn_tree = eqx.partition(pytree,
+                                           emb_predicate,
+                                           is_leaf=emb_predicate)
+        return emb_tree, dyn_tree
+
+    @staticmethod
+    def emb_dyn_merge(emb_tree, dyn_tree):
+        return eqx.combine(emb_tree, dyn_tree)
+
+    @staticmethod
     def dx_outcome_partitions(subject_interface: Subject_JAX,
                               train_ids: List[int]):
         return subject_interface.dx_outcome_by_percentiles(20, train_ids)
@@ -79,3 +101,9 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def l2(self):
         l2 = sum(jnp.square(w).sum() for w in self.weights)
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
+
+class AbstractModelProxMap(AbstractModel, metaclass=ABCMeta):
+
+    @staticmethod
+    def prox_map(model):
+        pass

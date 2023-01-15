@@ -10,7 +10,6 @@ import jax.numpy as jnp
 from ..metric import BatchPredictedRisks
 
 from .abstract_model import AbstractModel
-from .abstract_trainer import AbstractTrainer
 
 from ..ehr import Subject_JAX
 
@@ -72,6 +71,3 @@ class GRU(AbstractModel):
                         subject_id=subject_id, embeddings=state)
 
         return {'predictions': risk_prediction}
-
-
-AbstractTrainer.register_trainer(GRU)

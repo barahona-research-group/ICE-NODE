@@ -11,12 +11,11 @@ import jax.random as jrandom
 import equinox as eqx
 import optuna
 
-from ..metric import balanced_focal_bce, BatchPredictedRisks
+from ..metric import BatchPredictedRisks
 from ..utils import model_params_scaler
 from ..ehr import Subject_JAX, Admission_JAX
 
 from .base_models import (GRUDynamics, NeuralODE, StateUpdate)
-from .abstract_trainer import AbstractTrainer
 from .abstract_model import AbstractModel
 
 
@@ -89,15 +88,12 @@ class ICENODE(AbstractModel):
     @eqx.filter_jit
     def _integrate_state(self, subject_state: SubjectState, int_time: float,
                          ctrl: jnp.ndarray, args: Dict[str, Any]):
-        args = dict(control=ctrl, n_samples=2, **args)
+        args = dict(control=ctrl, **args)
         out = self.ode_dyn(subject_state.state, int_time, args)
         if args.get('tay_reg', 0) > 0:
             state, r, traj = out[0][-1], out[1][-1], out[0]
         else:
             state, r, traj = out[-1], 0.0, out
-
-        if args.get('sampling_rate', None) is None:
-            traj = None
 
         return SubjectState(state, subject_state.time + int_time), r, traj
 
@@ -191,68 +187,16 @@ class ICENODE(AbstractModel):
         }
 
 
-class Trainer(AbstractTrainer):
-    tay_reg: int = 3
+class ICENODE_UNIFORM(ICENODE):
 
-    @classmethod
-    def odeint_time(cls, predictions: BatchPredictedRisks):
-        int_time = 0
-        for subj_id, preds in predictions.items():
-            adms = [preds[idx] for idx in sorted(preds)]
-            # Integration time from the first discharge (adm[0].(length of
-            # stay)) to last discarge (adm[-1].time + adm[-1].(length of stay)
-            int_time += adms[-1].time + adms[-1].los - adms[0].los
-        return int_time
-
-    @classmethod
-    def dx_loss(y: jnp.ndarray, dx_logits: jnp.ndarray):
-        return balanced_focal_bce(y, dx_logits)
-
-    def reg_loss(self, model: AbstractModel, subject_interface: Subject_JAX,
-                 batch: List[int]):
-        args = dict(tay_reg=self.tay_reg)
-        res = model(subject_interface, batch, args)
-        preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss)
-
-        integration_weeks = self.odeint_time(preds) / 7
-        l1_loss = model.l1()
-        l2_loss = model.l2()
-        dyn_loss = res['dyn_loss'] / integration_weeks
-        l1_alpha = self.reg_hyperparams['L_l1']
-        l2_alpha = self.reg_hyperparams['L_l2']
-        dyn_alpha = self.reg_hyperparams['L_dyn']
-
-        loss = l + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha *
-                                                                  dyn_loss)
-
-        return loss, ({
-            'dx_loss': l,
-            'loss': loss,
-            'l1_loss': l1_loss,
-            'l2_loss': l2_loss,
-        }, preds)
-
-    @classmethod
-    def sample_reg_hyperparams(cls, trial: optuna.Trial):
-        return {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-            'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-        }
-
-    @classmethod
-    def sample_training_config(cls, trial: optuna.Trial):
-        return {
-            'epochs': 60,
-            'batch_size': 2**trial.suggest_int('Bexp', 1, 8),
-            #trial.suggest_int('B', 2, 27, 5),
-            'opt': 'adam',
-            #trial.suggest_categorical('opt', ['adam', 'adamax']),
-            'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
-            'decay_rate': trial.suggest_float('dr', 1e-1, 9e-1),
-            'reg_hyperparams': cls.sample_reg_hyperparams(trial)
-        }
+    @staticmethod
+    def _time_diff(t1, t2):
+        return 7.0
 
 
-Trainer.register_trainer(ICENODE)
+class ICENODE_ZERO(ICENODE_UNIFORM):
+
+    @eqx.filter_jit
+    def _integrate_state(self, subject_state, int_time, ctrl, args):
+        return SubjectState(subject_state.state,
+                            subject_state.time + int_time), 0.0, None

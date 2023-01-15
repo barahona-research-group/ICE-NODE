@@ -8,17 +8,17 @@ class ICENODE_STAGED_MIXIN:
 
     @classmethod
     def step_optimizer(cls, step, model_state, batch):
-        opt_state, opt_update, get_params, loss_, loss_mixing = model_state
+        opt_state, opt_update, get_params, loss_, reg_hyperparams = model_state
         params = get_params(opt_state)
         grads = jax.grad(loss_)(params, batch)
         if step > 50:
-            loss_mixing['L_dyn'] = 0
+            reg_hyperparams['L_dyn'] = 0
             for label in grads:
                 if label != 'f_n_ode':
                     grads[label] = tree_map(lambda g: g * 0, grads[label])
 
         opt_state = opt_update(step, grads, opt_state)
-        return opt_state, opt_update, get_params, loss_, loss_mixing
+        return opt_state, opt_update, get_params, loss_, reg_hyperparams
 
 
 class ICENODE(ICENODE_STAGED_MIXIN, ICENODE_TL):

@@ -22,7 +22,7 @@
         "batch_size": 17,
         "decay_rate": null,
         "epochs": 60,
-        "loss_mixing": {
+        "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0
         },

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 from ..ehr import Subject_JAX
 from ..metric import BatchPredictedRisks
 from .abstract_model import AbstractModel
-from .abstract_trainer import AbstractTrainer
 
 
 class RETAIN(AbstractModel):
@@ -134,6 +133,3 @@ class RETAIN(AbstractModel):
         sa = trial.suggest_int('sa', 100, 350, 50)
         sb = trial.suggest_int('sb', 100, 350, 50)
         return {'state_size': (sa, sb)}
-
-
-AbstractTrainer.register_trainer(RETAIN)

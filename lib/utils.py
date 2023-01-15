@@ -6,7 +6,6 @@ import zipfile
 import json
 
 import numpy as np
-import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_leaves
 import equinox as eqx
@@ -44,6 +43,7 @@ def model_params_scaler(model, scaler, filter_spec):
     func_model = eqx.filter(model, filter_spec, inverse=True)
     prms_model = eqx.filter(model, filter_spec, inverse=False)
     return eqx.combine(func_model, tree_scalar(prms_model, scaler))
+
 
 def tree_scalar(tree, scalar):
     """Compute tree_x + scalar * tree_y."""

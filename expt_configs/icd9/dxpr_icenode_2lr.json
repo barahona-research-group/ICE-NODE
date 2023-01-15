@@ -27,7 +27,7 @@
         "decay_rate1": 0.27729587471948475,
         "decay_rate2": 0.3293406876704547,
         "epochs": 60,
-        "loss_mixing": {
+        "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,
             "L_l2": 0
