@@ -1,5 +1,5 @@
 import copy
-from typing import List, Any, Dict, Type, Tuple, Union
+from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
 
@@ -41,12 +41,38 @@ class_weighting_dict = {
 
 class Trainer(eqx.Module):
 
-    opt: str = eqx.static_field()
+    opt: str
     reg_hyperparams: Dict[str, float]
     epochs: int
     batch_size: int
     lr: Union[float, Tuple[float, float]]
-    class_weighting: str = 'none'
+    decay_rate: Optional[Union[float, Tuple[float, float]]]
+    class_weighting: str
+
+    def __init__(self,
+                 opt,
+                 reg_hyperparams,
+                 epochs,
+                 batch_size,
+                 lr,
+                 decay_rate=None,
+                 class_weighting='none',
+                 **kwargs):
+        self.opt = opt
+        self.reg_hyperparams = reg_hyperparams
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.lr = lr
+        self.decay_rate = decay_rate
+        self.class_weighting = class_weighting
+
+    @staticmethod
+    def lr_schedule(lr, decay_rate):
+        if decay_rate is None:
+            return lr
+        return optax.exponential_decay(lr,
+                                       transition_steps=50,
+                                       decay_rate=decay_rate)
 
     def dx_loss(self):
         return class_weighting_dict[self.class_weighting]
@@ -102,7 +128,7 @@ class Trainer(eqx.Module):
         return loss, preds
 
     def init_opt(self, model):
-        opt = opts[self.opt](self.lr)
+        opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
         return opt, opt.init(eqx.filter(model, eqx.is_inexact_array))
 
     def _post_update_params(self, model: "..ml.AbstractModel"):
@@ -179,16 +205,19 @@ class Trainer(eqx.Module):
 
 class Trainer2LR(Trainer):
 
-    def init_opt(self, model: "..ml.abstract_model.AbstractModel"):
-        opt1 = opts[self.opt](self.lr[0])
-        opt2 = opts[self.opt](self.lr[1])
+    def init_opt(self, model: "..ml.AbstractModel"):
+        decay_rate = self.decay_rate
+        if not isinstance(decay_rate):
+            decay_rate = (decay_rate, decay_rate)
+
+        opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
+        opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
         m1, m2 = model.emb_dyn_partition(model)
         jax.debug.print('hiii init_opt')
         jax.debug.breakpoint()
         return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
 
-    def step_optimizer(self, opt_state: Any,
-                       model: "..ml.abstract_model.AbstractModel",
+    def step_optimizer(self, opt_state: Any, model: "..ml.AbstractModel",
                        subject_interface: Subject_JAX, batch: Tuple[int],
                        key: "jax.random.PRNGKey"):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
@@ -203,35 +232,6 @@ class Trainer2LR(Trainer):
         new_model = eqx.apply_updates(model, updates)
 
         return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
-
-
-def lr_schedule(lr, decay_rate):
-    if decay_rate is None:
-        return lr
-    return optax.exponential_decay(lr,
-                                   transition_steps=50,
-                                   decay_rate=decay_rate)
-
-
-def trainer_from_conf(conf):
-    lr = conf['lr']
-    dr = conf.get('decay_rate', None)
-
-    trainer_cls = Trainer
-    if isinstance(lr, list):
-        assert len(lr) == 2, "Shoule provide max of two learning rates."
-        trainer_cls = Trainer2LR
-        if not isinstance(dr, list):
-            dr = (dr, dr)
-        lr = tuple(map(lr_schedule, lr, dr))
-    else:
-        lr = lr_schedule(lr, dr)
-
-    return trainer_cls(opt=conf['opt'],
-                       reg_hyperparams=conf['reg_hyperparams'],
-                       epochs=conf['epochs'],
-                       batch_size=conf['batch_size'],
-                       lr=lr)
 
     def __call__(self,
                  model: "..ml.AbstractModel",
@@ -341,16 +341,6 @@ def sample_training_config(cls, trial: optuna.Trial,
 
 class LassoNetTrainer(Trainer):
 
-    def __call__(self,
-                 model: "..ml.AbstractModel",
-                 subject_interface: Subject_JAX,
-                 splits: Tuple[List[int], ...],
-                 prng_seed: int = 0,
-                 code_frequency_groups=None,
-                 trial_terminate_time=datetime.max,
-                 reporters: List[AbstractReporter] = []):
-        pass
-
     def loss(self,
              model: "..ml.abstract_model.AbstractModel",
              subject_interface: Subject_JAX,
@@ -413,3 +403,7 @@ class ODETrainer(Trainer):
             'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
             'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
         }
+
+
+class ODETrainer2LR(ODETrainer, Trainer2LR):
+    pass

@@ -27,7 +27,8 @@
             "L_l1": 0,
             "L_l2": 0
         },
-        "opt": "adam"
+        "opt": "adam",
+        "classname": "ODETrainer2LR"
     },
     "meta": {
     	"github_tag": "v0.2.20.dyn",

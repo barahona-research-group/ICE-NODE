@@ -48,13 +48,22 @@ class WindowLogReg(AbstractModelProxMap):
     W: jnp.ndarray
     b: jnp.ndarray
 
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, output_size, key: "jax.random.PRNGKey"):
+        super().__init__(dx_emb=None,
+                         dx_dec=None,
+                         state_size=0,
+                         control_size=0)
 
         W = 1e-5 * jnp.ones((output_size, input_size), dtype=float)
         b = jnp.zeros(output_size, dtype=float)
 
         self.supported_labels = None
         self.n_labels = None
+
+    @classmethod
+    def from_config(cls, conf, subject_interface, train_split, key):
+        return cls(subject_interface.dx_dim, subject_interface.dx_outcome_dim,
+                   key)
 
     @staticmethod
     def alpha_beta_config(alpha, beta):

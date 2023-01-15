@@ -19,6 +19,7 @@
             "L_l2": 0
         },
         "lr": 0.0016534371369143167,
-        "opt": "adam"
+        "opt": "adam",
+        "classname": "Trainer"
     }
 }

@@ -1,7 +1,15 @@
 {
-    "model": {
-        "alpha": 0.5,
-        "beta": 0.5,
-        "class_weight": "none"
+    "model": {},
+    "training": {
+        "batch_size": 256,
+        "decay_rate": null,
+        "lr": 0.001,
+        "epochs": 60,
+        "reg_hyperparams": {
+            "L_l1": 1e-5,
+            "L_l2": 1e-3
+        },
+        "opt": "adam",
+        "classname": "LassoNetTrainer"
     }
 }

@@ -1,4 +1,5 @@
 # All modules below imported to execute the registration.
+from .abstract_trainer import (Trainer, ODETrainer2LR, ODETrainer, LassoNetTrainer)
 from .abstract_model import AbstractModel, AbstractModelProxMap
 from .dx_gru import GRU
 from .dx_retain import RETAIN

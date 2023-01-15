@@ -4,20 +4,24 @@ To execute this test from the root directory:
 """
 
 import unittest
+import string
 import os
+import uuid
+import random
 import jax.random as jrandom
-from typing import List, Tuple
+from typing import List, Tuple, Type
+from collections import namedtuple
 from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
 from lib.ehr.outcome import OutcomeExtractor
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
-from lib.utils import load_config, load_params
+from lib.utils import load_config, load_params, write_params
 from lib.embeddings import embeddings_from_conf
 
 
 def setUpModule():
-    global m3_interface, m4_interface, model_configs
+    global m3_interface, m4_interface, model_configs, key
 
     m3_dataset = MIMIC3EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
@@ -58,71 +62,61 @@ def setUpModule():
         'dx_icenode_2lr_m'
     ]
     model_configs = {fname: _loadconfig(fname) for fname in fnames}
+    key = jrandom.PRNGKey(443)
 
 
 def tearDownModule():
     pass
 
 
-class DxCommonTests(object):
+TestActors = namedtuple('TestActors',
+                        ['model', 'conf', 'trainer', 'interface', 'splits'])
+
+
+class DxCommonTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.model_if_pairs: List[Tuple[Type[ml.AbstractModel], Subject_JAX]] = []
-        cls.config = dict()
+        cls.actors: List[TestActors] = []
 
     def test_train_read_write_params(self):
-        for (model_cls, IF) in self.model_if_pairs:
-            splits = IF.random_splits(0.7, 0.85, random_seed=42)
+        for i, actors in enumerate(self.actors):
+            res = actors.trainer(model=actors.model,
+                                 subject_interface=actors.interface,
+                                 splits=actors.splits,
+                                 rng_seed=42,
+                                 reporters=[ml.MinibatchLogger()])
+            model = res['model']
+            preds1 = model(actors.interface, actors.splits[2])['predictions']
 
-            emb_models = embeddings_from_conf(self.config["emb"], IF, splits[0])
-            model =
-            results = model.get_trainer()(model=model,
-                                          m_state=state,
-                                          config=config,
-                                          splits=self.splits,
-                                          rng_seed=42,
-                                          reporters=[ml.MinibatchLogger()])
-            model_, state_ = results['model']
-            test_out1 = model_(model_.get_params(state_),
-                               self.splits[2])['risk_prediction']
-            param_fname = f'test_{hash(str(config))}.pickle'
-            model_.write_params(state_, param_fname)
-            params = load_params(param_fname)
+            param_fname = f'test_{str(uuid.uuid4())}.eqx'
+            model.write_params(param_fname)
+
+            model = model.from_config(actors.config, actors.IF,
+                                      actors.splits[0], key)
+            model = model.load_params(param_fname)
             os.remove(param_fname)
 
-            state_ = model_.init_with_params(config, params)
-            test_out2 = model_(model_.get_params(state_),
-                               self.splits[2])['risk_prediction']
+            preds2 = model(actors.interface, actors.splits[2])['predictions']
 
-            self.assertEqual(test_out1, test_out2, msg=f"config: {config}")
+            self.assertEqual(preds1, preds2, msg=f"config: {actors.config}")
 
 
-class TestDxWindowLogReg(DxCommonTests, unittest.TestCase):
+class TestDxWindowLogReg(DxCommonTests):
 
     def setUp(self):
-        self.config = model_configs['dx_winlogreg']
-        cls.configs = []
-        for class_weight in ml.logreg_loss_multinomial_mode.keys():
-            config = c.copy()
-            config['class_weight'] = class_weight
-            cls.configs.append(config)
-
-        cls.model_cls = ml.WLR
-        cls.interface = m3_interface
-        cls.splits = m3_splits
-
-
-class TestDxWindowLogReg_Sklearn(DxCommonTests, unittest.TestCase):
-
-    def setUp(self):
-        self.config = self.configs['dx_winlogreg']
-        cls.model_cls = ml.WLR_SK
-        cls.interface = m3_interface
-        cls.splits = m3_splits
+        config = model_configs['dx_winlogreg']
+        self.models = []
+        for IF in list(m3_interface.values()) + list(m4_interface.values()):
+            splits = IF.random_splits(0.7, 0.85, 42)
+            model = ml.WindowLogReg.from_config(config, IF, splits[0], key)
+            trainer_cls = getattr(ml, config["training"]["classname"])
+            self.assertEqual(trainer_cls, ml.LassoNetTrainer)
+            trainer = trainer_cls(**config["training"])
+            self.models.append(TestActors(model, config, trainer, IF, splits))
 
 
-class TestDxGRU_M(DxCommonTests, unittest.TestCase):
+class TestDxGRU_M(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_gru_m']
@@ -130,8 +124,20 @@ class TestDxGRU_M(DxCommonTests, unittest.TestCase):
         cls.interface = m3_interface
         cls.splits = m3_splits
 
+    def setUp(self):
+        config = model_configs['dx_gru_m']
+        self.models = []
+        for IF in list(m3_interface.values()) + list(m4_interface.values()):
+            splits = IF.random_splits(0.7, 0.85, 42)
+            model = ml.WindowLogReg.from_config(config, IF, splits[0], key)
+            trainer_cls = getattr(ml, config["training"]["classname"])
+            self.assertEqual(trainer_cls, ml.LassoNetTrainer)
+            trainer = trainer_cls(**config["training"])
+            self.models.append(TestActors(model, config, trainer, IF, splits))
 
-class TestDxGRU_M4CCS_M(DxCommonTests, unittest.TestCase):
+
+
+class TestDxGRU_M4CCS_M(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_gru_m']
@@ -140,7 +146,7 @@ class TestDxGRU_M4CCS_M(DxCommonTests, unittest.TestCase):
         cls.splits = m4_splits
 
 
-class TestDxGRU_G(DxCommonTests, unittest.TestCase):
+class TestDxGRU_G(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_gru_g']
@@ -149,7 +155,7 @@ class TestDxGRU_G(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
+class TestICD9DxGRU_G(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['icd9_dx_gru_g']
@@ -158,7 +164,7 @@ class TestICD9DxGRU_G(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxRETAIN(DxCommonTests, unittest.TestCase):
+class TestDxRETAIN(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_retain_m']
@@ -167,7 +173,7 @@ class TestDxRETAIN(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_m']
@@ -176,7 +182,7 @@ class TestDxICENODE_M(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M_LazyLoad(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_m']
@@ -202,7 +208,7 @@ class TestDxICENODE_M_LazyLoad(DxCommonTests, unittest.TestCase):
         self.assertEqual(self.interface.data_max_size_gb, 0.0)
 
 
-class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_G(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_g']
@@ -211,7 +217,7 @@ class TestDxICENODE_G(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M_UNIFORM(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_m']
@@ -220,7 +226,7 @@ class TestDxICENODE_M_UNIFORM(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxICENODE_M_UNIFORM1(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M_UNIFORM1(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_m']
@@ -229,7 +235,7 @@ class TestDxICENODE_M_UNIFORM1(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxICENODE_M_UNIFORM0(DxCommonTests, unittest.TestCase):
+class TestDxICENODE_M_UNIFORM0(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dx_icenode_2lr_m']
@@ -238,7 +244,7 @@ class TestDxICENODE_M_UNIFORM0(DxCommonTests, unittest.TestCase):
         cls.splits = m3_splits
 
 
-class TestDxPrICENODE_G(DxCommonTests, unittest.TestCase):
+class TestDxPrICENODE_G(DxCommonTests):
 
     def setUp(self):
         self.config = self.configs['dxpr_icenode_2lr_g']

@@ -1,7 +1,7 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Optional
+from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict
 from abc import ABC, abstractmethod, ABCMeta
 
 import jax.numpy as jnp
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 from ..ehr import Subject_JAX
 from .. import metric
+from ..embeddings import embeddings_from_conf
+from ..utils import translate_path
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
@@ -101,6 +103,29 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def l2(self):
         l2 = sum(jnp.square(w).sum() for w in self.weights)
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
+
+    @classmethod
+    def from_config(cls, conf: Dict[str, Any], subject_interface: Subject_JAX,
+                    train_split: List[int], key: "jax.random.PRNGKey"):
+        emb_models = embeddings_from_conf(conf["emb"], subject_interface,
+                                          train_split)
+        return cls(**emb_models, **conf["model"], key=key)
+
+    def load_params(self, params_file):
+        """
+        Load the parameters in `params_file` filepath and return as PyTree Object.
+        """
+        with open(translate_path(params_file), 'rb') as file_rsc:
+            return eqx.tree_deserialise_leaves(file_rsc, self)
+
+    def write_params(self, params_file):
+        """
+        Store the parameters (PyTree object) into a new file
+        given by `params_file`.
+        """
+        with open(translate_path(params_file), 'wb') as file_rsc:
+            eqx.tree_serialise_leaves(file_rsc, self)
+
 
 class AbstractModelProxMap(AbstractModel, metaclass=ABCMeta):
 

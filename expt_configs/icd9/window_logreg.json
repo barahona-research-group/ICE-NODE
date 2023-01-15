@@ -4,9 +4,17 @@
         "dx_outcome": "dx_icd9_filter_v1",
         "pr": "none"
     },
-    "model": {
-        "alpha": 1.0025875130319654e-06,
-        "beta": 1.0002315751642798e-06,
-        "class_weight": "none"
+    "model": {},
+    "training": {
+        "batch_size": 256,
+        "decay_rate": null,
+        "lr": 0.001,
+        "epochs": 60,
+        "reg_hyperparams": {
+            "L_l1": 0,
+            "L_l2": 0
+        },
+        "opt": "adam",
+        "classname": "LassoNetTrainer"
     }
 }

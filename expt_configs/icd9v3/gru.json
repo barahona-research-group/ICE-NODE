@@ -23,7 +23,8 @@
             "L_l2": 0
         },
         "lr": 0.0010161679708784964,
-        "opt": "adam"
+        "opt": "adam",
+        "classname": "Trainer"
     },
     "meta": {
     	"github_tag": "v0.2.20",

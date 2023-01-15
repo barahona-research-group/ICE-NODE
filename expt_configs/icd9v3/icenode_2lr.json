@@ -26,6 +26,7 @@
             "L_l1": 0,
             "L_l2": 0
         },
-        "opt": "adam"
+        "opt": "adam",
+        "classname": "ODETrainer2LR"
     }
 }
