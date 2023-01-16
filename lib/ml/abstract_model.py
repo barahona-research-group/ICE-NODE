@@ -5,6 +5,7 @@ from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict
 from abc import ABC, abstractmethod, ABCMeta
 
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import equinox as eqx
 
 if TYPE_CHECKING:
@@ -97,11 +98,11 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         pass
 
     def l1(self):
-        l1 = sum(jnp.abs(w).sum() for w in self.weights)
+        l1 = sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
         return l1 + self.dx_emb.l1() + self.dx_dec.l1()
 
     def l2(self):
-        l2 = sum(jnp.square(w).sum() for w in self.weights)
+        l2 = sum(jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
 
     @classmethod

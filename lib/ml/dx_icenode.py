@@ -8,6 +8,7 @@ import re
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.tree_util as jtu
 import equinox as eqx
 import optuna
 
@@ -76,6 +77,13 @@ class ICENODE(AbstractModel):
             state_size=self.state_size,
             embeddings_size=self.dx_emb.embeddings_size,
             key=key2)
+
+    def weights(self):
+        has_weight = lambda leaf: hasattr(leaf, 'weight')
+        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
+        return tuple(x.weight
+                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                     if has_weight(x))
 
     def join_state_emb(self, state, emb):
         if state is None:

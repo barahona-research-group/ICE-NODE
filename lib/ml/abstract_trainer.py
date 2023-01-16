@@ -18,24 +18,14 @@ from ..utils import params_size, tree_hasnan
 
 opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
-
-def _loss_multinomial(logits, y):
-    return M.softmax_logits_bce(y, logits)
-
-
-def _loss_multinomial_balanced_focal(logits, y):
-    return M.softmax_logits_balanced_focal_bce(y, logits)
-
-
-def _loss_multinomial_balanced(logits, y):
-    weights = y.shape[0] / (y.sum(axis=0) + 1e-10)
-    return M.softmax_logits_weighted_bce(y, logits, weights)
-
-
 class_weighting_dict = {
-    'none': _loss_multinomial,
-    'balanced': _loss_multinomial_balanced,
-    'focal': _loss_multinomial_balanced_focal
+    'none':
+    M.softmax_logits_bce,
+    'balanced':
+    M.softmax_logits_balanced_focal_bce,
+    'focal':
+    lambda y, logits: M.softmax_logits_weighted_bce(
+        y, logits, y.shape[0] / (y.sum(axis=0) + 1e-10))
 }
 
 
@@ -123,7 +113,8 @@ class Trainer(eqx.Module):
              batch: List[int],
              args=dict()) -> Dict[str, float]:
         args['eval_only'] = True
-        _, loss, preds = self.unreg_loss(model, subject_interface, batch, args)
+        _, (loss, preds) = self.unreg_loss(model, subject_interface, batch,
+                                           args)
 
         return loss, preds
 
@@ -146,6 +137,7 @@ class Trainer(eqx.Module):
         return (opt, opt_state), new_model, aux
 
     def evaluations(self,
+                    subject_interface: Subject_JAX,
                     split_predictions: Dict[str, M.BatchPredictedRisks],
                     split_loss: Dict[str, Dict[str, float]],
                     code_frequency_groups=None,
@@ -187,7 +179,11 @@ class Trainer(eqx.Module):
 
         for split, preds in split_predictions.items():
             _, code_auc_dict = M.code_auc_scores(preds, split)
-            _, code_occ1_auc_dict = M.first_occurrence_auc_scores(preds, split)
+            subjects = sorted(preds.keys())
+            first_occ = map(subject_interface.code_first_occurrence, subjects)
+            occ1 = dict(zip(subjects, first_occ))
+            _, code_occ1_auc_dict = M.first_occurrence_auc_scores(
+                preds, occ1, key_prefix=split)
 
             flat_evals.update(code_auc_dict)
             flat_evals.update(code_occ1_auc_dict)
@@ -201,37 +197,6 @@ class Trainer(eqx.Module):
             'opt':
             'adam'  #trial.suggest_categorical('opt', ['adam', 'sgd', 'fromage'])
         }
-
-
-class Trainer2LR(Trainer):
-
-    def init_opt(self, model: "..ml.AbstractModel"):
-        decay_rate = self.decay_rate
-        if not isinstance(decay_rate):
-            decay_rate = (decay_rate, decay_rate)
-
-        opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
-        opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
-        m1, m2 = model.emb_dyn_partition(model)
-        jax.debug.print('hiii init_opt')
-        jax.debug.breakpoint()
-        return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
-
-    def step_optimizer(self, opt_state: Any, model: "..ml.AbstractModel",
-                       subject_interface: Subject_JAX, batch: Tuple[int],
-                       key: "jax.random.PRNGKey"):
-        (opt1, opt2), (opt1_s, opt2_s) = opt_state
-        grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch, key)
-        g1, g2 = model.emb_dyn_partition(grads)
-
-        updates1, opt1_s = opt1.update(g1, opt1_s)
-        updates2, opt2_s = opt2.update(g2, opt2_s)
-        updates = model.emb_dyn_merge(updates1, updates2)
-
-        new_model = eqx.apply_updates(model, updates)
-
-        return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
 
     def __call__(self,
                  model: "..ml.AbstractModel",
@@ -302,8 +267,8 @@ class Trainer2LR(Trainer):
                 split_preds['TST'] = tst_preds
                 split_loss['TST'] = tst_loss
 
-            evals_dict = self.evaluations(split_preds, split_loss,
-                                          code_frequency_groups)
+            evals_dict = self.evaluations(subject_interface, split_preds,
+                                          split_loss, code_frequency_groups)
             history.append_iteration(evals_dict)
 
             auc = evals_dict['VAL_MICRO-AUC']
@@ -321,6 +286,37 @@ class Trainer2LR(Trainer):
                 best_score = auc
 
         return {'objective': auc, 'model': model}
+
+
+class Trainer2LR(Trainer):
+
+    def init_opt(self, model: "..ml.AbstractModel"):
+        decay_rate = self.decay_rate
+        if not isinstance(decay_rate):
+            decay_rate = (decay_rate, decay_rate)
+
+        opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
+        opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
+        m1, m2 = model.emb_dyn_partition(model)
+        jax.debug.print('hiii init_opt')
+        jax.debug.breakpoint()
+        return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
+
+    def step_optimizer(self, opt_state: Any, model: "..ml.AbstractModel",
+                       subject_interface: Subject_JAX, batch: Tuple[int],
+                       key: "jax.random.PRNGKey"):
+        (opt1, opt2), (opt1_s, opt2_s) = opt_state
+        grad_f = eqx.filter_grad(self.loss, has_aux=True)
+        grads, aux = grad_f(model, subject_interface, batch, key)
+        g1, g2 = model.emb_dyn_partition(grads)
+
+        updates1, opt1_s = opt1.update(g1, opt1_s)
+        updates2, opt2_s = opt2.update(g2, opt2_s)
+        updates = model.emb_dyn_merge(updates1, updates2)
+
+        new_model = eqx.apply_updates(model, updates)
+
+        return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
 
 
 def sample_training_config(cls, trial: optuna.Trial,

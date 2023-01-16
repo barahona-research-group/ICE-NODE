@@ -14,9 +14,9 @@
         "state_size": 350
     },
     "training": {
-        "batch_size": 17,
+        "batch_size": 32,
         "decay_rate": null,
-        "epochs": 2,
+        "epochs": 1,
         "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0

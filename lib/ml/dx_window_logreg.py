@@ -54,27 +54,22 @@ class WindowLogReg(AbstractModelProxMap):
                          state_size=0,
                          control_size=0)
 
-        W = 1e-5 * jnp.ones((output_size, input_size), dtype=float)
-        b = jnp.zeros(output_size, dtype=float)
-
-        self.supported_labels = None
-        self.n_labels = None
+        self.W = 1e-5 * jnp.ones((output_size, input_size), dtype=float)
+        self.b = jnp.zeros(output_size, dtype=float)
 
     @classmethod
     def from_config(cls, conf, subject_interface, train_split, key):
         return cls(subject_interface.dx_dim, subject_interface.dx_outcome_dim,
                    key)
 
-    @staticmethod
-    def alpha_beta_config(alpha, beta):
-        # alpha is for L2-norm, beta is for L1-norm
-        return (beta, alpha / (beta + jnp.finfo('float').eps))
+    def weights(self):
+        return (self.W, )
 
-    def predict_logits(self, X):
-        return self.W @ X + self.b
+    def predict_logits(self, x):
+        return self.W @ x + self.b
 
-    def predict_proba(self, X):
-        return jax.nn.softmax(self.predict_logits(X))
+    def predict_proba(self, x):
+        return jax.nn.softmax(self.predict_logits(x))
 
     def __call__(self, subject_interface: Subject_JAX,
                  subjects_batch: List[int], args):
@@ -86,7 +81,7 @@ class WindowLogReg(AbstractModelProxMap):
 
             X = np.vstack([feats.dx_features for feats in features[1:]])
             y = np.vstack([adm.dx_outcome for adm in adms[1:]])
-            risk = self.predict_logits(X)
+            risk = jax.vmap(self.predict_logits)(X)
 
             for (adm, pred) in zip(adms[1:], risk):
                 risk_prediction.add(subject_id=subj_id,

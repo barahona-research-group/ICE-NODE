@@ -319,12 +319,9 @@ class Subject_JAX(dict):
         return [(adm.admission_time, adm.admission_time + adm.los)
                 for adm in adms_info]
 
-    def code_first_occurrence(self, subject_id, exclude_first_admission=True):
+    def code_first_occurrence(self, subject_id):
 
         adms_info = self[subject_id]
-        if exclude_first_admission:
-            adms_info = adms_info[1:]
-
         first_occurrence = np.empty_like(adms_info[0].dx_outcome, dtype=int)
         first_occurrence[:] = -1
         for adm in adms_info:

@@ -1,10 +1,12 @@
 """Performance metrics and loss functions."""
 
 from enum import Flag, auto
-from typing import Dict, Optional, List
-
+from typing import Dict, Optional, List, Tuple, Any
+from dataclasses import dataclass
+from collections import namedtuple
 from absl import logging
 from tqdm import tqdm
+from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
 import numpy as onp
@@ -13,14 +15,10 @@ import jax.numpy as jnp
 from jax.nn import sigmoid
 from sklearn import metrics
 
+from ..ehr import AbstractScheme, OutcomeExtractor
+from ..ehr import Subject_JAX
 from .delong import DeLongTest, FastDeLongTest
 from .risk import BatchPredictedRisks
-
-
-@jax.jit
-def jit_sigmoid(x):
-    """JAX-compiled Sigmoid activation."""
-    return sigmoid(x)
 
 
 @jax.jit
@@ -60,189 +58,259 @@ def confusion_matrix_scores(cm: jnp.ndarray):
 
 
 def compute_auc(v_truth, v_preds):
+
+    def _reject_auc(ground_truth):
+        # Reject if all positives (1) or all negatives (0).
+        n_pos = ground_truth.sum()
+        return (n_pos == 0 or n_pos == onp.size(ground_truth))
+
+    if _reject_auc(v_truth):
+        return float('nan')
     """Compute the area under the ROC from the ground-truth `v_truth` and
      the predictions `v_preds`."""
-    fpr, tpr, _ = metrics.roc_curve(v_truth, v_preds, pos_label=1)
+    fpr, tpr, _ = metrics.roc_curve(v_truth.flatten(),
+                                    v_preds.flatten(),
+                                    pos_label=1)
     return metrics.auc(fpr, tpr)
 
 
-def auc_scores(risk_prediction: BatchPredictedRisks):
-    gtruth = []
-    preds = []
-    for subject_risks in risk_prediction.values():
-        for risk in subject_risks.values():
-            # In some cases the ground truth is all negative, avoid them.
-            # Note: in Python {0.0, 1.0} == {0, 1} => True
-            if set(onp.unique(risk.ground_truth)) == {0, 1}:
+@dataclass
+class Metric(metaclass=ABCMeta):
+    subject_interface: Subject_JAX
+
+    @classmethod
+    def fields(cls):
+        return tuple()
+
+    @classmethod
+    def classname(cls):
+        return cls.__name__
+
+    @classmethod
+    def column(cls, field):
+        return f'{cls.classname()}.{field}'
+
+    @classmethod
+    def columns(cls):
+        return tuple(map(cls.column, cls.fields()))
+
+    @abstractmethod
+    def row(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+        pass
+
+
+class VisitsAUC(Metric):
+
+    @classmethod
+    def fields(cls):
+        return ('macro_auc', 'micro_auc')
+
+    def row(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+        gtruth = []
+        preds = []
+        for subject_risks in predictions.values():
+            for risk in subject_risks.values():
                 gtruth.append(risk.ground_truth)
-                preds.append(jit_sigmoid(risk.prediction))
+                preds.append(risk.prediction)
 
-    if len(preds) == 0 or any(onp.isnan(p).any() for p in preds):
-        logging.warning(f'no detections or nan probs: {risk_prediction}')
-        # nan is returned indicator of undetermined AUC.
-        return {'MACRO-AUC': float('nan'), 'MICRO-AUC': float('nan')}
+        gtruth_mat = onp.hstack(gtruth)
+        preds_mat = onp.hstack(preds)
+        macro_auc = compute_auc(gtruth_mat, preds_mat)
+        micro_auc = onp.array(list(map(compute_auc, gtruth, preds)))
 
-    macro_auc = compute_auc(onp.hstack(gtruth), onp.hstack(preds))
-    micro_auc = sum(compute_auc(t, p) for t, p in zip(gtruth, preds))
-
-    return {'MACRO-AUC': macro_auc, 'MICRO-AUC': micro_auc / len(preds)}
+        return (macro_auc, onp.nanmean(micro_auc))
 
 
-def code_auc_scores(risk_prediction: BatchPredictedRisks, key_prefix=''):
-    ground_truth = []
-    predictions = []
+@dataclass
+class CodeLevelMetric(Metric):
 
-    for subj_id, admission_risks in risk_prediction.items():
-        for admission_idx in sorted(admission_risks):
-            risk = admission_risks[admission_idx]
-            ground_truth.append(risk.ground_truth)
-            predictions.append(jit_sigmoid(risk.prediction))
+    index2code: Dict[int, str]
+    code2index: Dict[str, int]
 
-    ground_truth_mat = onp.vstack(ground_truth)
-    predictions_mat = onp.vstack(predictions)
+    def __init__(self, subject_interface: Subject_JAX):
+        super().__init__(subject_interface)
+        self.code2index = subject_interface.dx_outcome_extractor.index
+        self.index2code = {i: c for c, i in self.code2index.items()}
 
-    n_codes = []
-    auc = []
-    for code_index in range(ground_truth_mat.shape[1]):
-        code_ground_truth = ground_truth_mat[:, code_index]
-        code_predictions = predictions_mat[:, code_index]
+    @classmethod
+    def fields(cls):
+        return tuple()
 
-        n_codes.append(code_ground_truth.sum())
-        auc.append(compute_auc(code_ground_truth, code_predictions))
+    def code_qualifier(self, code_index):
+        return f'I{code_index}C{self.index2code[code_index]}'
 
-    data = {'CODE_INDEX': range(len(auc)), 'N_CODES': n_codes, 'AUC': auc}
+    def column(self, code_index, field):
+        clsname = self.classname()
+        return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
-    auc_dict = {
-        f'{key_prefix}_AUC_{code_idx}': aucval
-        for code_idx, aucval in enumerate(auc)
-    }
+    def order(self):
+        for index in sorted(self.index2code):
+            for field in self.fields():
+                yield (index, field)
 
-    return pd.DataFrame(data), auc_dict
-
-
-def first_occurrence_auc_scores(risk_prediction: BatchPredictedRisks,
-                          first_occurrence_adm: Dict[int, jnp.ndarray],
-                          key_prefix=''):
-    ground_truth = []
-    predictions = []
-    masks = []
-
-    for subj_id, admission_risks in risk_prediction.items():
-        subj_first_occurrence = first_occurrence_adm[subj_id]
-        for admission_id in sorted(admission_risks):
-            mask = (admission_id <= subj_first_occurrence)
-            risk = admission_risks[admission_id]
-            ground_truth.append(risk.ground_truth)
-            predictions.append(jit_sigmoid(risk.prediction))
-            masks.append(mask)
-
-    ground_truth_mat = onp.vstack(ground_truth)
-    predictions_mat = onp.vstack(predictions)
-    mask_mat = onp.vstack(masks).astype(bool)
-
-    n_codes = []
-    auc = []
-    for code_index in range(ground_truth_mat.shape[1]):
-        code_mask = mask_mat[:, code_index]
-        code_ground_truth = ground_truth_mat[code_mask, code_index]
-        code_predictions = predictions_mat[code_mask, code_index]
-        n_codes.append(code_mask.sum())
-
-        auc.append(compute_auc(code_ground_truth, code_predictions))
-
-    data = {'CODE_INDEX': range(len(auc)), 'N_CODES': n_codes, 'AUC': auc}
-    auc_dict = {
-        f'{key_prefix}_AUC_first_occ_{code_idx}': aucval
-        for code_idx, aucval in enumerate(auc)
-    }
-
-    return pd.DataFrame(data), auc_dict
+    def columns(self):
+        return tuple(self.column(idx, field) for idx, field in self.order())
 
 
-def admissions_auc_scores(risk_prediction: BatchPredictedRisks):
-    subject_ids = []
-    # HADM_ID in MIMIC-III
-    admission_ids = []
-    # Admission order mostly
-    admission_indexes = []
-    adm_auc = []
+class CodeAUC(CodeLevelMetric):
 
-    for subject_id, subject_risks in risk_prediction.items():
-        for i, admission_index in enumerate(sorted(subject_risks.keys())):
-            risk = subject_risks[admission_index]
-            # If ground truth has no clinical codes, skip.
-            if set(onp.unique(risk.ground_truth)) != {0, 1}:
-                continue
+    @classmethod
+    def fields(cls):
+        return ('auc', 'n')
 
-            admission_indexes.append(i)
-            admission_ids.append(risk.admission_id)
-            subject_ids.append(subject_id)
+    def row(self, predictions: BatchPredictedRisks):
+        ground_truth = []
+        preds = []
 
-            true_diag = risk.ground_truth
-            diag_score = jit_sigmoid(risk.prediction)
-            auc_score = compute_auc(true_diag, diag_score)
-            adm_auc.append(auc_score)
+        for subj_id, admission_risks in predictions.items():
+            for admission_idx in sorted(admission_risks):
+                risk = admission_risks[admission_idx]
+                ground_truth.append(risk.ground_truth)
+                preds.append(risk.prediction)
 
-    data = {
-        'SUBJECT_ID': subject_ids,
-        'HADM_ID': admission_ids,
-        'HADM_IDX': admission_indexes,
-        'AUC': adm_auc,
-    }
-    return pd.DataFrame(data)
+        ground_truth_mat = onp.vstack(ground_truth)
+        predictions_mat = onp.vstack(preds)
+
+        vals = {'auc': [], 'n': []}
+        for code_index in range(ground_truth_mat.shape[1]):
+            code_ground_truth = ground_truth_mat[:, code_index]
+            code_predictions = predictions_mat[:, code_index]
+            vals['n'].append(code_ground_truth.sum())
+            vals['auc'].append(compute_auc(code_ground_truth,
+                                           code_predictions))
+
+        return tuple(vals[field][index] for index, field in self.order())
 
 
-def compute_confusion_matrix(risk_prediction: BatchPredictedRisks):
-    cm = []
-    for subject_risks in risk_prediction.values():
-        for risk in subject_risks.values():
-            logits = risk.prediction
-            cm.append(confusion_matrix(risk.ground_truth, jit_sigmoid(logits)))
-    if cm:
-        return sum(cm)
-    else:
-        return onp.zeros((2, 2)) + onp.nan
+class UntilFirstCodeAUC(CodeAUC):
+
+    def row(self, predictions: BatchPredictedRisks):
+        ground_truth = []
+        preds = []
+        masks = []
+
+        for subj_id, admission_risks in predictions.items():
+            # first_occ is a vector of admission indices where the code at the corresponding
+            # coordinate has first appeard for the patient. The index value of
+            # (-1) means that the code will not appear at all for this patient.
+            first_occ = self.subject_interface.code_first_occurrence(subj_id)
+
+            for admission_id in sorted(admission_risks):
+                mask = (admission_id <= first_occ)
+                risk = admission_risks[admission_id]
+                ground_truth.append(risk.ground_truth)
+                preds.append(risk.prediction)
+                masks.append(mask)
+
+        ground_truth_mat = onp.vstack(ground_truth)
+        predictions_mat = onp.vstack(preds)
+        mask_mat = onp.vstack(masks).astype(bool)
+
+        vals = {'n': [], 'auc': []}
+        for code_index in range(ground_truth_mat.shape[1]):
+            code_mask = mask_mat[:, code_index]
+            code_ground_truth = ground_truth_mat[code_mask, code_index]
+            code_predictions = predictions_mat[code_mask, code_index]
+            vals['n'].append(code_mask.sum())
+            vals['auc'].append(compute_auc(code_ground_truth,
+                                           code_predictions))
+
+        return tuple(vals[field][index] for index, field in self.order())
 
 
-def top_k_detectability_scores(code_groups: List[List[int]],
-                               risk_predictions: BatchPredictedRisks,
-                               top_k_list: List[int]):
-    ground_truth = []
-    risks = []
+class AdmissionLevelAUC(Metric):
 
-    for subject_risks in risk_predictions.values():
-        for risk_pred in subject_risks.values():
-            risks.append(risk_pred.prediction)
-            ground_truth.append(risk_pred.ground_truth)
+    @classmethod
+    def fields(cls):
+        return ('auc', )
 
-    risks = onp.vstack(risks)
-    ground_truth = onp.vstack(ground_truth).astype(bool)
-    topk_risks = onp.argpartition(risks * -1, top_k_list, axis=1)
+    def admission_qualifier(self, subject_id, admission_id):
+        return f'S{subject_id}A{admission_id}'
 
-    true_positive = {}
-    for k in top_k_list:
-        topk_risks_i = topk_risks[:, :k]
-        topk_risks_k = onp.zeros_like(risks, dtype=bool)
-        onp.put_along_axis(topk_risks_k, topk_risks_i, True, 1)
-        true_positive[k] = (topk_risks_k & ground_truth)
+    def column(self, subject_id, admission_id, field):
+        clsname = self.classname()
+        return f'{clsname}.{self.admission_qualifier(subject_id, admission_id)}.{field}'
 
-    rate = {k: {} for k in top_k_list}
-    for i, code_indices in enumerate(code_groups):
-        group_ground_truth = ground_truth[:, tuple(code_indices)]
+    @classmethod
+    def order(cls, predictions):
+        for subject_id in sorted(predictions):
+            subject_predictions = predictions[subject_id]
+            for admission_id in sorted(subject_predictions):
+                for field in cls.fields():
+                    yield (subject_id, admission_id, field)
+
+    def columns(self, predictions):
+        return tuple(self.column(*o) for o in self.order(predictions))
+
+    def row(self, predictions: BatchPredictedRisks):
+        auc = {}
+        for subject_id in sorted(predictions):
+            subject_predictions = predictions[subject_id]
+            subject_auc = {}
+            for admission_id in enumerate(sorted(subject_predictions)):
+                prediction = subject_predictions[admission_id]
+                auc_score = compute_auc(prediction.ground_truth,
+                                        prediction.prediction)
+                subject_auc[admission_id] = auc_score
+            auc[subject_id] = subject_auc
+
+        return tuple(auc[s_i][a_i] for s_i, a_i, _ in self.order(predictions))
+
+
+@dataclass
+class CodeGroupTopAlarmAccuracy(Metric):
+
+    code_groups: List[List[int]]
+    top_k_list: List[int]
+
+    @classmethod
+    def fields(cls):
+        return ('acc', )
+
+    def column(self, group_index, k, field):
+        f'G{group_index}k{k}.{field}'
+
+    def order(self):
+        for k in self.top_k_list:
+            for gi in range(len(self.code_groups)):
+                for field in self.fields():
+                    yield gi, k, field
+
+    def columns(self):
+        tuple(self.column(gi, k, f) for gi, k, f in self.order())
+
+    def row(self, predictions: BatchPredictedRisks):
+        top_k_list = sorted(self.top_k_list)
+
+        ground_truth = []
+        preds = []
+
+        for subject_risks in predictions.values():
+            for pred in subject_risks.values():
+                preds.append(pred.prediction)
+                ground_truth.append(pred.ground_truth)
+
+        preds = onp.vstack(preds)
+        ground_truth = onp.vstack(ground_truth).astype(bool)
+        topk_risks = onp.argpartition(preds * -1, top_k_list, axis=1)
+
+        true_positive = {}
         for k in top_k_list:
-            group_true_positive = true_positive[k][:, tuple(code_indices)]
-            rate[k][f'ACC-P{i}-k{k}'] = group_true_positive.sum(
-            ) / group_ground_truth.sum()
-    return rate
+            topk_risks_i = topk_risks[:, :k]
+            topk_risks_k = onp.zeros_like(preds, dtype=bool)
+            onp.put_along_axis(topk_risks_k, topk_risks_i, True, 1)
+            true_positive[k] = (topk_risks_k & ground_truth)
 
+        alarm_acc = {}
+        for gi, code_indices in enumerate(self.code_groups):
+            group_true = ground_truth[:, tuple(code_indices)]
+            group_alarm_acc = {}
+            for k in top_k_list:
+                group_tp = true_positive[k][:, tuple(code_indices)]
+                group_alarm_acc[k] = group_tp.sum() / group_true.sum()
+            alarm_acc[gi] = group_alarm_acc
 
-class EvalFlag(Flag):
-    CM = auto()
-    POST = auto()
-
-    @staticmethod
-    def has(flag, attr):
-        return (flag & attr).value != 0
+        return tuple(alarm_acc[gi][k] for gi, k, _ in self.order())
 
 
 def codes_auc_pairwise_tests(results: Dict[str, BatchPredictedRisks],
