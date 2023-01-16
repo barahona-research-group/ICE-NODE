@@ -16,7 +16,7 @@ from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
 from lib.ehr.outcome import OutcomeExtractor
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
-from lib.utils import load_config, load_params, write_params
+from lib.utils import load_config
 from lib.embeddings import embeddings_from_conf
 
 
