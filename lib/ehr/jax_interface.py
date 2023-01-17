@@ -11,6 +11,7 @@ from absl import logging
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
+import jax.random as jrandom
 
 from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
@@ -128,15 +129,74 @@ class Admission_JAX:
             dx_outcome_extractor.codeset2vec(adm.dx_codes, adm.dx_scheme))
 
 
-class WindowFeatures:
+@dataclass
+class SubjectPredictedRisk:
+    admission: Admission_JAX
+    prediction: jnp.ndarray
+    trajectory: Optional[jnp.ndarray] = None
 
-    def __init__(self, past_admissions: List[Admission_JAX]):
-        self.dx_features = self.dx_jax(past_admissions)
+    @property
+    def ground_truth(self):
+        return self.admission.dx_outcome
 
-    @staticmethod
-    def dx_jax(past_admissions: List[Admission_JAX]):
-        past_codes = jnp.vstack([adm.dx_vec for adm in past_admissions])
-        return jnp.max(past_codes, axis=0)
+    def __str__(self):
+        return f"""
+                adm_id: {self.admission.admission_id}\n
+                prediction: {self.prediction}\n
+                """
+
+
+class BatchPredictedRisks(dict):
+
+    def __init__(self):
+        self.embeddings = dict()
+
+    def __str__(self):
+        subjects_str = []
+        for subj_id, _risks in self.items():
+            subjects_str.extend([
+                f'subject_id:{subj_id}\n{_risk}' for _risk in _risks.values()
+            ])
+        return '\n========\n'.join(subjects_str)
+
+    def set_subject_embeddings(self, subject_id, embeddings):
+        self.embeddings[subject_id] = embeddings
+
+    def get_subject_embeddings(self, subject_id):
+        return self.embeddings[subject_id]
+
+    def add(self,
+            subject_id: int,
+            admission: Admission_JAX,
+            prediction: jnp.ndarray,
+            trajectory: Optional[jnp.ndarray] = None):
+
+        if subject_id not in self:
+            self[subject_id] = {}
+
+        self[subject_id][admission.admission_id] = SubjectPredictedRisk(
+            admission=admission, prediction=prediction, trajectory=trajectory)
+
+    def get_subjects(self):
+        return sorted(self.keys())
+
+    def get_risks(self, subject_id):
+        risks = self[subject_id]
+        return list(map(risks.get, sorted(risks)))
+
+    def subject_prediction_loss(self, subject_id, loss_f):
+        loss = [
+            loss_f(r.admission.dx_outcome, r.prediction)
+            for r in self[subject_id].values()
+        ]
+        return sum(loss) / len(loss)
+
+    def prediction_loss(self, loss_f):
+        loss = [
+            self.subject_prediction_loss(subject_id, loss_f)
+            for subject_id in self.keys()
+        ]
+        return sum(loss) / len(loss)
 
 
 class Subject_JAX(dict):
@@ -517,6 +577,87 @@ class Subject_JAX(dict):
     def from_dataset(cls, dataset: AbstractEHRDataset, *args, **kwargs):
         subjects = Subject.from_dataset(dataset)
         return cls(subjects, *args, **kwargs)
+
+    def random_predictions(self, train_split, test_split):
+        predictions = BatchPredictedRisks()
+        key = jrandom.PRNGKey(0)
+
+        for subject_id in test_split:
+            # Skip first admission, not targeted for prediction.
+            adms = self[subject_id][1:]
+            for adm in adms:
+                (key, ) = jrandom.split(key, 1)
+
+                pred = jrandom.normal(key, shape=adm.dx_outcome.shape)
+                predictions.add(subject_id=subject_id,
+                                admission=adm,
+                                prediction=pred)
+        return predictions
+
+    def cheating_predictions(self, train_split, test_split):
+        predictions = BatchPredictedRisks()
+        for subject_id in test_split:
+            adms = self[subject_id][1:]
+            for adm in adms:
+                predictions.add(subject_id=subject_id,
+                                admission=adm,
+                                prediction=adm.dx_outcome * 1.0)
+        return predictions
+
+    def mean_predictions(self, train_split, test_split):
+        predictions = BatchPredictedRisks()
+        # Outcomes from training split
+        outcomes = jnp.vstack(
+            [a.dx_outcome for i in train_split for a in self[i]])
+        outcome_mean = jnp.mean(outcomes, axis=0)
+
+        # Train on mean outcomes
+        for subject_id in test_split:
+            adms = self[subject_id][1:]
+            for adm in adms:
+                predictions.add(subject_id=subject_id,
+                                admission=adm,
+                                prediction=outcome_mean)
+        return predictions
+
+    def recency_predictions(self, train_split, test_split):
+        predictions = BatchPredictedRisks()
+
+        # Use last admission outcome as it is
+        for subject_id in test_split:
+            adms = self[subject_id]
+            for i in range(1, len(adms)):
+                predictions.add(subject_id=subject_id,
+                                admission=adms[i],
+                                prediction=adms[i - 1].dx_outcome * 1.0)
+
+        return predictions
+
+    def historical_predictions(self, train_split, test_split):
+        predictions = BatchPredictedRisks()
+
+        # Aggregate all previous history for the particular subject.
+        for subject_id in test_split:
+            adms = self[subject_id][1:]
+            outcome = self[subject_id][0].dx_outcome
+            for i in range(1, len(adms)):
+                predictions.add(subject_id=subject_id,
+                                admission=adms[i],
+                                prediction=outcome * 1.0)
+                outcome = jnp.maximum(outcome, adms[i - 1].dx_outcome)
+
+        return predictions
+
+
+class WindowFeatures:
+
+    def __init__(self, past_admissions: List[Admission_JAX]):
+        self.dx_features = self.dx_jax(past_admissions)
+
+    @staticmethod
+    def dx_jax(past_admissions: List[Admission_JAX]):
+        past_codes = jnp.vstack([adm.dx_vec for adm in past_admissions])
+        return jnp.max(past_codes, axis=0)
 
 
 class WindowedInterface_JAX(Subject_JAX):

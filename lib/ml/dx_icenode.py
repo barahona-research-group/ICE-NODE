@@ -12,9 +12,8 @@ import jax.tree_util as jtu
 import equinox as eqx
 import optuna
 
-from ..metric import BatchPredictedRisks
 from ..utils import model_params_scaler
-from ..ehr import Subject_JAX, Admission_JAX
+from ..ehr import Subject_JAX, Admission_JAX, BatchPredictedRisks
 
 from .base_models import (GRUDynamics, NeuralODE, StateUpdate)
 from .abstract_model import AbstractModel

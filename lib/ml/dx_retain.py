@@ -12,8 +12,7 @@ import equinox as eqx
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import Subject_JAX
-from ..metric import BatchPredictedRisks
+from ..ehr import Subject_JAX, BatchPredictedRisks
 from .abstract_model import AbstractModel
 
 

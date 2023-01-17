@@ -3,6 +3,7 @@ from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
 
+import pandas as pd
 from tqdm import tqdm
 import jax
 import jax.numpy as jnp
@@ -11,8 +12,7 @@ import equinox as eqx
 import optuna
 import optax
 
-from .reporters import AbstractReporter
-from ..ehr import Subject_JAX
+from ..ehr import Subject_JAX, BatchPredictedRisks
 from .. import metric as M
 from ..utils import params_size, tree_hasnan
 
@@ -27,6 +27,34 @@ class_weighting_dict = {
     lambda y, logits: M.softmax_logits_weighted_bce(
         y, logits, y.shape[0] / (y.sum(axis=0) + 1e-10))
 }
+
+
+class MetricsHistory:
+    metrics: M.MetricsCollection
+
+    def __init__(self):
+        self._df = None
+
+    def to_df(self):
+        return self._df
+
+    def __len__(self):
+        return len(self._df) if self._df is not None else 0
+
+    def last_evals(self):
+        return self._df.iloc[-1, :].to_dict()
+
+    def append_iteration(
+            self,
+            predictions: BatchPredictedRisks,
+            other_estimated_metrics: Optional[Dict[str, float]] = None):
+        niters = 1 if self._df is None else len(self._df) + 1
+        row_df = self.metrics.to_df(niters, predictions,
+                                    other_estimated_metrics)
+        self._df = pd.concat([self._df, row_df])
+
+    def last_value(self, key):
+        return self._df.iloc[-1, key]
 
 
 class Trainer(eqx.Module):
@@ -68,7 +96,7 @@ class Trainer(eqx.Module):
         return class_weighting_dict[self.class_weighting]
 
     def unreg_loss(self,
-                   model: "..ml.abstract_model.AbstractModel",
+                   model: "lib.ml.AbstractModel",
                    subject_interface: Subject_JAX,
                    batch: List[int],
                    args: Dict[str, Any] = dict()):
@@ -77,7 +105,7 @@ class Trainer(eqx.Module):
         return l, ({'dx_loss': l}, res['predictions'])
 
     def reg_loss(self,
-                 model: "..ml.AbstractModel",
+                 model: "lib.ml.AbstractModel",
                  subject_interface: Subject_JAX,
                  batch: List[int],
                  args: Dict[str, Any] = dict()):
@@ -98,7 +126,7 @@ class Trainer(eqx.Module):
         }, res['predictions'])
 
     def loss(self,
-             model: "..ml.abstract_model.AbstractModel",
+             model: "lib.ml.AbstractModel",
              subject_interface: Subject_JAX,
              batch: List[int],
              args: Dict[str, Any] = dict()):
@@ -108,7 +136,7 @@ class Trainer(eqx.Module):
             return self.reg_loss(model, subject_interface, batch, args)
 
     def eval(self,
-             model: "..ml.abstract_model.AbstractModel",
+             model: "lib.ml.AbstractModel",
              subject_interface: Subject_JAX,
              batch: List[int],
              args=dict()) -> Dict[str, float]:
@@ -122,10 +150,10 @@ class Trainer(eqx.Module):
         opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
         return opt, opt.init(eqx.filter(model, eqx.is_inexact_array))
 
-    def _post_update_params(self, model: "..ml.AbstractModel"):
+    def _post_update_params(self, model: "lib.ml.AbstractModel"):
         return model
 
-    def step_optimizer(self, opt_state: Any, model: "..ml.AbstractModel",
+    def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
                        subject_interface: Subject_JAX, batch: Tuple[int],
                        key: "jax.random.PRNGKey"):
         opt, opt_state = opt_state
@@ -145,13 +173,13 @@ class Trainer(eqx.Module):
         }
 
     def __call__(self,
-                 model: "..ml.AbstractModel",
+                 model: "lib.ml.AbstractModel",
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
                  metrics: M.MetricsCollection,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
-                 reporters: List[AbstractReporter] = []):
+                 reporters: List["lib.ml.AbstractReporter"] = []):
         train_ids, valid_ids, test_ids = splits
         # Because shuffling is done in-place.
         train_ids = copy.deepcopy(train_ids)
@@ -168,7 +196,7 @@ class Trainer(eqx.Module):
         auc = 0.0
         best_score = 0.0
         history = {
-            split_name: M.MetricsHistory()
+            split_name: MetricsHistory()
             for split_name in ('TRN', 'VAL', 'TST')
         }
 
@@ -225,7 +253,7 @@ class Trainer(eqx.Module):
 
 class Trainer2LR(Trainer):
 
-    def init_opt(self, model: "..ml.AbstractModel"):
+    def init_opt(self, model: "lib.ml.AbstractModel"):
         decay_rate = self.decay_rate
         if not isinstance(decay_rate):
             decay_rate = (decay_rate, decay_rate)
@@ -237,7 +265,7 @@ class Trainer2LR(Trainer):
         jax.debug.breakpoint()
         return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
 
-    def step_optimizer(self, opt_state: Any, model: "..ml.AbstractModel",
+    def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
                        subject_interface: Subject_JAX, batch: Tuple[int],
                        key: "jax.random.PRNGKey"):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
@@ -255,7 +283,7 @@ class Trainer2LR(Trainer):
 
 
 def sample_training_config(cls, trial: optuna.Trial,
-                           model: '..ml.AbstractModel'):
+                           model: 'lib.ml.AbstractModel'):
 
     return {
         'epochs': 10,
@@ -273,7 +301,7 @@ def sample_training_config(cls, trial: optuna.Trial,
 class LassoNetTrainer(Trainer):
 
     def loss(self,
-             model: "..ml.abstract_model.AbstractModel",
+             model: "lib.ml.AbstractModel",
              subject_interface: Subject_JAX,
              batch: List[int],
              args: Dict[str, Any] = dict()):
@@ -302,7 +330,7 @@ class ODETrainer(Trainer):
     def dx_loss(self):
         return M.balanced_focal_bce
 
-    def reg_loss(self, model: '..ml.AbstractModel',
+    def reg_loss(self, model: 'lib.ml.AbstractModel',
                  subject_interface: Subject_JAX, batch: List[int]):
         args = dict(tay_reg=self.tay_reg)
         res = model(subject_interface, batch, args)

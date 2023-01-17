@@ -4,14 +4,11 @@ from functools import partial
 from typing import Any, List, Callable
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-
-from ..metric import BatchPredictedRisks
 
 from .abstract_model import AbstractModel
 
-from ..ehr import Subject_JAX
+from ..ehr import Subject_JAX, BatchPredictedRisks
 
 
 class GRU(AbstractModel):

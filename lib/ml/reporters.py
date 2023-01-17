@@ -5,7 +5,6 @@ import os
 from absl import logging
 import optuna
 
-from ..metric import MetricsHistory
 from .. import utils as U
 
 
@@ -77,7 +76,9 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self, history: Dict[str, MetricsHistory]):
+    def report_evaluation(self,
+                          history: Dict[str,
+                                        "lib.ml.MetricsHistory"]):
         for name, _history in history.items():
             history.to_df().to_csv(os.path.join(self.output_dir, name),
                                    compression="gzip")

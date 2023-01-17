@@ -14,8 +14,7 @@ if TYPE_CHECKING:
     import optuna
 
 from ..ml import AbstractModelProxMap
-from ..ehr import WindowedInterface_JAX, Subject_JAX
-from ..metric import BatchPredictedRisks
+from ..ehr import WindowedInterface_JAX, Subject_JAX, BatchPredictedRisks
 
 
 def prox_elastic_net(x: Any,

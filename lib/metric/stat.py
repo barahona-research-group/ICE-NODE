@@ -1,7 +1,7 @@
 """Performance metrics and loss functions."""
 
 from typing import Dict, Optional, List, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from tqdm import tqdm
 from abc import ABC, abstractmethod, ABCMeta
 
@@ -11,9 +11,8 @@ import jax
 import jax.numpy as jnp
 from sklearn import metrics
 
-from ..ehr import Subject_JAX
+from ..ehr import Subject_JAX, BatchPredictedRisks
 from .delong import FastDeLongTest
-from .risk import BatchPredictedRisks
 
 
 @jax.jit
@@ -120,27 +119,23 @@ class VisitsAUC(Metric):
         preds_mat = onp.hstack(preds)
         return {
             'macro_auc': compute_auc(gtruth_mat, preds_mat),
-            'micro_auc': onp.array(list(map(compute_auc, gtruth, preds)))
+            'micro_auc': onp.array(list(map(compute_auc, gtruth,
+                                            preds))).mean()
         }
 
 
 @dataclass
 class CodeLevelMetric(Metric):
+    index2code: Dict[int, str] = field(init=False)
+    code2index: Dict[str, int] = field(init=False)
     # Show estimates per code
-    code_level: bool
+    code_level: bool = field(default=True)
 
     # Show estimates aggregated over all codes.
-    aggregate_level: bool
+    aggregate_level: bool = field(default=True)
 
-    index2code: Dict[int, str]
-    code2index: Dict[str, int]
-
-    def __init__(self,
-                 subject_interface: Subject_JAX,
-                 code_level=True,
-                 aggregate_level=True):
-        super().__init__(subject_interface)
-        self.code2index = subject_interface.dx_outcome_extractor.index
+    def __post_init__(self):
+        self.code2index = self.subject_interface.dx_outcome_extractor.index
         self.index2code = {i: c for c, i in self.code2index.items()}
 
     @classmethod
@@ -165,7 +160,7 @@ class CodeLevelMetric(Metric):
         for field in self.fields():
             for agg_k, _ in self.agg_fields():
                 cols.append(f'{clsname}.{agg_k}({field})')
-        return cols
+        return tuple(cols)
 
     def order(self):
         for index in sorted(self.index2code):
@@ -180,7 +175,7 @@ class CodeLevelMetric(Metric):
         if self.aggregate_level:
             cols.append(self.agg_columns())
 
-        return sum(cols, tuple())
+        return sum(tuple(cols), tuple())
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
@@ -188,7 +183,7 @@ class CodeLevelMetric(Metric):
             field_vals = onp.array(list(result[field].values()))
             for _, agg_f in self.agg_fields():
                 row.append(agg_f(field_vals))
-        return row
+        return tuple(row)
 
     def row(self, result: Dict[str, Dict[int, float]]):
         row = []
@@ -196,12 +191,16 @@ class CodeLevelMetric(Metric):
             row.append(
                 tuple(result[field][index] for index, field in self.order()))
         if self.aggregate_level:
-            row.append(self.agg_row)
+            row.append(self.agg_row(result))
 
-        return sum(row, tuple())
+        return sum(tuple(row), tuple())
 
 
+@dataclass
 class CodeAUC(CodeLevelMetric):
+
+    #     def __post_init__(self, *args, **kwargs):
+    #         super().__init__(*args, **kwargs)
 
     @classmethod
     def fields(cls):
@@ -220,17 +219,21 @@ class CodeAUC(CodeLevelMetric):
         ground_truth_mat = onp.vstack(ground_truth)
         predictions_mat = onp.vstack(preds)
 
-        vals = {'auc': [], 'n': []}
+        vals = {'auc': {}, 'n': {}}
         for code_index in range(ground_truth_mat.shape[1]):
             code_ground_truth = ground_truth_mat[:, code_index]
             code_predictions = predictions_mat[:, code_index]
-            vals['n'].append(code_ground_truth.sum())
-            vals['auc'].append(compute_auc(code_ground_truth,
-                                           code_predictions))
+            vals['n'][code_index] = code_ground_truth.sum()
+            vals['auc'][code_index] = compute_auc(code_ground_truth,
+                                                  code_predictions)
         return vals
 
 
+@dataclass
 class UntilFirstCodeAUC(CodeAUC):
+
+    # def __post_init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
 
     def __call__(self, predictions: BatchPredictedRisks):
         ground_truth = []
@@ -254,29 +257,29 @@ class UntilFirstCodeAUC(CodeAUC):
         predictions_mat = onp.vstack(preds)
         mask_mat = onp.vstack(masks).astype(bool)
 
-        vals = {'n': [], 'auc': []}
+        vals = {'n': {}, 'auc': {}}
         for code_index in range(ground_truth_mat.shape[1]):
             code_mask = mask_mat[:, code_index]
             code_ground_truth = ground_truth_mat[code_mask, code_index]
             code_predictions = predictions_mat[code_mask, code_index]
-            vals['n'].append(code_mask.sum())
-            vals['auc'].append(compute_auc(code_ground_truth,
-                                           code_predictions))
+            vals['n'][code_index] = code_mask.sum()
+            vals['auc'][code_index] = compute_auc(code_ground_truth,
+                                                  code_predictions)
         return vals
 
 
 @dataclass
-class AdmissionLevelAUC(Metric):
+class AdmissionAUC(Metric):
 
     # Show estimates for each admission for each subject (extremely large
     # table)
-    admission_level: bool = False
+    admission_level: bool = field(default=False)
 
     # Show estimates aggregated on the subject level (very large table)
-    subject_aggregate_level: bool = False
+    subject_aggregate_level: bool = field(default=False)
 
     # Show estimates aggregated across the entire subjects and admissions.
-    aggregate_level: bool = True
+    aggregate_level: bool = field(default=True)
 
     @classmethod
     def fields(cls):
@@ -306,7 +309,7 @@ class AdmissionLevelAUC(Metric):
                     cols.append(
                         f'{clsname}.{self.subject_qualifier(subject_id)}.{agg_k}({field})'
                     )
-        return cols
+        return tuple(cols)
 
     @classmethod
     def agg_columns(self):
@@ -315,7 +318,7 @@ class AdmissionLevelAUC(Metric):
         for field in self.fields():
             for agg_k, _ in self.agg_fields():
                 cols.append(f'{clsname}.{agg_k}({field})')
-        return cols
+        return tuple(cols)
 
     @classmethod
     def ordered_subjects(cls, predictions):
@@ -340,14 +343,14 @@ class AdmissionLevelAUC(Metric):
         if self.aggregate_level:
             cols.append(self.agg_columns())
 
-        return cols
+        return sum(tuple(cols), tuple())
 
     def __call__(self, predictions: BatchPredictedRisks):
         auc = {}
         for subject_id in sorted(predictions):
             subject_predictions = predictions[subject_id]
             subject_auc = {}
-            for admission_id in enumerate(sorted(subject_predictions)):
+            for admission_id in sorted(subject_predictions):
                 prediction = subject_predictions[admission_id]
                 auc_score = compute_auc(prediction.ground_truth,
                                         prediction.prediction)
@@ -363,7 +366,7 @@ class AdmissionLevelAUC(Metric):
                     result[field][subject_id].values()))
                 for _, agg_f in self.agg_fields():
                     row.append(agg_f(field_data))
-        return row
+        return tuple(row)
 
     def agg_row(self, result):
         row = []
@@ -373,19 +376,17 @@ class AdmissionLevelAUC(Metric):
             data = onp.array(data)
             for _, agg_f in self.agg_fields():
                 row.append(agg_f(data))
-        return row
+        return tuple(row)
 
-    def row(self, predictions: BatchPredictedRisks, order_gen,
-            subject_order_gen):
-        res = self(predictions)
+    def row(self, result: Dict[str, Any], order_gen, subject_order_gen):
         row = []
         if self.admission_level:
-            row.append(tuple(res[f][s][a] for s, a, f in order_gen()))
+            row.append(tuple(result[f][s][a] for s, a, f in order_gen()))
         if self.subject_aggregate_level:
-            row.append(self.subject_agg_row(res, subject_order_gen))
+            row.append(self.subject_agg_row(result, subject_order_gen))
         if self.aggregate_level:
-            row.append(self.agg_row(res))
-        return row
+            row.append(self.agg_row(result))
+        return sum(tuple(row), tuple())
 
     def to_dict(self, predictions: BatchPredictedRisks):
         order_gen = lambda: self.order(predictions)
@@ -407,7 +408,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return ('acc', )
 
     def column(self, group_index, k, field):
-        f'G{group_index}k{k}.{field}'
+        return f'G{group_index}k{k}.{field}'
 
     def order(self):
         for k in self.top_k_list:
@@ -416,7 +417,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
                     yield gi, k, field
 
     def columns(self):
-        tuple(self.column(gi, k, f) for gi, k, f in self.order())
+        return tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
     def __call__(self, predictions: BatchPredictedRisks):
         top_k_list = sorted(self.top_k_list)
@@ -454,6 +455,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return tuple(result[f][gi][k] for gi, k, f in self.order())
 
 
+@dataclass
 class OtherMetrics(Metric):
 
     def __init__(self):
@@ -490,7 +492,11 @@ class MetricsCollection:
         return pd.concat(dfs, axis=1)
 
 
+@dataclass
 class DeLongTest(CodeLevelMetric):
+
+    # def __post_init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
 
     @classmethod
     def fields(cls):
@@ -523,7 +529,8 @@ class DeLongTest(CodeLevelMetric):
         order_gen = self.order(clfs)
         for cat in self.fields_category():
             col_f = self.column()[cat]
-            cols.append(tuple(col_f(*args) for args in order_gen[cat]()))
+            breakpoint()
+            cols.append(tuple(col_f(*t) for t in order_gen[cat]()))
         return sum(cols, tuple())
 
     def _row(self, code_index: int, data: Dict[str, Any], clfs: List[str]):
