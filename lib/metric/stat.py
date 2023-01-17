@@ -12,12 +12,11 @@ import pandas as pd
 import numpy as onp
 import jax
 import jax.numpy as jnp
-from jax.nn import sigmoid
 from sklearn import metrics
 
-from ..ehr import AbstractScheme, OutcomeExtractor
+from ..ehr import AbstractScheme
 from ..ehr import Subject_JAX
-from .delong import DeLongTest, FastDeLongTest
+from .delong import FastDeLongTest
 from .risk import BatchPredictedRisks
 
 
@@ -93,11 +92,15 @@ class Metric(metaclass=ABCMeta):
         return tuple(map(self.column, self.fields()))
 
     @abstractmethod
-    def row(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+    def __call__(self, predictions: BatchPredictedRisks):
         pass
 
+    def row(self, result: Dict[str, Any]) -> Tuple[float]:
+        return tuple(map(result.get, self.fields()))
+
     def to_dict(self, predictions: BatchPredictedRisks):
-        return dict(zip(self.columns(), self.row(predictions)))
+        result = self(predictions)
+        return dict(zip(self.columns(), self.row(result)))
 
     def to_df(self, index: int, predictions: BatchPredictedRisks):
         return pd.DataFrame(self.to_dict(predictions), index=[index])
@@ -109,7 +112,7 @@ class VisitsAUC(Metric):
     def fields(cls):
         return ('macro_auc', 'micro_auc')
 
-    def row(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+    def __call__(self, predictions: BatchPredictedRisks) -> Tuple[float]:
         gtruth = []
         preds = []
         for subject_risks in predictions.values():
@@ -119,10 +122,10 @@ class VisitsAUC(Metric):
 
         gtruth_mat = onp.hstack(gtruth)
         preds_mat = onp.hstack(preds)
-        macro_auc = compute_auc(gtruth_mat, preds_mat)
-        micro_auc = onp.array(list(map(compute_auc, gtruth, preds)))
-
-        return (macro_auc, onp.nanmean(micro_auc))
+        return {
+            'macro_auc': compute_auc(gtruth_mat, preds_mat),
+            'micro_auc': onp.array(list(map(compute_auc, gtruth, preds)))
+        }
 
 
 @dataclass
@@ -155,6 +158,9 @@ class CodeLevelMetric(Metric):
     def columns(self):
         return tuple(self.column(idx, field) for idx, field in self.order())
 
+    def row(self, result: Dict[str, Dict[int, float]]):
+        return tuple(result[field][index] for index, field in self.order())
+
 
 class CodeAUC(CodeLevelMetric):
 
@@ -162,7 +168,7 @@ class CodeAUC(CodeLevelMetric):
     def fields(cls):
         return ('auc', 'n')
 
-    def row(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: BatchPredictedRisks):
         ground_truth = []
         preds = []
 
@@ -182,13 +188,12 @@ class CodeAUC(CodeLevelMetric):
             vals['n'].append(code_ground_truth.sum())
             vals['auc'].append(compute_auc(code_ground_truth,
                                            code_predictions))
-
-        return tuple(vals[field][index] for index, field in self.order())
+        return vals
 
 
 class UntilFirstCodeAUC(CodeAUC):
 
-    def row(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: BatchPredictedRisks):
         ground_truth = []
         preds = []
         masks = []
@@ -218,8 +223,7 @@ class UntilFirstCodeAUC(CodeAUC):
             vals['n'].append(code_mask.sum())
             vals['auc'].append(compute_auc(code_ground_truth,
                                            code_predictions))
-
-        return tuple(vals[field][index] for index, field in self.order())
+        return vals
 
 
 class AdmissionLevelAUC(Metric):
@@ -246,7 +250,7 @@ class AdmissionLevelAUC(Metric):
     def columns(self, predictions):
         return tuple(self.column(*o) for o in self.order(predictions))
 
-    def row(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: BatchPredictedRisks):
         auc = {}
         for subject_id in sorted(predictions):
             subject_predictions = predictions[subject_id]
@@ -257,8 +261,11 @@ class AdmissionLevelAUC(Metric):
                                         prediction.prediction)
                 subject_auc[admission_id] = auc_score
             auc[subject_id] = subject_auc
+        return {'auc': auc}
 
-        return tuple(auc[s_i][a_i] for s_i, a_i, _ in self.order(predictions))
+    def row(self, predictions: BatchPredictedRisks):
+        res = self(predictions)
+        return tuple(res[f][s][a] for s, a, f in self.order(predictions))
 
     def to_dict(self, predictions: BatchPredictedRisks):
         return dict(zip(self.columns(predictions), self.row(predictions)))
@@ -286,7 +293,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def columns(self):
         tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
-    def row(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: BatchPredictedRisks):
         top_k_list = sorted(self.top_k_list)
 
         ground_truth = []
@@ -316,82 +323,78 @@ class CodeGroupTopAlarmAccuracy(Metric):
                 group_tp = true_positive[k][:, tuple(code_indices)]
                 group_alarm_acc[k] = group_tp.sum() / group_true.sum()
             alarm_acc[gi] = group_alarm_acc
+        return {'acc': alarm_acc}
 
-        return tuple(alarm_acc[gi][k] for gi, k, _ in self.order())
+    def row(self, result: Dict[str, Dict[int, Dict[int, float]]]):
+        return tuple(result[f][gi][k] for gi, k, f in self.order())
 
 
-class CodeAUCTestsXModels(CodeLevelMetric):
-
-    @classmethod
-    def code_fields(cls):
-        return ('n_pos', )
+class DeLongTest(CodeLevelMetric):
 
     @classmethod
-    def model_fields(cls):
-        return ('auc', 'auc_var')
+    def fields(cls):
+        return {
+            'code': ('n_pos', ),
+            'model': ('auc', 'auc_var'),
+            'pair': ('p_val', )
+        }
 
     @classmethod
-    def pair_fields(cls):
-        return ('p_val', )
+    def fields_category(cls):
+        return ('code', 'model', 'pair')
 
     def code_qualifier(self, code_index):
         return f'I{code_index}C{self.index2code[code_index]}'
 
-    def code_column(self, code_index, field):
-        clsname = self.classname()
-        return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
+    def column(self):
 
-    def model_column(self, code_index, model, field):
-        clsname = self.classname()
-        return f'{clsname}.{self.code_qualifier(code_index)}.{model}.{field}'
+        def code_col(self, code_index, field):
+            clsname = self.classname()
+            return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
-    def pair_column(self, code_index, model1, model2, field):
-        clsname = self.classname()
-        return f'{clsname}.{self.code_qualifier(code_index)}.{model1}-{model2}.{field}'
+        def model_col(self, code_index, model, field):
+            clsname = self.classname()
+            return f'{clsname}.{self.code_qualifier(code_index)}.{model}.{field}'
 
-    def code_columns(self):
-        return tuple(self.code_column(*args) for args in self.code_order())
+        def pair_col(self, code_index, model_pair, field):
+            clsname = self.classname()
+            m1, m2 = model_pair
+            return f'{clsname}.{self.code_qualifier(code_index)}.{m1}={m2}.{field}'
 
-    def model_columns(self, clfs: List[str]):
-        return tuple(
-            self.model_column(*args) for args in self.model_order(clfs))
-
-    def pair_columns(self, clfs: List[str]):
-        return tuple(self.pair_column(*args) for args in self.pair_order(clfs))
+        return {'code': code_col, 'model': model_col, 'pair': pair_col}
 
     def columns(self, clfs: List[str]):
-        return self.code_columns() + self.model_columns(
-            clfs) + self.pair_columns(clfs)
+        cols = []
+        order_gen = self.order(clfs)
+        for cat in self.fields_category():
+            col_f = self.column()[cat]
+            cols.append(tuple(col_f(*args) for args in order_gen[cat]()))
+        return sum(cols, tuple())
+
+    def _row(self, data: Dict[str, Any], clfs: List[str]):
+        order_gen = self.order(clfs)
+
+        def code_row():
+            d = data['code']
+            return tuple(d[f][idx] for idx, f in order_gen['code']())
+
+        def model_row():
+            d = data['model']
+            return tuple(d[f][idx][clf]
+                         for idx, clf, f in order_gen['model']())
+
+        def pair_row():
+            d = data['pair']
+            return tuple(d[f][idx][clfp]
+                         for idx, clfp, f in order_gen['pair']())
+
+        return {'code': code_row, 'model': model_row, 'pair': pair_row}
 
     def row(self, predictions: Dict[str, BatchPredictedRisks]):
-        data = self.compute_tests(predictions)
+        data = self(predictions)
         clfs = sorted(predictions)
-        code_data = data['code']
-        code_row = tuple(code_data[f][idx] for (idx, f) in self.code_order())
-
-        model_data = data['model']
-        model_row = []
-        for index, clf, field in self.model_order(clfs):
-            field_data = model_data[field]
-            codelevel_data = field_data.get(index)
-            if codelevel_data:
-                model_row.append(codelevel_data.get(clf, float('nan')))
-            else:
-                model_row.append(float('nan'))
-        model_row = tuple(model_row)
-
-        pair_data = data['pair']
-        pair_row = []
-        for index, clf1, clf2, field in self.pair_order(clfs):
-            field_data = pair_data[field]
-            codelevel_data = field_data.get(index)
-            if codelevel_data:
-                pair_row.append(codelevel_data.get((clf1, clf2), float('nan')))
-            else:
-                pair_row.append(float('nan'))
-        pair_row = tuple(pair_row)
-
-        return code_row + model_row + pair_row
+        row_gen = self._row(data, clfs)
+        return sum((row_gen[cat]() for cat in self.fields_category()), tuple())
 
     @classmethod
     def model_pairs(cls, clfs: List[str]):
@@ -401,23 +404,30 @@ class CodeAUCTestsXModels(CodeLevelMetric):
                 clf_pairs.append((clfs[i], clfs[j]))
         return tuple(clf_pairs)
 
-    def model_order(self, clfs: List[str]):
-        for index in sorted(self.index2code):
-            for model in clfs:
-                for field in self.fields():
-                    yield (index, model, field)
+    def order(self, clfs: List[str]):
 
-    def pair_order(self, clfs: List[str]):
-        pairs = self.model_pairs(clfs)
-        for index in sorted(self.index2code):
-            for model1, model2 in pairs:
-                for field in self.fields():
-                    yield (index, model1, model2, field)
+        def model_order():
+            fields = self.fields()['model']
+            for index in sorted(self.index2code):
+                for model in clfs:
+                    for field in fields:
+                        yield (index, model, field)
 
-    def code_order(self):
-        for index in sorted(self.index2code):
-            for field in self.code_fields():
-                yield index, field
+        def pair_order():
+            pairs = self.model_pairs(clfs)
+            fields = self.fields()['pair']
+            for index in sorted(self.index2code):
+                for model_pair in pairs:
+                    for field in fields:
+                        yield (index, model_pair, field)
+
+        def code_order():
+            fields = self.fields()['code']
+            for index in sorted(self.index2code):
+                for field in fields:
+                    yield index, field
+
+        return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
     @classmethod
     def extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
@@ -449,7 +459,7 @@ class CodeAUCTestsXModels(CodeLevelMetric):
 
         return tm0, pred_mat
 
-    def compute_tests(self, predictions: Dict[str, BatchPredictedRisks]):
+    def __call__(self, predictions: Dict[str, BatchPredictedRisks]):
         """
         Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
         conduct a pairwise test on the difference of AUC scores between each
@@ -472,8 +482,7 @@ class CodeAUCTestsXModels(CodeLevelMetric):
             n_neg = len(code_truth) - n_pos
             n_pos[code_index] = n_pos
             # This is a requirement for pairwise testing.
-            if n_pos < 2 or n_neg < 2:
-                continue
+            invalid_test = n_pos < 2 or n_neg < 2
 
             # Since we iterate on pairs, some AUC are computed more than once.
             # Update this dictionary for each AUC computed, then append the results
@@ -482,6 +491,13 @@ class CodeAUCTestsXModels(CodeLevelMetric):
             code_auc_var = {}
             code_p_val = {}
             for (clf1, clf2) in clf_pairs:
+                if invalid_test:
+                    code_p_val[(clf1, clf2)] = float('nan')
+                    for clf in (clf1, clf2):
+                        code_auc[clf] = code_auc.get(clf, float('nan'))
+                        code_auc_var[clf] = code_auc_var.get(clf, float('nan'))
+                    continue
+
                 preds1 = preds[clf1][:, code_index]
                 preds2 = preds[clf2][:, code_index]
                 auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
