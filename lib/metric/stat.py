@@ -1,10 +1,7 @@
 """Performance metrics and loss functions."""
 
-from enum import Flag, auto
 from typing import Dict, Optional, List, Tuple, Any
 from dataclasses import dataclass
-from collections import namedtuple
-from absl import logging
 from tqdm import tqdm
 from abc import ABC, abstractmethod, ABCMeta
 
@@ -14,7 +11,6 @@ import jax
 import jax.numpy as jnp
 from sklearn import metrics
 
-from ..ehr import AbstractScheme
 from ..ehr import Subject_JAX
 from .delong import FastDeLongTest
 from .risk import BatchPredictedRisks
@@ -130,11 +126,19 @@ class VisitsAUC(Metric):
 
 @dataclass
 class CodeLevelMetric(Metric):
+    # Show estimates per code
+    code_level: bool
+
+    # Show estimates aggregated over all codes.
+    aggregate_level: bool
 
     index2code: Dict[int, str]
     code2index: Dict[str, int]
 
-    def __init__(self, subject_interface: Subject_JAX):
+    def __init__(self,
+                 subject_interface: Subject_JAX,
+                 code_level=True,
+                 aggregate_level=True):
         super().__init__(subject_interface)
         self.code2index = subject_interface.dx_outcome_extractor.index
         self.index2code = {i: c for c, i in self.code2index.items()}
@@ -143,6 +147,11 @@ class CodeLevelMetric(Metric):
     def fields(cls):
         return tuple()
 
+    @classmethod
+    def agg_fields(cls):
+        return (('mean', onp.nanmean), ('median', onp.nanmedian),
+                ('max', onp.nanmax), ('min', onp.nanmin))
+
     def code_qualifier(self, code_index):
         return f'I{code_index}C{self.index2code[code_index]}'
 
@@ -150,16 +159,46 @@ class CodeLevelMetric(Metric):
         clsname = self.classname()
         return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
+    def agg_columns(self):
+        clsname = self.classname()
+        cols = []
+        for field in self.fields():
+            for agg_k, _ in self.agg_fields():
+                cols.append(f'{clsname}.{agg_k}({field})')
+        return cols
+
     def order(self):
         for index in sorted(self.index2code):
             for field in self.fields():
                 yield (index, field)
 
     def columns(self):
-        return tuple(self.column(idx, field) for idx, field in self.order())
+        cols = []
+        if self.code_level:
+            cols.append(
+                tuple(self.column(idx, field) for idx, field in self.order()))
+        if self.aggregate_level:
+            cols.append(self.agg_columns())
+
+        return sum(cols, tuple())
+
+    def agg_row(self, result: Dict[str, Dict[int, float]]):
+        row = []
+        for field in self.fields():
+            field_vals = onp.array(list(result[field].values()))
+            for _, agg_f in self.agg_fields():
+                row.append(agg_f(field_vals))
+        return row
 
     def row(self, result: Dict[str, Dict[int, float]]):
-        return tuple(result[field][index] for index, field in self.order())
+        row = []
+        if self.code_level:
+            row.append(
+                tuple(result[field][index] for index, field in self.order()))
+        if self.aggregate_level:
+            row.append(self.agg_row)
+
+        return sum(row, tuple())
 
 
 class CodeAUC(CodeLevelMetric):
@@ -226,29 +265,82 @@ class UntilFirstCodeAUC(CodeAUC):
         return vals
 
 
+@dataclass
 class AdmissionLevelAUC(Metric):
+
+    # Show estimates for each admission for each subject (extremely large
+    # table)
+    admission_level: bool = False
+
+    # Show estimates aggregated on the subject level (very large table)
+    subject_aggregate_level: bool = False
+
+    # Show estimates aggregated across the entire subjects and admissions.
+    aggregate_level: bool = True
 
     @classmethod
     def fields(cls):
         return ('auc', )
 
+    @classmethod
+    def agg_fields(cls):
+        return (('mean', onp.nanmean), ('median', onp.nanmedian),
+                ('max', onp.nanmax), ('min', onp.nanmin))
+
+    def subject_qualifier(self, subject_id):
+        return f'S{subject_id}'
+
     def admission_qualifier(self, subject_id, admission_id):
-        return f'S{subject_id}A{admission_id}'
+        return f'{self.subject_qualifier(subject_id)}A{admission_id}'
 
     def column(self, subject_id, admission_id, field):
         clsname = self.classname()
         return f'{clsname}.{self.admission_qualifier(subject_id, admission_id)}.{field}'
 
+    def subject_agg_columns(self, subject_order_gen):
+        clsname = self.classname()
+        cols = []
+        for subject_id in subject_order_gen():
+            for field in self.fields():
+                for agg_k, _ in self.agg_fields():
+                    cols.append(
+                        f'{clsname}.{self.subject_qualifier(subject_id)}.{agg_k}({field})'
+                    )
+        return cols
+
+    @classmethod
+    def agg_columns(self):
+        clsname = self.classname()
+        cols = []
+        for field in self.fields():
+            for agg_k, _ in self.agg_fields():
+                cols.append(f'{clsname}.{agg_k}({field})')
+        return cols
+
+    @classmethod
+    def ordered_subjects(cls, predictions):
+        return sorted(predictions)
+
     @classmethod
     def order(cls, predictions):
-        for subject_id in sorted(predictions):
+        for subject_id in cls.ordered_subjects(predictions):
             subject_predictions = predictions[subject_id]
             for admission_id in sorted(subject_predictions):
                 for field in cls.fields():
                     yield (subject_id, admission_id, field)
 
-    def columns(self, predictions):
-        return tuple(self.column(*o) for o in self.order(predictions))
+    def columns(self, order_gen, subject_order_gen):
+        cols = []
+        if self.admission_level:
+            cols.append(tuple(self.column(*o) for o in order_gen()))
+
+        if self.subject_aggregate_level:
+            cols.append(self.subject_agg_columns(subject_order_gen))
+
+        if self.aggregate_level:
+            cols.append(self.agg_columns())
+
+        return cols
 
     def __call__(self, predictions: BatchPredictedRisks):
         auc = {}
@@ -263,12 +355,45 @@ class AdmissionLevelAUC(Metric):
             auc[subject_id] = subject_auc
         return {'auc': auc}
 
-    def row(self, predictions: BatchPredictedRisks):
+    def subject_agg_row(self, result, subject_order_gen):
+        row = []
+        for subject_id in subject_order_gen():
+            for field in self.fields():
+                field_data = onp.array(list(
+                    result[field][subject_id].values()))
+                for _, agg_f in self.agg_fields():
+                    row.append(agg_f(field_data))
+        return row
+
+    def agg_row(self, result):
+        row = []
+        for field in self.fields():
+            fdata = result[field]
+            data = list(v for sdata in fdata.values() for v in sdata.values())
+            data = onp.array(data)
+            for _, agg_f in self.agg_fields():
+                row.append(agg_f(data))
+        return row
+
+    def row(self, predictions: BatchPredictedRisks, order_gen,
+            subject_order_gen):
         res = self(predictions)
-        return tuple(res[f][s][a] for s, a, f in self.order(predictions))
+        row = []
+        if self.admission_level:
+            row.append(tuple(res[f][s][a] for s, a, f in order_gen()))
+        if self.subject_aggregate_level:
+            row.append(self.subject_agg_row(res, subject_order_gen))
+        if self.aggregate_level:
+            row.append(self.agg_row(res))
+        return row
 
     def to_dict(self, predictions: BatchPredictedRisks):
-        return dict(zip(self.columns(predictions), self.row(predictions)))
+        order_gen = lambda: self.order(predictions)
+        subject_order_gen = lambda: self.ordered_subjects(predictions)
+        result = self(predictions)
+        cols = self.columns(order_gen, subject_order_gen)
+        rows = self.row(result, order_gen, subject_order_gen)
+        return dict(zip(cols, rows))
 
 
 @dataclass
@@ -329,6 +454,42 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return tuple(result[f][gi][k] for gi, k, f in self.order())
 
 
+class OtherMetrics(Metric):
+
+    def __init__(self):
+        super().__init__(None)
+
+    def __call__(self, some_flat_dict: Dict[str, float]):
+        return some_flat_dict
+
+    def row(self, some_flat_dict: Dict[str, float]) -> Tuple[float]:
+        return tuple(map(some_flat_dict.get, sorted(some_flat_dict)))
+
+    def to_dict(self, some_flat_dict):
+        return some_flat_dict
+
+    def to_df(self, index: int, some_flat_dict: Dict[str, float]):
+        return pd.DataFrame(some_flat_dict, index=[index])
+
+
+@dataclass
+class MetricsCollection:
+    metrics: List[Metric]
+    other_metrics: OtherMetrics = OtherMetrics()
+
+    def to_df(self,
+              iteration: int,
+              predictions: BatchPredictedRisks,
+              other_estimated_metrics: Dict[str, float] = None):
+
+        dfs = [m.to_df(iteration, predictions) for m in self.metrics]
+
+        if other_estimated_metrics:
+            dfs.append(
+                self.other_metrics.to_df(iteration, other_estimated_metrics))
+        return pd.concat(dfs, axis=1)
+
+
 class DeLongTest(CodeLevelMetric):
 
     @classmethod
@@ -343,23 +504,17 @@ class DeLongTest(CodeLevelMetric):
     def fields_category(cls):
         return ('code', 'model', 'pair')
 
-    def code_qualifier(self, code_index):
-        return f'I{code_index}C{self.index2code[code_index]}'
-
     def column(self):
 
-        def code_col(self, code_index, field):
-            clsname = self.classname()
-            return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
+        def code_col(field):
+            return f'{field}'
 
-        def model_col(self, code_index, model, field):
-            clsname = self.classname()
-            return f'{clsname}.{self.code_qualifier(code_index)}.{model}.{field}'
+        def model_col(model, field):
+            return f'{model}.{field}'
 
-        def pair_col(self, code_index, model_pair, field):
-            clsname = self.classname()
+        def pair_col(model_pair, field):
             m1, m2 = model_pair
-            return f'{clsname}.{self.code_qualifier(code_index)}.{m1}={m2}.{field}'
+            return f'{m1}={m2}.{field}'
 
         return {'code': code_col, 'model': model_col, 'pair': pair_col}
 
@@ -371,30 +526,51 @@ class DeLongTest(CodeLevelMetric):
             cols.append(tuple(col_f(*args) for args in order_gen[cat]()))
         return sum(cols, tuple())
 
-    def _row(self, data: Dict[str, Any], clfs: List[str]):
+    def _row(self, code_index: int, data: Dict[str, Any], clfs: List[str]):
         order_gen = self.order(clfs)
 
         def code_row():
             d = data['code']
-            return tuple(d[f][idx] for idx, f in order_gen['code']())
+            return tuple(d[f][code_index] for f in order_gen['code']())
 
         def model_row():
             d = data['model']
-            return tuple(d[f][idx][clf]
-                         for idx, clf, f in order_gen['model']())
+            return tuple(d[f][code_index][clf]
+                         for clf, f in order_gen['model']())
 
         def pair_row():
             d = data['pair']
-            return tuple(d[f][idx][clfp]
-                         for idx, clfp, f in order_gen['pair']())
+            return tuple(d[f][code_index][clfp]
+                         for clfp, f in order_gen['pair']())
 
         return {'code': code_row, 'model': model_row, 'pair': pair_row}
 
-    def row(self, predictions: Dict[str, BatchPredictedRisks]):
-        data = self(predictions)
+    def rows(self, data, clfs):
+        rows = []
+        for code_index in sorted(self.index2code):
+            row_gen = self._row(code_index, data, clfs)
+            rows.append(
+                sum((row_gen[cat]() for cat in self.fields_category()),
+                    tuple()))
+        return rows
+
+    def to_df(self, predictions: Dict[str, BatchPredictedRisks]):
         clfs = sorted(predictions)
-        row_gen = self._row(data, clfs)
-        return sum((row_gen[cat]() for cat in self.fields_category()), tuple())
+        cols = self.columns(clfs)
+        data = self(predictions)
+        df = pd.DataFrame(columns=cols)
+        for idx, row in enumerate(self.rows(data, clfs)):
+            df.loc[idx] = row
+        return df
+
+    def to_dict(self, predictions: Dict[str, BatchPredictedRisks]):
+        clfs = sorted(predictions)
+        cols = self.columns(clfs)
+        data = self(predictions)
+        res = {}
+        for idx, row in enumerate(self.rows(data, clfs)):
+            res[idx] = dict(zip(cols, row))
+        return res
 
     @classmethod
     def model_pairs(cls, clfs: List[str]):
@@ -408,24 +584,21 @@ class DeLongTest(CodeLevelMetric):
 
         def model_order():
             fields = self.fields()['model']
-            for index in sorted(self.index2code):
-                for model in clfs:
-                    for field in fields:
-                        yield (index, model, field)
+            for model in clfs:
+                for field in fields:
+                    yield (model, field)
 
         def pair_order():
             pairs = self.model_pairs(clfs)
             fields = self.fields()['pair']
-            for index in sorted(self.index2code):
-                for model_pair in pairs:
-                    for field in fields:
-                        yield (index, model_pair, field)
+            for model_pair in pairs:
+                for field in fields:
+                    yield (model_pair, field)
 
         def code_order():
             fields = self.fields()['code']
-            for index in sorted(self.index2code):
-                for field in fields:
-                    yield index, field
+            for field in fields:
+                yield field
 
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 

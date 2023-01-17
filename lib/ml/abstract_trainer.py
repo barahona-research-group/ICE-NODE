@@ -136,60 +136,6 @@ class Trainer(eqx.Module):
         new_model = self._post_update_params(new_model)
         return (opt, opt_state), new_model, aux
 
-    def evaluations(self,
-                    subject_interface: Subject_JAX,
-                    split_predictions: Dict[str, M.BatchPredictedRisks],
-                    split_loss: Dict[str, Dict[str, float]],
-                    code_frequency_groups=None,
-                    top_k_list=[20]):
-        evals = {split: {} for split in split_predictions}
-
-        for split, loss in split_loss.items():
-            for key, val in loss.items():
-                evals[split][key] = val
-
-        for split, preds in split_predictions.items():
-
-            # General confusion matrix statistics (after rounding risk-vals).
-            cm = M.compute_confusion_matrix(preds)
-            cm_scores = M.confusion_matrix_scores(cm)
-            for stat, val in cm_scores.items():
-                evals[split][stat] = val
-
-            for stat, val in M.auc_scores(preds).items():
-                evals[split][stat] = val
-
-            if code_frequency_groups is not None:
-                det_topk_scores = M.top_k_detectability_scores(
-                    code_frequency_groups, preds, top_k_list)
-                for k in top_k_list:
-                    for stat, val in det_topk_scores[k].items():
-                        evals[split][stat] = val
-
-            evals[split] = {
-                rowname: float(val)
-                for rowname, val in evals[split].items()
-            }
-
-        flat_evals = {}
-        for split in evals:
-            flat_evals.update(
-                {f'{split}_{key}': val
-                 for key, val in evals[split].items()})
-
-        for split, preds in split_predictions.items():
-            _, code_auc_dict = M.code_auc_scores(preds, split)
-            subjects = sorted(preds.keys())
-            first_occ = map(subject_interface.code_first_occurrence, subjects)
-            occ1 = dict(zip(subjects, first_occ))
-            _, code_occ1_auc_dict = M.first_occurrence_auc_scores(
-                preds, occ1, key_prefix=split)
-
-            flat_evals.update(code_auc_dict)
-            flat_evals.update(code_occ1_auc_dict)
-
-        return flat_evals
-
     @classmethod
     def sample_opt(cls, trial: optuna.Trial):
         return {
@@ -202,8 +148,8 @@ class Trainer(eqx.Module):
                  model: "..ml.AbstractModel",
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
+                 metrics: M.MetricsCollection,
                  prng_seed: int = 0,
-                 code_frequency_groups=None,
                  trial_terminate_time=datetime.max,
                  reporters: List[AbstractReporter] = []):
         train_ids, valid_ids, test_ids = splits
@@ -221,7 +167,10 @@ class Trainer(eqx.Module):
 
         auc = 0.0
         best_score = 0.0
-        history = M.MetricsHistory()
+        history = {
+            split_name: M.MetricsHistory()
+            for split_name in ('TRN', 'VAL', 'TST')
+        }
 
         for i in tqdm(range(iters)):
             eval_step = round((i + 1) * 100 / iters)
@@ -257,35 +206,21 @@ class Trainer(eqx.Module):
 
             trn_loss, trn_preds = self.eval(model, subject_interface,
                                             train_batch)
+            history['TRN'].append_iteration(trn_preds, trn_loss)
             val_loss, val_preds = self.eval(model, subject_interface,
                                             valid_ids)
-            split_preds = {'TRN': trn_preds, 'VAL': val_preds}
-            split_loss = {'TRN': trn_loss, 'VAL': val_loss}
+            history['VAL'].append_iteration(val_preds, val_loss)
+
             if i == iters - 1:
                 tst_loss, tst_preds = self.eval(model, subject_interface,
                                                 test_ids)
-                split_preds['TST'] = tst_preds
-                split_loss['TST'] = tst_loss
-
-            evals_dict = self.evaluations(subject_interface, split_preds,
-                                          split_loss, code_frequency_groups)
-            history.append_iteration(evals_dict)
-
-            auc = evals_dict['VAL_MICRO-AUC']
+                history['TST'].append_iteration(tst_preds, tst_loss)
 
             for r in reporters:
+                r.report_evaluation(eval_step=eval_step, history=history)
+                r.report_params(eval_step, model)
 
-                r.report_evaluation(eval_step=eval_step,
-                                    objective_v=auc,
-                                    evals_df=history.to_df())
-
-                if auc > best_score:
-                    r.report_params(eval_step, model)
-
-            if auc > best_score:
-                best_score = auc
-
-        return {'objective': auc, 'model': model}
+        return {'history': history, 'model': model}
 
 
 class Trainer2LR(Trainer):

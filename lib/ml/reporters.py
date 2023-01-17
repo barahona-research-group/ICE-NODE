@@ -1,10 +1,13 @@
 """."""
 
+from typing import Dict
 import os
 from absl import logging
 import optuna
 
+from ..metric import MetricsHistory
 from .. import utils as U
+
 
 class ResourceTimeout(Exception):
     """Raised when a trial is anticipated to be exceeding the timelimit of the compute."""
@@ -45,13 +48,10 @@ class AbstractReporter:
     def report_one_interation(self):
         pass
 
-    def report_evaluation(self, **kwargs):
+    def report_evaluation(self, history):
         pass
 
-    def report_plots(self, **kwargs):
-        pass
-
-    def report_params(self, eval_step, model):
+    def report_params(self, step, model):
         pass
 
 
@@ -63,18 +63,13 @@ class MinibatchLogger(AbstractReporter):
     def report_config(self):
         logging.info(f'HPs: {self.config}')
 
-    def report_nan_detected(self, msg = None):
+    def report_nan_detected(self, msg=None):
         logging.warning(msg or 'NaN detected')
 
-    def report_evaluation(self, evals_df, **kwargs):
-        logging.info(evals_df)
+    def report_evaluation(self, history):
+        for _history in history.values():
+            logging.info(_history.to_df())
 
-
-class Plotter(AbstractReporter):
-
-    def __init__(self, output_dir, prefix=''):
-        self.output_dir = output_dir
-        self.prefix = prefix
 
 class EvaluationDiskWriter(AbstractReporter):
 
@@ -82,10 +77,10 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self, eval_step, evals_df, **kwargs):
-        name = 'eval.csv.gz' if self.prefix == '' else f'{self.prefix}_eval.csv.gz'
-        evals_df.to_csv(os.path.join(self.output_dir, name),
-                        compression="gzip")
+    def report_evaluation(self, history: Dict[str, MetricsHistory]):
+        for name, _history in history.items():
+            history.to_df().to_csv(os.path.join(self.output_dir, name),
+                                   compression="gzip")
 
 
 class ParamsDiskWriter(AbstractReporter):
@@ -94,9 +89,9 @@ class ParamsDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_params(self, eval_step, model):
+    def report_params(self, step, model):
         tarname = os.path.join(self.output_dir, f'{self.prefix}params.tar.bz2')
-        name = f'step{eval_step:04d}.eqx'
+        name = f'step{step:04d}.eqx'
         U.append_params_to_zip(model, name, tarname)
 
 
@@ -114,8 +109,9 @@ class ConfigDiskWriter(AbstractReporter):
 
 class OptunaReporter(AbstractReporter):
 
-    def __init__(self, trial):
+    def __init__(self, trial, objective_key):
         self.trial = trial
+        self.objective_key = objective_key
 
     def report_params_size(self, size):
         self.trial.set_user_attr('parameters_size', size)
@@ -140,5 +136,6 @@ class OptunaReporter(AbstractReporter):
     def report_nan_detected(self):
         self.trial.set_user_attr('nan', 1)
 
-    def report_evaluation(self, eval_step, objective_v, **kwargs):
-        self.trial.report(objective_v, eval_step)
+    def report_evaluation(self, history):
+        history = history['VAL']
+        self.trial.report(history.last_value(self.objective_key), len(history))
