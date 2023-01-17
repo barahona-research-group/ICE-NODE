@@ -86,17 +86,21 @@ class Metric(metaclass=ABCMeta):
     def classname(cls):
         return cls.__name__
 
-    @classmethod
-    def column(cls, field):
-        return f'{cls.classname()}.{field}'
+    def column(self, field):
+        return f'{self.classname()}.{field}'
 
-    @classmethod
-    def columns(cls):
-        return tuple(map(cls.column, cls.fields()))
+    def columns(self):
+        return tuple(map(self.column, self.fields()))
 
     @abstractmethod
     def row(self, predictions: BatchPredictedRisks) -> Tuple[float]:
         pass
+
+    def to_dict(self, predictions: BatchPredictedRisks):
+        return dict(zip(self.columns(), self.row(predictions)))
+
+    def to_df(self, index: int, predictions: BatchPredictedRisks):
+        return pd.DataFrame(self.to_dict(predictions), index=[index])
 
 
 class VisitsAUC(Metric):
@@ -256,6 +260,9 @@ class AdmissionLevelAUC(Metric):
 
         return tuple(auc[s_i][a_i] for s_i, a_i, _ in self.order(predictions))
 
+    def to_dict(self, predictions: BatchPredictedRisks):
+        return dict(zip(self.columns(predictions), self.row(predictions)))
+
 
 @dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
@@ -313,113 +320,192 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return tuple(alarm_acc[gi][k] for gi, k, _ in self.order())
 
 
-def codes_auc_pairwise_tests(results: Dict[str, BatchPredictedRisks],
-                             fast=False):
-    """
-    Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
-    conduct a pairwise test on the difference of AUC scores between each
-    pair of classifiers using DeLong test. Codes that have either less than two positive cases or
-    have less than two negative cases are discarded (AUC computation and difference test requirements).
-    """
-    # Classifier labels
-    clf_labels = list(sorted(results.keys()))
+class CodeAUCTestsXModels(CodeLevelMetric):
 
-    def extract_subjects():
-        example_risk_predictions = results[clf_labels[0]]
-        subjects = set(example_risk_predictions.keys())
-        assert all(
-            set(other_risk_prediction.keys()) == subjects
-            for other_risk_prediction in
-            results.values()), "results should correspond to the same group"
-        return list(sorted(subjects))
+    @classmethod
+    def code_fields(cls):
+        return ('n_pos', )
 
-    subjects = extract_subjects()
+    @classmethod
+    def model_fields(cls):
+        return ('auc', 'auc_var')
 
-    def extract_ground_truth_and_scores():
-        ground_truth_mat = {}
-        scores_mat = {}
-        for clf_label in clf_labels:
-            clf_ground_truth = []
-            clf_scores = []
-            clf_risk_prediction = results[clf_label]
-            for subject_id in subjects:
-                subj_pred_risks = clf_risk_prediction[subject_id]
-                for index in sorted(subj_pred_risks):
-                    risk_prediction = subj_pred_risks[index]
-                    clf_ground_truth.append(risk_prediction.ground_truth)
-                    clf_scores.append(risk_prediction.prediction)
-            ground_truth_mat[clf_label] = onp.vstack(clf_ground_truth)
-            scores_mat[clf_label] = onp.vstack(clf_scores)
+    @classmethod
+    def pair_fields(cls):
+        return ('p_val', )
 
-        g0 = ground_truth_mat[clf_labels[0]]
-        assert all(
-            (g0 == gi).all()
-            for gi in ground_truth_mat.values()), "Mismatch in ground-truth!"
+    def code_qualifier(self, code_index):
+        return f'I{code_index}C{self.index2code[code_index]}'
 
-        return g0, scores_mat
+    def code_column(self, code_index, field):
+        clsname = self.classname()
+        return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
-    ground_truth_mat, scores = extract_ground_truth_and_scores()
+    def model_column(self, code_index, model, field):
+        clsname = self.classname()
+        return f'{clsname}.{self.code_qualifier(code_index)}.{model}.{field}'
 
-    clf_pairs = []
-    for i in range(len(clf_labels)):
-        for j in range(i + 1, len(clf_labels)):
-            clf_pairs.append((clf_labels[i], clf_labels[j]))
+    def pair_column(self, code_index, model1, model2, field):
+        clsname = self.classname()
+        return f'{clsname}.{self.code_qualifier(code_index)}.{model1}-{model2}.{field}'
 
-    n_positive_codes = []
-    auc = {clf: [] for clf in clf_labels}
-    auc_var = {clf: [] for clf in clf_labels}
+    def code_columns(self):
+        return tuple(self.code_column(*args) for args in self.code_order())
 
-    pairwise_tests = {pair: [] for pair in clf_pairs}
+    def model_columns(self, clfs: List[str]):
+        return tuple(
+            self.model_column(*args) for args in self.model_order(clfs))
 
-    for code_index in tqdm(range(ground_truth_mat.shape[1])):
-        code_ground_truth = ground_truth_mat[:, code_index]
-        n_pos = code_ground_truth.sum()
-        n_neg = len(code_ground_truth) - n_pos
+    def pair_columns(self, clfs: List[str]):
+        return tuple(self.pair_column(*args) for args in self.pair_order(clfs))
 
-        # This is a requirement for pairwise testing.
-        if n_pos < 2 or n_neg < 2:
-            continue
+    def columns(self, clfs: List[str]):
+        return self.code_columns() + self.model_columns(
+            clfs) + self.pair_columns(clfs)
 
-        n_positive_codes.append(n_pos)
-        # Since we iterate on pairs, some AUC are computed more than once.
-        # Update this dictionary for each AUC computed, then append the results
-        # to the big list of auc.
-        _auc = {}
-        _auc_var = {}
-        for (clf1, clf2) in clf_pairs:
-            scores1 = scores[clf1][:, code_index]
-            scores2 = scores[clf2][:, code_index]
-            if fast:
-                auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
-                    code_ground_truth, scores1, scores2)
+    def row(self, predictions: Dict[str, BatchPredictedRisks]):
+        data = self.compute_tests(predictions)
+        clfs = sorted(predictions)
+        code_data = data['code']
+        code_row = tuple(code_data[f][idx] for (idx, f) in self.code_order())
+
+        model_data = data['model']
+        model_row = []
+        for index, clf, field in self.model_order(clfs):
+            field_data = model_data[field]
+            codelevel_data = field_data.get(index)
+            if codelevel_data:
+                model_row.append(codelevel_data.get(clf, float('nan')))
             else:
-                auc1, auc2, auc1_v, auc2_v, p = DeLongTest.difference_test(
-                    code_ground_truth, scores1, scores2)
+                model_row.append(float('nan'))
+        model_row = tuple(model_row)
 
-            pairwise_tests[(clf1, clf2)].append(p)
+        pair_data = data['pair']
+        pair_row = []
+        for index, clf1, clf2, field in self.pair_order(clfs):
+            field_data = pair_data[field]
+            codelevel_data = field_data.get(index)
+            if codelevel_data:
+                pair_row.append(codelevel_data.get((clf1, clf2), float('nan')))
+            else:
+                pair_row.append(float('nan'))
+        pair_row = tuple(pair_row)
 
-            _auc[clf1] = auc1
-            _auc[clf2] = auc2
-            _auc_var[clf1] = auc1_v
-            _auc_var[clf2] = auc2_v
+        return code_row + model_row + pair_row
 
-        for clf, a in _auc.items():
-            auc[clf].append(a)
-        for clf, v in _auc_var.items():
-            auc_var[clf].append(v)
-    data = {
-        'CODE_INDEX': range(len(n_positive_codes)),
-        'N_POSITIVE_CODES': n_positive_codes,
-        **{f'AUC({clf})': auc_vals
-           for clf, auc_vals in sorted(auc.items())},
-        **{
-            f'VAR[AUC({clf})]': auc_v
-            for clf, auc_v in sorted(auc_var.items())
-        },
-        **{
-            f'P0(AUC_{clf1}==AUC_{clf2})': p_vals
-            for (clf1, clf2), p_vals in sorted(pairwise_tests.items())
+    @classmethod
+    def model_pairs(cls, clfs: List[str]):
+        clf_pairs = []
+        for i in range(len(clfs)):
+            for j in range(i + 1, len(clfs)):
+                clf_pairs.append((clfs[i], clfs[j]))
+        return tuple(clf_pairs)
+
+    def model_order(self, clfs: List[str]):
+        for index in sorted(self.index2code):
+            for model in clfs:
+                for field in self.fields():
+                    yield (index, model, field)
+
+    def pair_order(self, clfs: List[str]):
+        pairs = self.model_pairs(clfs)
+        for index in sorted(self.index2code):
+            for model1, model2 in pairs:
+                for field in self.fields():
+                    yield (index, model1, model2, field)
+
+    def code_order(self):
+        for index in sorted(self.index2code):
+            for field in self.code_fields():
+                yield index, field
+
+    @classmethod
+    def extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
+        subject_sets = [preds.get_subjects() for preds in predictions.values()]
+        for s1, s2 in zip(subject_sets[:-1], subject_sets[1:]):
+            assert set(s1) == set(s2), "Subjects mismatch across model outputs"
+        return list(sorted(subject_sets[0]))
+
+    @classmethod
+    def extract_grountruth_vs_predictions(cls, predictions):
+        subjects = cls.extract_subjects(predictions)
+        true_mat = {}
+        pred_mat = {}
+        for clf_label, clf_preds in predictions.items():
+            clf_true = []
+            clf_pred = []
+            for subject_id in subjects:
+                subj_preds = clf_preds[subject_id]
+                for adm_index in sorted(subj_preds):
+                    pred = subj_preds[adm_index]
+                    clf_true.append(pred.ground_truth)
+                    clf_pred.append(pred.prediction)
+            true_mat[clf_label] = onp.vstack(clf_true)
+            pred_mat[clf_label] = onp.vstack(clf_pred)
+
+        tm0 = list(true_mat.values())[0]
+        for tm in true_mat.values():
+            assert (tm0 == tm).all(), "Mismatch in ground-truth across models."
+
+        return tm0, pred_mat
+
+    def compute_tests(self, predictions: Dict[str, BatchPredictedRisks]):
+        """
+        Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
+        conduct a pairwise test on the difference of AUC scores between each
+        pair of classifiers using DeLong test. Codes that have either less than two positive cases or
+        have less than two negative cases are discarded (AUC computation and difference test requirements).
+        """
+        # Classifier labels
+        clf_labels = list(sorted(predictions.keys()))
+        true_mat, preds = self.extract_grountruth_vs_predictions(predictions)
+        clf_pairs = self.model_pairs(clf_labels)
+
+        n_pos = {}  # only codewise
+        auc = {}  # modelwise
+        auc_var = {}  # modelwise
+        p_val = {}  # pairwise
+
+        for code_index in tqdm(range(true_mat.shape[1])):
+            code_truth = true_mat[:, code_index]
+            n_pos = code_truth.sum()
+            n_neg = len(code_truth) - n_pos
+            n_pos[code_index] = n_pos
+            # This is a requirement for pairwise testing.
+            if n_pos < 2 or n_neg < 2:
+                continue
+
+            # Since we iterate on pairs, some AUC are computed more than once.
+            # Update this dictionary for each AUC computed, then append the results
+            # to the big list of auc.
+            code_auc = {}
+            code_auc_var = {}
+            code_p_val = {}
+            for (clf1, clf2) in clf_pairs:
+                preds1 = preds[clf1][:, code_index]
+                preds2 = preds[clf2][:, code_index]
+                auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
+                    code_truth, preds1, preds2)
+
+                code_p_val[(clf1, clf2)] = p
+                code_auc[clf1] = auc1
+                code_auc[clf2] = auc2
+                code_auc_var[clf1] = auc1_v
+                code_auc_var[clf2] = auc2_v
+
+            auc[code_index] = code_auc
+            auc_var[code_index] = code_auc_var
+            p_val[code_index] = code_p_val
+
+        return {
+            'pair': {
+                'p_val': p_val
+            },
+            'code': {
+                'n_pos': n_pos
+            },
+            'model': {
+                'auc': auc,
+                'auc_var': auc_var
+            }
         }
-    }
-
-    return pd.DataFrame(data)
