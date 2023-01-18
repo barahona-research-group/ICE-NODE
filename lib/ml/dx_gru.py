@@ -43,7 +43,7 @@ class GRU(AbstractModel):
 
             # Exclude last input for irrelevance (not more future predictions)
             dx_vec = [adm.dx_vec for adm in adms[:-1]]
-            emb_seqs = map(emb, dx_vec)
+            emb_seqs = list(map(emb, dx_vec))
 
             # Merge controls with embeddings
             # c1, c2, ..., cT. <- controls
