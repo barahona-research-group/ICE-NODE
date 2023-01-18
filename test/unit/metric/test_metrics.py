@@ -4,6 +4,7 @@ import unittest
 
 import jax.random as jrandom
 import jax.numpy as jnp
+import numpy as onp
 
 from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
@@ -40,18 +41,50 @@ class MetricsTest(unittest.TestCase):
             splits[0], splits[1])
         cls.mean_predictions = m3_interface.mean_predictions(
             splits[0], splits[1])
+        cls.cheating_predictions = m3_interface.cheating_predictions(
+            splits[0], splits[1])
 
     def test_visits_auc(self):
         metric = VisitsAUC(m3_interface)
-        df = metric.to_df(0, self.random_predictions)
+        df_rnd = metric.to_df(0, self.random_predictions)
+
+        # AUC of randomized decisions almost in (0.4, 0.6)
+        self.assertGreater(df_rnd.max().max(), 0.4)
+        self.assertLess(df_rnd.min().min(), 0.6)
+
+        df_truth = metric.to_df(0, self.cheating_predictions)
+
+        # AUC of perfect decision = 1.0
+        self.assertEqual(set(onp.unique(df_truth)), {1.0}, msg=df_truth)
 
     def test_code_auc(self):
         metric = CodeAUC(m3_interface)
-        df = metric.to_df(0, self.random_predictions)
+        df_rnd = metric.to_df(0, self.random_predictions)
+        df_truth = metric.to_df(0, self.cheating_predictions)
+        cols = df_rnd.columns
+        auc_cols = [c for c in cols if c.split('.')[-1] == 'auc']
+        self.assertEqual(len(auc_cols), len(metric.index2code))
+
+        a_rnd = df_rnd[auc_cols].values.flatten()
+        a_truth = df_truth[auc_cols].values.flatten()
+        mask = onp.isnan(a_rnd)
+        self.assertEqual(set(a_truth[~mask]), {1.0})
+        self.assertTrue((a_rnd[~mask] <= a_truth[~mask]).all())
 
     def test_until_first_code_auc(self):
         metric = UntilFirstCodeAUC(m3_interface)
-        df = metric.to_df(0, self.random_predictions)
+        df_rnd = metric.to_df(0, self.random_predictions)
+        df_truth = metric.to_df(0, self.cheating_predictions)
+        cols = df_rnd.columns
+        auc_cols = [c for c in cols if c.split('.')[-1] == 'auc']
+        self.assertEqual(len(auc_cols), len(metric.index2code))
+
+        a_rnd = df_rnd[auc_cols].values.flatten()
+        a_truth = df_truth[auc_cols].values.flatten()
+        mask = onp.isnan(a_rnd)
+        self.assertEqual(set(a_truth[~mask]), {1.0})
+        self.assertTrue((a_rnd[~mask] <= a_truth[~mask]).all())
+
 
     def test_code_group_alarm_acc(self):
         m3_groups = m3_interface.dx_outcome_by_percentiles(percentile_range=20,
@@ -87,5 +120,6 @@ class MetricsTest(unittest.TestCase):
             'random': self.random_predictions,
             'recency': self.recency_predictions,
             'mean': self.mean_predictions,
-            'historical': self.historical_predictions
+            'historical': self.historical_predictions,
+            'cheating': self.cheating_predictions
         })

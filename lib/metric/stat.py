@@ -118,9 +118,10 @@ class VisitsAUC(Metric):
         gtruth_mat = onp.hstack(gtruth)
         preds_mat = onp.hstack(preds)
         return {
-            'macro_auc': compute_auc(gtruth_mat, preds_mat),
-            'micro_auc': onp.array(list(map(compute_auc, gtruth,
-                                            preds))).mean()
+            'macro_auc':
+            compute_auc(gtruth_mat, preds_mat),
+            'micro_auc':
+            onp.nanmean(onp.array(list(map(compute_auc, gtruth, preds))))
         }
 
 
@@ -529,7 +530,6 @@ class DeLongTest(CodeLevelMetric):
         order_gen = self.order(clfs)
         for cat in self.fields_category():
             col_f = self.column()[cat]
-            breakpoint()
             cols.append(tuple(col_f(*t) for t in order_gen[cat]()))
         return sum(cols, tuple())
 
@@ -538,7 +538,7 @@ class DeLongTest(CodeLevelMetric):
 
         def code_row():
             d = data['code']
-            return tuple(d[f][code_index] for f in order_gen['code']())
+            return tuple(d[f][code_index] for (f, ) in order_gen['code']())
 
         def model_row():
             d = data['model']
@@ -605,7 +605,7 @@ class DeLongTest(CodeLevelMetric):
         def code_order():
             fields = self.fields()['code']
             for field in fields:
-                yield field
+                yield (field, )
 
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
@@ -658,11 +658,11 @@ class DeLongTest(CodeLevelMetric):
 
         for code_index in tqdm(range(true_mat.shape[1])):
             code_truth = true_mat[:, code_index]
-            n_pos = code_truth.sum()
-            n_neg = len(code_truth) - n_pos
-            n_pos[code_index] = n_pos
+            _n_pos = code_truth.sum()
+            n_neg = len(code_truth) - _n_pos
+            n_pos[code_index] = _n_pos
             # This is a requirement for pairwise testing.
-            invalid_test = n_pos < 2 or n_neg < 2
+            invalid_test = _n_pos < 2 or n_neg < 2
 
             # Since we iterate on pairs, some AUC are computed more than once.
             # Update this dictionary for each AUC computed, then append the results

@@ -638,8 +638,8 @@ class Subject_JAX(dict):
 
         # Aggregate all previous history for the particular subject.
         for subject_id in test_split:
-            adms = self[subject_id][1:]
-            outcome = self[subject_id][0].dx_outcome
+            adms = self[subject_id]
+            outcome = adms[0].dx_outcome
             for i in range(1, len(adms)):
                 predictions.add(subject_id=subject_id,
                                 admission=adms[i],
