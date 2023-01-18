@@ -18,6 +18,7 @@ import jax
 import jax.random as jrandom
 from jax import lax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 
 import equinox as eqx
 
@@ -99,6 +100,20 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
     def register_embedding(cls, label, short):
         cls.embedding_cls[label] = cls
         cls.short_tag[label] = short
+
+    def weights(self):
+        has_weight = lambda leaf: hasattr(leaf, 'weight')
+        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
+        return tuple(x.weight
+                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                     if has_weight(x))
+
+    def l1(self):
+        return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
+
+    def l2(self):
+        return sum(
+            jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
 
 
 class GRAM(AbstractEmbeddingsLayer):
@@ -218,10 +233,10 @@ class CachedEmbeddingsMatrix(dict):
         self.gram = gram
 
     def multiply(self, x: jnp.ndarray):
-        index = onp.nonzero(x)[0]
+        index = list(map(int, list(onp.nonzero(x)[0])))
         if len(index) == 0:
             return jnp.zeros_like(self.gram.basic_embeddings[0])
-        return sum(self[i.item()] for i in index)
+        return sum(self[i] for i in index)
 
     def __getitem__(self, idx):
         if idx in self:
@@ -306,6 +321,20 @@ class LogitsDecoder(eqx.Module):
 
     def __call__(self, logits: jnp.ndarray):
         return self.f_dec(logits)
+
+    def weights(self):
+        has_weight = lambda leaf: hasattr(leaf, 'weight')
+        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
+        return tuple(x.weight
+                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                     if has_weight(x))
+
+    def l1(self):
+        return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
+
+    def l2(self):
+        return sum(
+            jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
 
 
 def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,

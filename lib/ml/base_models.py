@@ -218,8 +218,8 @@ class NeuralODE(eqx.Module):
 
 class StateUpdate(eqx.Module):
     """Implements discrete update based on the received observations."""
-    f_project_error = Callable
-    f_update = Callable
+    f_project_error: Callable
+    f_update: Callable
 
     def __init__(self, state_size: int, embeddings_size: int,
                  key: "jax.random.PRNGKey"):

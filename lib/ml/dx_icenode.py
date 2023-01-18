@@ -33,6 +33,7 @@ def ode_dyn(label, state_size, embeddings_size, control_size, key):
         'mlp':
         dict(activation=jax.nn.tanh,
              depth=nlayers - 1,
+             width_size=input_size,
              in_size=input_size,
              out_size=dyn_state_size),
         'gru':
@@ -61,6 +62,7 @@ class ICENODE(AbstractModel):
                  timescale: float, key: "jax.random.PRNGKey", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.timescale = timescale
+        self.ode_init_var = ode_init_var
         key1, key2 = jrandom.split(key, 2)
         ode_dyn_f = ode_dyn(ode_dyn_label,
                             state_size=self.state_size,

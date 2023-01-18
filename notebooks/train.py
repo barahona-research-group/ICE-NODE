@@ -11,12 +11,7 @@ from icenode.ml import (MinibatchLogger, EvaluationDiskWriter,
 
 def make_reporters(clfs, clf_dir):
     return {
-        clf: [
-            ConfigDiskWriter(output_dir=clf_dir[clf]),
-            MinibatchLogger(),
-            EvaluationDiskWriter(output_dir=clf_dir[clf]),
-            ParamsDiskWriter(output_dir=clf_dir[clf])
-        ]
+        clf
         for clf in clfs
     }
 

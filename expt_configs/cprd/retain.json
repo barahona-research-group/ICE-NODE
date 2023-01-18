@@ -11,8 +11,7 @@
         }
     },
     "model": {
-        "state_a_size": 200,
-        "state_b_size": 100
+        "state_size":  [200, 100]
     },
     "training": {
         "batch_size": 27,

@@ -23,6 +23,7 @@ class RETAIN(AbstractModel):
     att_b: Callable
 
     def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
+        kwargs['state_size'] = tuple(kwargs['state_size'])
         super().__init__(*args, **kwargs)
 
         k1, k2, k3, k4 = jrandom.split(key, 4)
