@@ -198,6 +198,15 @@ class BatchPredictedRisks(dict):
         ]
         return sum(loss) / len(loss)
 
+    def equals(self, other: BatchPredictedRisks):
+        for subj_i, s_preds in self.items():
+            s_preds_other = other[subj_i]
+            for a, a_oth in zip(s_preds.values(), s_preds_other.values()):
+                if ((a.ground_truth != a_oth.ground_truth).any()
+                        or (a.prediction != a_oth.prediction).any()):
+                    return False
+        return True
+
 
 class Subject_JAX(dict):
     """
@@ -578,9 +587,9 @@ class Subject_JAX(dict):
         subjects = Subject.from_dataset(dataset)
         return cls(subjects, *args, **kwargs)
 
-    def random_predictions(self, train_split, test_split):
+    def random_predictions(self, train_split, test_split, seed=0):
         predictions = BatchPredictedRisks()
-        key = jrandom.PRNGKey(0)
+        key = jrandom.PRNGKey(seed)
 
         for subject_id in test_split:
             # Skip first admission, not targeted for prediction.

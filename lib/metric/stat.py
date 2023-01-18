@@ -2,9 +2,10 @@
 
 from typing import Dict, Optional, List, Tuple, Any
 from dataclasses import dataclass, field
-from tqdm import tqdm
 from abc import ABC, abstractmethod, ABCMeta
 
+from tqdm import tqdm
+from absl import logging
 import pandas as pd
 import numpy as onp
 import jax
@@ -72,8 +73,12 @@ def compute_auc(v_truth, v_preds):
 class Metric(metaclass=ABCMeta):
     subject_interface: Subject_JAX
 
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
+        return tuple()
+
+    @staticmethod
+    def dirs():
         return tuple()
 
     @classmethod
@@ -100,12 +105,28 @@ class Metric(metaclass=ABCMeta):
     def to_df(self, index: int, predictions: BatchPredictedRisks):
         return pd.DataFrame(self.to_dict(predictions), index=[index])
 
+    def value_extractor(self, keys: Dict[str, str]):
+        colname = self.column(keys.get('field', self.fields()[0]))
+
+        def from_df(df, index=-1):
+            return df[colname].iloc[index]
+
+        return from_df
+
 
 class VisitsAUC(Metric):
 
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
         return ('macro_auc', 'micro_auc')
+
+    @staticmethod
+    def dirs():
+        return (1, 1)
+
+    @classmethod
+    def field_dir(cls, field):
+        return dict(zip(cls.fields(), cls.dirs()))[field]
 
     def __call__(self, predictions: BatchPredictedRisks) -> Tuple[float]:
         gtruth = []
@@ -139,12 +160,8 @@ class CodeLevelMetric(Metric):
         self.code2index = self.subject_interface.dx_outcome_extractor.index
         self.index2code = {i: c for c, i in self.code2index.items()}
 
-    @classmethod
-    def fields(cls):
-        return tuple()
-
-    @classmethod
-    def agg_fields(cls):
+    @staticmethod
+    def agg_fields():
         return (('mean', onp.nanmean), ('median', onp.nanmedian),
                 ('max', onp.nanmax), ('min', onp.nanmin))
 
@@ -155,12 +172,16 @@ class CodeLevelMetric(Metric):
         clsname = self.classname()
         return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
+    @classmethod
+    def agg_column(cls, agg_key, field):
+        return f'{cls.classname()}.{agg_key}({field})'
+
     def agg_columns(self):
         clsname = self.classname()
         cols = []
         for field in self.fields():
             for agg_k, _ in self.agg_fields():
-                cols.append(f'{clsname}.{agg_k}({field})')
+                cols.append(self.agg_column(agg_k, field))
         return tuple(cols)
 
     def order(self):
@@ -196,16 +217,41 @@ class CodeLevelMetric(Metric):
 
         return sum(tuple(row), tuple())
 
+    def value_extractor(self, keys):
+        code_index = keys.get('code_index')
+        code = keys.get('code')
+        assert (code_index is None) != (
+            code is
+            None), "providing code and code_index are mutually exlusive"
+        code_index = self.code2index[code] if code is not None else code_index
+
+        column = self.column(code_index, keys['field'])
+
+        def from_df(df, index=-1):
+            return df[column].iloc[index]
+
+        return from_df
+
+    def aggregate_extractor(self, keys):
+        agg = keys['aggregate']
+        column = self.agg_column(agg, keys.get('field', self.fields()[0]))
+
+        def from_df(df, index=-1):
+            return df[column].iloc[index]
+
+        return from_df
+
 
 @dataclass
 class CodeAUC(CodeLevelMetric):
 
-    #     def __post_init__(self, *args, **kwargs):
-    #         super().__init__(*args, **kwargs)
-
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
         return ('auc', 'n')
+
+    @staticmethod
+    def dirs():
+        return (1, 1)
 
     def __call__(self, predictions: BatchPredictedRisks):
         ground_truth = []
@@ -232,9 +278,6 @@ class CodeAUC(CodeLevelMetric):
 
 @dataclass
 class UntilFirstCodeAUC(CodeAUC):
-
-    # def __post_init__(self, *args, **kwargs):
-    #     super().__init__(*args, **kwargs)
 
     def __call__(self, predictions: BatchPredictedRisks):
         ground_truth = []
@@ -282,43 +325,57 @@ class AdmissionAUC(Metric):
     # Show estimates aggregated across the entire subjects and admissions.
     aggregate_level: bool = field(default=True)
 
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
         return ('auc', )
 
-    @classmethod
-    def agg_fields(cls):
+    @staticmethod
+    def dirs():
+        return (1, )
+
+    @staticmethod
+    def agg_fields():
         return (('mean', onp.nanmean), ('median', onp.nanmedian),
                 ('max', onp.nanmax), ('min', onp.nanmin))
 
-    def subject_qualifier(self, subject_id):
+    @staticmethod
+    def subject_qualifier(subject_id):
         return f'S{subject_id}'
 
-    def admission_qualifier(self, subject_id, admission_id):
-        return f'{self.subject_qualifier(subject_id)}A{admission_id}'
+    @classmethod
+    def admission_qualifier(cls, subject_id, admission_id):
+        return f'{cls.subject_qualifier(subject_id)}A{admission_id}'
 
-    def column(self, subject_id, admission_id, field):
-        clsname = self.classname()
-        return f'{clsname}.{self.admission_qualifier(subject_id, admission_id)}.{field}'
+    @classmethod
+    def column(cls, subject_id, admission_id, field):
+        clsname = cls.classname()
+        return f'{clsname}.{cls.admission_qualifier(subject_id, admission_id)}.{field}'
 
-    def subject_agg_columns(self, subject_order_gen):
-        clsname = self.classname()
+    @classmethod
+    def subject_agg_column(cls, subject_id, agg_key, field):
+        return f'{cls.classname()}.{cls.subject_qualifier(subject_id)}.{agg_key}({field})'
+
+    @classmethod
+    def subject_agg_columns(cls, subject_order_gen):
+        clsname = cls.classname()
         cols = []
         for subject_id in subject_order_gen():
-            for field in self.fields():
-                for agg_k, _ in self.agg_fields():
+            for field in cls.fields():
+                for agg_k, _ in cls.agg_fields():
                     cols.append(
-                        f'{clsname}.{self.subject_qualifier(subject_id)}.{agg_k}({field})'
-                    )
+                        cls.subject_agg_column(subject_id, agg_k, field))
         return tuple(cols)
 
     @classmethod
-    def agg_columns(self):
-        clsname = self.classname()
+    def agg_column(cls, agg_key, field):
+        return f'{cls.classname()}.{agg_key}({field})'
+
+    @classmethod
+    def agg_columns(cls):
         cols = []
-        for field in self.fields():
-            for agg_k, _ in self.agg_fields():
-                cols.append(f'{clsname}.{agg_k}({field})')
+        for field in cls.fields():
+            for agg_k, _ in cls.agg_fields():
+                cols.append(cls.agg_column(agg_k, field))
         return tuple(cols)
 
     @classmethod
@@ -397,6 +454,37 @@ class AdmissionAUC(Metric):
         rows = self.row(result, order_gen, subject_order_gen)
         return dict(zip(cols, rows))
 
+    def value_extractor(self, keys):
+        subject_id = keys['subject_id']
+        admission_id = keys['admission_id']
+        field = keys.get('field', self.fields()[0])
+        column = self.column(subject_id, admission_id, field)
+
+        def from_df(df, index=-1):
+            return df[column].iloc[index]
+
+        return from_df
+
+    def subject_aggregate_extractor(self, keys):
+        field = keys.get('field', self.fields()[0])
+        column = self.subject_agg_column(keys['subject_id'], keys['aggregate'],
+                                         field)
+
+        def from_df(df, index=-1):
+            return df[column].iloc[index]
+
+        return from_df
+
+    def aggregate_extractor(self, keys):
+        agg = keys['aggregate']
+        field = keys.get('field', self.fields()[0])
+        column = self.agg_column(agg, field)
+
+        def from_df(df, index=-1):
+            return df[column].iloc[index]
+
+        return from_df
+
 
 @dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
@@ -404,9 +492,13 @@ class CodeGroupTopAlarmAccuracy(Metric):
     code_groups: List[List[int]]
     top_k_list: List[int]
 
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
         return ('acc', )
+
+    @staticmethod
+    def dirs():
+        return (1, )
 
     def column(self, group_index, k, field):
         return f'G{group_index}k{k}.{field}'
@@ -455,6 +547,20 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def row(self, result: Dict[str, Dict[int, Dict[int, float]]]):
         return tuple(result[f][gi][k] for gi, k, f in self.order())
 
+    def value_extractor(self, keys: Dict[str, str]):
+        k = keys['k']
+        gi = keys['group_index']
+        assert k in self.top_k_list, f"k={k} is not in {self.top_k_list}"
+        assert gi < len(
+            self.code_groups), f"group_index ({gi}) >= len(self.code_groups)"
+        field = keys.get('field', self.fields()[0])
+        colname = self.column(gi, k, field)
+
+        def from_df(df, index=-1):
+            return df[colname].iloc[index]
+
+        return from_df
+
 
 @dataclass
 class OtherMetrics(Metric):
@@ -472,6 +578,10 @@ class OtherMetrics(Metric):
         return some_flat_dict
 
     def to_df(self, index: int, some_flat_dict: Dict[str, float]):
+        some_flat_dict = {
+            k: v.item() if hasattr(v, 'item') else v
+            for k, v in some_flat_dict.items()
+        }
         return pd.DataFrame(some_flat_dict, index=[index])
 
 
@@ -499,19 +609,20 @@ class DeLongTest(CodeLevelMetric):
     # def __post_init__(self, *args, **kwargs):
     #     super().__init__(*args, **kwargs)
 
-    @classmethod
-    def fields(cls):
+    @staticmethod
+    def fields():
         return {
             'code': ('n_pos', ),
             'model': ('auc', 'auc_var'),
             'pair': ('p_val', )
         }
 
-    @classmethod
-    def fields_category(cls):
+    @staticmethod
+    def fields_category():
         return ('code', 'model', 'pair')
 
-    def column(self):
+    @staticmethod
+    def column():
 
         def code_col(field):
             return f'{field}'
@@ -524,6 +635,44 @@ class DeLongTest(CodeLevelMetric):
             return f'{m1}={m2}.{field}'
 
         return {'code': code_col, 'model': model_col, 'pair': pair_col}
+
+    def value_extractor(self, keys):
+        """
+        Makes an extractor function to retrieve the estimated value.
+        Each estimand by this metric corresponds to a particular code.
+        The keys object therefore must include either 'code' with actual code
+        value or 'code_index' with the corresponding index.
+        The keys should have the 'field' key, with one of the following values:
+            - 'n_pos': to extract number of positive cases of the AUC problem.
+            - 'auc': to extract the AUC exhibited by a particular model. In
+            this case keys should also have the 'model' key for the model of interest.
+            - 'auc_var': same as 'auc' but returns the estimated variance of
+            the AUC.
+            - 'p_val': to extract the p-value of the equivalence test between
+            the AUC of two models, hence the two models should be included in the keys
+            as {'pairs': (model1, model2), ....}.
+        """
+        code_index = keys.get('code_index')
+        code = keys.get('code')
+        assert (code_index is None) != (
+            code is
+            None), "providing code and code_index are mutually exlusive"
+        code_index = self.code2index[code] if code is not None else code_index
+
+        field = keys['field']
+        if field in self.fields()['model']:
+            model = keys['model']
+            column = self.column()['model'](model, field)
+        elif field in self.fields()['code']:
+            column = self.column()['code'](field)
+        else:
+            pair = tuple(sorted(keys['pair']))
+            column = self.column()['pair'](pair, field)
+
+        def from_df(df):
+            return df.loc[code_index, column]
+
+        return from_df
 
     def columns(self, clfs: List[str]):
         cols = []
@@ -580,7 +729,7 @@ class DeLongTest(CodeLevelMetric):
         return res
 
     @classmethod
-    def model_pairs(cls, clfs: List[str]):
+    def _model_pairs(cls, clfs: List[str]):
         clf_pairs = []
         for i in range(len(clfs)):
             for j in range(i + 1, len(clfs)):
@@ -596,7 +745,7 @@ class DeLongTest(CodeLevelMetric):
                     yield (model, field)
 
         def pair_order():
-            pairs = self.model_pairs(clfs)
+            pairs = self._model_pairs(clfs)
             fields = self.fields()['pair']
             for model_pair in pairs:
                 for field in fields:
@@ -610,15 +759,15 @@ class DeLongTest(CodeLevelMetric):
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
     @classmethod
-    def extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
+    def _extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
         subject_sets = [preds.get_subjects() for preds in predictions.values()]
         for s1, s2 in zip(subject_sets[:-1], subject_sets[1:]):
             assert set(s1) == set(s2), "Subjects mismatch across model outputs"
         return list(sorted(subject_sets[0]))
 
     @classmethod
-    def extract_grountruth_vs_predictions(cls, predictions):
-        subjects = cls.extract_subjects(predictions)
+    def _extract_grountruth_vs_predictions(cls, predictions):
+        subjects = cls._extract_subjects(predictions)
         true_mat = {}
         pred_mat = {}
         for clf_label, clf_preds in predictions.items():
@@ -648,8 +797,8 @@ class DeLongTest(CodeLevelMetric):
         """
         # Classifier labels
         clf_labels = list(sorted(predictions.keys()))
-        true_mat, preds = self.extract_grountruth_vs_predictions(predictions)
-        clf_pairs = self.model_pairs(clf_labels)
+        true_mat, preds = self._extract_grountruth_vs_predictions(predictions)
+        clf_pairs = self._model_pairs(clf_labels)
 
         n_pos = {}  # only codewise
         auc = {}  # modelwise

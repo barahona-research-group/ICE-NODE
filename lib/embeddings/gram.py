@@ -261,7 +261,7 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
                                     use_bias=True,
                                     key=key)
 
-    def compute_embeddings_mat(self, params):
+    def compute_embeddings_mat(self):
         return self
 
     @eqx.filter_jit

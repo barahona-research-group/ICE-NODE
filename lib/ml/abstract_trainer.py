@@ -32,29 +32,47 @@ class_weighting_dict = {
 class MetricsHistory:
     metrics: M.MetricsCollection
 
-    def __init__(self):
-        self._df = None
+    def __init__(self, metrics):
+        self.metrics = metrics
+        self._train_df = None
+        self._val_df = None
+        self._test_df = None
 
-    def to_df(self):
-        return self._df
+    def train_df(self):
+        return self._train_df
 
-    def __len__(self):
-        return len(self._df) if self._df is not None else 0
+    def validation_df(self):
+        return self._val_df
 
-    def last_evals(self):
-        return self._df.iloc[-1, :].to_dict()
+    def test_df(self):
+        return self._test_df
 
-    def append_iteration(
+    def append_train_iteration(
             self,
             predictions: BatchPredictedRisks,
             other_estimated_metrics: Optional[Dict[str, float]] = None):
-        niters = 1 if self._df is None else len(self._df) + 1
+        niters = 1 if self._train_df is None else len(self._train_df) + 1
         row_df = self.metrics.to_df(niters, predictions,
                                     other_estimated_metrics)
-        self._df = pd.concat([self._df, row_df])
+        self._train_df = pd.concat([self._train_df, row_df])
 
-    def last_value(self, key):
-        return self._df.iloc[-1, key]
+    def append_validation_iteration(
+            self,
+            predictions: BatchPredictedRisks,
+            other_estimated_metrics: Optional[Dict[str, float]] = None):
+        niters = 1 if self._val_df is None else len(self._val_df) + 1
+        row_df = self.metrics.to_df(niters, predictions,
+                                    other_estimated_metrics)
+        self._val_df = pd.concat([self._val_df, row_df])
+
+    def append_test_iteration(
+            self,
+            predictions: BatchPredictedRisks,
+            other_estimated_metrics: Optional[Dict[str, float]] = None):
+        niters = 1 if self._test_df is None else len(self._test_df) + 1
+        row_df = self.metrics.to_df(niters, predictions,
+                                    other_estimated_metrics)
+        self._test_df = pd.concat([self._test_df, row_df])
 
 
 class Trainer(eqx.Module):
@@ -176,7 +194,7 @@ class Trainer(eqx.Module):
                  model: "lib.ml.AbstractModel",
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
-                 metrics: M.MetricsCollection,
+                 history: MetricsHistory,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
                  reporters: List["lib.ml.AbstractReporter"] = []):
@@ -192,13 +210,6 @@ class Trainer(eqx.Module):
             r.report_config()
             r.report_params_size(params_size(model))
             r.report_steps(iters)
-
-        auc = 0.0
-        best_score = 0.0
-        history = {
-            split_name: MetricsHistory()
-            for split_name in ('TRN', 'VAL', 'TST')
-        }
 
         for i in tqdm(range(iters)):
             eval_step = round((i + 1) * 100 / iters)
@@ -234,18 +245,19 @@ class Trainer(eqx.Module):
 
             trn_loss, trn_preds = self.eval(model, subject_interface,
                                             train_batch)
-            history['TRN'].append_iteration(trn_preds, trn_loss)
+            history.append_train_iteration(trn_preds, trn_loss)
             val_loss, val_preds = self.eval(model, subject_interface,
                                             valid_ids)
-            history['VAL'].append_iteration(val_preds, val_loss)
+            history.append_validation_iteration(val_preds, val_loss)
 
             if i == iters - 1:
                 tst_loss, tst_preds = self.eval(model, subject_interface,
                                                 test_ids)
-                history['TST'].append_iteration(tst_preds, tst_loss)
+
+                history.append_test_iteration(tst_preds, tst_loss)
 
             for r in reporters:
-                r.report_evaluation(eval_step=eval_step, history=history)
+                r.report_evaluation(history)
                 r.report_params(eval_step, model)
 
         return {'history': history, 'model': model}
