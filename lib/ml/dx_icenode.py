@@ -77,6 +77,11 @@ class ICENODE(AbstractModel):
             embeddings_size=self.dx_emb.embeddings_size,
             key=key2)
 
+    @staticmethod
+    def decoder_input_size(expt_config):
+        return expt_config["emb"]["dx"]["embeddings_size"]
+
+
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics

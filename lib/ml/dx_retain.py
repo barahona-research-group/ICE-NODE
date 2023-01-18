@@ -52,6 +52,10 @@ class RETAIN(AbstractModel):
             self.gru_b.weight_ih, self.att_a.weight, self.att_b.weight
         ]
 
+    @staticmethod
+    def decoder_input_size(expt_config):
+        return expt_config["emb"]["dx"]["embeddings_size"]
+
     def __call__(self,
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],

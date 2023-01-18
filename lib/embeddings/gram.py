@@ -277,11 +277,11 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
 
 class LogitsDecoder(eqx.Module):
     f_dec: Callable
-    embeddings_size: int
+    input_size: int
     output_size: int
     n_layers: int
 
-    def __init__(self, n_layers: int, embeddings_size: int, output_size: int,
+    def __init__(self, n_layers: int, input_size: int, output_size: int,
                  key: "jax.random.PRNGKey"):
 
         def _act(index):
@@ -293,17 +293,15 @@ class LogitsDecoder(eqx.Module):
         layers = []
         keys = jrandom.split(key, n_layers)
         for i in range(n_layers):
-            out_size = embeddings_size if i != n_layers - 1 else output_size
+            out_size = input_size if i != n_layers - 1 else output_size
             layers.append(
-                eqx.nn.Linear(embeddings_size,
-                              out_size,
-                              use_bias=True,
+                eqx.nn.Linear(input_size, out_size, use_bias=True,
                               key=keys[i]))
             layers.append(eqx.nn.Lambda(_act(i)))
 
         self.f_dec = eqx.nn.Sequential(layers[:-1])
         self.n_layers = n_layers
-        self.embeddings_size = embeddings_size
+        self.input_size = input_size
         self.output_size = output_size
 
     def __call__(self, logits: jnp.ndarray):
@@ -354,7 +352,8 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
 
 
 def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
-                         subject_interface: Subject_JAX, train_ids: List[int]):
+                         subject_interface: Subject_JAX, train_ids: List[int],
+                         decoder_input_size: int):
     models = {}
     if conf.get('dx'):
         models['dx_emb'] = create_embeddings_model('dx', conf['dx'],
@@ -362,9 +361,8 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                                                    train_ids)
         dec_n_layers = conf['dx']['decoder_n_layers']
         dec_output_size = subject_interface.dx_outcome_dim
-        embeddings_size = conf['dx']['embeddings_size']
         models['dx_dec'] = LogitsDecoder(n_layers=dec_n_layers,
-                                         embeddings_size=embeddings_size,
+                                         input_size=decoder_input_size,
                                          output_size=dec_output_size,
                                          key=jrandom.PRNGKey(0))
 

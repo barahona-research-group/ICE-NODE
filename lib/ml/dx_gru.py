@@ -14,8 +14,8 @@ from ..ehr import Subject_JAX, BatchPredictedRisks
 class GRU(AbstractModel):
     f_update: Callable
 
-    def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, key: "jax.random.PRNGKey", **kwargs):
+        super().__init__(**kwargs)
         self.f_update = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
                                        self.control_size,
                                        self.state_size,

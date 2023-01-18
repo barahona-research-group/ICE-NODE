@@ -172,11 +172,10 @@ class Trainer(eqx.Module):
         return model
 
     def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
-                       subject_interface: Subject_JAX, batch: Tuple[int],
-                       key: "jax.random.PRNGKey"):
+                       subject_interface: Subject_JAX, batch: Tuple[int]):
         opt, opt_state = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch, key)
+        grads, aux = grad_f(model, subject_interface, batch)
         updates, opt_state = opt.update(grads, opt_state)
         new_model = eqx.apply_updates(model, updates)
         new_model = self._post_update_params(new_model)
@@ -219,13 +218,13 @@ class Trainer(eqx.Module):
                 [r.report_timeout() for r in reporters]
                 break
 
-            (key, k2) = jrandom.split(key, 2)
+            (key, ) = jrandom.split(key, 1)
             train_ids = jrandom.shuffle(key, jnp.array(train_ids)).tolist()
             train_batch = train_ids[:batch_size]
 
             try:
                 opt_state, model, _ = self.step_optimizer(
-                    opt_state, model, subject_interface, train_batch, k2)
+                    opt_state, model, subject_interface, train_batch)
 
             except RuntimeError as e:
                 [

@@ -29,6 +29,10 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
                  subjects_batch: List[int], args):
         pass
 
+    @staticmethod
+    def decoder_input_size(expt_config):
+        return expt_config["model"]["state_size"]
+
     def subject_embeddings(self, subject_interface: Subject_JAX,
                            batch: List[int]):
         out = self(subject_interface, batch, dict(return_embeddings=True))
@@ -108,8 +112,10 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     @classmethod
     def from_config(cls, conf: Dict[str, Any], subject_interface: Subject_JAX,
                     train_split: List[int], key: "jax.random.PRNGKey"):
+        decoder_input_size = cls.decoder_input_size(conf)
         emb_models = embeddings_from_conf(conf["emb"], subject_interface,
-                                          train_split)
+                                          train_split,
+                                          decoder_input_size)
         return cls(**emb_models, **conf["model"], key=key)
 
     def load_params(self, params_file):
