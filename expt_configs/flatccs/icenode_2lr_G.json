@@ -1,41 +1,39 @@
 {
     "code_scheme": {
-        "dx": "dx_ccs",
+        "dx": "DxCCS",
         "dx_dagvec": true,
         "dx_outcome": "dx_flatccs_filter_v1"
     },
     "emb": {
         "dx": {
-            "attention_dim": 200,
+           "decoder_n_layers": 2,
+            "classname": "CachedGRAM", 
+            "attention_size": 200,
             "attention_method": "tanh",
-            "embeddings_dim": 300,
-            "glove_config": {
-                "iterations": 30,
-                "window_size_days": 730
-            }
-        },
-        "kind": "gram"
+            "embeddings_size": 300,
+            "glove_iterations": 100, 
+            "cooc_window_size_days": 360
+        }
     },
     "model": {
-        "ode_dyn": "mlp3",
+        "ode_dyn_label": "mlp3",
         "ode_init_var": 1.0776395319697402e-07,
-        "ode_with_bias": false,
+        
         "state_size": 30,
         "timescale": 7
     },
     "training": {
         "batch_size": 256,
-        "decay_rate1": 0.27729587471948475,
-        "decay_rate2": 0.3293406876704547,
+        "decay_rate": [0.27729587471948475, 0.3293406876704547],
+        "lr": [7.156197978746877e-05,  0.0011484691965460785],
         "epochs": 60,
-        "loss_mixing": {
+        "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,
             "L_l2": 0
         },
-        "lr1": 7.156197978746877e-05,
-        "lr2": 0.0011484691965460785,
-        "optimizer": "adam"
+        "opt": "adam",
+        "classname": "ODETrainer2LR"
     },
     "meta": {
     	"github_tag": "v0.2.20.dyn",

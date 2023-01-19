@@ -10,7 +10,7 @@
         "admission_id": "HADM_ID"
     },
     "code_scheme": {
-        "dx": "dx_icd9"
+        "dx": "DxICD9"
     },
     "files": {
         "adm": "m3_adm_df.csv.gz",

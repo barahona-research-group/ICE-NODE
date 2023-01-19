@@ -1,33 +1,24 @@
 {
-    "code_scheme": {
-        "dx": "dx_ccs",
-        "dx_outcome": "dx_flatccs_filter_v1"
-    },
     "emb": {
         "dx": {
-            "embeddings_dim": 300
-        },
-        "kind": "matrix"
+           "decoder_n_layers": 2,
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 300
+        }
     },
     "model": {
         "state_size": 350
     },
     "training": {
-        "batch_size": 17,
+        "batch_size": 16,
         "decay_rate": null,
-        "epochs": 2,
-        "loss_mixing": {
+        "epochs": 0.5,
+        "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0
         },
         "lr": 0.0010161679708784964,
-        "optimizer": "adam"
-    },
-    "meta": {
-    	"github_tag": "v0.2.20",
-    	"data_tag": "M3",
-    	"model": "gru",
-    	"emb_kind": "matrix",
-    	"optuna_trial_number": 649
+        "opt": "adam",
+        "classname": "Trainer"
     }
 }

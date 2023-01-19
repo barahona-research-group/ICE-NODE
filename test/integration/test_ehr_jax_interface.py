@@ -3,35 +3,37 @@
 import unittest
 import logging
 
-from icenode import ehr
+from lib.ehr import (Subject_JAX,WindowedInterface_JAX, MIMIC3EHRDataset, MIMIC4EHRDataset)
+from lib.ehr.coding_scheme import (DxICD9, DxICD10, DxCCS, DxFlatCCS, NullScheme)
+from lib.ehr.outcome import OutcomeExtractor
 
 
 class TestSubject_JAX(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+        m3_dataset = MIMIC3EHRDataset.from_meta_json(
             'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-        m4_dataset = ehr.AbstractEHRDataset.from_meta_json(
+        m4_dataset = MIMIC4EHRDataset.from_meta_json(
             'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
 
         cls.interfaces = []
-        for dx_scheme in [s for s in ehr.code_scheme if 'dx' in s]:
+        for dx_scheme in [DxICD9, DxICD10, DxCCS, DxFlatCCS]:
             code_scheme = {
-                'dx': dx_scheme,
-                'dx_outcome': 'dx_flatccs_filter_v1',
-                'pr': 'none'
+                'dx': dx_scheme(),
+                'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1'),
+                'pr': NullScheme()
             }
-            interface = ehr.Subject_JAX.from_dataset(m3_dataset, code_scheme)
+            interface = Subject_JAX.from_dataset(m3_dataset, code_scheme)
             cls.interfaces.append(interface)
 
-        for dx_scheme in ['dx_icd9', 'dx_icd10']:
+        for dx_scheme in [DxICD9, DxICD10]:
             code_scheme = {
-                'dx': dx_scheme,
-                'dx_outcome': 'dx_icd9_filter_v1',
-                'pr': 'none'
+                'dx': dx_scheme(),
+                'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1'),
+                'pr': NullScheme()
             }
-            interface = ehr.Subject_JAX.from_dataset(m4_dataset, code_scheme)
+            interface = Subject_JAX.from_dataset(m4_dataset, code_scheme)
             cls.interfaces.append(interface)
 
     def test_split(self):
@@ -69,13 +71,13 @@ class CommonWindowedInterfaceTests(object):
 
     @classmethod
     def setUpClass(cls):
-        m3_dataset = ehr.ConsistentSchemeEHRDataset.from_meta_json(
+        m3_dataset = MIMIC3EHRDataset.from_meta_json(
             'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-        interface = ehr.Subject_JAX.from_dataset(m3_dataset, {
-            'dx': 'dx_flatccs',
-            'dx_outcome': 'dx_flatccs_v1'
+        interface = Subject_JAX.from_dataset(m3_dataset, {
+            'dx': DxFlatCCS(),
+            'dx_outcome': OutcomeExtractor('dx_flatccs_v1')
         })
-        cls.win_features = ehr.WindowedInterface_JAX(interface)
+        cls.win_features = WindowedInterface_JAX(interface)
 
     def test_tabular(self):
         X, y = self.win_features.tabular_features()

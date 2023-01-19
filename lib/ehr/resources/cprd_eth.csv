@@ -1,0 +1,17 @@
+eth16,eth5,eth16_desc,eth5_desc
+1,0,British,White
+2,0,Irish,White
+3,0,Other White,White
+10,1,Bangladeshi,South Asian
+11,1,Other Asian,South Asian
+8,1,Indian,South Asian
+9,1,Pakistani,South Asian
+12,2,Caribbean,Black
+13,2,African,Black
+14,2,Other Black,Black
+15,3,Chinese,Other
+16,3,Other ethnic group,Other
+4,4,White and Black Caribbean,Mixed
+5,4,White and Black African,Mixed
+6,4,White and Asian,Mixed
+7,4,Other Mixed,Mixed

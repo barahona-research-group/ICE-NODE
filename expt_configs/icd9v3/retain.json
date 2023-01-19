@@ -1,28 +1,29 @@
 {
     "code_scheme": {
-        "dx": "dx_icd9",
+        "dx": "DxICD9",
         "dx_outcome": "dx_icd9_filter_v3_groups"
     },
     "emb": {
         "dx": {
-            "embeddings_dim": 270
-        },
-        "kind": "matrix"
+           "decoder_n_layers": 2,
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 270
+        }
     },
     "model": {
-        "state_a_size": 200,
-        "state_b_size": 100
+        "state_size":  [200, 100]
     },
     "training": {
         "batch_size": 27,
         "decay_rate": null,
         "epochs": 60,
-        "loss_mixing": {
+        "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0
         },
         "lr": 0.0016534371369143167,
-        "optimizer": "adam"
+        "opt": "adam",
+        "classname": "Trainer"
     },
     "meta": {
     	"github_tag": "v0.2.20",
