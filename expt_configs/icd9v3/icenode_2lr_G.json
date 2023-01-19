@@ -17,7 +17,7 @@
     },
     "model": {
         "ode_dyn_label": "mlp3",
-        "ode_init_var": 1.0776395319697402e-07,
+        "ode_init_var": 1e-7,
         "state_size": 30,
         "timescale": 7
     },

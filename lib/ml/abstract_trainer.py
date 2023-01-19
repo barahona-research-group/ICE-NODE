@@ -266,7 +266,7 @@ class Trainer2LR(Trainer):
 
     def init_opt(self, model: "lib.ml.AbstractModel"):
         decay_rate = self.decay_rate
-        if not isinstance(decay_rate):
+        if not (isinstance(decay_rate, list) or isinstance(decay_rate, tuple)):
             decay_rate = (decay_rate, decay_rate)
 
         opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))

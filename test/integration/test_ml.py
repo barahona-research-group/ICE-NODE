@@ -8,7 +8,10 @@ import string
 import os
 import uuid
 import random
+import jax
+import jax.numpy as jnp
 import jax.random as jrandom
+import jax.tree_util as jtu
 from typing import List, Tuple, Type
 from collections import namedtuple
 from lib import ml
@@ -65,6 +68,12 @@ TestActors = namedtuple('TestActors',
                         ['model', 'conf', 'trainer', 'interface', 'splits'])
 
 
+def equal_models(model1, model2):
+    eq = jtu.tree_map(lambda leaf1, leaf2: leaf1 == leaf2, model1, model2)
+    return all(a.all() if isinstance(a, jnp.ndarray) else a
+               for a in jtu.tree_leaves(eq))
+
+
 class DxCommonTests(unittest.TestCase):
 
     @classmethod
@@ -93,22 +102,27 @@ class DxCommonTests(unittest.TestCase):
             history = res['history']
             self.assertTrue(objective(history.train_df()) > 0.4)
 
-            model = res['model']
-            preds1 = model(actors.interface,
-                           actors.splits[2],
-                           args=dict(eval_only=True))['predictions']
+            model1 = res['model']
+            preds1 = model1(actors.interface,
+                            actors.splits[2],
+                            args=dict(eval_only=True))['predictions']
 
             param_fname = f'test_{str(uuid.uuid4())}.eqx'
-            model.write_params(param_fname)
+            model1.write_params(param_fname)
+            # jax.debug.print("model1: {}", model1)
 
-            model = model.from_config(actors.conf, actors.interface,
-                                      actors.splits[0], key)
-            model = model.load_params(param_fname)
+            model2 = type(actors.model).from_config(actors.conf,
+                                                    actors.interface,
+                                                    actors.splits[0], key)
+            model2 = model2.load_params(param_fname)
+            # jax.debug.print("model2: {}", model2)
             os.remove(param_fname)
 
-            preds2 = model(actors.interface,
-                           actors.splits[2],
-                           args=dict(eval_only=True))['predictions']
+            self.assertTrue(equal_models(model1, model2))
+
+            preds2 = model2(actors.interface,
+                            actors.splits[2],
+                            args=dict(eval_only=True))['predictions']
 
             self.assertTrue(preds1.equals(preds2),
                             msg=f"config: {actors.conf}")

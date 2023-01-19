@@ -198,6 +198,7 @@ class GRAM(AbstractEmbeddingsLayer):
 
         # Ancestry mask will zero-out the padded embeddings.
         A_att = jax.vmap(partial(self.f_att, e_i))(E_i) * ancestry_mask
+
         return jnp.average(E_i, axis=0, weights=unnormalized_softmax(A_att))
 
     @eqx.filter_jit
@@ -233,7 +234,7 @@ class CachedEmbeddingsMatrix(dict):
         self.gram = gram
 
     def multiply(self, x: jnp.ndarray):
-        index = list(map(int, list(onp.nonzero(x)[0])))
+        index = list(i.item() for i in onp.nonzero(x)[0])
         if len(index) == 0:
             return jnp.zeros_like(self.gram.basic_embeddings[0])
         return sum(self[i] for i in index)

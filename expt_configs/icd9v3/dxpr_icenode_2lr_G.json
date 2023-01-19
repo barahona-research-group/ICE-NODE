@@ -27,15 +27,14 @@
     },
     "model": {
         "ode_dyn_label": "mlp3",
-        "ode_init_var": 1.0776395319697402e-07,
+        "ode_init_var": 1e-7,
         
         "state_size": 30,
         "timescale": 7
     },
     "training": {
         "batch_size": 256,
-        "decay_rate1": 0.27729587471948475,
-        "decay_rate2": 0.3293406876704547,
+        "decay_rate": [0.25, 0.33],
         "epochs": 60,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
