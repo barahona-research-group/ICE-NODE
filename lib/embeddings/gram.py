@@ -80,9 +80,6 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
     embeddings_size: int
     input_size: int
 
-    embedding_cls = {}
-    short_tag = {}
-
     @abstractmethod
     def compute_embeddings_mat(self):
         pass
@@ -95,11 +92,6 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
     @abstractmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
         pass
-
-    @classmethod
-    def register_embedding(cls, label, short):
-        cls.embedding_cls[label] = cls
-        cls.short_tag[label] = short
 
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
@@ -201,15 +193,16 @@ class GRAM(AbstractEmbeddingsLayer):
 
         return jnp.average(E_i, axis=0, weights=unnormalized_softmax(A_att))
 
-    @eqx.filter_jit
-    def compute_embeddings_mat(self):
-        return jax.vmap(self.ancestry_attention)(self.code_ancestry,
-                                                 self.code_ancestry_mask,
-                                                 self.basic_embeddings)
+    def compute_embeddings_mat(self, in_vec):
+        G = [None] * self.input_size
+        for i in jnp.nonzero(in_vec)[0]:
+            G[i] = self.ancestry_attention(self.code_ancestry[i],
+                                           self.code_ancestry_mask[i],
+                                           self.basic_embeddings[i])
+        return tuple(G)
 
-    @eqx.filter_jit
     def encode(self, G: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.tanh(jnp.matmul(x, G))
+        return jnp.tanh(sum(G[i] for i in jnp.nonzero(x)[0]))
 
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
@@ -227,44 +220,6 @@ class GRAM(AbstractEmbeddingsLayer):
         }
 
 
-class CachedEmbeddingsMatrix(dict):
-    gram: GRAM
-
-    def __init__(self, gram):
-        self.gram = gram
-
-    def multiply(self, x: jnp.ndarray):
-        index = list(i.item() for i in onp.nonzero(x)[0])
-        if len(index) == 0:
-            return jnp.zeros_like(self.gram.basic_embeddings[0])
-        return sum(self[i] for i in index)
-
-    def __getitem__(self, idx):
-        if idx in self:
-            return super().__getitem__(idx)
-        else:
-            gi = self.gram.ancestry_attention(
-                self.gram.code_ancestry[idx],
-                self.gram.code_ancestry_mask[idx],
-                self.gram.basic_embeddings[idx])
-            super().__setitem__(idx, gi)
-            return gi
-
-    def get(self, k, default=None):
-        if k in self:
-            return self.__getitem__(k)
-        return default
-
-
-class CachedGRAM(GRAM):
-
-    def compute_embeddings_mat(self):
-        return CachedEmbeddingsMatrix(self)
-
-    def encode(self, G: CachedEmbeddingsMatrix, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.tanh(G.multiply(x))
-
-
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
     linear: Callable
 
@@ -277,7 +232,7 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
                                     use_bias=True,
                                     key=key)
 
-    def compute_embeddings_mat(self):
+    def compute_embeddings_mat(self, in_vec):
         return self
 
     @eqx.filter_jit
@@ -356,9 +311,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
                                 input_size=input_size,
                                 key=jrandom.PRNGKey(0))
 
-    if classname in ['GRAM', 'CachedGRAM']:
-        emb_cls = globals()[classname]
-
+    if classname == 'GRAM':
         if code_type == 'dx':
             cooc_f = subject_interface.dx_augmented_coocurrence
             ancestors_mat = subject_interface.dx_make_ancestors_mat()
@@ -372,11 +325,11 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
         glove = train_glove(cooccurrences=coocurrence_mat,
                             embeddings_size=embeddings_size,
                             iterations=emb_conf['glove_iterations'])
-        return emb_cls(basic_embeddings=glove,
-                       attention_method=emb_conf['attention_method'],
-                       attention_size=emb_conf['attention_size'],
-                       ancestors_mat=ancestors_mat,
-                       key=jrandom.PRNGKey(0))
+        return GRAM(basic_embeddings=glove,
+                    attention_method=emb_conf['attention_method'],
+                    attention_size=emb_conf['attention_size'],
+                    ancestors_mat=ancestors_mat,
+                    key=jrandom.PRNGKey(0))
     else:
         raise RuntimeError(f'Unrecognized Embedding class {classname}')
 
@@ -402,7 +355,3 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                                                    train_ids)
 
     return models
-
-
-MatrixEmbeddings.register_embedding('matrix', 'M')
-GRAM.register_embedding('gram', 'G')

@@ -2,7 +2,7 @@
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
-            "classname": "CachedGRAM", 
+            "classname": "GRAM", 
             "attention_size": 10,
             "attention_method": "tanh",
             "embeddings_size": 10,
@@ -10,7 +10,7 @@
             "cooc_window_size_days": 360
         },
         "pr": {
-            "classname": "CachedGRAM", 
+            "classname": "GRAM", 
             "attention_size": 5,
             "attention_method": "tanh",
             "embeddings_size": 5,

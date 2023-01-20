@@ -61,8 +61,9 @@ class RETAIN(AbstractModel):
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],
                  args=dict()):
-        G = self.dx_emb.compute_embeddings_mat()
-        emb = jax.vmap(partial(self.dx_emb.encode, G))
+        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
+        G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
+        emb = partial(self.dx_emb.encode, G)
 
         risk_prediction = BatchPredictedRisks()
         state_a0 = jnp.zeros(self.state_size[0])
@@ -72,12 +73,10 @@ class RETAIN(AbstractModel):
             adms = subject_interface[subj_id]
             get_ctrl = partial(subject_interface.subject_control, subj_id)
 
-            dx_vec = jnp.vstack([adm.dx_vec for adm in adms])
-
             # step 1 @RETAIN paper
 
             # v1, v2, ..., vT
-            v_seq = emb(dx_vec)
+            v_seq = jnp.vstack([emb(adm.dx_vec) for adm in adms])
 
             # c1, c2, ..., cT. <- controls
             c_seq = jnp.vstack([get_ctrl(adm.admission_date) for adm in adms])

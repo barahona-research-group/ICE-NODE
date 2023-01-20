@@ -150,8 +150,7 @@ class NeuralODE(eqx.Module):
                             round((int_time - int_time % dt) / dt + 1))
 
     def __call__(self, t, x, args=dict()):
-        dt0 = self.initial_step_size(t[0], x[0, :], 4, 1.4e-8, 1.4e-8,
-                                     self.ode_dyn(x[0, :]))
+        dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, self.ode_dyn(x))
         sampling_rate = args.get('sampling_rate', None)
         if sampling_rate:
             t = self.timesamples(t, sampling_rate)
@@ -180,7 +179,7 @@ class NeuralODE(eqx.Module):
 
     def get_x0(self, x0, args):
         if args.get('tay_reg', 0) > 0:
-            return (x0, jnp.zeros(1))
+            return (x0, jnp.array(0.0))
         else:
             return x0
 
@@ -231,7 +230,7 @@ class StateUpdate(eqx.Module):
                           key=key1),
             eqx.nn.Lambda(jnp.tanh)
         ])
-        self.f_update = eqx.nn.GRUCell(state_size + embeddings_size,
+        self.f_update = eqx.nn.GRUCell(embeddings_size,
                                        state_size,
                                        use_bias=True,
                                        key=key2)

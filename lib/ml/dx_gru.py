@@ -29,8 +29,8 @@ class GRU(AbstractModel):
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],
                  args=dict()):
-
-        G = self.dx_emb.compute_embeddings_mat()
+        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
+        G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
         emb = partial(self.dx_emb.encode, G)
 
         loss = {}

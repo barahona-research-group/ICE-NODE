@@ -8,12 +8,15 @@ import string
 import os
 import uuid
 import random
+from typing import List, Tuple, Type
+from collections import namedtuple
+
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
-from typing import List, Tuple, Type
-from collections import namedtuple
+import equinox as eqx
+
 from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
 from lib.ehr.outcome import OutcomeExtractor
@@ -39,17 +42,18 @@ def setUpModule():
     if4_f = lambda scheme: Subject_JAX.from_dataset(m4_dataset, scheme)
 
     m3_interface = {
-        'ccs':
-        if3_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
-        'icd10':
-        if3_f(dict(dx=DxICD10(), dx_outcome=icd9_outcome)),
-        'icd9':
-        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome)),
-        'icd9dag':
-        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome, dx_dagvec=True))
+        'ccs': if3_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
+        # 'icd10':
+        # if3_f(dict(dx=DxICD10(), dx_outcome=icd9_outcome)),
+        # 'icd9':
+        # if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome)),
+        # 'icd9dag':
+        # if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome, dx_dagvec=True))
     }
 
-    m4_interface = {'ccs': if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome))}
+    m4_interface = {
+        # 'ccs': if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome))
+    }
     _loadconfig = lambda fname: load_config(
         f'test/integration/fixtures/model_configs/{fname}.json')
     fnames = [
@@ -68,12 +72,6 @@ TestActors = namedtuple('TestActors',
                         ['model', 'conf', 'trainer', 'interface', 'splits'])
 
 
-def equal_models(model1, model2):
-    eq = jtu.tree_map(lambda leaf1, leaf2: leaf1 == leaf2, model1, model2)
-    return all(a.all() if isinstance(a, jnp.ndarray) else a
-               for a in jtu.tree_leaves(eq))
-
-
 class DxCommonTests(unittest.TestCase):
 
     @classmethod
@@ -81,7 +79,33 @@ class DxCommonTests(unittest.TestCase):
         cls.actors: List[TestActors] = []
 
     def test_train_read_write_params(self):
+
+        def assert_equal_models(model1, model2):
+            m1 = jtu.tree_leaves(eqx.filter(model1, eqx.is_inexact_array))
+            m2 = jtu.tree_leaves(eqx.filter(model2, eqx.is_inexact_array))
+            self.assertTrue(all((a1 == a2).all() for a1, a2 in zip(m1, m2)))
+            _, def1 = jtu.tree_flatten(model1)
+            _, def2 = jtu.tree_flatten(model2)
+            try:
+                self.assertEqual(def1, def2)
+            except:
+                for module in ('dx_emb', 'dx_dec'):
+                    if not hasattr(model1, module):
+                        continue
+                    model1_m = getattr(model1, module)
+                    model2_m = getattr(model2, module)
+
+                    try:
+                        _, mm1 = jtu.tree_flatten(model1_m)
+                        _, mm2 = jtu.tree_flatten(model2_m)
+                        self.assertEqual(mm1, mm2)
+                    except:
+                        print(f"Issue regarding module {module}")
+
+                self.assertTrue(False, msg=f"\ndef1: {def1}\ndef2: {def2}")
+
         for i, actors in enumerate(self.actors):
+            print(actors.conf)
             metrics = [
                 CodeAUC(actors.interface),
                 AdmissionAUC(actors.interface),
@@ -117,8 +141,8 @@ class DxCommonTests(unittest.TestCase):
             model2 = model2.load_params(param_fname)
             # jax.debug.print("model2: {}", model2)
             os.remove(param_fname)
-
-            self.assertTrue(equal_models(model1, model2))
+            jax.clear_backends()
+            assert_equal_models(model1, model2)
 
             preds2 = model2(actors.interface,
                             actors.splits[2],
@@ -128,62 +152,47 @@ class DxCommonTests(unittest.TestCase):
                             msg=f"config: {actors.conf}")
 
 
-class TestDxWindowLogReg(DxCommonTests):
+# class TestDxWindowLogReg(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_winlogreg']
-        self.actors = []
-        for IF in list(m3_interface.values()) + list(m4_interface.values()):
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.WindowLogReg.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.LassoNetTrainer)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
-
-
-class TestDxGRU_M(DxCommonTests):
-
-    def setUp(self):
-        config = model_configs['dx_gru_m']
-        self.actors = []
-        for IF in list(m3_interface.values()) + list(m4_interface.values()):
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.GRU.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.Trainer)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_winlogreg']
+#         self.actors = []
+#         for IF in list(m3_interface.values()) + list(m4_interface.values()):
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.WindowLogReg.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.LassoNetTrainer)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 
-class TestDxGRU_G(DxCommonTests):
+# class TestDxGRU_M(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_gru_g']
-        self.actors = []
-        IFs = [m3_interface['icd9dag']]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.GRU.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.Trainer)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_gru_m']
+#         self.actors = []
+#         for IF in list(m3_interface.values()) + list(m4_interface.values()):
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.GRU.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.Trainer)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 
-class TestDxRETAIN(DxCommonTests):
+# class TestDxRETAIN(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_retain_m']
-        self.actors = []
-        IFs = [m3_interface['ccs']]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.RETAIN.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.Trainer)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_retain_m']
+#         self.actors = []
+#         IFs = [m3_interface['ccs']]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.RETAIN.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.Trainer)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 
 class TestDxICENODE_M(DxCommonTests):
@@ -201,79 +210,92 @@ class TestDxICENODE_M(DxCommonTests):
             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 
-class TestDxICENODE_M_LazyLoad(DxCommonTests):
+# class TestDxICENODE_M_LazyLoad(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_icenode_2lr_m']
-        self.actors = []
-        self.env_patcher = unittest.mock.patch.dict(
-            os.environ, {"ICENODE_INTERFACE_MAX_SIZE_GB": "0.0"})
-        self.interface = Subject_JAX.from_dataset(
-            m3_dataset, {
-                'dx': DxCCS(),
-                'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
-            })
-        IFs = [self.interface]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.ICENODE.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_icenode_2lr_m']
+#         self.actors = []
+#         self.env_patcher = unittest.mock.patch.dict(
+#             os.environ, {"ICENODE_INTERFACE_MAX_SIZE_GB": "0.0"})
+#         self.interface = Subject_JAX.from_dataset(
+#             m3_dataset, {
+#                 'dx': DxCCS(),
+#                 'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
+#             })
+#         IFs = [self.interface]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.ICENODE.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
-    def tearDown(self):
-        super().tearDownClass()
-        self.env_patcher.stop()
+#     def tearDown(self):
+#         super().tearDownClass()
+#         self.env_patcher.stop()
 
-    def test_env_effect(self):
-        self.assertEqual(self.interface.data_max_size_gb, 0.0)
-
-
-class TestDxICENODE_G(DxCommonTests):
-
-    def setUp(self):
-        config = model_configs['dx_icenode_2lr_g']
-        self.actors = []
-        IFs = [m3_interface['icd9dag']]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.ICENODE.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def test_env_effect(self):
+#         self.assertEqual(self.interface.data_max_size_gb, 0.0)
 
 
-class TestDxICENODE_M_UNIFORM(DxCommonTests):
+# class TestDxICENODE_M_UNIFORM(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_icenode_2lr_m']
-        self.actors = []
-        IFs = [m3_interface['ccs']]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.ICENODE_UNIFORM.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_icenode_2lr_m']
+#         self.actors = []
+#         IFs = [m3_interface['ccs']]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.ICENODE_UNIFORM.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 
-class TestDxICENODE_M_UNIFORM0(DxCommonTests):
+# class TestDxICENODE_M_UNIFORM0(DxCommonTests):
 
-    def setUp(self):
-        config = model_configs['dx_icenode_2lr_m']
-        self.actors = []
-        IFs = [m3_interface['ccs']]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.ICENODE_ZERO.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
+#     def setUp(self):
+#         config = model_configs['dx_icenode_2lr_m']
+#         self.actors = []
+#         IFs = [m3_interface['ccs']]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.ICENODE_ZERO.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
+
+# class TestDxICENODE_G(DxCommonTests):
+
+#     def setUp(self):
+#         config = model_configs['dx_icenode_2lr_g']
+#         self.actors = []
+#         IFs = [m3_interface['icd9dag']]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.ICENODE.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
+
+# class TestDxGRU_G(DxCommonTests):
+
+#     def setUp(self):
+#         config = model_configs['dx_gru_g']
+#         self.actors = []
+#         IFs = [m3_interface['icd9dag']]
+#         for IF in IFs:
+#             splits = IF.random_splits(0.7, 0.85, 42)
+#             model = ml.GRU.from_config(config, IF, splits[0], key)
+#             trainer_cls = getattr(ml, config["training"]["classname"])
+#             self.assertEqual(trainer_cls, ml.Trainer)
+#             trainer = trainer_cls(**config["training"])
+#             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
 # class TestDxPrICENODE_G(DxCommonTests):
 

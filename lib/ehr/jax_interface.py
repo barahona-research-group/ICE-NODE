@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 import jax.random as jrandom
+import equinox as eqx
 
 from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
@@ -19,8 +20,7 @@ from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 from .outcome import OutcomeExtractor
 
 
-@dataclass
-class StaticInfo_JAX:
+class StaticInfo_JAX(eqx.Module):
     static_info: StaticInfo
     flags: StaticInfoFlags
     static_control_vec: jnp.ndarray
@@ -76,8 +76,7 @@ class StaticInfo_JAX:
         return jnp.hstack((d_vec, self.static_control_vec))
 
 
-@dataclass
-class Admission_JAX:
+class Admission_JAX(eqx.Module):
     admission_time: int
     los: int
     admission_id: int
@@ -402,6 +401,14 @@ class Subject_JAX(dict):
         np_res = Subject.dx_outcome_frequency_vec(
             map(self._subjects.get, subjects), self.dx_outcome_extractor)
         return jnp.array(np_res)
+
+    def dx_batch_history_vec(self, subjects: List[Subject], skip_first_adm=True):
+        history = jnp.zeros((self.dx_dim, ), dtype=int)
+        for adms in (self[i] for i in subjects):
+            if skip_first_adm:
+                adms = adms[1:]
+            history += sum(adm.dx_vec for adm in adms)
+        return (history > 0).astype(int)
 
     @staticmethod
     def _code_frequency_partitions(percentile_range, code_frequency_vec):

@@ -48,7 +48,9 @@ def ode_dyn(label, state_size, embeddings_size, control_size, key):
     raise RuntimeError(f'Unexpected dynamics label: {label}')
 
 
-SubjectState = namedtuple('SubjectState', ['state', 'time'])
+class SubjectState(eqx.Module):
+    state: jnp.ndarray
+    time: float
 
 
 class ICENODE(AbstractModel):
@@ -57,6 +59,10 @@ class ICENODE(AbstractModel):
 
     ode_init_var: float = eqx.static_field()
     timescale: float = eqx.static_field()
+
+    @property
+    def dyn_state_size(self):
+        return self.state_size + self.dx_emb.embeddings_size
 
     def __init__(self, ode_dyn_label: str, ode_init_var: float,
                  timescale: float, key: "jax.random.PRNGKey", *args, **kwargs):
@@ -83,7 +89,6 @@ class ICENODE(AbstractModel):
     def decoder_input_size(expt_config):
         return expt_config["emb"]["dx"]["embeddings_size"]
 
-
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
@@ -103,20 +108,23 @@ class ICENODE(AbstractModel):
     def _integrate_state(self, subject_state: SubjectState, int_time: float,
                          ctrl: jnp.ndarray, args: Dict[str, Any]):
         args = dict(control=ctrl, **args)
-        out = self.ode_dyn(subject_state.state, int_time, args)
+        out = self.ode_dyn(int_time, subject_state.state, args)
         if args.get('tay_reg', 0) > 0:
-            state, r, traj = out[0][-1], out[1][-1], out[0]
+            state, r, traj = out[0][-1], out[1][-1].squeeze(), out[0]
         else:
             state, r, traj = out[-1], 0.0, out
 
         return SubjectState(state, subject_state.time + int_time), r, traj
 
     @eqx.filter_jit
+    def _jitted_update(self, *args):
+        return self.f_update(*args)
+
     def _update_state(self, subject_state: SubjectState,
                       adm_info: Admission_JAX,
                       dx_emb: jnp.ndarray) -> jnp.ndarray:
         state, dx_emb_hat = self.split_state_emb(subject_state)
-        state = self.f_update(state, dx_emb_hat, dx_emb)
+        state = self._jitted_update(state, dx_emb_hat, dx_emb)
         return SubjectState(self.join_state_emb(state, dx_emb),
                             adm_info.admission_time + adm_info.los)
 
@@ -143,9 +151,9 @@ class ICENODE(AbstractModel):
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],
                  args=dict()):
-
-        dx_G = self.dx_emb.compute_embeddings_mat()
-        f_emb = partial(self.dx_emb, dx_G)
+        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
+        dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
+        f_emb = partial(self.dx_emb.encode, dx_G)
         risk_prediction = BatchPredictedRisks()
         dyn_loss = []
 
@@ -162,7 +170,7 @@ class ICENODE(AbstractModel):
             for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[1:]):
 
                 # Discharge-to-discharge time.
-                d2d_time = self._time_diff(adm.time + adm.los,
+                d2d_time = self._time_diff(adm.admission_time + adm.los,
                                            subject_state.time)
 
                 # Integrate until next discharge
@@ -184,7 +192,7 @@ class ICENODE(AbstractModel):
                 # Update state at discharge
                 subject_state = self._update_state(subject_state, adm, emb)
 
-        return {'predictions': risk_prediction, 'dyn_loss': dyn_loss}
+        return {'predictions': risk_prediction, 'dyn_loss': sum(dyn_loss)}
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):

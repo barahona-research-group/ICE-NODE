@@ -272,20 +272,23 @@ class Trainer2LR(Trainer):
         opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
         opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
         m1, m2 = model.emb_dyn_partition(model)
-        jax.debug.print('hiii init_opt')
-        jax.debug.breakpoint()
+        m1 = eqx.filter(m1, eqx.is_inexact_array)
+        m2 = eqx.filter(m2, eqx.is_inexact_array)
         return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
 
     def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
-                       subject_interface: Subject_JAX, batch: Tuple[int],
-                       key: "jax.random.PRNGKey"):
+                       subject_interface: Subject_JAX, batch: Tuple[int]):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch, key)
+        grads, aux = grad_f(model, subject_interface, batch)
         g1, g2 = model.emb_dyn_partition(grads)
 
         updates1, opt1_s = opt1.update(g1, opt1_s)
         updates2, opt2_s = opt2.update(g2, opt2_s)
+
+        jax.debug.print('hmmmm')
+        jax.debug.breakpoint()
+        breakpoint()
         updates = model.emb_dyn_merge(updates1, updates2)
 
         new_model = eqx.apply_updates(model, updates)
@@ -332,21 +335,24 @@ class ODETrainer(Trainer):
     def odeint_time(cls, predictions: M.BatchPredictedRisks):
         int_time = 0
         for subj_id, preds in predictions.items():
-            adms = [preds[idx] for idx in sorted(preds)]
+            adms = [preds[idx].admission for idx in sorted(preds)]
             # Integration time from the first discharge (adm[0].(length of
             # stay)) to last discarge (adm[-1].time + adm[-1].(length of stay)
-            int_time += adms[-1].time + adms[-1].los - adms[0].los
+            int_time += adms[-1].admission_time + adms[-1].los - adms[0].los
         return int_time
 
     def dx_loss(self):
         return M.balanced_focal_bce
 
-    def reg_loss(self, model: 'lib.ml.AbstractModel',
-                 subject_interface: Subject_JAX, batch: List[int]):
-        args = dict(tay_reg=self.tay_reg)
+    def reg_loss(self,
+                 model: 'lib.ml.AbstractModel',
+                 subject_interface: Subject_JAX,
+                 batch: List[int],
+                 args: Dict[str, float] = dict()):
+        args['tay_reg'] = self.tay_reg
         res = model(subject_interface, batch, args)
         preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss)
+        l = preds.prediction_loss(self.dx_loss())
 
         integration_weeks = self.odeint_time(preds) / 7
         l1_loss = model.l1()
