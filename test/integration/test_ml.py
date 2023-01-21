@@ -205,36 +205,6 @@ class TestDxICENODE_M(DxCommonTests):
             trainer = trainer_cls(**config["training"])
             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
-
-class TestDxICENODE_M_LazyLoad(DxCommonTests):
-
-    def setUp(self):
-        config = model_configs['dx_icenode_2lr_m']
-        self.actors = []
-        self.env_patcher = unittest.mock.patch.dict(
-            os.environ, {"ICENODE_INTERFACE_MAX_SIZE_GB": "0.0"})
-        self.interface = Subject_JAX.from_dataset(
-            m3_dataset, {
-                'dx': DxCCS(),
-                'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1')
-            })
-        IFs = [self.interface]
-        for IF in IFs:
-            splits = IF.random_splits(0.7, 0.85, 42)
-            model = ml.ICENODE.from_config(config, IF, splits[0], key)
-            trainer_cls = getattr(ml, config["training"]["classname"])
-            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
-            trainer = trainer_cls(**config["training"])
-            self.actors.append(TestActors(model, config, trainer, IF, splits))
-
-    def tearDown(self):
-        super().tearDownClass()
-        self.env_patcher.stop()
-
-    def test_env_effect(self):
-        self.assertEqual(self.interface.data_max_size_gb, 0.0)
-
-
 class TestDxICENODE_M_UNIFORM(DxCommonTests):
 
     def setUp(self):

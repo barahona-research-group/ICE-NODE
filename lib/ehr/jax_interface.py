@@ -6,7 +6,6 @@ import random
 from typing import List, Optional, Dict, Any, Set, Callable, Union
 from datetime import datetime
 from dataclasses import dataclass
-import os
 from absl import logging
 import numpy as np
 import pandas as pd
@@ -219,15 +218,14 @@ class Subject_JAX(dict):
                  subjects: List[Subject],
                  code_scheme: Dict[str, AbstractScheme],
                  static_info_flags: StaticInfoFlags = StaticInfoFlags(),
-                 data_max_size_gb=None):
+                 data_max_size_gb=4):
         # If the data size on the JAX device will exceed this preset variable,
         # let the interface contain subject data amounting to that limit, and the
         # remaining subjects will be loaded to the device everytime one of these
         # subjects is requested.
         # This will rectify the memory consumption, but will lead to time
         # consumption for data loading between host/device memories.
-        self._data_max_size_gb = data_max_size_gb or float(
-            os.environ.get('ICENODE_INTERFACE_MAX_SIZE_GB', 1))
+        self._data_max_size_gb = data_max_size_gb
 
         # Filter subjects with admissions less than two.
         subjects = [s for s in subjects if len(s.admissions) > 1]
