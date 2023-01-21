@@ -402,11 +402,9 @@ class Subject_JAX(dict):
             map(self._subjects.get, subjects), self.dx_outcome_extractor)
         return jnp.array(np_res)
 
-    def dx_batch_history_vec(self, subjects: List[Subject], skip_first_adm=True):
+    def dx_batch_history_vec(self, subjects: List[Subject]):
         history = jnp.zeros((self.dx_dim, ), dtype=int)
         for adms in (self[i] for i in subjects):
-            if skip_first_adm:
-                adms = adms[1:]
             history += sum(adm.dx_vec for adm in adms)
         return (history > 0).astype(int)
 

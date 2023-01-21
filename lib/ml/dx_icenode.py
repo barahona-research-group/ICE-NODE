@@ -50,7 +50,7 @@ def ode_dyn(label, state_size, embeddings_size, control_size, key):
 
 class SubjectState(eqx.Module):
     state: jnp.ndarray
-    time: float
+    time: jnp.ndarray  # shape ()
 
 
 class ICENODE(AbstractModel):
@@ -105,8 +105,9 @@ class ICENODE(AbstractModel):
         return jnp.split(state.state, (self.state_size, ), axis=-1)
 
     @eqx.filter_jit
-    def _integrate_state(self, subject_state: SubjectState, int_time: float,
-                         ctrl: jnp.ndarray, args: Dict[str, Any]):
+    def _integrate_state(self, subject_state: SubjectState,
+                         int_time: jnp.ndarray, ctrl: jnp.ndarray,
+                         args: Dict[str, Any]):
         args = dict(control=ctrl, **args)
         out = self.ode_dyn(int_time, subject_state.state, args)
         if args.get('tay_reg', 0) > 0:
@@ -126,7 +127,7 @@ class ICENODE(AbstractModel):
         state, dx_emb_hat = self.split_state_emb(subject_state)
         state = self._jitted_update(state, dx_emb_hat, dx_emb)
         return SubjectState(self.join_state_emb(state, dx_emb),
-                            adm_info.admission_time + adm_info.los)
+                            jnp.array(adm_info.admission_time + adm_info.los))
 
     @eqx.filter_jit
     def _decode(self, subject_state: SubjectState):
@@ -164,14 +165,16 @@ class ICENODE(AbstractModel):
                 subject_interface.subject_control(subj_i, adm.admission_date)
                 for adm in adms
             ]
-            subject_state = SubjectState(self.join_state_emb(None, emb_seq[0]),
-                                         adms[0].admission_time + adms[0].los)
+            subject_state = SubjectState(
+                self.join_state_emb(None, emb_seq[0]),
+                jnp.array(adms[0].admission_time + adms[0].los))
 
             for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[1:]):
 
                 # Discharge-to-discharge time.
-                d2d_time = self._time_diff(adm.admission_time + adm.los,
-                                           subject_state.time)
+                d2d_time = jnp.array(
+                    self._time_diff(adm.admission_time + adm.los,
+                                    subject_state.time))
 
                 # Integrate until next discharge
                 subject_state, r, traj = self._integrate_state(

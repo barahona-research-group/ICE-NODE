@@ -153,7 +153,7 @@ class NeuralODE(eqx.Module):
         dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, self.ode_dyn(x))
         sampling_rate = args.get('sampling_rate', None)
         if sampling_rate:
-            t = self.timesamples(t, sampling_rate)
+            t = self.timesamples(float(t), sampling_rate)
         else:
             t = jnp.linspace(0.0, t / self.timescale, 2)
 

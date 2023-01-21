@@ -41,27 +41,25 @@ class GRU(AbstractModel):
 
             adms = subject_interface[subject_id]
 
-            # Exclude last input for irrelevance (not more future predictions)
-            dx_vec = [adm.dx_vec for adm in adms[:-1]]
+            # Exclude first input, not to be predicted.
+            dx_vec = [adm.dx_vec for adm in adms]
             emb_seqs = list(map(emb, dx_vec))
 
             # Merge controls with embeddings
             # c1, c2, ..., cT. <- controls
-            c_seq = jnp.vstack(
-                [ctrl_f(adm.admission_date) for adm in adms[:-1]])
+            c_seq = jnp.vstack([ctrl_f(adm.admission_date) for adm in adms])
 
             # Merge controls with embeddings
             emb_seqs = jnp.hstack([c_seq, emb_seqs])
 
             loss[subject_id] = []
             state = state0
-
-            # Exclude first adm, we need to predict them for a future step.
-            for i, (dx_emb_i, adm_i) in enumerate(zip(emb_seqs, adms[1:])):
-                state = self.f_update(dx_emb_i, state)
+            for i, (dx_emb_prev,
+                    adm_current) in enumerate(zip(emb_seqs[:-1], adms[1:])):
+                state = self.f_update(dx_emb_prev, state)
                 logits = self.dx_dec(state)
                 risk_prediction.add(subject_id=subject_id,
-                                    admission=adm_i,
+                                    admission=adm_current,
                                     prediction=logits)
                 if args.get('return_embeddings', False):
                     risk_prediction.set_subject_embeddings(
