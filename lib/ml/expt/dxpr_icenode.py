@@ -107,7 +107,7 @@ class ICENODE(DX_ICENODE):
             return E.MatrixEmbeddings(input_dim=input_dim, **emb_config)
 
         if emb_kind == 'gram':
-            return E.CachedGRAM(category=category,
+            return E.GRAM(category=category,
                                 subject_interface=subject_interface,
                                 train_ids=train_ids,
                                 **emb_config)

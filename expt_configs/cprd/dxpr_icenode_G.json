@@ -1,9 +1,4 @@
 {
-    "code_scheme": {
-        "dx": "DxCCS",
-        "dx_dagvec": true,
-        "dx_outcome": "dx_flatccs_filter_v1"
-    },
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
@@ -13,33 +8,33 @@
             "embeddings_size": 300,
             "glove_iterations": 100, 
             "cooc_window_size_days": 360
+        },
+        "pr": {
+            "classname": "GRAM", 
+            "attention_size": 100,
+            "attention_method": "tanh",
+            "embeddings_size": 150,
+            "glove_iterations": 100, 
+            "cooc_window_size_days": 360
         }
     },
     "model": {
         "ode_dyn_label": "mlp3",
         "ode_init_var": 1e-7,
-        
         "state_size": 30,
         "timescale": 7
     },
     "training": {
         "batch_size": 256,
-        "decay_rate": [0.27729587471948475, 0.3293406876704547],
-        "lr": [7.156197978746877e-05,  0.0011484691965460785],
+        "decay_rate": [0.25, 0.33],
         "epochs": 60,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,
             "L_l2": 0
         },
+        "lr": [7e-05, 1e-3],
         "opt": "adam",
         "classname": "ODETrainer2LR"
-    },
-    "meta": {
-    	"github_tag": "v0.2.20.dyn",
-    	"data_tag": "M3",
-    	"model": "icenode_2lr",
-    	"emb_kind": "matrix",
-    	"optuna_trial_number": 97
     }
 }

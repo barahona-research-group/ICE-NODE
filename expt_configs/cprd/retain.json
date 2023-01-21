@@ -1,8 +1,4 @@
 {
-    "code_scheme": {
-        "dx": "dx_cprd_ltc9809",
-        "dx_outcome": "dx_cprd_ltc9809"
-    },
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
@@ -11,26 +7,18 @@
         }
     },
     "model": {
-        "state_a_size": 200,
-        "state_b_size": 100
+        "state_size":  [200, 100]
     },
     "training": {
-        "batch_size": 27,
+        "batch_size": 28,
         "decay_rate": null,
         "epochs": 60,
         "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0
         },
-        "lr": 0.0016534371369143167,
+        "lr": 0.001,
         "opt": "adam",
         "classname": "Trainer"
-    },
-    "meta": {
-    	"github_tag": "v0.2.20",
-    	"data_tag": "M3",
-    	"model": "retain",
-    	"emb_kind": "matrix",
-    	"optuna_trial_number": 171
     }
 }

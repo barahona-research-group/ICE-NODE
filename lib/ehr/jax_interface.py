@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 import jax.random as jrandom
+import equinox as eqx
 
 from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
@@ -19,8 +20,7 @@ from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 from .outcome import OutcomeExtractor
 
 
-@dataclass
-class StaticInfo_JAX:
+class StaticInfo_JAX(eqx.Module):
     static_info: StaticInfo
     flags: StaticInfoFlags
     static_control_vec: jnp.ndarray
@@ -76,8 +76,7 @@ class StaticInfo_JAX:
         return jnp.hstack((d_vec, self.static_control_vec))
 
 
-@dataclass
-class Admission_JAX:
+class Admission_JAX(eqx.Module):
     admission_time: int
     los: int
     admission_id: int
@@ -197,6 +196,15 @@ class BatchPredictedRisks(dict):
             for subject_id in self.keys()
         ]
         return sum(loss) / len(loss)
+
+    def equals(self, other: BatchPredictedRisks):
+        for subj_i, s_preds in self.items():
+            s_preds_other = other[subj_i]
+            for a, a_oth in zip(s_preds.values(), s_preds_other.values()):
+                if ((a.ground_truth != a_oth.ground_truth).any()
+                        or (a.prediction != a_oth.prediction).any()):
+                    return False
+        return True
 
 
 class Subject_JAX(dict):
@@ -394,6 +402,14 @@ class Subject_JAX(dict):
             map(self._subjects.get, subjects), self.dx_outcome_extractor)
         return jnp.array(np_res)
 
+    def dx_batch_history_vec(self, subjects: List[Subject], skip_first_adm=True):
+        history = jnp.zeros((self.dx_dim, ), dtype=int)
+        for adms in (self[i] for i in subjects):
+            if skip_first_adm:
+                adms = adms[1:]
+            history += sum(adm.dx_vec for adm in adms)
+        return (history > 0).astype(int)
+
     @staticmethod
     def _code_frequency_partitions(percentile_range, code_frequency_vec):
         sections = list(range(0, 100, percentile_range)) + [100]
@@ -578,9 +594,9 @@ class Subject_JAX(dict):
         subjects = Subject.from_dataset(dataset)
         return cls(subjects, *args, **kwargs)
 
-    def random_predictions(self, train_split, test_split):
+    def random_predictions(self, train_split, test_split, seed=0):
         predictions = BatchPredictedRisks()
-        key = jrandom.PRNGKey(0)
+        key = jrandom.PRNGKey(seed)
 
         for subject_id in test_split:
             # Skip first admission, not targeted for prediction.

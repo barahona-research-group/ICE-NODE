@@ -7,7 +7,7 @@
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
-            "classname": "CachedGRAM", 
+            "classname": "GRAM", 
             "attention_size": 200,
             "attention_method": "tanh",
             "embeddings_size": 300,
@@ -26,7 +26,7 @@
             "L_l1": 0,
             "L_l2": 0
         },
-        "lr": 0.0010161679708784964,
+        "lr": 1e-3,
         "opt": "adam",
         "classname": "Trainer"
     },

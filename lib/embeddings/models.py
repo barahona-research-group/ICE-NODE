@@ -240,7 +240,7 @@ class CachedEmbeddingsMatrix(dict):
         return default
 
 
-class CachedGRAM(GRAM):
+class GRAM(GRAM):
 
     def compute_embeddings_mat(self, params):
         return CachedEmbeddingsMatrix(self)

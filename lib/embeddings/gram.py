@@ -18,6 +18,7 @@ import jax
 import jax.random as jrandom
 from jax import lax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 
 import equinox as eqx
 
@@ -79,9 +80,6 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
     embeddings_size: int
     input_size: int
 
-    embedding_cls = {}
-    short_tag = {}
-
     @abstractmethod
     def compute_embeddings_mat(self):
         pass
@@ -95,10 +93,19 @@ class AbstractEmbeddingsLayer(eqx.Module, metaclass=ABCMeta):
     def sample_model_config(prefix: str, trial: optuna.Trial):
         pass
 
-    @classmethod
-    def register_embedding(cls, label, short):
-        cls.embedding_cls[label] = cls
-        cls.short_tag[label] = short
+    def weights(self):
+        has_weight = lambda leaf: hasattr(leaf, 'weight')
+        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
+        return tuple(x.weight
+                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                     if has_weight(x))
+
+    def l1(self):
+        return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
+
+    def l2(self):
+        return sum(
+            jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
 
 
 class GRAM(AbstractEmbeddingsLayer):
@@ -183,17 +190,19 @@ class GRAM(AbstractEmbeddingsLayer):
 
         # Ancestry mask will zero-out the padded embeddings.
         A_att = jax.vmap(partial(self.f_att, e_i))(E_i) * ancestry_mask
+
         return jnp.average(E_i, axis=0, weights=unnormalized_softmax(A_att))
 
-    @eqx.filter_jit
-    def compute_embeddings_mat(self):
-        return jax.vmap(self.ancestry_attention)(self.code_ancestry,
-                                                 self.code_ancestry_mask,
-                                                 self.basic_embeddings)
+    def compute_embeddings_mat(self, in_vec):
+        G = [None] * self.input_size
+        for i in jnp.nonzero(in_vec)[0]:
+            G[i] = self.ancestry_attention(self.code_ancestry[i],
+                                           self.code_ancestry_mask[i],
+                                           self.basic_embeddings[i])
+        return tuple(G)
 
-    @eqx.filter_jit
     def encode(self, G: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.tanh(jnp.matmul(x, G))
+        return jnp.tanh(sum(G[i] for i in jnp.nonzero(x)[0]))
 
     @staticmethod
     def sample_model_config(prefix: str, trial: optuna.Trial):
@@ -211,44 +220,6 @@ class GRAM(AbstractEmbeddingsLayer):
         }
 
 
-class CachedEmbeddingsMatrix(dict):
-    gram: GRAM
-
-    def __init__(self, gram):
-        self.gram = gram
-
-    def multiply(self, x: jnp.ndarray):
-        index = onp.nonzero(x)[0]
-        if len(index) == 0:
-            return jnp.zeros_like(self.gram.basic_embeddings[0])
-        return sum(self[i.item()] for i in index)
-
-    def __getitem__(self, idx):
-        if idx in self:
-            return super().__getitem__(idx)
-        else:
-            gi = self.gram.ancestry_attention(
-                self.gram.code_ancestry[idx],
-                self.gram.code_ancestry_mask[idx],
-                self.gram.basic_embeddings[idx])
-            super().__setitem__(idx, gi)
-            return gi
-
-    def get(self, k, default=None):
-        if k in self:
-            return self.__getitem__(k)
-        return default
-
-
-class CachedGRAM(GRAM):
-
-    def compute_embeddings_mat(self):
-        return CachedEmbeddingsMatrix(self)
-
-    def encode(self, G: CachedEmbeddingsMatrix, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.tanh(G.multiply(x))
-
-
 class MatrixEmbeddings(AbstractEmbeddingsLayer):
     linear: Callable
 
@@ -261,7 +232,7 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
                                     use_bias=True,
                                     key=key)
 
-    def compute_embeddings_mat(self, params):
+    def compute_embeddings_mat(self, in_vec):
         return self
 
     @eqx.filter_jit
@@ -277,11 +248,11 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
 
 class LogitsDecoder(eqx.Module):
     f_dec: Callable
-    embeddings_size: int
+    input_size: int
     output_size: int
     n_layers: int
 
-    def __init__(self, n_layers: int, embeddings_size: int, output_size: int,
+    def __init__(self, n_layers: int, input_size: int, output_size: int,
                  key: "jax.random.PRNGKey"):
 
         def _act(index):
@@ -293,21 +264,33 @@ class LogitsDecoder(eqx.Module):
         layers = []
         keys = jrandom.split(key, n_layers)
         for i in range(n_layers):
-            out_size = embeddings_size if i != n_layers - 1 else output_size
+            out_size = input_size if i != n_layers - 1 else output_size
             layers.append(
-                eqx.nn.Linear(embeddings_size,
-                              out_size,
-                              use_bias=True,
+                eqx.nn.Linear(input_size, out_size, use_bias=True,
                               key=keys[i]))
             layers.append(eqx.nn.Lambda(_act(i)))
 
         self.f_dec = eqx.nn.Sequential(layers[:-1])
         self.n_layers = n_layers
-        self.embeddings_size = embeddings_size
+        self.input_size = input_size
         self.output_size = output_size
 
     def __call__(self, logits: jnp.ndarray):
         return self.f_dec(logits)
+
+    def weights(self):
+        has_weight = lambda leaf: hasattr(leaf, 'weight')
+        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
+        return tuple(x.weight
+                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                     if has_weight(x))
+
+    def l1(self):
+        return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
+
+    def l2(self):
+        return sum(
+            jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
 
 
 def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
@@ -328,9 +311,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
                                 input_size=input_size,
                                 key=jrandom.PRNGKey(0))
 
-    if classname in ['GRAM', 'CachedGRAM']:
-        emb_cls = globals()[classname]
-
+    if classname == 'GRAM':
         if code_type == 'dx':
             cooc_f = subject_interface.dx_augmented_coocurrence
             ancestors_mat = subject_interface.dx_make_ancestors_mat()
@@ -344,17 +325,18 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
         glove = train_glove(cooccurrences=coocurrence_mat,
                             embeddings_size=embeddings_size,
                             iterations=emb_conf['glove_iterations'])
-        return emb_cls(basic_embeddings=glove,
-                       attention_method=emb_conf['attention_method'],
-                       attention_size=emb_conf['attention_size'],
-                       ancestors_mat=ancestors_mat,
-                       key=jrandom.PRNGKey(0))
+        return GRAM(basic_embeddings=glove,
+                    attention_method=emb_conf['attention_method'],
+                    attention_size=emb_conf['attention_size'],
+                    ancestors_mat=ancestors_mat,
+                    key=jrandom.PRNGKey(0))
     else:
         raise RuntimeError(f'Unrecognized Embedding class {classname}')
 
 
 def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
-                         subject_interface: Subject_JAX, train_ids: List[int]):
+                         subject_interface: Subject_JAX, train_ids: List[int],
+                         decoder_input_size: int):
     models = {}
     if conf.get('dx'):
         models['dx_emb'] = create_embeddings_model('dx', conf['dx'],
@@ -362,9 +344,8 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                                                    train_ids)
         dec_n_layers = conf['dx']['decoder_n_layers']
         dec_output_size = subject_interface.dx_outcome_dim
-        embeddings_size = conf['dx']['embeddings_size']
         models['dx_dec'] = LogitsDecoder(n_layers=dec_n_layers,
-                                         embeddings_size=embeddings_size,
+                                         input_size=decoder_input_size,
                                          output_size=dec_output_size,
                                          key=jrandom.PRNGKey(0))
 
@@ -374,7 +355,3 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                                                    train_ids)
 
     return models
-
-
-MatrixEmbeddings.register_embedding('matrix', 'M')
-GRAM.register_embedding('gram', 'G')

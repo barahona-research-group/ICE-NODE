@@ -66,8 +66,10 @@ class MinibatchLogger(AbstractReporter):
         logging.warning(msg or 'NaN detected')
 
     def report_evaluation(self, history):
-        for _history in history.values():
-            logging.info(_history.to_df())
+        h = history
+        for name, df in zip(('train', 'val', 'tst'),
+                            (h.train_df(), h.validation_df(), h.test_df())):
+            logging.info(name + str(df))
 
 
 class EvaluationDiskWriter(AbstractReporter):
@@ -76,12 +78,15 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self,
-                          history: Dict[str,
-                                        "lib.ml.MetricsHistory"]):
-        for name, _history in history.items():
-            history.to_df().to_csv(os.path.join(self.output_dir, name),
-                                   compression="gzip")
+    def report_evaluation(self, history: "lib.ml.MetricsHistory"):
+        h = history
+        for name, df in zip(('train', 'val', 'tst'),
+                            (h.train_df(), h.validation_df(), h.test_df())):
+            if df is None:
+                continue
+            fname = f'{self.prefix}_{name}_evals.csv.gz'
+            fpath = os.path.join(self.output_dir, fname)
+            df.to_csv(fpath, compression="gzip")
 
 
 class ParamsDiskWriter(AbstractReporter):
@@ -110,9 +115,15 @@ class ConfigDiskWriter(AbstractReporter):
 
 class OptunaReporter(AbstractReporter):
 
-    def __init__(self, trial, objective_key):
+    def __init__(self, trial, objective):
         self.trial = trial
-        self.objective_key = objective_key
+
+        if callable(objective):
+            self.objective = objective
+        elif isinstance(objective, list):
+            self.objective = None
+        else:
+            raise RuntimeError('Unexpected objective passed')
 
     def report_params_size(self, size):
         self.trial.set_user_attr('parameters_size', size)
@@ -138,5 +149,6 @@ class OptunaReporter(AbstractReporter):
         self.trial.set_user_attr('nan', 1)
 
     def report_evaluation(self, history):
-        history = history['VAL']
-        self.trial.report(history.last_value(self.objective_key), len(history))
+        if self.objective:
+            value = self.objective(history.validation_df())
+            self.trial.report(value, len(history.validation_df()))

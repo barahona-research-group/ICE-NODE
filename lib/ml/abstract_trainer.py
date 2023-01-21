@@ -32,29 +32,47 @@ class_weighting_dict = {
 class MetricsHistory:
     metrics: M.MetricsCollection
 
-    def __init__(self):
-        self._df = None
+    def __init__(self, metrics):
+        self.metrics = metrics
+        self._train_df = None
+        self._val_df = None
+        self._test_df = None
 
-    def to_df(self):
-        return self._df
+    def train_df(self):
+        return self._train_df
 
-    def __len__(self):
-        return len(self._df) if self._df is not None else 0
+    def validation_df(self):
+        return self._val_df
 
-    def last_evals(self):
-        return self._df.iloc[-1, :].to_dict()
+    def test_df(self):
+        return self._test_df
 
-    def append_iteration(
+    def append_train_iteration(
             self,
             predictions: BatchPredictedRisks,
             other_estimated_metrics: Optional[Dict[str, float]] = None):
-        niters = 1 if self._df is None else len(self._df) + 1
+        niters = 1 if self._train_df is None else len(self._train_df) + 1
         row_df = self.metrics.to_df(niters, predictions,
                                     other_estimated_metrics)
-        self._df = pd.concat([self._df, row_df])
+        self._train_df = pd.concat([self._train_df, row_df])
 
-    def last_value(self, key):
-        return self._df.iloc[-1, key]
+    def append_validation_iteration(
+            self,
+            predictions: BatchPredictedRisks,
+            other_estimated_metrics: Optional[Dict[str, float]] = None):
+        niters = 1 if self._val_df is None else len(self._val_df) + 1
+        row_df = self.metrics.to_df(niters, predictions,
+                                    other_estimated_metrics)
+        self._val_df = pd.concat([self._val_df, row_df])
+
+    def append_test_iteration(
+            self,
+            predictions: BatchPredictedRisks,
+            other_estimated_metrics: Optional[Dict[str, float]] = None):
+        niters = 1 if self._test_df is None else len(self._test_df) + 1
+        row_df = self.metrics.to_df(niters, predictions,
+                                    other_estimated_metrics)
+        self._test_df = pd.concat([self._test_df, row_df])
 
 
 class Trainer(eqx.Module):
@@ -154,11 +172,10 @@ class Trainer(eqx.Module):
         return model
 
     def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
-                       subject_interface: Subject_JAX, batch: Tuple[int],
-                       key: "jax.random.PRNGKey"):
+                       subject_interface: Subject_JAX, batch: Tuple[int]):
         opt, opt_state = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch, key)
+        grads, aux = grad_f(model, subject_interface, batch)
         updates, opt_state = opt.update(grads, opt_state)
         new_model = eqx.apply_updates(model, updates)
         new_model = self._post_update_params(new_model)
@@ -176,7 +193,7 @@ class Trainer(eqx.Module):
                  model: "lib.ml.AbstractModel",
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
-                 metrics: M.MetricsCollection,
+                 history: MetricsHistory,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
                  reporters: List["lib.ml.AbstractReporter"] = []):
@@ -193,13 +210,6 @@ class Trainer(eqx.Module):
             r.report_params_size(params_size(model))
             r.report_steps(iters)
 
-        auc = 0.0
-        best_score = 0.0
-        history = {
-            split_name: MetricsHistory()
-            for split_name in ('TRN', 'VAL', 'TST')
-        }
-
         for i in tqdm(range(iters)):
             eval_step = round((i + 1) * 100 / iters)
             last_step = round(i * 100 / iters)
@@ -208,13 +218,13 @@ class Trainer(eqx.Module):
                 [r.report_timeout() for r in reporters]
                 break
 
-            (key, k2) = jrandom.split(key, 2)
+            (key, ) = jrandom.split(key, 1)
             train_ids = jrandom.shuffle(key, jnp.array(train_ids)).tolist()
             train_batch = train_ids[:batch_size]
 
             try:
                 opt_state, model, _ = self.step_optimizer(
-                    opt_state, model, subject_interface, train_batch, k2)
+                    opt_state, model, subject_interface, train_batch)
 
             except RuntimeError as e:
                 [
@@ -234,18 +244,19 @@ class Trainer(eqx.Module):
 
             trn_loss, trn_preds = self.eval(model, subject_interface,
                                             train_batch)
-            history['TRN'].append_iteration(trn_preds, trn_loss)
+            history.append_train_iteration(trn_preds, trn_loss)
             val_loss, val_preds = self.eval(model, subject_interface,
                                             valid_ids)
-            history['VAL'].append_iteration(val_preds, val_loss)
+            history.append_validation_iteration(val_preds, val_loss)
 
             if i == iters - 1:
                 tst_loss, tst_preds = self.eval(model, subject_interface,
                                                 test_ids)
-                history['TST'].append_iteration(tst_preds, tst_loss)
+
+                history.append_test_iteration(tst_preds, tst_loss)
 
             for r in reporters:
-                r.report_evaluation(eval_step=eval_step, history=history)
+                r.report_evaluation(history)
                 r.report_params(eval_step, model)
 
         return {'history': history, 'model': model}
@@ -255,26 +266,29 @@ class Trainer2LR(Trainer):
 
     def init_opt(self, model: "lib.ml.AbstractModel"):
         decay_rate = self.decay_rate
-        if not isinstance(decay_rate):
+        if not (isinstance(decay_rate, list) or isinstance(decay_rate, tuple)):
             decay_rate = (decay_rate, decay_rate)
 
         opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
         opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
         m1, m2 = model.emb_dyn_partition(model)
-        jax.debug.print('hiii init_opt')
-        jax.debug.breakpoint()
+        m1 = eqx.filter(m1, eqx.is_inexact_array)
+        m2 = eqx.filter(m2, eqx.is_inexact_array)
         return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
 
     def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
-                       subject_interface: Subject_JAX, batch: Tuple[int],
-                       key: "jax.random.PRNGKey"):
+                       subject_interface: Subject_JAX, batch: Tuple[int]):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch, key)
+        grads, aux = grad_f(model, subject_interface, batch)
         g1, g2 = model.emb_dyn_partition(grads)
 
         updates1, opt1_s = opt1.update(g1, opt1_s)
         updates2, opt2_s = opt2.update(g2, opt2_s)
+
+        jax.debug.print('hmmmm')
+        jax.debug.breakpoint()
+        breakpoint()
         updates = model.emb_dyn_merge(updates1, updates2)
 
         new_model = eqx.apply_updates(model, updates)
@@ -321,21 +335,24 @@ class ODETrainer(Trainer):
     def odeint_time(cls, predictions: M.BatchPredictedRisks):
         int_time = 0
         for subj_id, preds in predictions.items():
-            adms = [preds[idx] for idx in sorted(preds)]
+            adms = [preds[idx].admission for idx in sorted(preds)]
             # Integration time from the first discharge (adm[0].(length of
             # stay)) to last discarge (adm[-1].time + adm[-1].(length of stay)
-            int_time += adms[-1].time + adms[-1].los - adms[0].los
+            int_time += adms[-1].admission_time + adms[-1].los - adms[0].los
         return int_time
 
     def dx_loss(self):
         return M.balanced_focal_bce
 
-    def reg_loss(self, model: 'lib.ml.AbstractModel',
-                 subject_interface: Subject_JAX, batch: List[int]):
-        args = dict(tay_reg=self.tay_reg)
+    def reg_loss(self,
+                 model: 'lib.ml.AbstractModel',
+                 subject_interface: Subject_JAX,
+                 batch: List[int],
+                 args: Dict[str, float] = dict()):
+        args['tay_reg'] = self.tay_reg
         res = model(subject_interface, batch, args)
         preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss)
+        l = preds.prediction_loss(self.dx_loss())
 
         integration_weeks = self.odeint_time(preds) / 7
         l1_loss = model.l1()

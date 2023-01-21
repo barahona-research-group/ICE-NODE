@@ -14,8 +14,8 @@ from ..ehr import Subject_JAX, BatchPredictedRisks
 class GRU(AbstractModel):
     f_update: Callable
 
-    def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, key: "jax.random.PRNGKey", **kwargs):
+        super().__init__(**kwargs)
         self.f_update = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
                                        self.control_size,
                                        self.state_size,
@@ -29,8 +29,8 @@ class GRU(AbstractModel):
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],
                  args=dict()):
-
-        G = self.dx_emb.compute_embeddings_mat()
+        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
+        G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
         emb = partial(self.dx_emb.encode, G)
 
         loss = {}
@@ -43,7 +43,7 @@ class GRU(AbstractModel):
 
             # Exclude last input for irrelevance (not more future predictions)
             dx_vec = [adm.dx_vec for adm in adms[:-1]]
-            emb_seqs = map(emb, dx_vec)
+            emb_seqs = list(map(emb, dx_vec))
 
             # Merge controls with embeddings
             # c1, c2, ..., cT. <- controls
