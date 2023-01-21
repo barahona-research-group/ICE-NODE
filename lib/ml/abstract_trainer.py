@@ -286,9 +286,6 @@ class Trainer2LR(Trainer):
         updates1, opt1_s = opt1.update(g1, opt1_s)
         updates2, opt2_s = opt2.update(g2, opt2_s)
 
-        jax.debug.print('hmmmm')
-        jax.debug.breakpoint()
-        breakpoint()
         updates = model.emb_dyn_merge(updates1, updates2)
 
         new_model = eqx.apply_updates(model, updates)

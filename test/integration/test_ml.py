@@ -133,15 +133,12 @@ class DxCommonTests(unittest.TestCase):
 
             param_fname = f'test_{str(uuid.uuid4())}.eqx'
             model1.write_params(param_fname)
-            # jax.debug.print("model1: {}", model1)
 
             model2 = type(actors.model).from_config(actors.conf,
                                                     actors.interface,
                                                     actors.splits[0], key)
             model2 = model2.load_params(param_fname)
-            # jax.debug.print("model2: {}", model2)
             os.remove(param_fname)
-            jax.clear_backends()
             assert_equal_models(model1, model2)
 
             preds2 = model2(actors.interface,

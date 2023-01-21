@@ -51,12 +51,9 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         Separate the dynamics parameters from the embedding parameters.
         Thanks to Patrick Kidger for the clever function of eqx.partition.
         """
-        emb_nodes = AbstractModel._emb_subtrees(pytree)
-        emb_predicate = lambda _t: any(_t is t for t in emb_nodes)
-
-        emb_tree, dyn_tree = eqx.partition(pytree,
-                                           emb_predicate,
-                                           is_leaf=emb_predicate)
+        emb_leaves = jtu.tree_leaves(AbstractModel._emb_subtrees(pytree))
+        emb_predicate = lambda _t: any(_t is t for t in emb_leaves)
+        emb_tree, dyn_tree = eqx.partition(pytree, emb_predicate)
         return emb_tree, dyn_tree
 
     @staticmethod
@@ -114,8 +111,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
                     train_split: List[int], key: "jax.random.PRNGKey"):
         decoder_input_size = cls.decoder_input_size(conf)
         emb_models = embeddings_from_conf(conf["emb"], subject_interface,
-                                          train_split,
-                                          decoder_input_size)
+                                          train_split, decoder_input_size)
         return cls(**emb_models, **conf["model"], key=key)
 
     def load_params(self, params_file):
