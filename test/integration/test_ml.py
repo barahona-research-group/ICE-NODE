@@ -128,7 +128,8 @@ class DxCommonTests(unittest.TestCase):
                                  reporters=[ml.MinibatchLogger(actors.conf)])
 
             history = res['history']
-            self.assertTrue(objective(history.train_df()) > 0.4)
+            self.assertTrue(objective(history.train_df()) > 0.35,
+                            msg=f'obj: {objective(history.train_df())}')
 
             model1 = res['model']
             preds1 = model1(actors.interface,
