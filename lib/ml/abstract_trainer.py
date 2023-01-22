@@ -15,6 +15,7 @@ import optax
 from ..ehr import Subject_JAX, BatchPredictedRisks
 from .. import metric as M
 from ..utils import params_size, tree_hasnan
+from ..ml import AbstractModel
 
 opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
@@ -24,8 +25,8 @@ class_weighting_dict = {
     'balanced':
     M.softmax_logits_balanced_focal_bce,
     'focal':
-    lambda y, logits: M.softmax_logits_weighted_bce(
-        y, logits, y.shape[0] / (y.sum(axis=0) + 1e-10))
+    lambda y, logits, mask: M.softmax_logits_weighted_bce(
+        y, logits, mask, y.shape[0] / (y.sum(axis=0) + 1e-10))
 }
 
 
@@ -114,7 +115,7 @@ class Trainer(eqx.Module):
         return class_weighting_dict[self.class_weighting]
 
     def unreg_loss(self,
-                   model: "lib.ml.AbstractModel",
+                   model: AbstractModel,
                    subject_interface: Subject_JAX,
                    batch: List[int],
                    args: Dict[str, Any] = dict()):
@@ -123,7 +124,7 @@ class Trainer(eqx.Module):
         return l, ({'dx_loss': l}, res['predictions'])
 
     def reg_loss(self,
-                 model: "lib.ml.AbstractModel",
+                 model: AbstractModel,
                  subject_interface: Subject_JAX,
                  batch: List[int],
                  args: Dict[str, Any] = dict()):
@@ -144,7 +145,7 @@ class Trainer(eqx.Module):
         }, res['predictions'])
 
     def loss(self,
-             model: "lib.ml.AbstractModel",
+             model: AbstractModel,
              subject_interface: Subject_JAX,
              batch: List[int],
              args: Dict[str, Any] = dict()):
@@ -154,7 +155,7 @@ class Trainer(eqx.Module):
             return self.reg_loss(model, subject_interface, batch, args)
 
     def eval(self,
-             model: "lib.ml.AbstractModel",
+             model: AbstractModel,
              subject_interface: Subject_JAX,
              batch: List[int],
              args=dict()) -> Dict[str, float]:
@@ -168,10 +169,10 @@ class Trainer(eqx.Module):
         opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
         return opt, opt.init(eqx.filter(model, eqx.is_inexact_array))
 
-    def _post_update_params(self, model: "lib.ml.AbstractModel"):
+    def _post_update_params(self, model: AbstractModel):
         return model
 
-    def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
+    def step_optimizer(self, opt_state: Any, model: AbstractModel,
                        subject_interface: Subject_JAX, batch: Tuple[int]):
         opt, opt_state = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
@@ -190,7 +191,7 @@ class Trainer(eqx.Module):
         }
 
     def __call__(self,
-                 model: "lib.ml.AbstractModel",
+                 model: AbstractModel,
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
                  history: MetricsHistory,
@@ -219,7 +220,9 @@ class Trainer(eqx.Module):
                 break
 
             (key, ) = jrandom.split(key, 1)
-            train_ids = jrandom.shuffle(key, jnp.array(train_ids)).tolist()
+            train_ids = jrandom.permutation(key,
+                                            jnp.array(train_ids),
+                                            independent=True).tolist()
             train_batch = train_ids[:batch_size]
 
             try:
@@ -264,7 +267,7 @@ class Trainer(eqx.Module):
 
 class Trainer2LR(Trainer):
 
-    def init_opt(self, model: "lib.ml.AbstractModel"):
+    def init_opt(self, model: AbstractModel):
         decay_rate = self.decay_rate
         if not (isinstance(decay_rate, list) or isinstance(decay_rate, tuple)):
             decay_rate = (decay_rate, decay_rate)
@@ -276,7 +279,7 @@ class Trainer2LR(Trainer):
         m2 = eqx.filter(m2, eqx.is_inexact_array)
         return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
 
-    def step_optimizer(self, opt_state: Any, model: "lib.ml.AbstractModel",
+    def step_optimizer(self, opt_state: Any, model: AbstractModel,
                        subject_interface: Subject_JAX, batch: Tuple[int]):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
@@ -293,8 +296,7 @@ class Trainer2LR(Trainer):
         return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
 
 
-def sample_training_config(cls, trial: optuna.Trial,
-                           model: 'lib.ml.AbstractModel'):
+def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
     return {
         'epochs': 10,
@@ -312,7 +314,7 @@ def sample_training_config(cls, trial: optuna.Trial,
 class LassoNetTrainer(Trainer):
 
     def loss(self,
-             model: "lib.ml.AbstractModel",
+             model: AbstractModel,
              subject_interface: Subject_JAX,
              batch: List[int],
              args: Dict[str, Any] = dict()):
@@ -342,7 +344,7 @@ class ODETrainer(Trainer):
         return M.balanced_focal_bce
 
     def reg_loss(self,
-                 model: 'lib.ml.AbstractModel',
+                 model: AbstractModel,
                  subject_interface: Subject_JAX,
                  batch: List[int],
                  args: Dict[str, float] = dict()):
