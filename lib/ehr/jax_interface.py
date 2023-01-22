@@ -395,7 +395,8 @@ class Subject_JAX(dict):
 
     def outcome_by_percentiles(self,
                                percentile_range: float = 20,
-                               subjects: List[int] = []):
+                               subjects: Optional[List[int]] = None):
+        subjects = subjects or list(self.keys())
         return self._code_frequency_partitions(
             percentile_range, self.outcome_frequency_vec(subjects))
 

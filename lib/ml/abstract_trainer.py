@@ -1,4 +1,3 @@
-import copy
 from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
@@ -199,8 +198,6 @@ class Trainer(eqx.Module):
                  trial_terminate_time=datetime.max,
                  reporters: List[AbstractReporter] = []):
         train_ids, valid_ids, test_ids = splits
-        # Because shuffling is done in-place.
-        train_ids = copy.deepcopy(train_ids)
         batch_size = min(self.batch_size, len(train_ids))
         iters = round(self.epochs * len(train_ids) / batch_size)
         opt_state = self.init_opt(model)
@@ -211,6 +208,7 @@ class Trainer(eqx.Module):
             r.report_params_size(params_size(model))
             r.report_steps(iters)
 
+        train_index = jnp.arange(len(train_ids))
         for i in tqdm(range(iters)):
             eval_step = round((i + 1) * 100 / iters)
             last_step = round(i * 100 / iters)
@@ -220,10 +218,8 @@ class Trainer(eqx.Module):
                 break
 
             (key, ) = jrandom.split(key, 1)
-            train_ids = jrandom.permutation(key,
-                                            jnp.array(train_ids),
-                                            independent=True).tolist()
-            train_batch = train_ids[:batch_size]
+            shuffled_idx = jrandom.permutation(key, train_index)
+            train_batch = [train_ids[i] for i in shuffled_idx[:batch_size]]
 
             try:
                 opt_state, model, _ = self.step_optimizer(

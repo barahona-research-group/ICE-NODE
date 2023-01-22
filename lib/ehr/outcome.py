@@ -70,8 +70,11 @@ class OutcomeExtractor(C.AbstractScheme):
                 for adm in subject.admissions]
 
     def outcome_frequency_vec(self, subjects: List[Subject]):
-        return sum(outcome[0] for subj in subjects
-                   for outcome in self.subject_outcome(subj))
+        outcomes = [
+            outcome[0] for subj in subjects
+            for outcome in self.subject_outcome(subj)
+        ]
+        return sum(outcomes)
 
     def outcome_history(self,
                         admissions: List[Admission],
