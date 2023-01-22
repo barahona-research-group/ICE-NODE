@@ -114,7 +114,7 @@ class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
         # The mask elements are ones for each outcome coordinate until
         # the outcome appears at one admission, the mask will have zero values
         # for later admissions for that particular coordinate
-        mask = np.ones((self.outcome_dim, ))
+        mask = np.ones((self.outcome_dim, ), dtype=bool)
         outcomes = []
         for adm in subject.admissions:
             outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)

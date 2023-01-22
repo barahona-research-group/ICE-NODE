@@ -58,7 +58,7 @@ class WindowLogReg(AbstractModelProxMap):
 
     @classmethod
     def from_config(cls, conf, subject_interface, train_split, key):
-        return cls(subject_interface.dx_dim, subject_interface.dx_outcome_dim,
+        return cls(subject_interface.dx_dim, subject_interface.outcome_dim,
                    key)
 
     def weights(self):
@@ -79,7 +79,7 @@ class WindowLogReg(AbstractModelProxMap):
             features = subject_interface.features[subj_id]
 
             X = np.vstack([feats.dx_features for feats in features[1:]])
-            y = np.vstack([adm.dx_outcome for adm in adms[1:]])
+            y = np.vstack([adm.outcome for adm in adms[1:]])
             risk = jax.vmap(self.predict_logits)(X)
 
             for (adm, pred) in zip(adms[1:], risk):

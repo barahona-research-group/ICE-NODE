@@ -343,7 +343,7 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                                                    subject_interface,
                                                    train_ids)
         dec_n_layers = conf['dx']['decoder_n_layers']
-        dec_output_size = subject_interface.dx_outcome_dim
+        dec_output_size = subject_interface.outcome_dim
         models['dx_dec'] = LogitsDecoder(n_layers=dec_n_layers,
                                          input_size=decoder_input_size,
                                          output_size=dec_output_size,

@@ -202,7 +202,7 @@ class Subject_JAX(dict):
         self._dx_scheme = code_scheme['dx']
         self._pr_scheme = code_scheme.get('pr', NullScheme())
 
-        self._outcome_extractor = code_scheme['dx_outcome']
+        self._outcome_extractor = code_scheme['outcome']
 
         # The interface will map all Dx/Pr codes to DAG space if:
         # 1. The experiment explicitly requests so through (dx|pr)_dagvec
@@ -513,7 +513,7 @@ class Subject_JAX(dict):
     def _jaxify_subject_admissions(self):
 
         def _jaxify_adms(subj):
-            outcomes = self.outcome_extractor(subj)
+            outcomes = self.outcome_extractor.subject_outcome(subj)
             adms = []
             for adm, (outcome, mask) in zip(subj.admissions, outcomes):
                 dx_mapper = adm.dx_scheme.mapper_to(self.dx_scheme)

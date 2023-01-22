@@ -46,18 +46,18 @@ def setUpModule():
 
     m3_interface = {
         'ccs':
-        if3_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome)),
+        if3_f(dict(dx=DxCCS(), outcome=flatccs_outcome)),
         'ccs1':
-        if3_f(dict(dx=DxCCS(), dx_outcome=flatccs_1outcome)),
+        if3_f(dict(dx=DxCCS(), outcome=flatccs_1outcome)),
         'icd10':
-        if3_f(dict(dx=DxICD10(), dx_outcome=icd9_outcome)),
+        if3_f(dict(dx=DxICD10(), outcome=icd9_outcome)),
         'icd9':
-        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_1outcome)),
+        if3_f(dict(dx=DxICD9(), outcome=icd9_1outcome)),
         'icd9dag':
-        if3_f(dict(dx=DxICD9(), dx_outcome=icd9_outcome, dx_dagvec=True))
+        if3_f(dict(dx=DxICD9(), outcome=icd9_outcome, dx_dagvec=True))
     }
 
-    m4_interface = {'ccs': if4_f(dict(dx=DxCCS(), dx_outcome=flatccs_outcome))}
+    m4_interface = {'ccs': if4_f(dict(dx=DxCCS(), outcome=flatccs_outcome))}
     _loadconfig = lambda fname: load_config(
         f'test/integration/fixtures/model_configs/{fname}.json')
     fnames = [
@@ -186,7 +186,7 @@ class TestDxRETAIN(DxCommonTests):
     def setUp(self):
         config = model_configs['dx_retain_m']
         self.actors = []
-        IFs = [m3_interface['ccs'], m3_inteface['ccs1']]
+        IFs = [m3_interface['ccs'], m3_interface['ccs1']]
         for IF in IFs:
             splits = IF.random_splits(0.7, 0.85, 42)
             model = ml.RETAIN.from_config(config, IF, splits[0], key)
