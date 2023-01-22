@@ -75,56 +75,15 @@ class StaticInfo_JAX(eqx.Module):
         return jnp.hstack((d_vec, self.static_control_vec))
 
 
-class Admission_JAX(eqx.Module):
+@dataclass
+class Admission_JAX:
     admission_time: int
     los: int
     admission_id: int
     admission_date: datetime
-    dx_mapper: Any
-    pr_mapper: Any
-    dx_codes: Set[str]
-    pr_codes: Set[str]
     dx_vec: jnp.ndarray
     pr_vec: jnp.ndarray
     dx_outcome: jnp.ndarray
-
-    def __init__(self,
-                 adm: Admission,
-                 first_adm_date: datetime,
-                 dx_scheme: str,
-                 dx_outcome_extractor: OutcomeExtractor,
-                 pr_scheme: str,
-                 dx_dagvec=False,
-                 pr_dagvec=False):
-        # Time as days since the first admission
-        self.admission_time = adm.admission_day(first_adm_date)
-        self.los = adm.length_of_stay
-        self.admission_id = adm.admission_id
-        self.admission_date = adm.admission_dates[0]
-
-        dx_mapper = adm.dx_scheme.mapper_to(dx_scheme)
-        pr_mapper = adm.pr_scheme.mapper_to(pr_scheme)
-        self.dx_mapper = dx_mapper
-        self.pr_mapper = pr_mapper
-
-        dx_codes = dx_mapper.map_codeset(adm.dx_codes)
-        if dx_dagvec:
-            self.dx_vec = jnp.array(dx_mapper.codeset2dagvec(dx_codes))
-            self.dx_codes = dx_mapper.codeset2dagset(dx_codes)
-        else:
-            self.dx_vec = jnp.array(dx_mapper.codeset2vec(dx_codes))
-            self.dx_codes = dx_codes
-
-        pr_codes = pr_mapper.map_codeset(adm.pr_codes)
-        if pr_dagvec:
-            self.pr_vec = jnp.array(pr_mapper.codeset2dagvec(pr_codes))
-            self.pr_codes = pr_mapper.codeset2dagset(pr_codes)
-        else:
-            self.pr_vec = jnp.array(pr_mapper.codeset2vec(pr_codes))
-            self.pr_codes = pr_codes
-
-        self.dx_outcome = jnp.array(
-            dx_outcome_extractor.codeset2vec(adm.dx_codes, adm.dx_scheme))
 
 
 @dataclass
@@ -550,16 +509,34 @@ class Subject_JAX(dict):
     def _jaxify_subject_admissions(self):
 
         def _jaxify_adms(subj):
-            return [
-                Admission_JAX(adm,
-                              first_adm_date=subj.first_adm_date,
-                              dx_scheme=self.dx_scheme,
-                              dx_outcome_extractor=self.dx_outcome_extractor,
-                              pr_scheme=self.pr_scheme,
-                              dx_dagvec=self._dx_dagvec,
-                              pr_dagvec=self._pr_dagvec)
-                for adm in subj.admissions
-            ]
+            outcomes = self.dx_outcome_extractor(subj)
+            adms = []
+            for adm, outcome in zip(subj.admissions, outcomes):
+                dx_mapper = adm.dx_scheme.mapper_to(self.dx_scheme)
+                pr_mapper = adm.pr_scheme.mapper_to(self.pr_scheme)
+                dx_codes = dx_mapper.map_codeset(adm.dx_codes)
+                if self._dx_dagvec:
+                    dx_vec = jnp.array(dx_mapper.codeset2dagvec(dx_codes))
+                else:
+                    dx_vec = jnp.array(dx_mapper.codeset2vec(dx_codes))
+
+                pr_codes = pr_mapper.map_codeset(adm.pr_codes)
+                if self._pr_dagvec:
+                    pr_vec = jnp.array(pr_mapper.codeset2dagvec(pr_codes))
+                else:
+                    pr_vec = jnp.array(pr_mapper.codeset2vec(pr_codes))
+
+                adms.append(
+                    Admission_JAX(admission_time=adm.admission_day(
+                        subj.first_adm_date),
+                                  los=adm.length_of_stay,
+                                  admission_id=adm.admission_id,
+                                  admission_date=adm.admission_dates[0],
+                                  dx_vec=dx_vec,
+                                  pr_vec=pr_vec,
+                                  dx_outcome=jnp.array(outcome)))
+
+            return adms
 
         def _lazy_load(subj):
             return lambda: _jaxify_adms(subj)

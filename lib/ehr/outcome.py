@@ -6,6 +6,7 @@ import numpy as np
 from ..utils import load_config
 
 from . import coding_scheme as C
+from .concept import Admission, Subject
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -60,6 +61,12 @@ class OutcomeExtractor(C.AbstractScheme):
         for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True
         return vec
+
+    def subject_outcome(self, subject: Subject):
+        return [
+            self.codeset2vec(adm.dx_codes, adm.dx_scheme)
+            for adm in subject.admissions
+        ]
 
     @staticmethod
     def conf_from_json(json_file: str):
