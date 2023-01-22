@@ -83,7 +83,8 @@ class Admission_JAX:
     admission_date: datetime
     dx_vec: jnp.ndarray
     pr_vec: jnp.ndarray
-    dx_outcome: jnp.ndarray
+    outcome: jnp.ndarray
+    mask: jnp.ndarray
 
 
 @dataclass
@@ -94,7 +95,11 @@ class SubjectPredictedRisk:
 
     @property
     def ground_truth(self):
-        return self.admission.dx_outcome
+        return self.admission.outcome
+
+    @property
+    def mask(self):
+        return self.admission.mask
 
     def __str__(self):
         return f"""
@@ -143,7 +148,7 @@ class BatchPredictedRisks(dict):
 
     def subject_prediction_loss(self, subject_id, loss_f):
         loss = [
-            loss_f(r.admission.dx_outcome, r.prediction)
+            loss_f(r.admission.outcome, r.prediction, r.admission.mask)
             for r in self[subject_id].values()
         ]
         return sum(loss) / len(loss)
@@ -153,7 +158,7 @@ class BatchPredictedRisks(dict):
             self.subject_prediction_loss(subject_id, loss_f)
             for subject_id in self.keys()
         ]
-        return sum(loss) / len(loss)
+        return jnp.nanmean(jnp.array(loss))
 
     def equals(self, other: BatchPredictedRisks):
         for subj_i, s_preds in self.items():
@@ -197,7 +202,7 @@ class Subject_JAX(dict):
         self._dx_scheme = code_scheme['dx']
         self._pr_scheme = code_scheme.get('pr', NullScheme())
 
-        self._dx_outcome_extractor = code_scheme['dx_outcome']
+        self._outcome_extractor = code_scheme['dx_outcome']
 
         # The interface will map all Dx/Pr codes to DAG space if:
         # 1. The experiment explicitly requests so through (dx|pr)_dagvec
@@ -308,12 +313,12 @@ class Subject_JAX(dict):
         return self.pr_scheme.make_ancestors_mat()
 
     @property
-    def dx_outcome_extractor(self):
-        return self._dx_outcome_extractor
+    def outcome_extractor(self):
+        return self._outcome_extractor
 
     @property
-    def dx_outcome_dim(self):
-        return len(self.dx_outcome_extractor.index)
+    def outcome_dim(self):
+        return len(self.outcome_extractor.index)
 
     def random_splits(self,
                       split1: float,
@@ -335,9 +340,9 @@ class Subject_JAX(dict):
         return self.subjects[subject_id].dx_history(self.dx_scheme,
                                                     absolute_dates)
 
-    def dx_outcome_history(self, subject_id, absolute_dates=False):
-        return self.subjects[subject_id].dx_outcome_history(
-            self.dx_outcome_extractor, absolute_dates)
+    def outcome_history(self, subject_id, absolute_dates=False):
+        return self.subjects[subject_id].outcome_history(
+            self.outcome_extractor, absolute_dates)
 
     def adm_times(self, subject_id):
         adms_info = self[subject_id]
@@ -347,17 +352,16 @@ class Subject_JAX(dict):
     def code_first_occurrence(self, subject_id):
 
         adms_info = self[subject_id]
-        first_occurrence = np.empty_like(adms_info[0].dx_outcome, dtype=int)
+        first_occurrence = np.empty_like(adms_info[0].outcome, dtype=int)
         first_occurrence[:] = -1
         for adm in adms_info:
-            update_mask = (first_occurrence < 0) & adm.dx_outcome
+            update_mask = (first_occurrence < 0) & adm.outcome
             first_occurrence[update_mask] = adm.admission_id
         return first_occurrence
 
-    def dx_outcome_frequency_vec(self, subjects: List[Subject]):
-        np_res = Subject.dx_outcome_frequency_vec(
-            map(self._subjects.get, subjects), self.dx_outcome_extractor)
-        return jnp.array(np_res)
+    def outcome_frequency_vec(self, subjects: List[int]):
+        subjs = list(map(self._subjects.get, subjects))
+        return jnp.array(self.outcome_extractor.outcome_frequency_vec(subjs))
 
     def dx_batch_history_vec(self, subjects: List[Subject]):
         history = jnp.zeros((self.dx_dim, ), dtype=int)
@@ -389,11 +393,11 @@ class Subject_JAX(dict):
 
         return codes_by_percentiles
 
-    def dx_outcome_by_percentiles(self,
-                                  percentile_range: float = 20,
-                                  subjects: List[int] = []):
+    def outcome_by_percentiles(self,
+                               percentile_range: float = 20,
+                               subjects: List[int] = []):
         return self._code_frequency_partitions(
-            percentile_range, self.dx_outcome_frequency_vec(subjects))
+            percentile_range, self.outcome_frequency_vec(subjects))
 
     def batch_nth_admission(self, batch: List[int]):
         nth_admission = defaultdict(dict)
@@ -509,9 +513,9 @@ class Subject_JAX(dict):
     def _jaxify_subject_admissions(self):
 
         def _jaxify_adms(subj):
-            outcomes = self.dx_outcome_extractor(subj)
+            outcomes = self.outcome_extractor(subj)
             adms = []
-            for adm, outcome in zip(subj.admissions, outcomes):
+            for adm, (outcome, mask) in zip(subj.admissions, outcomes):
                 dx_mapper = adm.dx_scheme.mapper_to(self.dx_scheme)
                 pr_mapper = adm.pr_scheme.mapper_to(self.pr_scheme)
                 dx_codes = dx_mapper.map_codeset(adm.dx_codes)
@@ -534,7 +538,8 @@ class Subject_JAX(dict):
                                   admission_date=adm.admission_dates[0],
                                   dx_vec=dx_vec,
                                   pr_vec=pr_vec,
-                                  dx_outcome=jnp.array(outcome)))
+                                  outcome=jnp.array(outcome),
+                                  mask=jnp.array(mask)))
 
             return adms
 
@@ -548,7 +553,7 @@ class Subject_JAX(dict):
             dx_dagvec=self._dx_dagvec,
             pr_scheme=self.pr_scheme,
             pr_dagvec=self._pr_dagvec,
-            outcome_extractor=self.dx_outcome_extractor)
+            outcome_extractor=self.outcome_extractor)
 
         for subject_id, subject in self.subjects.items():
             acc_size_gb += len(subject.admissions) * adm_data_size_gb
@@ -577,7 +582,7 @@ class Subject_JAX(dict):
             for adm in adms:
                 (key, ) = jrandom.split(key, 1)
 
-                pred = jrandom.normal(key, shape=adm.dx_outcome.shape)
+                pred = jrandom.normal(key, shape=adm.outcome.shape)
                 predictions.add(subject_id=subject_id,
                                 admission=adm,
                                 prediction=pred)
@@ -590,14 +595,14 @@ class Subject_JAX(dict):
             for adm in adms:
                 predictions.add(subject_id=subject_id,
                                 admission=adm,
-                                prediction=adm.dx_outcome * 1.0)
+                                prediction=adm.outcome * 1.0)
         return predictions
 
     def mean_predictions(self, train_split, test_split):
         predictions = BatchPredictedRisks()
         # Outcomes from training split
         outcomes = jnp.vstack(
-            [a.dx_outcome for i in train_split for a in self[i]])
+            [a.outcome for i in train_split for a in self[i]])
         outcome_mean = jnp.mean(outcomes, axis=0)
 
         # Train on mean outcomes
@@ -618,7 +623,7 @@ class Subject_JAX(dict):
             for i in range(1, len(adms)):
                 predictions.add(subject_id=subject_id,
                                 admission=adms[i],
-                                prediction=adms[i - 1].dx_outcome * 1.0)
+                                prediction=adms[i - 1].outcome * 1.0)
 
         return predictions
 
@@ -628,12 +633,12 @@ class Subject_JAX(dict):
         # Aggregate all previous history for the particular subject.
         for subject_id in test_split:
             adms = self[subject_id]
-            outcome = adms[0].dx_outcome
+            outcome = adms[0].outcome
             for i in range(1, len(adms)):
                 predictions.add(subject_id=subject_id,
                                 admission=adms[i],
                                 prediction=outcome * 1.0)
-                outcome = jnp.maximum(outcome, adms[i - 1].dx_outcome)
+                outcome = jnp.maximum(outcome, adms[i - 1].outcome)
 
         return predictions
 
@@ -685,7 +690,7 @@ class WindowedInterface_JAX(Subject_JAX):
             features = self.features[subj_id]
             for adm, feats in zip(adms[1:], features[1:]):
                 X.append(feats.dx_features)
-                y.append(adm.dx_outcome)
+                y.append(adm.outcome)
 
         return np.vstack(X), np.vstack(y)
 
@@ -695,4 +700,4 @@ class WindowedInterface_JAX(Subject_JAX):
 
     @property
     def n_targets(self):
-        return self._interface_.dx_outcome_dim
+        return self._interface_.outcome_dim

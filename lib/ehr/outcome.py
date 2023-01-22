@@ -1,6 +1,8 @@
-from typing import Set
-import os
+"""."""
 
+from typing import Set, List, Callable, Dict
+import os
+from collections import defaultdict
 import numpy as np
 
 from ..utils import load_config
@@ -63,10 +65,27 @@ class OutcomeExtractor(C.AbstractScheme):
         return vec
 
     def subject_outcome(self, subject: Subject):
-        return [
-            self.codeset2vec(adm.dx_codes, adm.dx_scheme)
-            for adm in subject.admissions
-        ]
+        mask = np.ones((self.outcome_dim, ))
+        return [(self.codeset2vec(adm.dx_codes, adm.dx_scheme), mask)
+                for adm in subject.admissions]
+
+    def outcome_frequency_vec(self, subjects: List[Subject]):
+        return sum(outcome[0] for subj in subjects
+                   for outcome in self.subject_outcome(subj))
+
+    def outcome_history(self,
+                        admissions: List[Admission],
+                        absolute_dates=False):
+        history = defaultdict(list)
+        first_adm_date = admissions[0].admission_dates[0]
+        for adm in admissions:
+            for code in self.map_codeset(adm.dx_codes, adm.dx_scheme):
+                if absolute_dates:
+                    history[code].append(adm.admission_dates)
+                else:
+                    history[code].append(adm.admission_day(first_adm_date),
+                                         adm.discharge_day(first_adm_date))
+        return history
 
     @staticmethod
     def conf_from_json(json_file: str):
@@ -87,3 +106,25 @@ class OutcomeExtractor(C.AbstractScheme):
             return conf
         elif 'exclude_codes' in conf:
             return conf
+
+
+class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
+
+    def subject_outcome(self, subject: Subject):
+        # The mask elements are ones for each outcome coordinate until
+        # the outcome appears at one admission, the mask will have zero values
+        # for later admissions for that particular coordinate
+        mask = np.ones((self.outcome_dim, ))
+        outcomes = []
+        for adm in subject.admissions:
+            outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
+            outcomes.append((outcome, mask))
+
+            # set mask[i] to zero if already zero or outcome[i] == 1
+            mask = (mask & ~outcome)
+
+        return outcomes
+
+    def outcome_frequency_vec(self, subjects: List[Subject]):
+        return sum(outcome[0] * outcome[1] for subj in subjects
+                   for outcome in self.subject_outcome(subj))

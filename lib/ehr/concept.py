@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 from datetime import date
-from collections import defaultdict, namedtuple
-from typing import List, Tuple, Set, Callable, Dict, Optional
-from absl import logging
+from collections import namedtuple
 from dataclasses import dataclass
+from typing import List, Tuple, Set, Callable, Optional
+from absl import logging
 
-import numpy as np
-
-from .outcome import OutcomeExtractor
-from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
+from .coding_scheme import AbstractScheme, NullScheme
 
 
 @dataclass
@@ -96,31 +93,6 @@ class Subject:
         return self.admissions[0].admission_dates[0]
 
     @staticmethod
-    def _event_history(adms_sorted: List[Admission],
-                       adm2codeset: Callable[[Admission], Set[str]],
-                       absolute_dates=False):
-        history = defaultdict(list)
-        first_adm_date = adms_sorted[0].admission_dates[0]
-        for adm in adms_sorted:
-            for code in adm2codeset(adm):
-                if absolute_dates:
-                    history[code].append(adm.admission_dates)
-                else:
-                    history[code].append(adm.admission_day(first_adm_date),
-                                         adm.discharge_day(first_adm_date))
-        return history
-
-    def dx_outcome_history(self,
-                           dx_outcome: OutcomeExtractor,
-                           absolute_dates=False):
-
-        m = dx_outcome
-        return self._event_history(
-            self.admissions,
-            lambda adm: m.map_codeset(adm.dx_codes, adm.dx_scheme),
-            absolute_dates)
-
-    @staticmethod
     def dx_schemes(subjects: List[Subject]):
         # This function handles the case when coding schemes are not consistent
         # across admissions.
@@ -139,41 +111,6 @@ class Subject:
             for a in s.admissions:
                 schemes.add(a.pr_scheme)
         return schemes
-
-    @staticmethod
-    def _event_frequency(subjects: List[Subject],
-                         adm2codeset: Callable[[Admission], Set[str]],
-                         index=None):
-        counter = defaultdict(int)
-        for subject in subjects:
-            for adm in subject.admissions:
-                codeset = adm2codeset(adm)
-                for c in codeset:
-                    counter[c] += 1
-
-        if index:
-            counter = {index[c]: counter[c] for c in counter}
-
-        return counter
-
-    @staticmethod
-    def _event_frequency_vec(subjects: List[Subject],
-                             adm2codeset: Callable[[Admission], Set[str]],
-                             index: Dict[str, int]):
-        freq_dict = Subject._event_frequency(subjects, adm2codeset, index)
-        vec = np.zeros(len(index))
-        for idx, count in freq_dict.items():
-            vec[idx] = count
-        return vec
-
-    @staticmethod
-    def dx_outcome_frequency_vec(subjects: List[Subject],
-                                 dx_outcome: OutcomeExtractor):
-        m = dx_outcome
-        return Subject._event_frequency_vec(
-            subjects=subjects,
-            adm2codeset=lambda adm: m.map_codeset(adm.dx_codes, adm.dx_scheme),
-            index=m.index)
 
     @staticmethod
     def merge_overlaps(admissions):

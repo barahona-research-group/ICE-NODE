@@ -136,13 +136,17 @@ class VisitsAUC(Metric):
                 gtruth.append(risk.ground_truth)
                 preds.append(risk.prediction)
 
-        gtruth_mat = onp.hstack(gtruth)
-        preds_mat = onp.hstack(preds)
+        gtruth_vec = onp.hstack(gtruth)
+        preds_vec = onp.hstack(preds)
         return {
             'macro_auc':
-            compute_auc(gtruth_mat, preds_mat),
+            compute_auc(gtruth_vec, preds_vec, mask_vec),
             'micro_auc':
-            onp.nanmean(onp.array(list(map(compute_auc, gtruth, preds))))
+            onp.nanmean(onp.array(list(map(
+                compute_auc,
+                gtruth,
+                preds,
+            ))))
         }
 
 
@@ -157,7 +161,7 @@ class CodeLevelMetric(Metric):
     aggregate_level: bool = field(default=True)
 
     def __post_init__(self):
-        self.code2index = self.subject_interface.dx_outcome_extractor.index
+        self.code2index = self.subject_interface.outcome_extractor.index
         self.index2code = {i: c for c, i in self.code2index.items()}
 
     @staticmethod
@@ -286,7 +290,7 @@ class UntilFirstCodeAUC(CodeAUC):
 
         for subj_id, admission_risks in predictions.items():
             # first_occ is a vector of admission indices where the code at the corresponding
-            # coordinate has first appeard for the patient. The index value of
+            # coordinate has first appeard for the patient. the index value of
             # (-1) means that the code will not appear at all for this patient.
             first_occ = self.subject_interface.code_first_occurrence(subj_id)
 
