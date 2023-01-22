@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     import optuna
 
 from ..ml import AbstractModelProxMap
-from ..ehr import WindowedInterface_JAX, Subject_JAX, BatchPredictedRisks
+from ..ehr import Subject_JAX, BatchPredictedRisks
 
 
 def prox_elastic_net(x: Any,
@@ -64,28 +64,25 @@ class WindowLogReg(AbstractModelProxMap):
     def weights(self):
         return (self.W, )
 
+    @eqx.filter_jit
     def predict_logits(self, x):
         return self.W @ x + self.b
 
+    @eqx.filter_jit
     def predict_proba(self, x):
         return jax.nn.softmax(self.predict_logits(x))
 
     def __call__(self, subject_interface: Subject_JAX,
                  subjects_batch: List[int], args):
-        subject_interface = WindowedInterface_JAX(subject_interface)
         risk_prediction = BatchPredictedRisks()
         for subj_id in subjects_batch:
             adms = subject_interface[subj_id]
-            features = subject_interface.features[subj_id]
-
-            X = np.vstack([feats.dx_features for feats in features[1:]])
-            y = np.vstack([adm.outcome for adm in adms[1:]])
-            risk = jax.vmap(self.predict_logits)(X)
-
-            for (adm, pred) in zip(adms[1:], risk):
+            X = subject_interface.tabular_features(subjects_batch)
+            risks = [self.predict_logits(x) for x in X]
+            for (adm, risk) in zip(adms[1:], risks):
                 risk_prediction.add(subject_id=subj_id,
                                     admission=adm,
-                                    prediction=pred)
+                                    prediction=risk)
 
         return {'predictions': risk_prediction}
 

@@ -140,7 +140,7 @@ class VisitsAUC(Metric):
         preds_vec = onp.hstack(preds)
         return {
             'macro_auc':
-            compute_auc(gtruth_vec, preds_vec, mask_vec),
+            compute_auc(gtruth_vec, preds_vec),
             'micro_auc':
             onp.nanmean(onp.array(list(map(
                 compute_auc,

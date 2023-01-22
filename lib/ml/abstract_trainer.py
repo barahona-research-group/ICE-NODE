@@ -15,6 +15,7 @@ from ..ehr import Subject_JAX, BatchPredictedRisks
 from .. import metric as M
 from ..utils import params_size, tree_hasnan
 from .abstract_model import AbstractModel
+from .reporters import AbstractReporter
 
 opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
@@ -196,7 +197,7 @@ class Trainer(eqx.Module):
                  history: MetricsHistory,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
-                 reporters: List["lib.ml.AbstractReporter"] = []):
+                 reporters: List[AbstractReporter] = []):
         train_ids, valid_ids, test_ids = splits
         # Because shuffling is done in-place.
         train_ids = copy.deepcopy(train_ids)

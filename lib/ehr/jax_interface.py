@@ -642,62 +642,24 @@ class Subject_JAX(dict):
 
         return predictions
 
-
-class WindowFeatures:
-
-    def __init__(self, past_admissions: List[Admission_JAX]):
-        self.dx_features = self.dx_jax(past_admissions)
-
-    @staticmethod
-    def dx_jax(past_admissions: List[Admission_JAX]):
-        past_codes = jnp.vstack([adm.dx_vec for adm in past_admissions])
-        return jnp.max(past_codes, axis=0)
-
-
-class WindowedInterface_JAX(Subject_JAX):
-
-    def __init__(self, interface: Subject_JAX):
-        self._interface_ = interface
-        self._subjects = interface._subjects
-        self.update(interface)
-        self.features = self._compute_window_features(interface)
-
-    @staticmethod
-    def _compute_window_features(interface: Subject_JAX):
+    def _compute_window_features(self, subjects: List[int]):
         features = {}
-        for subj_id, adms in interface.items():
-            current_window = []
+        for subj_id in subjects:
+            adms = self[subj_id]
             # Windowed features only contain information about the past adms.
-            # First element, corresponding to first admission time, is None.
-            window_features = [None]
-
-            for adm in adms[:-1]:
-                current_window.append(adm)
-                window_features.append(WindowFeatures(current_window))
-            features[subj_id] = window_features
+            dx_vec_list = []
+            subject_features = []
+            for i in range(len(adms) - 1):
+                dx_vec_list.append(adms[i].dx_vec)
+                current_features = jnp.max(jnp.vstack(dx_vec_list), axis=0)
+                subject_features.append(current_features)
+            features[subj_id] = subject_features
         return features
 
-    def tabular_features(self, batch: Optional[List[int]] = None):
-        """
-        Features are the past window of CCS codes, and labels
-        are the past window of Flat CCS codes.
-        """
-        batch = batch or sorted(self.features.keys())
+    def tabular_features(self, subjects: List[int]):
+        features = self._compute_window_features(subjects)
         X = []
-        y = []
-        for subj_id in batch:
-            adms = self[subj_id]
-            features = self.features[subj_id]
-            for adm, feats in zip(adms[1:], features[1:]):
-                X.append(feats.dx_features)
-                y.append(adm.outcome)
+        for subj_id in subjects:
+            X.extend(features[subj_id])
 
-        return np.vstack(X), np.vstack(y)
-
-    @property
-    def n_features(self):
-        return self._interface_.dx_dim
-
-    @property
-    def n_targets(self):
-        return self._interface_.outcome_dim
+        return np.vstack(X)

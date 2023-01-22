@@ -12,7 +12,7 @@
     "training": {
         "batch_size": 16,
         "decay_rate": null,
-        "epochs": 0.1,
+        "epochs": 0.5,
         "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0
