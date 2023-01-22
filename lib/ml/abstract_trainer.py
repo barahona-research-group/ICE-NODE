@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
 from tqdm import tqdm
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import equinox as eqx
@@ -15,7 +14,7 @@ import optax
 from ..ehr import Subject_JAX, BatchPredictedRisks
 from .. import metric as M
 from ..utils import params_size, tree_hasnan
-from ..ml import AbstractModel
+from .abstract_model import AbstractModel
 
 opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
