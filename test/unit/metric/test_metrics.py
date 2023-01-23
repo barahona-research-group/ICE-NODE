@@ -150,7 +150,7 @@ class MetricsTest(unittest.TestCase):
         self.assertLess(mean_auc(df_rnd), mean_auc(df_truth))
 
     def test_metrics_collection(self):
-        m3_groups = m3_interface.dx_outcome_by_percentiles(percentile_range=20,
+        m3_groups = m3_interface.outcome_by_percentiles(percentile_range=20,
                                                            subjects=splits[0])
         vauc_m = VisitsAUC(m3_interface)
         vmicroauc = vauc_m.value_extractor({'field': 'micro_auc'})
