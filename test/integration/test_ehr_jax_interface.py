@@ -57,9 +57,8 @@ class TestSubject_JAX(unittest.TestCase):
                     code_partitions = IF.outcome_by_percentiles(
                         percentile_range, train_ids)
                     # Assert that union of all partitions recovers all the codes.
-                    self.assertEqual(
-                        set(IF.outcome_extractor.index.values()),
-                        set.union(*code_partitions))
+                    self.assertEqual(set(IF.outcome_extractor.index.values()),
+                                     set.union(*code_partitions))
 
                     # Assert that no intersection between the partitions
                     for i in range(len(code_partitions)):
@@ -69,8 +68,8 @@ class TestSubject_JAX(unittest.TestCase):
 
     def test_tabular(self):
         subjects_ids = list(self.interfaces[0].keys())
-        X, y = self.interfaces[0].tabular_features(subjects_ids)
-        self.assertTrue(set(X.flatten()) & set(y.flatten()) == {0, 1})
+        X = self.interfaces[0].tabular_features(subjects_ids)
+        self.assertTrue(set(X.flatten()) == {0, 1})
 
 
 if __name__ == '__main__':
