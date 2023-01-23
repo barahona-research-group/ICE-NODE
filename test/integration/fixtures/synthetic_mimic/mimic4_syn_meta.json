@@ -18,11 +18,18 @@
         "dischtime": "dischtime",
         "subject_id": "subject_id",
         "admission_id": "hadm_id"
+    },    
+    "static_colname": {
+	"subject_id": "subject_id",
+	"gender": "gender",
+	"anchor_age": "anchor_age",
+	"anchor_year": "anchor_year"
     },
     "files": {
         "adm": "m4_adm_df.csv.gz",
         "dx": "m4_dx_df.csv.gz",
-        "pr": "m4_pr_df.csv.gz"
+        "pr": "m4_pr_df.csv.gz",
+	"static": "m4_static_df.csv.gz"
     },
     "name": "MIMIC-IV",
     "python_class": "MIMIC4Dataset",

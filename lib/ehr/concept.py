@@ -17,7 +17,7 @@ class AbstractAdmission:
 
     @staticmethod
     def days(d1, d2):
-        return (d1.to_pydatetime() - d2.to_pydatetime()).days
+        return (d1 - d2).days
 
     def admission_day(self, ref_date):
         return self.days(self.admission_dates[0], ref_date)
@@ -54,8 +54,7 @@ class StaticInfo:
     ethnicity_scheme: AbstractScheme = NullScheme()
 
     def age(self, current_date: date):
-        return (current_date.to_pydatetime() -
-                self.date_of_birth.to_pydatetime()).days / 365.25
+        return (current_date - self.date_of_birth).days / 365.25
 
 
 StaticInfoFlags = namedtuple("StaticInfoFlags",

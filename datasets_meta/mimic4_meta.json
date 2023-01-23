@@ -19,10 +19,17 @@
         "subject_id": "subject_id",
         "admission_id": "hadm_id"
     },
+    "static_colname": {
+	"subject_id": "subject_id",
+	"gender": "gender",
+	"anchor_age": "anchor_age",
+	"anchor_year": "anchor_year"
+    },
     "files": {
         "adm": "adm_df.csv.gz",
         "dx": "dx_df.csv.gz",
-        "pr": "pr_df.csv.gz"
+        "pr": "pr_df.csv.gz",
+	"static": "static_df.csv.gz"
     },
     "name": "MIMIC-IV",
     "python_class": "MIMIC4Dataset",

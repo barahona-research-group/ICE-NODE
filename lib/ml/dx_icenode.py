@@ -169,7 +169,7 @@ class ICENODE(AbstractModel):
                 self.join_state_emb(None, emb_seq[0]),
                 jnp.array(adms[0].admission_time + adms[0].los))
 
-            for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[1:]):
+            for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[:-1]):
 
                 # Discharge-to-discharge time.
                 d2d_time = jnp.array(

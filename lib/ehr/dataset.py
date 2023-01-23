@@ -35,10 +35,11 @@ class AbstractEHRDataset(metaclass=ABCMeta):
 
 class MIMIC4EHRDataset(AbstractEHRDataset):
 
-    def __init__(self, df: Dict[str, pd.DataFrame],
-                 code_scheme: Dict[str, StrDict], normalised_scheme: StrDict,
-                 code_colname: StrDict, code_version_colname: StrDict,
-                 adm_colname: StrDict, name: str, **kwargs):
+    def __init__(self, df: Dict[str, pd.DataFrame], code_scheme: Dict[str,
+                                                                      StrDict],
+                 normalised_scheme: StrDict, code_colname: StrDict,
+                 code_version_colname: StrDict, adm_colname: StrDict,
+                 static_colname: StrDict, name: str, **kwargs):
 
         normalised_scheme = {
             code_type: eval(f"C.{scheme}")()
@@ -71,6 +72,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
         self.normalised_scheme = normalised_scheme
         self.code_scheme = code_scheme
         self.adm_colname = adm_colname
+        self.static_colname = static_colname
         self.code_colname = code_colname
         self.code_version_colname = code_version_colname
         self.df = df
@@ -85,16 +87,17 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
         code_ver_colname = m.get('code_version_colname')
 
         adm_df = pd.read_csv(os.path.join(base_dir, files['adm']))
+        static_df = pd.read_csv(os.path.join(base_dir, files['static']))
 
         # Cast columns of dates to datetime64
         adm_df[adm_colname['admittime']] = pd.to_datetime(
             adm_df[adm_colname['admittime']],
-            infer_datetime_format=True).dt.normalize()
+            infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
         adm_df[adm_colname['dischtime']] = pd.to_datetime(
             adm_df[adm_colname['dischtime']],
-            infer_datetime_format=True).dt.normalize()
+            infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
 
-        res = {'adm': adm_df}
+        res = {'adm': adm_df, 'static': static_df}
 
         for code_type in ['dx', 'pr']:
             if files.get(code_type, None) is None:
@@ -131,11 +134,25 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
     def to_subjects(self):
         col = self.adm_colname
+        scol = self.static_colname
         adm_id_col = col["admission_id"]
         admt_col = col["admittime"]
         dist_col = col["dischtime"]
         dx_scheme = self.normalised_scheme['dx']
         pr_scheme = self.normalised_scheme.get('pr', C.NullScheme())
+
+        s_df = self.df['static']
+        gender_dict = {'M': 1.0, 'F': 0.0}
+
+        gender_col = s_df[scol["gender"]].map(gender_dict)
+        subject_gender = dict(zip(s_df[scol["subject_id"]], gender_col))
+        anchor_date = pd.to_datetime(
+            s_df[scol['anchor_year']],
+            format='%Y').dt.normalize().dt.to_pydatetime()
+        anchor_age = s_df[scol['anchor_age']].apply(
+            lambda y: pd.DateOffset(years=-y))
+        dob = anchor_date + anchor_age
+        subject_dob = dict(zip(s_df[scol["subject_id"]], dob))
 
         subjects = {}
         # Admissions
@@ -151,9 +168,11 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                                          pr_codes=set(),
                                          dx_scheme=dx_scheme,
                                          pr_scheme=pr_scheme)
+            static_info = StaticInfo(date_of_birth=subject_dob[subj_id],
+                                     gender=subject_gender[subj_id])
             subjects[subj_id] = dict(subject_id=subj_id,
                                      admissions=subj_adms,
-                                     static_info=StaticInfo())
+                                     static_info=static_info)
 
         for subj_id, adm_id, dx_codes in self.codes_extractor("dx"):
             subjects[subj_id]["admissions"][adm_id]["dx_codes"] = dx_codes
@@ -203,8 +222,8 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
 class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
-    def __init__(self, df, code_scheme, code_colname, adm_colname, name,
-                 **kwargs):
+    def __init__(self, df, code_scheme, code_colname, adm_colname,
+                 static_colname, name, **kwargs):
         code_scheme = {
             code_type: eval(f"C.{scheme}")()
             for code_type, scheme in code_scheme.items()
@@ -222,6 +241,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
         self.df = df
         self.code_scheme = code_scheme
         self.adm_colname = adm_colname
+        self.static_colname = static_colname
         self.code_colname = code_colname
 
     @staticmethod
@@ -256,12 +276,23 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
     def to_subjects(self):
         col = self.adm_colname
+        scol = self.static_colname
+
         adm_id_col = col["admission_id"]
         admt_col = col["admittime"]
         dist_col = col["dischtime"]
         dx_scheme = self.code_scheme['dx']
         pr_scheme = self.code_scheme.get('pr', C.NullScheme())
 
+        s_df = self.df['static']
+        gender_dict = {'M': 1.0, 'F': 0.0}
+
+        gender_col = s_df[scol["gender"]].map(gender_dict)
+        subject_gender = dict(zip(s_df[scol["subject_id"]], gender_col))
+        dob = pd.to_datetime(
+            s_df[scol["date_of_birth"]],
+            infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
+        subject_dob = dict(zip(s_df[scol["subject_id"]], dob))
         subjects = {}
         # Admissions
         for subj_id, subj_adms_df in self.df['adm'].groupby(col["subject_id"]):
@@ -276,9 +307,11 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
                                          pr_codes=set(),
                                          dx_scheme=dx_scheme,
                                          pr_scheme=pr_scheme)
+            static_info = StaticInfo(gender=subject_gender[subj_id],
+                                     date_of_birth=subject_dob[subj_id])
             subjects[subj_id] = dict(subject_id=subj_id,
                                      admissions=subj_adms,
-                                     static_info=StaticInfo())
+                                     static_info=static_info)
 
         for subj_id, adm_id, dx_codes in self.codes_extractor("dx"):
             subjects[subj_id]["admissions"][adm_id]["dx_codes"] = dx_codes
@@ -295,8 +328,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
 class CPRDEHRDataset(AbstractEHRDataset):
 
-    def __init__(self, df, colname, code_scheme, name,
-                 **kwargs):
+    def __init__(self, df, colname, code_scheme, name, **kwargs):
 
         self.name = name
         self.code_scheme = {

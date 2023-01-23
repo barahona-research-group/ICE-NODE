@@ -82,7 +82,7 @@ class RETAIN(AbstractModel):
             c_seq = jnp.vstack([get_ctrl(adm.admission_date) for adm in adms])
 
             # Merge controls with embeddings
-            v_seq = jnp.hstack([c_seq, v_seq])
+            cv_seq = jnp.hstack([c_seq, v_seq])
 
             for i in range(1, len(v_seq)):
                 # e: i, ..., 1
@@ -95,15 +95,15 @@ class RETAIN(AbstractModel):
                 state_b = state_b0
                 for j in reversed(range(i)):
                     # step 2 @RETAIN paper
-                    g_j = state_a = self.gru_a(v_seq[j], state_a)
-                    e_j = self.att_a(g_j)
+                    state_a = self.gru_a(cv_seq[j], state_a)
+                    e_j = self.att_a(state_a)
                     # After the for-loop apply softmax on e_seq to get
                     # alpha_seq
 
                     e_seq.append(e_j)
 
                     # step 3 @RETAIN paper
-                    h_j = state_b = self.gru_b(v_seq[j], state_b)
+                    h_j = state_b = self.gru_b(cv_seq[j], state_b)
                     b_j = self.att_b(h_j)
 
                     b_seq.append(jnp.tanh(b_j))

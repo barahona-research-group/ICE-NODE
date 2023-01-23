@@ -66,24 +66,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         return subject_interface.dx_outcome_by_percentiles(20, train_ids)
 
     @classmethod
-    def select_loss(cls, loss_label: str, subject_interface: Subject_JAX,
-                    train_ids: List[int], dx_scheme: str):
-        if loss_label == 'balanced_focal':
-            return lambda t, p: metric.balanced_focal_bce(
-                t, p, gamma=2, beta=0.999)
-        elif loss_label == 'softmax_logits_bce':
-            return metric.softmax_logits_bce
-        elif loss_label == 'bce':
-            return metric.bce
-        elif loss_label == 'balanced_bce':
-            codes_dist = subject_interface.dx_code_frequency_vec(
-                train_ids, dx_scheme)
-            weights = codes_dist.sum() / (codes_dist + 1e-1) * len(codes_dist)
-            return lambda t, logits: metric.weighted_bce(t, logits, weights)
-        else:
-            raise ValueError(f'Unrecognized dx_loss: {loss_label}')
-
-    @classmethod
     def sample_reg_hyperparams(cls, trial: optuna.Trial):
         return {
             'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
@@ -112,7 +94,11 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         decoder_input_size = cls.decoder_input_size(conf)
         emb_models = embeddings_from_conf(conf["emb"], subject_interface,
                                           train_split, decoder_input_size)
-        return cls(**emb_models, **conf["model"], key=key)
+        control_size = subject_interface.control_dim
+        return cls(**emb_models,
+                   **conf["model"],
+                   control_size=control_size,
+                   key=key)
 
     def load_params(self, params_file):
         """

@@ -20,6 +20,7 @@ import equinox as eqx
 from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
 from lib.ehr.outcome import OutcomeExtractor, FirstOccurrenceOutcomeExtractor
+from lib.ehr.concept import StaticInfoFlags
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
 from lib.utils import load_config
@@ -41,16 +42,19 @@ def setUpModule():
     flatccs_outcome = OutcomeExtractor('dx_flatccs_filter_v1')
     flatccs_1outcome = FirstOccurrenceOutcomeExtractor('dx_flatccs_filter_v1')
 
-    if3_f = lambda scheme: Subject_JAX.from_dataset(m3_dataset, scheme)
+    if3_f = lambda scheme, **kw: Subject_JAX.from_dataset(
+        m3_dataset, scheme, **kw)
     if4_f = lambda scheme: Subject_JAX.from_dataset(m4_dataset, scheme)
 
+    ctrl_flags = StaticInfoFlags(gender=True, age=True)
     m3_interface = {
         'ccs':
         if3_f(dict(dx=DxCCS(), outcome=flatccs_outcome)),
-        'ccs1':
+        'ccs_first':
         if3_f(dict(dx=DxCCS(), outcome=flatccs_1outcome)),
-        'icd10':
-        if3_f(dict(dx=DxICD10(), outcome=icd9_outcome)),
+        'ccs_first_control':
+        if3_f(dict(dx=DxCCS(), outcome=flatccs_1outcome),
+              static_info_flags=ctrl_flags),
         'icd9':
         if3_f(dict(dx=DxICD9(), outcome=icd9_1outcome)),
         'icd9dag':
@@ -159,7 +163,7 @@ class TestDxWindowLogReg(DxCommonTests):
     def setUp(self):
         config = model_configs['dx_winlogreg']
         self.actors = []
-        for IF in [m3_interface['ccs'], m3_interface['ccs1']]:
+        for IF in [m3_interface['ccs'], m3_interface['ccs_first']]:
             splits = IF.random_splits(0.7, 0.85, 42)
             model = ml.WindowLogReg.from_config(config, IF, splits[0], key)
             trainer_cls = getattr(ml, config["training"]["classname"])
@@ -187,7 +191,7 @@ class TestDxRETAIN(DxCommonTests):
     def setUp(self):
         config = model_configs['dx_retain_m']
         self.actors = []
-        IFs = [m3_interface['ccs'], m3_interface['ccs1']]
+        IFs = [m3_interface['ccs'], m3_interface['ccs_first_control']]
         for IF in IFs:
             splits = IF.random_splits(0.7, 0.85, 42)
             model = ml.RETAIN.from_config(config, IF, splits[0], key)
@@ -202,7 +206,7 @@ class TestDxICENODE_M(DxCommonTests):
     def setUp(self):
         config = model_configs['dx_icenode_2lr_m']
         self.actors = []
-        IFs = [m3_interface['ccs']]
+        IFs = [m3_interface['ccs_first_control']]
         for IF in IFs:
             splits = IF.random_splits(0.7, 0.85, 42)
             model = ml.ICENODE.from_config(config, IF, splits[0], key)
@@ -210,6 +214,7 @@ class TestDxICENODE_M(DxCommonTests):
             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
             trainer = trainer_cls(**config["training"])
             self.actors.append(TestActors(model, config, trainer, IF, splits))
+
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests):
 
@@ -255,7 +260,6 @@ class TestDxICENODE_M_UNIFORM0(DxCommonTests):
 #             trainer = trainer_cls(**config["training"])
 #             self.actors.append(TestActors(model, config, trainer, IF, splits))
 
-
 # class TestDxGRU_G(DxCommonTests):
 
 #     def setUp(self):
@@ -269,7 +273,6 @@ class TestDxICENODE_M_UNIFORM0(DxCommonTests):
 #             self.assertEqual(trainer_cls, ml.Trainer)
 #             trainer = trainer_cls(**config["training"])
 #             self.actors.append(TestActors(model, config, trainer, IF, splits))
-
 
 # class TestDxPrICENODE_G(DxCommonTests):
 

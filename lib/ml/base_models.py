@@ -13,14 +13,6 @@ from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
                      NoAdjoint)
 
 
-class ControlledDynamics(eqx.Module):
-    f: Callable
-    c: jnp.ndarray = eqx.static_field()
-
-    def __call__(self, t, x, args):
-        return self.f(t, jnp.concatenate((self.c, x)), args)
-
-
 class GRUDynamics(eqx.Module):
     """
     Modified GRU unit to deal with latent state ``h(t)``.
@@ -131,6 +123,13 @@ class TaylorAugmented(eqx.Module):
         return dydt, jnp.mean(drdt**2)
 
 
+class ControlledDynamics(eqx.Module):
+    f_dyn: Callable
+
+    def __call__(self, t, x, args):
+        return self.f_dyn(t, jnp.concatenate((args['control'], x)), args)
+
+
 class VectorField(eqx.Module):
     f_dyn: eqx.Module
 
@@ -150,14 +149,15 @@ class NeuralODE(eqx.Module):
                             round((int_time - int_time % dt) / dt + 1))
 
     def __call__(self, t, x, args=dict()):
-        dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, self.ode_dyn(x))
+        x0 = self.get_x0(x, args)
+
+        dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, args)
         sampling_rate = args.get('sampling_rate', None)
         if sampling_rate:
             t = self.timesamples(float(t), sampling_rate)
         else:
             t = jnp.linspace(0.0, t / self.timescale, 2)
 
-        x0 = self.get_x0(x, args)
         term = self.ode_term(args)
         saveat = SaveAt(ts=t)
         solver = Dopri5()
@@ -173,6 +173,7 @@ class NeuralODE(eqx.Module):
                            t[-1],
                            dt0=dt0,
                            y0=x0,
+                           args=args,
                            adjoint=adjoint,
                            saveat=saveat,
                            max_steps=2**20).ys
@@ -186,17 +187,21 @@ class NeuralODE(eqx.Module):
     def ode_term(self, args):
         term = VectorField(self.ode_dyn)
         if len(args.get('control', jnp.array([]))) > 0:
-            term = ControlledDynamics(term, args['control'])
+            term = ControlledDynamics(term)
         if args.get('tay_reg', 0) > 0:
             term = TaylorAugmented(term, args['tay_reg'])
 
         return ODETerm(term)
 
-    def initial_step_size(self, t0, y0, order, rtol, atol, f0):
+    def initial_step_size(self, t0, y0, order, rtol, atol, args):
         # Algorithm from:
         # E. Hairer, S. P. Norsett G. Wanner,
         # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
         # Code from: https://github.com/google/jax/blob/main/jax/experimental/ode.py
+        ctrl = args.get('control', jnp.array([]))
+        ctrl_y = lambda y: jnp.concatenate((ctrl, y))
+        f0 = self.ode_dyn(ctrl_y(y0))
+
         dtype = y0.dtype
 
         scale = atol + jnp.abs(y0) * rtol
@@ -205,7 +210,7 @@ class NeuralODE(eqx.Module):
 
         h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
         y1 = y0 + h0.astype(dtype) * f0
-        f1 = self.ode_dyn(y1)
+        f1 = self.ode_dyn(ctrl_y(y1))
         d2 = jnp.linalg.norm((f1 - f0) / scale.astype(dtype)) / h0
 
         h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
