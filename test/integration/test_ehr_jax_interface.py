@@ -3,8 +3,9 @@
 import unittest
 import logging
 
-from lib.ehr import (Subject_JAX,WindowedInterface_JAX, MIMIC3EHRDataset, MIMIC4EHRDataset)
-from lib.ehr.coding_scheme import (DxICD9, DxICD10, DxCCS, DxFlatCCS, NullScheme)
+from lib.ehr import (Subject_JAX, MIMIC3EHRDataset, MIMIC4EHRDataset)
+from lib.ehr.coding_scheme import (DxICD9, DxICD10, DxCCS, DxFlatCCS,
+                                   NullScheme)
 from lib.ehr.outcome import OutcomeExtractor
 
 
@@ -21,7 +22,7 @@ class TestSubject_JAX(unittest.TestCase):
         for dx_scheme in [DxICD9, DxICD10, DxCCS, DxFlatCCS]:
             code_scheme = {
                 'dx': dx_scheme(),
-                'dx_outcome': OutcomeExtractor('dx_flatccs_filter_v1'),
+                'outcome': OutcomeExtractor('dx_flatccs_filter_v1'),
                 'pr': NullScheme()
             }
             interface = Subject_JAX.from_dataset(m3_dataset, code_scheme)
@@ -30,7 +31,7 @@ class TestSubject_JAX(unittest.TestCase):
         for dx_scheme in [DxICD9, DxICD10]:
             code_scheme = {
                 'dx': dx_scheme(),
-                'dx_outcome': OutcomeExtractor('dx_icd9_filter_v1'),
+                'outcome': OutcomeExtractor('dx_icd9_filter_v1'),
                 'pr': NullScheme()
             }
             interface = Subject_JAX.from_dataset(m4_dataset, code_scheme)
@@ -53,11 +54,11 @@ class TestSubject_JAX(unittest.TestCase):
             train_ids, valid_ids, test_ids = splits
             with self.subTest(msg=f"{IF.dx_mappers}"):
                 for percentile_range in [2, 5, 10, 20, 25, 33, 50, 100]:
-                    code_partitions = IF.dx_outcome_by_percentiles(
+                    code_partitions = IF.outcome_by_percentiles(
                         percentile_range, train_ids)
                     # Assert that union of all partitions recovers all the codes.
                     self.assertEqual(
-                        set(IF.dx_outcome_extractor.index.values()),
+                        set(IF.outcome_extractor.index.values()),
                         set.union(*code_partitions))
 
                     # Assert that no intersection between the partitions
@@ -66,21 +67,9 @@ class TestSubject_JAX(unittest.TestCase):
                             self.assertCountEqual(
                                 code_partitions[i] & code_partitions[j], set())
 
-
-class CommonWindowedInterfaceTests(object):
-
-    @classmethod
-    def setUpClass(cls):
-        m3_dataset = MIMIC3EHRDataset.from_meta_json(
-            'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
-        interface = Subject_JAX.from_dataset(m3_dataset, {
-            'dx': DxFlatCCS(),
-            'dx_outcome': OutcomeExtractor('dx_flatccs_v1')
-        })
-        cls.win_features = WindowedInterface_JAX(interface)
-
     def test_tabular(self):
-        X, y = self.win_features.tabular_features()
+        subjects_ids = list(self.interfaces[0].keys())
+        X, y = self.interfaces[0].tabular_features(subjects_ids)
         self.assertTrue(set(X.flatten()) & set(y.flatten()) == {0, 1})
 
 
