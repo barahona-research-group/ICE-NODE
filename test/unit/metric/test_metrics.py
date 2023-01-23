@@ -117,7 +117,7 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(mean_auc(df_truth), a_truth[~mask].mean())
 
     def test_code_group_alarm_acc(self):
-        m3_groups = m3_interface.dx_outcome_by_percentiles(percentile_range=20,
+        m3_groups = m3_interface.outcome_by_percentiles(percentile_range=20,
                                                            subjects=splits[0])
         ks = [1, 5, 10, 15]
         metric = CodeGroupTopAlarmAccuracy(code_groups=m3_groups,
