@@ -25,7 +25,7 @@ def setUpModule():
         'test/integration/fixtures/synthetic_mimic/mimic3_syn_meta.json')
     icd9_outcome = OutcomeExtractor('dx_icd9_filter_v1')
     m3_interface = Subject_JAX.from_dataset(
-        m3_dataset, dict(dx=DxICD9(), dx_outcome=icd9_outcome))
+        m3_dataset, dict(dx=DxICD9(), outcome=icd9_outcome))
     splits = m3_interface.random_splits(0.7, 0.85, 42)
 
 
