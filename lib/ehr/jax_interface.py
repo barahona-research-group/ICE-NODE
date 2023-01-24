@@ -414,11 +414,13 @@ class Subject_JAX(dict):
         assert isinstance(
             self._dx_scheme, HierarchicalScheme
         ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
-        return self._coocurrence(self._dx_scheme,
-                                 adm_codes_f=lambda adm: adm.dx_codes,
-                                 augmented=True,
-                                 subjects=subjects,
-                                 window_size_days=window_size_days)
+        return self._coocurrence(
+            self._dx_scheme,
+            adm_codes_f=lambda adm: adm.dx_codes,
+            adm_mapper_f=lambda adm: adm.dx_scheme.mapper_to(self.dx_scheme),
+            augmented=True,
+            subjects=subjects,
+            window_size_days=window_size_days)
 
     def pr_augmented_coocurrence(self,
                                  subjects: List[int],
@@ -426,29 +428,37 @@ class Subject_JAX(dict):
         assert isinstance(
             self._pr_scheme, HierarchicalScheme
         ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
-        return self._coocurrence(self._pr_scheme,
-                                 adm_codes_f=lambda adm: adm.pr_codes,
-                                 augmented=True,
-                                 subjects=subjects,
-                                 window_size_days=window_size_days)
+
+        return self._coocurrence(
+            self._pr_scheme,
+            adm_codes_f=lambda adm: adm.pr_codes,
+            adm_mapper_f=lambda adm: adm.pr_scheme.mapper_to(self.pr_scheme),
+            augmented=True,
+            subjects=subjects,
+            window_size_days=window_size_days)
 
     def dx_coocurrence(self, subjects: List[int], window_size_days: int = 1):
-        return self._coocurrence(self._dx_scheme,
-                                 adm_codes_f=lambda adm: adm.dx_codes,
-                                 augmented=False,
-                                 subjects=subjects,
-                                 window_size_days=window_size_days)
+        return self._coocurrence(
+            self._dx_scheme,
+            adm_codes_f=lambda adm: adm.dx_codes,
+            adm_mapper_f=lambda adm: adm.dx_scheme.mapper_to(self.dx_scheme),
+            augmented=False,
+            subjects=subjects,
+            window_size_days=window_size_days)
 
     def pr_coocurrence(self, subjects: List[int], window_size_days: int = 1):
-        return self._coocurrence(self._pr_scheme,
-                                 adm_codes_f=lambda adm: adm.pr_codes,
-                                 augmented=False,
-                                 subjects=subjects,
-                                 window_size_days=window_size_days)
+        return self._coocurrence(
+            self._pr_scheme,
+            adm_codes_f=lambda adm: adm.pr_codes,
+            adm_mapper_f=lambda adm: adm.pr_scheme.mapper_to(self.pr_scheme),
+            augmented=False,
+            subjects=subjects,
+            window_size_days=window_size_days)
 
     def _coocurrence(self,
                      scheme: Union[AbstractScheme, HierarchicalScheme],
-                     adm_codes_f: Callable[[Admission_JAX], Set[str]],
+                     adm_codes_f: Callable[[Admission], Set[str]],
+                     adm_mapper_f: Callable[[Admission], AbstractScheme],
                      augmented: bool,
                      subjects: List[int],
                      window_size_days: int = 1):
@@ -475,20 +485,24 @@ class Subject_JAX(dict):
 
         adms_lists = []
         for subj_id in subjects:
-            subject_adms = self[subj_id]
+            subject_adms = self._subjects[subj_id].admissions
             adms_list = []
+            first_adm_date = subject_adms[0].admission_dates[0]
+
             for adm in subject_adms:
+                adm_day = adm.admission_day(first_adm_date)
+                codes = adm_codes_f(adm)
+                mapper = adm_mapper_f(adm)
+                mapped_codes = mapper.map_codeset(codes)
                 if augmented:
-                    codes = _augment_codes(adm_codes_f(adm))
-                else:
-                    codes = adm_codes_f(adm)
-                adms_list.append((adm.admission_time, codes))
+                    mapped_codes = _augment_codes(mapped_codes)
+                adms_list.append((adm_day, mapped_codes))
             adms_lists.append(adms_list)
 
         index = scheme.dag_index if augmented else scheme.index
         cooccurrences = defaultdict(int)
         for subj_adms_list in adms_lists:
-            for adm_day, adm_codes in subj_adms_list:
+            for adm_day, _ in subj_adms_list:
 
                 def is_context(other_adm):
                     # Symmetric context (left+right)
