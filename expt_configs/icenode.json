@@ -1,31 +1,28 @@
 {
-    "code_scheme": {
-        "dx": "DxICD9",
-        "dx_outcome": "dx_icd9_filter_v3_groups"
-    },
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
            "classname":  "MatrixEmbeddings",      
-           "embeddings_size": 300
+           "embeddings_size": 200
         }
     },
     "model": {
         "ode_dyn_label": "mlp3",
         "ode_init_var": 1e-7,
         "state_size": 30,
-        "timescale": 7
+        "timescale": 30
     },
     "training": {
         "batch_size": 256,
-        "decay_rate": [0.27729587471948475, 0.3293406876704547],
-        "lr": [7.156197978746877e-05,  0.0011484691965460785],
+        "decay_rate": [0.25, 0.33],
+        "lr": [7e-5,  1e-3],
         "epochs": 60,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,
             "L_l2": 0
         },
+        "tay_reg": 3,
         "opt": "adam",
         "classname": "ODETrainer2LR"
     }

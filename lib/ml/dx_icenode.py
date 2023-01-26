@@ -32,6 +32,7 @@ def ode_dyn(label, state_size, embeddings_size, control_size, key):
     nn_kwargs = {
         'mlp':
         dict(activation=jax.nn.tanh,
+             final_activation=jax.nn.tanh,
              depth=nlayers - 1,
              width_size=input_size,
              in_size=input_size,

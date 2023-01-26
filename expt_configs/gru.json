@@ -1,9 +1,4 @@
 {
-    "code_scheme": {
-        "dx": "DxICD9",
-        "dx_outcome": "dx_icd9_filter_v1",
-        "pr": "none"
-    },
     "emb": {
         "dx": {
            "decoder_n_layers": 2,
@@ -12,7 +7,7 @@
         }
     },
     "model": {
-        "state_size": 350
+        "state_size": 250
     },
     "training": {
         "batch_size": 17,
@@ -25,12 +20,5 @@
         "lr": 1e-3,
         "opt": "adam",
         "classname": "Trainer"
-    },
-    "meta": {
-    	"github_tag": "v0.2.20",
-    	"data_tag": "M3",
-    	"model": "gru",
-    	"emb_kind": "matrix",
-    	"optuna_trial_number": 649
     }
 }
