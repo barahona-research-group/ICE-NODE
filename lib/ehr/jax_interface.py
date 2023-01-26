@@ -410,7 +410,8 @@ class Subject_JAX(dict):
 
     def dx_augmented_coocurrence(self,
                                  subjects: List[int],
-                                 window_size_days: int = 1):
+                                 window_size_days: Optional[int] = None,
+                                 context_size: Optional[int] = None):
         assert isinstance(
             self._dx_scheme, HierarchicalScheme
         ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
@@ -420,11 +421,13 @@ class Subject_JAX(dict):
             adm_mapper_f=lambda adm: adm.dx_scheme.mapper_to(self.dx_scheme),
             augmented=True,
             subjects=subjects,
-            window_size_days=window_size_days)
+            window_size_days=window_size_days,
+            context_size=context_size)
 
     def pr_augmented_coocurrence(self,
                                  subjects: List[int],
-                                 window_size_days: int = 1):
+                                 window_size_days: Optional[int] = None,
+                                 context_size: Optional[int] = None):
         assert isinstance(
             self._pr_scheme, HierarchicalScheme
         ), "Augmented Coocurrence is only allowed for hierarchical coding schemes"
@@ -435,73 +438,38 @@ class Subject_JAX(dict):
             adm_mapper_f=lambda adm: adm.pr_scheme.mapper_to(self.pr_scheme),
             augmented=True,
             subjects=subjects,
-            window_size_days=window_size_days)
+            window_size_days=window_size_days,
+            context_size=context_size)
 
-    def dx_coocurrence(self, subjects: List[int], window_size_days: int = 1):
+    def dx_coocurrence(self,
+                       subjects: List[int],
+                       window_size_days: Optional[int] = None,
+                       context_size: Optional[int] = None):
         return self._coocurrence(
             self._dx_scheme,
             adm_codes_f=lambda adm: adm.dx_codes,
             adm_mapper_f=lambda adm: adm.dx_scheme.mapper_to(self.dx_scheme),
             augmented=False,
             subjects=subjects,
-            window_size_days=window_size_days)
+            window_size_days=window_size_days,
+            context_size=context_size)
 
-    def pr_coocurrence(self, subjects: List[int], window_size_days: int = 1):
+    def pr_coocurrence(self,
+                       subjects: List[int],
+                       window_size_days: Optional[int] = None,
+                       context_size: Optional[int] = None):
         return self._coocurrence(
             self._pr_scheme,
             adm_codes_f=lambda adm: adm.pr_codes,
             adm_mapper_f=lambda adm: adm.pr_scheme.mapper_to(self.pr_scheme),
             augmented=False,
             subjects=subjects,
-            window_size_days=window_size_days)
+            window_size_days=window_size_days,
+            context_size=context_size)
 
-    def _coocurrence(self,
-                     scheme: Union[AbstractScheme, HierarchicalScheme],
-                     adm_codes_f: Callable[[Admission], Set[str]],
-                     adm_mapper_f: Callable[[Admission], AbstractScheme],
-                     augmented: bool,
-                     subjects: List[int],
-                     window_size_days: int = 1):
-        """
-        Build cooccurrence matrix from timestamped CCS codes.
-
-        Args:
-            code_type: the code type to consider for the coocurrences. 'dx' is for diagnostic codes, 'pr' for procedure codes.
-            subjects: a list of subjects (patients) from which diagnosis codes are extracted for GloVe initialization.
-            dx_idx: a mapping between CCS diagnosis codes as strings to integer indices.
-            proc_idx: a mapping between CCS procedure codes as strings to integer indices.
-            ccs_dag: CCSDAG object that supports DAG operations on ICD9 codes in their hierarchical organization within CCS.
-            window_size_days: the moving time window of the context.
-        """
-
-        # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
-        # As described in the paper of GRAM, ancestors duplications are allowed and informative.
-
-        def _augment_codes(codes):
-            _aug_codes = []
-            for c in codes:
-                _aug_codes.extend(scheme.code_ancestors_bfs(c, True))
-            return _aug_codes
-
-        adms_lists = []
-        for subj_id in subjects:
-            subject_adms = self._subjects[subj_id].admissions
-            adms_list = []
-            first_adm_date = subject_adms[0].admission_dates[0]
-
-            for adm in subject_adms:
-                adm_day = adm.admission_day(first_adm_date)
-                codes = adm_codes_f(adm)
-                mapper = adm_mapper_f(adm)
-                mapped_codes = mapper.map_codeset(codes)
-                if augmented:
-                    mapped_codes = _augment_codes(mapped_codes)
-                adms_list.append((adm_day, mapped_codes))
-            adms_lists.append(adms_list)
-
-        index = scheme.dag_index if augmented else scheme.index
-        cooccurrences = defaultdict(int)
-        for subj_adms_list in adms_lists:
+    @staticmethod
+    def _time_window_coocurrence(adms_list, window_size_days, index):
+        for subj_adms_list in adms_list:
             for adm_day, _ in subj_adms_list:
 
                 def is_context(other_adm):
@@ -515,10 +483,75 @@ class Subject_JAX(dict):
                 for c in codes:
                     code_count[index[c]] += 1
 
-                for i, count_i in code_count.items():
-                    for j, count_j in code_count.items():
-                        cooccurrences[(i, j)] += count_i * count_j
-                        cooccurrences[(j, i)] += count_i * count_j
+                yield code_count
+
+    @staticmethod
+    def _seq_window_coocurrence(adms_list, context_size, index):
+        for subj_adms_list in adms_list:
+            sequence = [
+                c for (_, codes) in subj_adms_list for c in sorted(codes)
+            ]
+            for i in range(len(sequence)):
+                code_count = defaultdict(int)
+                first_i = max(0, i - context_size)
+                last_i = min(len(sequence) - 1, i + context_size)
+                for c in sequence[first_i:last_i]:
+                    code_count[index[c]] += 1
+                yield code_count
+
+    def _coocurrence(self, scheme: Union[AbstractScheme, HierarchicalScheme],
+                     adm_codes_f: Callable[[Admission], Set[str]],
+                     adm_mapper_f: Callable[[Admission],
+                                            AbstractScheme], augmented: bool,
+                     subjects: List[int], window_size_days: Optional[int],
+                     context_size: Optional[int]):
+        assert (window_size_days is None) != (
+            context_size is
+            None), 'Should pass either window_size_days or context_size'
+
+        # Filter and augment all the codes, i.e. by adding the parent codes in the CCS hierarchy.
+        # As described in the paper of GRAM, ancestors duplications are allowed and informative.
+
+        def _augment_codes(codes):
+            _aug_codes = []
+            for c in codes:
+                _aug_codes.extend(scheme.code_ancestors_bfs(c, True))
+            return _aug_codes
+
+        adms_list = []
+        for subj_id in subjects:
+            subject_adms = self._subjects[subj_id].admissions
+            first_adm_date = subject_adms[0].admission_dates[0]
+
+            subj_adms_list = []
+            for adm in subject_adms:
+                adm_day = adm.admission_day(first_adm_date)
+                codes = adm_codes_f(adm)
+                mapper = adm_mapper_f(adm)
+                mapped_codes = mapper.map_codeset(codes)
+                if augmented:
+                    mapped_codes = _augment_codes(mapped_codes)
+                subj_adms_list.append((adm_day, mapped_codes))
+            adms_list.append(subj_adms_list)
+
+        index = scheme.dag_index if augmented else scheme.index
+        cooccurrences = defaultdict(int)
+
+        def _add_counts(code_count):
+            for i, count_i in code_count.items():
+                for j, count_j in code_count.items():
+                    cooccurrences[(i, j)] += count_i * count_j
+                    cooccurrences[(j, i)] += count_i * count_j
+
+        if window_size_days is not None:
+            count_gen = self._time_window_coocurrence(adms_list,
+                                                      window_size_days, index)
+        else:
+            count_gen = self._seq_window_coocurrence(adms_list, context_size,
+                                                     index)
+
+        for counter in count_gen:
+            _add_counts(counter)
 
         coocurrence_mat = np.zeros((len(index), len(index)))
         for (i, j), count in cooccurrences.items():
