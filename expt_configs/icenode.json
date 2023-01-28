@@ -13,7 +13,7 @@
         "timescale": 30
     },
     "training": {
-        "batch_size": 256,
+        "batch_size": 64,
         "decay_rate": [0.25, 0.33],
         "lr": [7e-5,  1e-3],
         "epochs": 60,
@@ -22,7 +22,7 @@
             "L_l1": 0,
             "L_l2": 0
         },
-        "tay_reg": 3,
+        "tay_reg": 0,
         "opt": "adam",
         "classname": "ODETrainer2LR"
     }
