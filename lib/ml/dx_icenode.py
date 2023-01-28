@@ -15,7 +15,7 @@ import optuna
 from ..utils import model_params_scaler
 from ..ehr import Subject_JAX, Admission_JAX, BatchPredictedRisks
 
-from .base_models import (GRUDynamics, NeuralODE, StateUpdate)
+from .base_models import (GRUDynamics, NeuralODE, StateUpdate, NeuralODE_JAX)
 from .abstract_model import AbstractModel
 
 
@@ -79,7 +79,7 @@ class ICENODE(AbstractModel):
         ode_dyn_f = model_params_scaler(ode_dyn_f, ode_init_var,
                                         eqx.is_inexact_array)
 
-        self.ode_dyn = NeuralODE(ode_dyn_f, timescale=timescale)
+        self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=timescale)
 
         self.f_update = StateUpdate(
             state_size=self.state_size,

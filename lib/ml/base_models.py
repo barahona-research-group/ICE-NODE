@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax.experimental.jet import jet
+from jax.experimental.ode import odeint
 from jax.nn import sigmoid
 import jax.tree_util as jtu
 import equinox as eqx
@@ -130,6 +131,13 @@ class ControlledDynamics(eqx.Module):
         return self.f_dyn(t, jnp.concatenate((args['control'], x)), args)
 
 
+def timesamples(int_time, dt):
+    if dt < 0:
+        dt = int_time
+    return jnp.linspace(0, int_time - int_time % dt,
+                        round((int_time - int_time % dt) / dt + 1))
+
+
 class VectorField(eqx.Module):
     f_dyn: eqx.Module
 
@@ -137,16 +145,40 @@ class VectorField(eqx.Module):
         return self.f_dyn(x)
 
 
-class NeuralODE(eqx.Module):
+class NeuralODE_JAX(eqx.Module):
     ode_dyn: Callable
     timescale: float = eqx.static_field()
 
-    @staticmethod
-    def timesamples(int_time, dt):
-        if dt < 0:
-            dt = int_time
-        return jnp.linspace(0, int_time - int_time % dt,
-                            round((int_time - int_time % dt) / dt + 1))
+    def __call__(self, t, x, args=dict()):
+        x0 = self.get_x0(x, args)
+
+        sampling_rate = args.get('sampling_rate', None)
+        if sampling_rate:
+            t = timesamples(float(t), sampling_rate)
+        else:
+            t = jnp.linspace(0.0, t / self.timescale, 2)
+
+        term = self.ode_term(args)
+        return odeint(term, x0, t, dict(control=args.get('control')))
+
+    def get_x0(self, x0, args):
+        if args.get('tay_reg', 0) > 0:
+            return (x0, jnp.array(0.0))
+        else:
+            return x0
+
+    def ode_term(self, args):
+        term = VectorField(self.ode_dyn)
+        if len(args.get('control', jnp.array([]))) > 0:
+            term = ControlledDynamics(term)
+        if args.get('tay_reg', 0) > 0:
+            term = TaylorAugmented(term, args['tay_reg'])
+        return lambda x, t, args: term(t, x, args)
+
+
+class NeuralODE(eqx.Module):
+    ode_dyn: Callable
+    timescale: float = eqx.static_field()
 
     def __call__(self, t, x, args=dict()):
         x0 = self.get_x0(x, args)
@@ -154,7 +186,7 @@ class NeuralODE(eqx.Module):
         dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, args)
         sampling_rate = args.get('sampling_rate', None)
         if sampling_rate:
-            t = self.timesamples(float(t), sampling_rate)
+            t = timesamples(float(t), sampling_rate)
         else:
             t = jnp.linspace(0.0, t / self.timescale, 2)
 
