@@ -344,8 +344,12 @@ class CPRDEHRDataset(AbstractEHRDataset):
         col = self.colname
         subjects = {}
 
-        gender_dict = {0: np.array([1, 0, 0]), 1: np.array([0, 1, 0])}
-        gender_missing = np.array([0, 0, 1])
+        gender_dict = {
+            0: np.array([1, 0, 0]),
+            1: np.array([0, 1, 0]),
+            2: np.array([0, 0, 1])
+        }
+        gender_missing = np.array([0, 0, 0])
 
         # Admissions
         for subj_id, subj_df in self.df.groupby(col["subject_id"]):
