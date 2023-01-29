@@ -51,7 +51,11 @@ class StaticInfo_JAX(eqx.Module):
         # IMD
         if self.flags.idx_deprivation:
             assert self.static_info.idx_deprivation is not None, "IMD info requested while it is not provided in the dataset."
-            vec.append(np.array(self.static_info.idx_deprivation, dtype=float))
+            v = np.zeros(10, dtype=float)
+            idx = self.static_info.idx_deprivation - 1
+            if idx < 10 and idx >= 0:
+                v[idx] = 1.0
+            vec.append(v)
 
         if len(vec) > 0:
             return jnp.hstack(vec)

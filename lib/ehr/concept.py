@@ -4,8 +4,9 @@ from __future__ import annotations
 from datetime import date
 from collections import namedtuple
 from dataclasses import dataclass
-from typing import List, Tuple, Set, Callable, Optional
+from typing import List, Tuple, Set, Callable, Optional, Union
 from absl import logging
+import numpy as np
 
 from .coding_scheme import AbstractScheme, NullScheme
 
@@ -47,7 +48,7 @@ class Admission(AbstractAdmission):
 
 @dataclass
 class StaticInfo:
-    gender: Optional[float] = None
+    gender: Optional[Union[float, np.ndarray]] = None
     date_of_birth: Optional[date] = None
     idx_deprivation: Optional[float] = None
     ethnicity: Optional[str] = None
