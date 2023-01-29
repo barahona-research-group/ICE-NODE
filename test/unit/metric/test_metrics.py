@@ -15,7 +15,7 @@ from lib.embeddings import embeddings_from_conf
 
 from lib.metric.stat import (MetricsCollection, CodeAUC, DeLongTest,
                              CodeGroupTopAlarmAccuracy, AdmissionAUC,
-                             UntilFirstCodeAUC, VisitsAUC)
+                             UntilFirstCodeAUC, VisitsAUC, LossMetric)
 
 
 def setUpModule():
@@ -48,6 +48,19 @@ class MetricsTest(unittest.TestCase):
             splits[0], splits[1])
         cls.cheating_predictions = m3_interface.cheating_predictions(
             splits[0], splits[1])
+
+    def test_loss(self):
+        metric = LossMetric(m3_interface)
+        extractors = [
+            metric.value_extractor({'field': field})
+            for field in metric.fields()
+        ]
+
+        df_rnd = metric.to_df(0, self.random_predictions)
+        df_truth = metric.to_df(0, self.cheating_predictions)
+
+        for extractor in extractors:
+            self.assertGreater(extractor(df_rnd), extractor(df_truth))
 
     def test_visits_auc(self):
         metric = VisitsAUC(m3_interface)
@@ -118,7 +131,7 @@ class MetricsTest(unittest.TestCase):
 
     def test_code_group_alarm_acc(self):
         m3_groups = m3_interface.outcome_by_percentiles(percentile_range=20,
-                                                           subjects=splits[0])
+                                                        subjects=splits[0])
         ks = [1, 5, 10, 15]
         metric = CodeGroupTopAlarmAccuracy(code_groups=m3_groups,
                                            top_k_list=ks,
@@ -151,7 +164,7 @@ class MetricsTest(unittest.TestCase):
 
     def test_metrics_collection(self):
         m3_groups = m3_interface.outcome_by_percentiles(percentile_range=20,
-                                                           subjects=splits[0])
+                                                        subjects=splits[0])
         vauc_m = VisitsAUC(m3_interface)
         vmicroauc = vauc_m.value_extractor({'field': 'micro_auc'})
 
@@ -221,7 +234,7 @@ class MetricsTest(unittest.TestCase):
 
                 # Check the pair-order is normalized.
                 self.assertEqual(pvalue(i, 'mean', 'recency'),
-                                pvalue(i, 'recency', 'mean'))
+                                 pvalue(i, 'recency', 'mean'))
 
                 # Random against perfect
                 self.assertLess(pvalue(i, 'random1', 'cheating'), 0.05)

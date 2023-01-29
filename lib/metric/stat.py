@@ -1,6 +1,6 @@
 """Performance metrics and loss functions."""
 
-from typing import Dict, Optional, List, Tuple, Any
+from typing import Dict, Optional, List, Tuple, Any, Callable
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod, ABCMeta
 
@@ -14,6 +14,7 @@ from sklearn import metrics
 
 from ..ehr import Subject_JAX, BatchPredictedRisks
 from .delong import FastDeLongTest
+from . import loss as L
 
 
 @jax.jit
@@ -82,6 +83,10 @@ class Metric(metaclass=ABCMeta):
         return tuple()
 
     @classmethod
+    def field_dir(cls, field):
+        return dict(zip(cls.fields(), cls.dirs()))[field]
+
+    @classmethod
     def classname(cls):
         return cls.__name__
 
@@ -106,10 +111,20 @@ class Metric(metaclass=ABCMeta):
         return pd.DataFrame(self.to_dict(predictions), index=[index])
 
     def value_extractor(self, keys: Dict[str, str]):
-        colname = self.column(keys.get('field', self.fields()[0]))
+        field_name = keys.get('field', self.fields()[0])
+        colname = self.column(field_name)
+        return self.from_df_functor(colname, self.field_dir(field_name))
+
+    def from_df_functor(self, colname, direction):
 
         def from_df(df, index=-1):
-            return df[colname].iloc[index]
+            if index == 'best':
+                if direction == 1:
+                    return df[colname].argmax(), df[colname].max()
+                else:
+                    return df[colname].argmin(), df[colname].min()
+            else:
+                return df[colname].iloc[index]
 
         return from_df
 
@@ -147,6 +162,34 @@ class VisitsAUC(Metric):
                 gtruth,
                 preds,
             ))))
+        }
+
+
+@dataclass
+class LossMetric(Metric):
+    loss_functions: Dict[str, Callable] = field(init=False)
+
+    def __post_init__(self):
+        self.loss_functions = {
+            'softmax': L.softmax_logits_bce,
+            'balanced_softmax': L.softmax_logits_balanced_focal_bce,
+            'focal_softmax': L.softmax_logits_weighted_bce,
+            'balanced_bce': L.balanced_focal_bce
+        }
+
+    def fields(self):
+        return sorted(self.loss_functions.keys())
+
+    def dirs(self):
+        return (0, ) * len(self.loss_functions)
+
+    def field_dir(self, field):
+        return 0
+
+    def __call__(self, predictions: BatchPredictedRisks):
+        return {
+            loss_key: float(predictions.prediction_loss(loss_f))
+            for loss_key, loss_f in self.loss_functions.items()
         }
 
 
@@ -228,22 +271,13 @@ class CodeLevelMetric(Metric):
             code is
             None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
-
         column = self.column(code_index, keys['field'])
-
-        def from_df(df, index=-1):
-            return df[column].iloc[index]
-
-        return from_df
+        return self.from_df_functor(column, self.field_dir(keys['field']))
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
         column = self.agg_column(agg, keys.get('field', self.fields()[0]))
-
-        def from_df(df, index=-1):
-            return df[column].iloc[index]
-
-        return from_df
+        return self.from_df_functor(column, self.field_dir(keys['field']))
 
 
 @dataclass
@@ -463,31 +497,19 @@ class AdmissionAUC(Metric):
         admission_id = keys['admission_id']
         field = keys.get('field', self.fields()[0])
         column = self.column(subject_id, admission_id, field)
-
-        def from_df(df, index=-1):
-            return df[column].iloc[index]
-
-        return from_df
+        return self.from_df_functor(column, self.field_dir(field))
 
     def subject_aggregate_extractor(self, keys):
         field = keys.get('field', self.fields()[0])
         column = self.subject_agg_column(keys['subject_id'], keys['aggregate'],
                                          field)
-
-        def from_df(df, index=-1):
-            return df[column].iloc[index]
-
-        return from_df
+        return self.from_df_functor(column, self.field_dir(field))
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
         field = keys.get('field', self.fields()[0])
         column = self.agg_column(agg, field)
-
-        def from_df(df, index=-1):
-            return df[column].iloc[index]
-
-        return from_df
+        return self.from_df_functor(column, self.field_dir(field))
 
 
 @dataclass
@@ -559,11 +581,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
             self.code_groups), f"group_index ({gi}) >= len(self.code_groups)"
         field = keys.get('field', self.fields()[0])
         colname = self.column(gi, k, field)
-
-        def from_df(df, index=-1):
-            return df[colname].iloc[index]
-
-        return from_df
+        return self.from_df_functor(colname, self.field_dir(field))
 
 
 @dataclass
