@@ -367,7 +367,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
             gender_key = int(subj_df.iloc[0][col["gender"]])
             gender = gender_dict.get(gender_key, gender_missing)
 
-            imd = float(subj_df.iloc[0][col["imd_decile"]])
+            imd = int(subj_df.iloc[0][col["imd_decile"]])
             ethnicity = subj_df.iloc[0][col["ethnicity"]]
             static_info = StaticInfo(ethnicity=ethnicity,
                                      ethnicity_scheme=self.code_scheme["eth"],
