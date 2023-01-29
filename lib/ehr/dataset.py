@@ -8,6 +8,7 @@ from absl import logging
 from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
+import numpy as np
 
 from ..utils import load_config, translate_path
 
@@ -342,6 +343,10 @@ class CPRDEHRDataset(AbstractEHRDataset):
         listify = lambda s: list(map(lambda e: e.strip(), s.split(',')))
         col = self.colname
         subjects = {}
+
+        gender_dict = {0: np.array([1, 0, 0]), 1: np.array([0, 1, 0])}
+        gender_missing = np.array([0, 0, 1])
+
         # Admissions
         for subj_id, subj_df in self.df.groupby(col["subject_id"]):
 
@@ -355,7 +360,9 @@ class CPRDEHRDataset(AbstractEHRDataset):
             year_month0 = pd.to_datetime(
                 year_month[0], infer_datetime_format=True).normalize()
             year_of_birth = year_month0 + pd.DateOffset(years=-age0)
-            gender = float(subj_df.iloc[0][col["gender"]])
+            gender_key = int(subj_df.iloc[0][col["gender"]])
+            gender = gender_dict.get(gender_key, gender_missing)
+
             imd = float(subj_df.iloc[0][col["imd_decile"]])
             ethnicity = subj_df.iloc[0][col["ethnicity"]]
             static_info = StaticInfo(ethnicity=ethnicity,
