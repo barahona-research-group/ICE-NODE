@@ -172,9 +172,9 @@ class LossMetric(Metric):
     def __post_init__(self):
         self.loss_functions = {
             'softmax': L.softmax_logits_bce,
-            'balanced_softmax': L.softmax_logits_balanced_focal_bce,
-            'focal_softmax': L.softmax_logits_weighted_bce,
-            'balanced_bce': L.balanced_focal_bce
+            'weighted_softmax': L.softmax_logits_weighted_bce,
+            'focal_softmax': L.softmax_logits_balanced_focal_bce,
+            'focal_bce': L.balanced_focal_bce
         }
 
     def fields(self):

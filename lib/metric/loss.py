@@ -61,7 +61,7 @@ def softmax_logits_weighted_bce(y: jnp.ndarray, logits: jnp.ndarray,
     """Weighted version of ``softmax_logits_bce``."""
     terms = (y * jax.nn.log_softmax(logits) +
              (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
-    weights = y.shape[0] / (y.sum(axis=0) + 1e-10)
+    weights = y.shape[0] / (y.sum(axis=0) + 1)
     return -jnp.nanmean(weights * terms, where=mask)
 
 

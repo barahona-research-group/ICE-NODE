@@ -20,8 +20,8 @@ opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
 
 class_weighting_dict = {
     'none': M.softmax_logits_bce,
-    'balanced': M.softmax_logits_balanced_focal_bce,
-    'focal': M.softmax_logits_weighted_bce
+    'weighted': M.softmax_logits_weighted_bce,
+    'focal': M.softmax_logits_balanced_focal_bce
 }
 
 class MetricsHistory:
