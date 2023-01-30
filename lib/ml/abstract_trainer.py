@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod, ABCMeta
 
 import pandas as pd
 from tqdm import tqdm
+import numpy as np
 import jax.numpy as jnp
 import jax.random as jrandom
 import equinox as eqx
@@ -23,6 +24,7 @@ class_weighting_dict = {
     'weighted': M.softmax_logits_weighted_bce,
     'focal': M.softmax_logits_balanced_focal_bce
 }
+
 
 class MetricsHistory:
     metrics: M.MetricsCollection
@@ -204,10 +206,9 @@ class Trainer(eqx.Module):
             r.report_steps(iters)
 
         train_index = jnp.arange(len(train_ids))
-        for i in tqdm(range(iters)):
-            eval_step = round((i + 1) * 100 / iters)
-            last_step = round(i * 100 / iters)
 
+        eval_steps = sorted(set(np.linspace(0, iters - 1, 100).astype(int)))
+        for i in tqdm(range(iters)):
             if datetime.now() > trial_terminate_time:
                 [r.report_timeout() for r in reporters]
                 break
@@ -231,10 +232,10 @@ class Trainer(eqx.Module):
                 [r.report_nan_detected() for r in reporters]
                 break
 
-            if eval_step == last_step and i < iters - 1:
+            if i not in eval_steps:
                 continue
 
-            [r.report_progress(eval_step) for r in reporters]
+            [r.report_progress(eval_steps.index(i)) for r in reporters]
 
             trn_loss, trn_preds = self.eval(model, subject_interface,
                                             train_batch)
@@ -251,7 +252,7 @@ class Trainer(eqx.Module):
 
             for r in reporters:
                 r.report_evaluation(history)
-                r.report_params(eval_step, model)
+                r.report_params(eval_steps.index(i), model)
 
         return {'history': history, 'model': model}
 

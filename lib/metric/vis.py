@@ -1,7 +1,7 @@
 """."""
 
+from typing import Callable, Dict, Optional, Union, Tuple, Type, List
 import glob
-import sys
 import math
 from collections import defaultdict
 
@@ -9,13 +9,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from .. import utils as U
+from .. import ml
+from .. import ehr
 
-def performance_traces(train_dir, metric_extractor):
+ExtractorType = Callable[[pd.DataFrame, Union[int, str]],
+                         Union[Tuple[int, float], float]]
+ExtractorDict = Dict[str, ExtractorType]
+
+
+def performance_traces(train_dir: str, metric_extractor: ExtractorDict):
 
     clf_dirs = glob.glob(f'{train_dir}/*')
-    clf_dir = {d.split('/')[-1]: d for d in clf_dirs}
+    clf_dirs = {d.split('/')[-1]: d for d in clf_dirs}
     traces_df = []
-    for clf, clf_dir in clf_dir.items():
+    for clf, clf_dir in clf_dirs.items():
         try:
             df = pd.read_csv(f'{clf_dir}/_val_evals.csv.gz')
         except:
@@ -36,55 +44,43 @@ def performance_traces(train_dir, metric_extractor):
     return pd.concat(traces_df)
 
 
-def get_trained_models(clfs, train_dir, model_dir, data_tag, criterion, comp):
-    params = {}
-    config = {}
-    df = {}
-    clfs_params_dir = train_dir[data_tag]
+def models_from_configs(train_dir: str,
+                        model_cls: Dict[str, Type[ml.AbstractModel]],
+                        subject_interface: ehr.Subject_JAX,
+                        subject_splits: Tuple[List[int], ...]):
+    models = {}
+    clf_dirs = glob.glob(f'{train_dir}/*')
+    clf_dirs = {d.split('/')[-1]: d for d in clf_dirs}
 
-    best_iter, best_val = [], []
-    for clf in clfs:
-        clf_dir = model_dir[clf]
-        csv_files = sorted(
-            glob.glob(f'{clfs_params_dir}/{clf_dir}/*.csv', recursive=False))
-        dfs = [pd.read_csv(csv_file, index_col=[0]) for csv_file in csv_files]
-
-        if callable(criterion):
-            max_i = comp(range(len(dfs)),
-                         key=lambda i: criterion(dfs[i].loc[:, 'VAL']))
-            best_val.append(criterion(dfs[max_i].loc[:, 'VAL']))
-        else:
-            max_i = comp(range(len(dfs)),
-                         key=lambda i: dfs[i].loc[criterion, 'VAL'])
-            best_val.append(dfs[max_i].loc[criterion, "VAL"])
-
-        best_iter.append(max_i)
-        df[clf] = dfs[max_i]
-        csv_file = csv_files[max_i]
-        prefix = csv_file.split('_')
-        prefix[-1] = 'params.pickle'
-        params_file = '_'.join(prefix)
-        params[clf] = C.load_params(params_file)
-        config[clf] = C.load_config(f'{clfs_params_dir}/{clf_dir}/config.json')
-
-    summary = pd.DataFrame({
-        'Clf': clfs,
-        'Best_i': best_iter,
-        str(criterion): best_val
-    })
-    return {
-        'config': config,
-        'params': params,
-        'evaluation': df,
-        'summary': summary
-    }
+    for clf, clf_dir in clf_dirs.items():
+        config = U.load_config('f{clf_dir}/config.json')
+        models[clf] = model_cls[clf].from_config(config, subject_interface,
+                                                 subject_splits[0])
+    return models
 
 
-def test_eval_table(dfs, metric):
-    data = {}
-    for clf, df in dfs.items():
-        data[clf] = df.loc[metric, "TST"].tolist()
-    return pd.DataFrame(data=data, index=metric).transpose()
+def probe_model_snapshots(train_dir: str,
+                          metric_extractor: ExtractorDict,
+                          selection_metric: Optional[str] = None,
+                          models: Dict[str, ml.AbstractModel] = None):
+    data = defaultdict(list)
+    clf_dirs = glob.glob(f'{train_dir}/*')
+    clf_dirs = {d.split('/')[-1]: d for d in clf_dirs}
+
+    for clf, clf_dir in clf_dirs.items():
+        df = pd.read_csv(f'{clf_dir}/_val_evals.csv.gz')
+        data['model'].append(clf)
+        for metric, extractor in metric_extractor.items():
+            index, value = extractor(df, 'best')
+            data[f'{metric}_best_snapshot_index'].append(index)
+            data[f'{metric}_best_snapshot_value'].append(value)
+
+            if metric == selection_metric:
+                tarfname = f'{clf_dir}/params.tar.bz2'
+                membername = f'step{index:04d}.eqx'
+                models[clf].load_params_from_tar_archive(tarfname, membername)
+
+    return pd.DataFrame(data, index=data['model'])
 
 
 def relative_performance_upset(auc_tests,

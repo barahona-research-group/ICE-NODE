@@ -1,8 +1,9 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict
+from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict, Optional
 from abc import ABC, abstractmethod, ABCMeta
+import tarfile
 
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -114,6 +115,13 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         """
         with open(translate_path(params_file), 'wb') as file_rsc:
             eqx.tree_serialise_leaves(file_rsc, self)
+
+    def load_params_from_tar_archive(self, tar_archive: str,
+                                     params_fname: str):
+
+        with tarfile.open(translate_path(tar_archive)) as tar_rsc:
+            params_file = tar_rsc.extractfile(params_fname)
+            return eqx.tree_deserialise_leaves(params_file, self)
 
 
 class AbstractModelProxMap(AbstractModel, metaclass=ABCMeta):
