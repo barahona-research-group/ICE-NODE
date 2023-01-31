@@ -204,40 +204,27 @@ class MetricsTest(unittest.TestCase):
             'cheating': self.cheating_predictions
         })
 
-        pvalue = lambda i, m1, m2: delong.value_extractor({
-            'field': 'p_val',
-            'pair': (m1, m2),
-            'code_index': i
-        })(df)
-        auc = lambda i, m: delong.value_extractor({
-            'field': 'auc',
-            'model': m,
-            'code_index': i
-        })(df)
-        aucvar = lambda i, m: delong.value_extractor({
-            'field': 'auc_var',
-            'model': m,
-            'code_index': i
-        })(df)
-        npos = lambda i: delong.value_extractor({
-            'field': 'n_pos',
-            'code_index': i
-        })(df)
-
         for i, code in delong.index2code.items():
-            if npos(i) < 2:
+            pvalue = delong.value_extractor(field='p_value', code_index=i)
+            auc = delong.value_extractor(field='auc', code_index=i)
+            aucvar = delong.value_extractor(field='auc_var', code_index=i)
+            npos = delong.value_extractor(field='n_pos', code_index=i)
+            if npos(df) < 2:
                 continue
 
-            if npos(i) > 10:
+            if npos(df) > 10:
                 # Random against random
-                self.assertGreater(pvalue(i, 'random1', 'random2'), 0.05)
+                self.assertGreater(pvalue(df, pair=('random1', 'random2')),
+                                   0.05)
 
                 # Check the pair-order is normalized.
-                self.assertEqual(pvalue(i, 'mean', 'recency'),
-                                 pvalue(i, 'recency', 'mean'))
+                self.assertEqual(pvalue(df, pair=('mean', 'recency')),
+                                 pvalue(df, pair=('recency', 'mean')))
 
                 # Random against perfect
-                self.assertLess(pvalue(i, 'random1', 'cheating'), 0.05)
+                self.assertLess(pvalue(df, pair=('random1', 'cheating')), 0.05)
 
-            self.assertGreater(auc(i, 'cheating'), auc(i, 'random1'))
-            self.assertLess(aucvar(i, 'cheating'), aucvar(i, 'random1'))
+            self.assertGreater(auc(df, model='cheating'),
+                               auc(df, model='random1'))
+            self.assertLess(aucvar(df, model='cheating'),
+                            aucvar(df, model='random1'))

@@ -658,7 +658,10 @@ class DeLongTest(CodeLevelMetric):
 
         return {'code': code_col, 'model': model_col, 'pair': pair_col}
 
-    def value_extractor(self, keys):
+    def value_extractor(self,
+                        field: str,
+                        code_index: Optional[int] = None,
+                        code: Optional[str] = None):
         """
         Makes an extractor function to retrieve the estimated value.
         Each estimand by this metric corresponds to a particular code.
@@ -674,25 +677,21 @@ class DeLongTest(CodeLevelMetric):
             the AUC of two models, hence the two models should be included in the keys
             as {'pairs': (model1, model2), ....}.
         """
-        code_index = keys.get('code_index')
-        code = keys.get('code')
         assert (code_index is None) != (
             code is
             None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
 
-        field = keys['field']
         if field in self.fields()['model']:
-            model = keys['model']
-            column = self.column()['model'](model, field)
+            column_gen = lambda kw: self.column()['model'](kw['model'], field)
         elif field in self.fields()['code']:
-            column = self.column()['code'](field)
+            column_gen = lambda _: self.column()['code'](field)
         else:
-            pair = tuple(sorted(keys['pair']))
-            column = self.column()['pair'](pair, field)
+            column_gen = lambda kw: self.column()['pair'](tuple(
+                sorted(kw['pair'])), field)
 
-        def from_df(df):
-            return df.loc[code_index, column]
+        def from_df(df, **kw):
+            return df.loc[code_index, column_gen(kw)]
 
         return from_df
 
@@ -876,3 +875,33 @@ class DeLongTest(CodeLevelMetric):
                 'auc_var': auc_var
             }
         }
+
+    def filter_results(self, results: pd.DataFrame, models: List[str],
+                       min_auc: float):
+        models = sorted(models)
+        m_pairs = self._model_pairs(models)
+
+        # exclude tests with nans
+        pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
+        valid_tests = results.loc[:, pval_cols].isnull().max(axis=1) == 0
+        results = results[valid_tests]
+        logging.info(
+            f'{sum(valid_tests)}/{len(valid_tests)} rows with valid tests (no NaN p-values)'
+        )
+
+        # AUC cut-off
+        auc_cols = [self.column()['model'](m, 'auc') for m in models]
+        accepted_aucs = results.loc[:, auc_cols].max(axis=1) > min_auc
+        results = results[accepted_aucs]
+        logging.info(f'{sum(accepted_aucs)}/{len(accepted_aucs)} rows with\
+            an AUC higher than {min_auc} by at least one model.')
+
+        return results
+
+    def insignificant_difference_rows(self, results: pd.DataFrame,
+                                      models: List[str], p_value: float):
+        models = sorted(models)
+        m_pairs = self._model_pairs(models)
+        pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
+        insigificant = results.loc[:, pval_cols].min(axis=1) > p_value
+        return results[insigificant]
