@@ -131,3 +131,20 @@ class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
     def outcome_frequency_vec(self, subjects: List[Subject]):
         return sum(outcome[0] * outcome[1] for subj in subjects
                    for outcome in self.subject_outcome(subj))
+
+class SurvivalOutcomeExtractor(OutcomeExtractor):
+
+    def subject_outcome(self, subject: Subject):
+        mask = np.ones((self.outcome_dim, ), dtype=bool)
+        outcomes = []
+        last_outcome = np.zeros((self.outcome_dim, ), dtype=bool)
+        for adm in subject.admissions:
+            outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
+            outcome = outcome | last_outcome
+            outcomes.append((outcome, mask))
+            last_outcome = outcome
+        return outcomes
+
+    def outcome_frequency_vec(self, subjects: List[Subject]):
+        return sum(outcome[0] * outcome[1] for subj in subjects
+                   for outcome in self.subject_outcome(subj))
