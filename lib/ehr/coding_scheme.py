@@ -1275,7 +1275,7 @@ class DxLTC212FlatCodes(AbstractScheme, Singleton):
 
             medcodes_list = sorted(set(disease_df[medcode_cname]))
 
-            desc[disease_num] = disease_name + ' - ' + '|'.join(medcodes_list)
+            desc[disease_num] = disease_name 
             system[disease_num] = system_num
             medcodes[disease_num] = medcodes_list
 
@@ -1307,6 +1307,7 @@ class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
         medcode_cname = 'medcodeid'
         disease_num_cname = 'disease_num'
         disease_cname = 'disease'
+        desc_cname = 'descr'
 
         system_cname = 'system'
         system_num_cname = 'system_num'
@@ -1321,8 +1322,7 @@ class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
             disease_list = sorted(set(medcode_df[disease_cname]))
             system_list = sorted(set(medcode_df[system_cname]))
 
-            desc[medcodeid] = ' | '.join(disease_list) + ' - ' + '|'.join(
-                system_list)
+            desc[medcodeid] = str(medcode_df[desc_cname])
             systems[medcodeid] = system_num_list
             diseases[medcodeid] = disease_num_list
 
@@ -1415,7 +1415,7 @@ def reg_pr_icd9_chained_map(s_scheme, t_scheme):
 # Possible Mappings, Lazy-loaded maps.
 load_maps = {}
 
-# ICD9 <-> ICD10
+# ICD9 <-> ICD10s
 load_maps.update({
     (DxICD10, DxICD9):
     lambda: ICDCommons.register_mappings(DxICD10(), DxICD9(),
