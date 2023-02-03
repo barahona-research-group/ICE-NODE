@@ -111,38 +111,23 @@ class OutcomeExtractor(C.AbstractScheme):
             return conf
 
 
-class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
+class SurvivalOutcomeExtractor(OutcomeExtractor):
 
     def subject_outcome(self, subject: Subject):
         # The mask elements are ones for each outcome coordinate until
         # the outcome appears at one admission, the mask will have zero values
         # for later admissions for that particular coordinate
         mask = np.ones((self.outcome_dim, ), dtype=bool)
-        outcomes = []
-        for adm in subject.admissions:
-            outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
-            outcomes.append((outcome, mask))
-
-            # set mask[i] to zero if already zero or outcome[i] == 1
-            mask = (mask & ~outcome)
-
-        return outcomes
-
-    def outcome_frequency_vec(self, subjects: List[Subject]):
-        return sum(outcome[0] * outcome[1] for subj in subjects
-                   for outcome in self.subject_outcome(subj))
-
-class SurvivalOutcomeExtractor(OutcomeExtractor):
-
-    def subject_outcome(self, subject: Subject):
-        mask = np.ones((self.outcome_dim, ), dtype=bool)
-        outcomes = []
         last_outcome = np.zeros((self.outcome_dim, ), dtype=bool)
+        outcomes = []
         for adm in subject.admissions:
             outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
             outcome = outcome | last_outcome
             outcomes.append((outcome, mask))
             last_outcome = outcome
+            # set mask[i] to zero if already zero or outcome[i] == 1
+            mask = (mask & ~outcome)
+
         return outcomes
 
     def outcome_frequency_vec(self, subjects: List[Subject]):
