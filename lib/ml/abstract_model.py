@@ -12,8 +12,7 @@ import equinox as eqx
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import Subject_JAX
-from .. import metric
+from ..ehr import Subject_JAX, OutcomeExtractor, MixedOutcomeExtractor
 from ..embeddings import embeddings_from_conf
 from ..utils import translate_path
 
@@ -21,6 +20,7 @@ from ..utils import translate_path
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
     dx_emb: Callable
     dx_dec: Callable
+    outcome: OutcomeExtractor
 
     state_size: Union[int, Tuple[int, ...]]
     control_size: int = 0
@@ -29,6 +29,12 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def __call__(self, subject_interface: Subject_JAX,
                  subjects_batch: List[int], args):
         pass
+
+    def outcome_mixer(self):
+        if hasattr(self.outcome, MixedOutcomeExtractor):
+            return self.outcome.mixer_params()
+        else:
+            return None
 
     @staticmethod
     def decoder_input_size(expt_config):

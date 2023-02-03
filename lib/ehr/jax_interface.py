@@ -3,7 +3,7 @@
 from __future__ import annotations
 from collections import defaultdict
 import random
-from typing import List, Optional, Dict, Any, Set, Callable, Union
+from typing import List, Optional, Dict, Any, Set, Callable, Union, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 from absl import logging
@@ -17,6 +17,12 @@ from .concept import Subject, Admission, StaticInfo, StaticInfoFlags
 from .dataset import AbstractEHRDataset
 from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 from .outcome import OutcomeExtractor
+
+LossFunction = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
+SingleOutcome = Tuple[jnp.ndarray, jnp.ndarray]
+MixedOutcome = Tuple[SingleOutcome, ...]
+Outcome = Union[SingleOutcome, MixedOutcome]
+MixerParams = Tuple[jnp.ndarray, ...]
 
 
 class StaticInfo_JAX(eqx.Module):
@@ -87,23 +93,17 @@ class Admission_JAX:
     admission_date: datetime
     dx_vec: jnp.ndarray
     pr_vec: jnp.ndarray
-    outcome: jnp.ndarray
-    mask: jnp.ndarray
+    outcome: Outcome
 
+    @property
+    def is_mixed_outcome(self):
+        return isinstance(self.outcome[0], tuple)
 
 @dataclass
 class SubjectPredictedRisk:
     admission: Admission_JAX
     prediction: jnp.ndarray
     trajectory: Optional[jnp.ndarray] = None
-
-    @property
-    def ground_truth(self):
-        return self.admission.outcome
-
-    @property
-    def mask(self):
-        return self.admission.mask
 
     def __str__(self):
         return f"""
@@ -150,16 +150,35 @@ class BatchPredictedRisks(dict):
         risks = self[subject_id]
         return list(map(risks.get, sorted(risks)))
 
-    def subject_prediction_loss(self, subject_id, loss_f):
+    def subject_mixed_prediction_loss(self, subject_id, loss_f: LossFunction,
+                                      mixer_params: Optional[MixerParams]):
+        loss = []
+        for r in self[subject_id].values():
+            outcomes = tuple(o[0] for o in r.admission.outcome)
+            masks = tuple(o[1] * m
+                          for o, m in zip(r.admission.outcome, mixer_params))
+            lossval = sum(
+                loss_f(o, r.prediction, m) for o, m in zip(outcomes, masks))
+            loss.append(lossval)
+        return sum(loss) / len(loss)
+
+    def subject_prediction_loss(self, subject_id, loss_f: LossFunction,
+                                mixer_params: Optional[jnp.ndarray]):
+
+        if mixer_params is not None:
+            return self.subject_mixed_prediction_loss(subject_id, loss_f,
+                                                      mixer_params)
         loss = [
-            loss_f(r.admission.outcome, r.prediction, r.admission.mask)
-            for r in self[subject_id].values()
+            loss_f(r.admission.outcome[0], r.prediction,
+                   r.admission.outcome[1]) for r in self[subject_id].values()
         ]
         return sum(loss) / len(loss)
 
-    def prediction_loss(self, loss_f):
+    def prediction_loss(self,
+                        loss_f: LossFunction,
+                        mixer_params: Optional[MixerParams] = None):
         loss = [
-            self.subject_prediction_loss(subject_id, loss_f)
+            self.subject_prediction_loss(subject_id, loss_f, mixer_params)
             for subject_id in self.keys()
         ]
         return jnp.nanmean(jnp.array(loss))
@@ -590,8 +609,7 @@ class Subject_JAX(dict):
                                   admission_date=adm.admission_dates[0],
                                   dx_vec=dx_vec,
                                   pr_vec=pr_vec,
-                                  outcome=jnp.array(outcome),
-                                  mask=jnp.array(mask)))
+                                  outcome=outcome))
 
             return adms
 

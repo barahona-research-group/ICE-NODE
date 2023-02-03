@@ -4,5 +4,5 @@ from .concept import Subject, Admission, StaticInfoFlags
 from .jax_interface import (Subject_JAX, Admission_JAX, BatchPredictedRisks)
 from .coding_scheme import AbstractScheme
 from .outcome import (OutcomeExtractor, outcome_conf_files,
-                      FirstOccurrenceOutcomeExtractor,
+                      MixedOutcomeExtractor,
                       SurvivalOutcomeExtractor)
