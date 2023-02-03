@@ -99,6 +99,19 @@ class Admission_JAX:
     def is_mixed_outcome(self):
         return isinstance(self.outcome[0], tuple)
 
+    def get_outcome(self):
+        if self.is_mixed_outcome:
+            return self.outcome[0][0]
+        else:
+            return self.outcome[0]
+
+    def get_mask(self):
+        if self.is_mixed_outcome:
+            return self.outcome[0][1]
+        else:
+            return self.outcome[1]
+
+
 @dataclass
 class SubjectPredictedRisk:
     admission: Admission_JAX

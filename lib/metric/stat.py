@@ -148,7 +148,7 @@ class VisitsAUC(Metric):
         preds = []
         for subject_risks in predictions.values():
             for risk in subject_risks.values():
-                gtruth.append(risk.ground_truth)
+                gtruth.append(risk.get_outcome())
                 preds.append(risk.prediction)
 
         gtruth_vec = onp.hstack(gtruth)
@@ -298,7 +298,7 @@ class CodeAUC(CodeLevelMetric):
         for subj_id, admission_risks in predictions.items():
             for admission_idx in sorted(admission_risks):
                 risk = admission_risks[admission_idx]
-                ground_truth.append(risk.ground_truth)
+                ground_truth.append(risk.get_outcome())
                 preds.append(risk.prediction)
 
         ground_truth_mat = onp.vstack(ground_truth)
@@ -331,7 +331,7 @@ class UntilFirstCodeAUC(CodeAUC):
             for admission_id in sorted(admission_risks):
                 mask = (admission_id <= first_occ)
                 risk = admission_risks[admission_id]
-                ground_truth.append(risk.ground_truth)
+                ground_truth.append(risk.get_outcome())
                 preds.append(risk.prediction)
                 masks.append(mask)
 
@@ -448,7 +448,7 @@ class AdmissionAUC(Metric):
             subject_auc = {}
             for admission_id in sorted(subject_predictions):
                 prediction = subject_predictions[admission_id]
-                auc_score = compute_auc(prediction.ground_truth,
+                auc_score = compute_auc(prediction.get_outcome(),
                                         prediction.prediction)
                 subject_auc[admission_id] = auc_score
             auc[subject_id] = subject_auc
@@ -547,7 +547,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         for subject_risks in predictions.values():
             for pred in subject_risks.values():
                 preds.append(pred.prediction)
-                ground_truth.append(pred.ground_truth)
+                ground_truth.append(pred.get_outcome())
 
         preds = onp.vstack(preds)
         ground_truth = onp.vstack(ground_truth).astype(bool)
@@ -791,23 +791,30 @@ class DeLongTest(CodeLevelMetric):
         subjects = cls._extract_subjects(predictions)
         true_mat = {}
         pred_mat = {}
+        mask_mat = {}
         for clf_label, clf_preds in predictions.items():
             clf_true = []
             clf_pred = []
+            clf_mask = []
             for subject_id in subjects:
                 subj_preds = clf_preds[subject_id]
                 for adm_index in sorted(subj_preds):
                     pred = subj_preds[adm_index]
-                    clf_true.append(pred.ground_truth)
+                    clf_true.append(pred.get_outcome())
+                    clf_mask.append(pred.get_mask())
                     clf_pred.append(pred.prediction)
+
             true_mat[clf_label] = onp.vstack(clf_true)
             pred_mat[clf_label] = onp.vstack(clf_pred)
+            mask_mat[clf_label] = onp.vstack(clf_mask)
 
         tm0 = list(true_mat.values())[0]
-        for tm in true_mat.values():
+        mask = list(mask_mat.values())[0]
+        for tm, msk in zip(true_mat.values(), mask_mat.values()):
             assert (tm0 == tm).all(), "Mismatch in ground-truth across models."
+            assert (mask == msk).all(), "Mismatch in mask across models."
 
-        return tm0, pred_mat
+        return tm0, mask, pred_mat
 
     def __call__(self, predictions: Dict[str, BatchPredictedRisks]):
         """
@@ -818,7 +825,8 @@ class DeLongTest(CodeLevelMetric):
         """
         # Classifier labels
         clf_labels = list(sorted(predictions.keys()))
-        true_mat, preds = self._extract_grountruth_vs_predictions(predictions)
+        true_mat, mask_mat, preds = self._extract_grountruth_vs_predictions(
+            predictions)
         clf_pairs = self._model_pairs(clf_labels)
 
         n_pos = {}  # only codewise
@@ -827,7 +835,8 @@ class DeLongTest(CodeLevelMetric):
         p_val = {}  # pairwise
 
         for code_index in tqdm(range(true_mat.shape[1])):
-            code_truth = true_mat[:, code_index]
+            mask = mask_mat[:, code_index]
+            code_truth = true_mat[mask, code_index]
             _n_pos = code_truth.sum()
             n_neg = len(code_truth) - _n_pos
             n_pos[code_index] = _n_pos
@@ -848,8 +857,8 @@ class DeLongTest(CodeLevelMetric):
                         code_auc_var[clf] = code_auc_var.get(clf, float('nan'))
                     continue
 
-                preds1 = preds[clf1][:, code_index]
-                preds2 = preds[clf2][:, code_index]
+                preds1 = preds[clf1][mask, code_index]
+                preds2 = preds[clf2][mask, code_index]
                 auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
                     code_truth, preds1, preds2)
 
