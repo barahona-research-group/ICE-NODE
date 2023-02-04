@@ -124,6 +124,12 @@ class SubjectPredictedRisk:
                 prediction: {self.prediction}\n
                 """
 
+    def get_outcome(self):
+        return self.admission.get_outcome()
+
+    def get_mask(self):
+        return self.admission.get_mask()
+
 
 class BatchPredictedRisks(dict):
 
