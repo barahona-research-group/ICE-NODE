@@ -47,9 +47,11 @@ class WindowLogReg(AbstractModelProxMap):
     W: jnp.ndarray
     b: jnp.ndarray
 
-    def __init__(self, input_size, output_size, key: "jax.random.PRNGKey"):
+    def __init__(self, input_size, output_size, outcome,
+                 key: "jax.random.PRNGKey"):
         super().__init__(dx_emb=None,
                          dx_dec=None,
+                         outcome=outcome,
                          state_size=0,
                          control_size=0)
 
@@ -59,7 +61,7 @@ class WindowLogReg(AbstractModelProxMap):
     @classmethod
     def from_config(cls, conf, subject_interface, train_split, key):
         return cls(subject_interface.dx_dim, subject_interface.outcome_dim,
-                   key)
+                   subject_interface.outcome_extractor, key)
 
     def weights(self):
         return (self.W, )

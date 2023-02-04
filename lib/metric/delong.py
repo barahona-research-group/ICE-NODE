@@ -199,8 +199,8 @@ class FastDeLongTest:
         z_num = np.abs(np.diff(aucs))
         z_den = np.sqrt(np.dot(np.dot(l, sigma), l.T))
         if (z_den == 0).any():
-            logging.warning('Indeterminate test')
-            return float('nan')
+            logging.warning('Indeterminate test, p-value set to max (1.0)')
+            return 1.0
         # Two sided-test
         z = z_num / z_den
         return st.norm.sf(abs(z.item())) * 2

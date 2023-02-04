@@ -31,7 +31,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         pass
 
     def outcome_mixer(self):
-        if hasattr(self.outcome, MixedOutcomeExtractor):
+        if isinstance(self.outcome, MixedOutcomeExtractor):
             return self.outcome.mixer_params()
         else:
             return None
@@ -104,6 +104,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         control_size = subject_interface.control_dim
         return cls(**emb_models,
                    **conf["model"],
+                   outcome=subject_interface.outcome_extractor,
                    control_size=control_size,
                    key=key)
 
