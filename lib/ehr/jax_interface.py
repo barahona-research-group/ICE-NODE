@@ -206,7 +206,7 @@ class BatchPredictedRisks(dict):
         for subj_i, s_preds in self.items():
             s_preds_other = other[subj_i]
             for a, a_oth in zip(s_preds.values(), s_preds_other.values()):
-                if ((a.ground_truth != a_oth.ground_truth).any()
+                if ((a.get_outcome() != a_oth.get_outcome()).any()
                         or (a.prediction != a_oth.prediction).any()):
                     return False
         return True
