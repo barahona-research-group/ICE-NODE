@@ -395,7 +395,6 @@ class AdmissionAUC(Metric):
 
     @classmethod
     def subject_agg_columns(cls, subject_order_gen):
-        clsname = cls.classname()
         cols = []
         for subject_id in subject_order_gen():
             for field in cls.fields():
@@ -806,7 +805,7 @@ class DeLongTest(CodeLevelMetric):
 
             true_mat[clf_label] = onp.vstack(clf_true)
             pred_mat[clf_label] = onp.vstack(clf_pred)
-            mask_mat[clf_label] = onp.vstack(clf_mask)
+            mask_mat[clf_label] = onp.vstack(clf_mask).astype(bool)
 
         tm0 = list(true_mat.values())[0]
         mask = list(mask_mat.values())[0]

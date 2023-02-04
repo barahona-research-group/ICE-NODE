@@ -394,10 +394,10 @@ class Subject_JAX(dict):
     def code_first_occurrence(self, subject_id):
 
         adms_info = self[subject_id]
-        first_occurrence = np.empty_like(adms_info[0].outcome, dtype=int)
+        first_occurrence = np.empty_like(adms_info[0].get_outcome(), dtype=int)
         first_occurrence[:] = -1
         for adm in adms_info:
-            update_mask = (first_occurrence < 0) & adm.outcome
+            update_mask = (first_occurrence < 0) & adm.get_outcome()
             first_occurrence[update_mask] = adm.admission_id
         return first_occurrence
 
@@ -628,7 +628,7 @@ class Subject_JAX(dict):
                                   admission_date=adm.admission_dates[0],
                                   dx_vec=dx_vec,
                                   pr_vec=pr_vec,
-                                  outcome=outcome))
+                                  outcome=(outcome, mask)))
 
             return adms
 
@@ -671,7 +671,7 @@ class Subject_JAX(dict):
             for adm in adms:
                 (key, ) = jrandom.split(key, 1)
 
-                pred = jrandom.normal(key, shape=adm.outcome.shape)
+                pred = jrandom.normal(key, shape=adm.get_outcome().shape)
                 predictions.add(subject_id=subject_id,
                                 admission=adm,
                                 prediction=pred)
@@ -684,14 +684,14 @@ class Subject_JAX(dict):
             for adm in adms:
                 predictions.add(subject_id=subject_id,
                                 admission=adm,
-                                prediction=adm.outcome * 1.0)
+                                prediction=adm.get_outcome() * 1.0)
         return predictions
 
     def mean_predictions(self, train_split, test_split):
         predictions = BatchPredictedRisks()
         # Outcomes from training split
         outcomes = jnp.vstack(
-            [a.outcome for i in train_split for a in self[i]])
+            [a.get_outcome() for i in train_split for a in self[i]])
         outcome_mean = jnp.mean(outcomes, axis=0)
 
         # Train on mean outcomes
@@ -712,7 +712,7 @@ class Subject_JAX(dict):
             for i in range(1, len(adms)):
                 predictions.add(subject_id=subject_id,
                                 admission=adms[i],
-                                prediction=adms[i - 1].outcome * 1.0)
+                                prediction=adms[i - 1].get_outcome() * 1.0)
 
         return predictions
 
@@ -722,12 +722,12 @@ class Subject_JAX(dict):
         # Aggregate all previous history for the particular subject.
         for subject_id in test_split:
             adms = self[subject_id]
-            outcome = adms[0].outcome
+            outcome = adms[0].get_outcome()
             for i in range(1, len(adms)):
                 predictions.add(subject_id=subject_id,
                                 admission=adms[i],
                                 prediction=outcome * 1.0)
-                outcome = jnp.maximum(outcome, adms[i - 1].outcome)
+                outcome = jnp.maximum(outcome, adms[i - 1].get_outcome())
 
         return predictions
 
