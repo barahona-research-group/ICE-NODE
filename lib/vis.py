@@ -60,10 +60,15 @@ def models_from_configs(train_dir: str,
         try:
             config = U.load_config(f'{clf_dir}/config.json')
             key = jrandom.PRNGKey(0)
-            models[clf] = model_cls[clf].from_config(config, subject_interface,
-                                                     subject_splits[0], key)
+            model_class = None
+            for model_name in model_cls.keys():
+                if model_name.lower() in clf.lower():
+                    model_class = model_cls[model_name]
+
+            models[clf] = model_class.from_config(config, subject_interface,
+                                                  subject_splits[0], key)
         except Exception as e:
-            logging.warning(e)
+            logging.warning(f'{e}, clf: {clf}')
 
     return models
 

@@ -19,7 +19,7 @@ import equinox as eqx
 
 from lib import ml
 from lib.ehr.coding_scheme import DxICD10, DxICD9, DxCCS, PrICD9
-from lib.ehr.outcome import OutcomeExtractor, FirstOccurrenceOutcomeExtractor
+from lib.ehr.outcome import OutcomeExtractor, SurvivalOutcomeExtractor
 from lib.ehr.concept import StaticInfoFlags
 from lib.ehr.jax_interface import Subject_JAX
 from lib.ehr.dataset import MIMIC3EHRDataset, MIMIC4EHRDataset
@@ -37,10 +37,10 @@ def setUpModule():
     m4_dataset = MIMIC4EHRDataset.from_meta_json(
         'test/integration/fixtures/synthetic_mimic/mimic4_syn_meta.json')
     icd9_outcome = OutcomeExtractor('dx_icd9_filter_v1')
-    icd9_1outcome = FirstOccurrenceOutcomeExtractor('dx_icd9_filter_v1')
+    icd9_1outcome = SurvivalOutcomeExtractor('dx_icd9_filter_v1')
 
     flatccs_outcome = OutcomeExtractor('dx_flatccs_filter_v1')
-    flatccs_1outcome = FirstOccurrenceOutcomeExtractor('dx_flatccs_filter_v1')
+    flatccs_1outcome = SurvivalOutcomeExtractor('dx_flatccs_filter_v1')
 
     if3_f = lambda scheme, **kw: Subject_JAX.from_dataset(
         m3_dataset, scheme, **kw)

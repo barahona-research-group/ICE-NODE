@@ -1,8 +1,11 @@
 """."""
 
-from typing import Set, List, Callable, Dict
+from typing import Set, List, Callable, Dict, Tuple
+from dataclasses import dataclass
 import os
 from collections import defaultdict
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ..utils import load_config
@@ -23,6 +26,11 @@ outcome_conf_files = {
     'dx_icd9_filter_v2_groups': 'dx_icd9_v2_groups.json',
     'dx_icd9_filter_v3_groups': 'dx_icd9_v3_groups.json'
 }
+
+Outcome = jnp.ndarray
+Mask = jnp.ndarray
+SingleOutcome = Tuple[Outcome, Mask]
+MaskedOutcome = Tuple[SingleOutcome, SingleOutcome]
 
 
 class OutcomeExtractor(C.AbstractScheme):
@@ -62,10 +70,10 @@ class OutcomeExtractor(C.AbstractScheme):
         vec = np.zeros(len(self.index), dtype=bool)
         for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True
-        return vec
+        return jnp.array(vec)
 
     def subject_outcome(self, subject: Subject):
-        mask = np.ones((self.outcome_dim, ))
+        mask = jnp.ones((self.outcome_dim, ))
         return [(self.codeset2vec(adm.dx_codes, adm.dx_scheme), mask)
                 for adm in subject.admissions]
 
@@ -111,18 +119,20 @@ class OutcomeExtractor(C.AbstractScheme):
             return conf
 
 
-class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
+class SurvivalOutcomeExtractor(OutcomeExtractor):
 
     def subject_outcome(self, subject: Subject):
         # The mask elements are ones for each outcome coordinate until
         # the outcome appears at one admission, the mask will have zero values
         # for later admissions for that particular coordinate
-        mask = np.ones((self.outcome_dim, ), dtype=bool)
+        mask = jnp.ones((self.outcome_dim, ), dtype=bool)
+        last_outcome = jnp.zeros((self.outcome_dim, ), dtype=bool)
         outcomes = []
         for adm in subject.admissions:
             outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
+            outcome = outcome | last_outcome
             outcomes.append((outcome, mask))
-
+            last_outcome = outcome
             # set mask[i] to zero if already zero or outcome[i] == 1
             mask = (mask & ~outcome)
 
@@ -132,19 +142,20 @@ class FirstOccurrenceOutcomeExtractor(OutcomeExtractor):
         return sum(outcome[0] * outcome[1] for subj in subjects
                    for outcome in self.subject_outcome(subj))
 
-class SurvivalOutcomeExtractor(OutcomeExtractor):
+
+@dataclass
+class MixedOutcomeExtractor(OutcomeExtractor):
+    alpha_mix: jnp.ndarray
+
+    def __post_init__(self):
+        self.alpha_mix = jnp.zeros((self.outcome_dim, ), dtype=float)
 
     def subject_outcome(self, subject: Subject):
-        mask = np.ones((self.outcome_dim, ), dtype=bool)
-        outcomes = []
-        last_outcome = np.zeros((self.outcome_dim, ), dtype=bool)
-        for adm in subject.admissions:
-            outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
-            outcome = outcome | last_outcome
-            outcomes.append((outcome, mask))
-            last_outcome = outcome
-        return outcomes
+        vanilla_outcome = OutcomeExtractor.subject_outcome(self, subject)
+        survive_outcome = SurvivalOutcomeExtractor.subject_outcome(
+            self, subject)
+        return list(zip(vanilla_outcome, survive_outcome))
 
-    def outcome_frequency_vec(self, subjects: List[Subject]):
-        return sum(outcome[0] * outcome[1] for subj in subjects
-                   for outcome in self.subject_outcome(subj))
+    def mixer_params(self):
+        sigma = jax.nn.sigmoid(self.alpha_mix)
+        return (sigma, 1 - sigma)
