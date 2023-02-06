@@ -16,7 +16,7 @@
         "batch_size": 128,
         "decay_rate": [0.25, 0.33],
         "lr": [7e-5,  1e-3],
-        "epochs": 20,
+        "epochs": 60,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,
