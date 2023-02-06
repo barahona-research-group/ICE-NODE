@@ -44,7 +44,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
                            batch: List[int]):
         out = self(subject_interface, batch, dict(return_embeddings=True))
         return {
-            i: out['risk_prediction'].get_subject_embeddings(i)
+            i: out['predictions'].get_subject_embeddings(i)
             for i in batch
         }
 
