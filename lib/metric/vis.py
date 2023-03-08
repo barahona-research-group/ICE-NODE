@@ -78,7 +78,8 @@ def probe_model_snapshots(train_dir: str,
             if metric == selection_metric:
                 tarfname = f'{clf_dir}/params.tar.bz2'
                 membername = f'step{index:04d}.eqx'
-                models[clf].load_params_from_tar_archive(tarfname, membername)
+                models[clf] = models[clf].load_params_from_tar_archive(
+                    tarfname, membername)
 
     return pd.DataFrame(data, index=data['model'])
 

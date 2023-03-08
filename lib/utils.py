@@ -68,6 +68,11 @@ def append_params_to_zip(model, params_name, zipfile_fname):
             eqx.tree_serialise_leaves(zip_member, model)
 
 
+def zip_members(zipfile_fname):
+    with zipfile.ZipFile(translate_path(zipfile_fname)) as archive:
+        return archive.namelist()
+
+
 def load_config(config_file):
     """Load a JSON file from `config_file`."""
     with open(translate_path(config_file)) as json_file:

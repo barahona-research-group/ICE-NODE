@@ -1,10 +1,23 @@
 """."""
 
+from typing import Any
 import os
 from absl import logging
+import re
 import optuna
+import equinox as eqx
+import tarfile
 
 from .. import utils as U
+
+
+class OptState(eqx.Module):
+    opt_state: Any = None
+
+    def load_from_tar_archive(self, tar_archive: str, membername: str):
+        with tarfile.open(U.translate_path(tar_archive)) as tar_rsc:
+            opt_file = tar_rsc.extractfile(membername)
+            return eqx.tree_deserialise_leaves(opt_file, self)
 
 
 class ResourceTimeout(Exception):
@@ -49,8 +62,14 @@ class AbstractReporter:
     def report_evaluation(self, history):
         pass
 
-    def report_params(self, step, model):
+    def report_params(self, step, model, opt_state):
         pass
+
+    def last_eval_step(self):
+        return None
+
+    def trained_model(self, step):
+        return None
 
 
 class MinibatchLogger(AbstractReporter):
@@ -77,7 +96,7 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self, history: "lib.ml.MetricsHistory"):
+    def report_evaluation(self, history: ".MetricsHistory"):
         h = history
         for name, df in zip(('train', 'val', 'tst'),
                             (h.train_df(), h.validation_df(), h.test_df())):
@@ -94,10 +113,39 @@ class ParamsDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_params(self, step, model):
+    def report_params(self, step, model, opt_state):
         tarname = os.path.join(self.output_dir, f'{self.prefix}params.tar.bz2')
         name = f'step{step:04d}.eqx'
+        optstate_name = f'step_optstate_{step:04d}.eqx'
+
         U.append_params_to_zip(model, name, tarname)
+        U.append_params_to_zip(OptState(opt_state), optstate_name, tarname)
+
+    def last_eval_step(self):
+        tarname = os.path.join(self.output_dir, f'{self.prefix}params.tar.bz2')
+        try:
+            filenames = U.zip_members(tarname)
+            numbers = []
+            for fname in filenames:
+                numbers.extend(map(int, re.findall(r'\d+', fname)))
+            if len(numbers) > 0:
+                return sorted(numbers)[-1]
+        except:
+            pass
+        return None
+
+    def trained_model(self, model, step):
+        tarfname = os.path.join(self.output_dir,
+                                f'{self.prefix}params.tar.bz2')
+        membername = f'step{step:04d}.eqx'
+        optstate_name = f'step_optstate_{step:04d}.eqx'
+
+        try:
+            m = model.load_params_from_tar_archive(tarfname, membername)
+            opt = OptState().load_from_tar_archive(tarfname, optstate_name)
+            return m, opt.opt_state
+        except:
+            return None, None
 
 
 class ConfigDiskWriter(AbstractReporter):

@@ -168,6 +168,10 @@ class Trainer(eqx.Module):
         opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
         return opt, opt.init(eqx.filter(model, eqx.is_inexact_array))
 
+    def init_from_optstate(self, optstate):
+        opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
+        return opt, optstate
+
     def _post_update_params(self, model: AbstractModel):
         return model
 
@@ -189,11 +193,23 @@ class Trainer(eqx.Module):
             'adam'  #trial.suggest_categorical('opt', ['adam', 'sgd', 'fromage'])
         }
 
+    def continue_training(self, model, reporters: List[AbstractReporter]):
+        last_eval_step = None
+        m, optstate = None, None
+        for r in reporters:
+            _last_eval_step = r.last_eval_step()
+            if _last_eval_step is not None:
+                last_eval_step = _last_eval_step
+                m, optstate = r.trained_model(model, last_eval_step)
+                optstate = self.init_from_optstate(optstate)
+        return last_eval_step, (m, optstate)
+
     def __call__(self,
                  model: AbstractModel,
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
                  history: MetricsHistory,
+                 continue_training: bool = False,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
                  reporters: List[AbstractReporter] = []):
@@ -203,20 +219,30 @@ class Trainer(eqx.Module):
         opt_state = self.init_opt(model)
         key = jrandom.PRNGKey(prng_seed)
 
+        train_index = jnp.arange(len(train_ids))
         for r in reporters:
             r.report_config()
             r.report_params_size(params_size(model))
             r.report_steps(iters)
 
-        train_index = jnp.arange(len(train_ids))
-
         eval_steps = sorted(set(np.linspace(0, iters - 1, 100).astype(int)))
+
+        cont_idx, (cont_m, cont_opt) = self.continue_training(model, reporters)
         for i in tqdm(range(iters)):
+            (key, ) = jrandom.split(key, 1)
+
             if datetime.now() > trial_terminate_time:
                 [r.report_timeout() for r in reporters]
                 break
 
-            (key, ) = jrandom.split(key, 1)
+            if continue_training and cont_idx:
+                j = eval_steps[cont_idx]
+                if i <= j:
+                    continue
+                elif i - 1 == j:
+                    model = cont_m
+                    opt_state = cont_opt
+
             shuffled_idx = jrandom.permutation(key, train_index)
             train_batch = [train_ids[i] for i in shuffled_idx[:batch_size]]
 
@@ -255,7 +281,7 @@ class Trainer(eqx.Module):
 
             for r in reporters:
                 r.report_evaluation(history)
-                r.report_params(eval_steps.index(i), model)
+                r.report_params(eval_steps.index(i), model, opt_state)
 
         return {'history': history, 'model': model}
 
@@ -346,8 +372,7 @@ class ODETrainer(Trainer):
         args['tay_reg'] = self.tay_reg
         res = model(subject_interface, batch, args)
         preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss(),
-                                  model.outcome_mixer())
+        l = preds.prediction_loss(self.dx_loss(), model.outcome_mixer())
 
         integration_weeks = self.odeint_time(preds) / 7
         l1_loss = model.l1()
