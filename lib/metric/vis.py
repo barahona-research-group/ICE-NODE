@@ -76,9 +76,9 @@ def probe_model_snapshots(train_dir: str,
             data[f'{metric}_best_snapshot_value'].append(value)
 
             if metric == selection_metric:
-                tarfname = f'{clf_dir}/params.tar.bz2'
+                tarfname = f'{clf_dir}/params.zip'
                 membername = f'step{index:04d}.eqx'
-                models[clf] = models[clf].load_params_from_tar_archive(
+                models[clf] = models[clf].load_params_from_archive(
                     tarfname, membername)
 
     return pd.DataFrame(data, index=data['model'])

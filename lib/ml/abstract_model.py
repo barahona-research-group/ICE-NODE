@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict, Optional
 from abc import ABC, abstractmethod, ABCMeta
-import tarfile
+import zipfile
 
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -43,10 +43,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def subject_embeddings(self, subject_interface: Subject_JAX,
                            batch: List[int]):
         out = self(subject_interface, batch, dict(return_embeddings=True))
-        return {
-            i: out['predictions'].get_subject_embeddings(i)
-            for i in batch
-        }
+        return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
 
     @staticmethod
     def _emb_subtrees(pytree):
@@ -123,12 +120,13 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         with open(translate_path(params_file), 'wb') as file_rsc:
             eqx.tree_serialise_leaves(file_rsc, self)
 
-    def load_params_from_tar_archive(self, tar_archive: str,
-                                     params_fname: str):
+    def load_params_from_archive(self, zipfile_fname: str, params_fname: str):
 
-        with tarfile.open(translate_path(tar_archive)) as tar_rsc:
-            params_file = tar_rsc.extractfile(params_fname)
-            return eqx.tree_deserialise_leaves(params_file, self)
+        with zipfile.ZipFile(translate_path(zipfile_fname),
+                             compression=zipfile.ZIP_STORED,
+                             mode="r") as archive:
+            with archive.open(params_fname, "r") as zip_member:
+                return eqx.tree_deserialise_leaves(zip_member, self)
 
 
 class AbstractModelProxMap(AbstractModel, metaclass=ABCMeta):

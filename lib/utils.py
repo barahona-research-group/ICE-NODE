@@ -61,11 +61,11 @@ def translate_path(path):
 
 def append_params_to_zip(model, params_name, zipfile_fname):
     with zipfile.ZipFile(translate_path(zipfile_fname),
-                         compression=zipfile.ZIP_BZIP2,
-                         compresslevel=9,
+                         compression=zipfile.ZIP_STORED,
                          mode="a") as archive:
         with archive.open(params_name, "w") as zip_member:
             eqx.tree_serialise_leaves(zip_member, model)
+
 
 
 def zip_members(zipfile_fname):
