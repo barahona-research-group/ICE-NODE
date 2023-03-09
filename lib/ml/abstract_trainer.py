@@ -1,6 +1,7 @@
 from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
+import pickle
 
 import pandas as pd
 from tqdm import tqdm
@@ -171,15 +172,14 @@ class Trainer(eqx.Module):
         opt_state = opt_init(eqx.filter(model, eqx.is_inexact_array))
         return (opt_update, get_params), opt_state
 
-    def init_from_optstate(self, optstate):
-        _, opt_update, get_params = opts[self.opt](self.lr_schedule(
-            self.lr, self.decay_rate))
+    def init_from_loaded_optstate(self, optstate, model):
+        opt, _ = self.init_opt(model)
+        optstate = jopt.pack_optimizer_state(optstate)
+        return opt, optstate
 
-        return (opt_update, get_params), optstate
-
-    def optstate_object(self, optstate):
+    def serializable_optstate(self, optstate):
         _, optstate = optstate
-        return optstate
+        return jopt.unpack_optimizer_state(optstate)
 
     def update_model(self, model, new_params):
 
@@ -190,7 +190,7 @@ class Trainer(eqx.Module):
                 return new
 
         def _is_none(x):
-            x is None
+            return x is None
 
         return jtu.tree_map(_replace, new_params, model, is_leaf=_is_none)
 
@@ -221,7 +221,7 @@ class Trainer(eqx.Module):
             last_eval_step = r.last_eval_step()
             if last_eval_step is not None:
                 m, optstate = r.trained_model(model, last_eval_step)
-                opt_state = self.init_from_optstate(optstate)
+                optstate = self.init_from_loaded_optstate(optstate, model)
                 return last_eval_step, (m, optstate)
 
         raise RuntimeError(f'No history to continue training from.')
@@ -307,12 +307,24 @@ class Trainer(eqx.Module):
             for r in reporters:
                 r.report_evaluation(history)
                 r.report_params(eval_steps.index(i), model,
-                                self.optstate_object(opt_state))
+                                self.serializable_optstate(opt_state))
 
         return {'history': history, 'model': model}
 
 
 class Trainer2LR(Trainer):
+
+    def init_from_loaded_optstate(self, optstate, model):
+        optstate = (jopt.pack_optimizer_state(optstate[0]),
+                    jopt.pack_optimizer_state(optstate[1]))
+        opt, _ = self.init_opt(model)
+
+        return opt, optstate
+
+    def serializable_optstate(self, optstate):
+        _, optstate = optstate
+        return (jopt.unpack_optimizer_state(optstate[0]),
+                jopt.unpack_optimizer_state(optstate[1]))
 
     def init_opt(self, model: AbstractModel):
         decay_rate = self.decay_rate
@@ -346,12 +358,7 @@ class Trainer2LR(Trainer):
         opt2_s = opt2_u(step, g2, opt2_s)
 
         new_params = model.emb_dyn_merge(opt1_p(opt1_s), opt2_p(opt2_s))
-        print(new_params)
-        print('-----')
-        print(model)
-        print('-----')
         new_model = self.update_model(model, new_params)
-        print(new_model)
 
         return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
 
