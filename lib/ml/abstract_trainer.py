@@ -1,15 +1,17 @@
 from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
 from abc import ABC, abstractmethod, ABCMeta
+import pickle
 
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.example_libraries.optimizers as jopt
+import jax.tree_util as jtu
 import equinox as eqx
 import optuna
-import optax
 
 from ..ehr import Subject_JAX, BatchPredictedRisks
 from .. import metric as M
@@ -17,7 +19,7 @@ from ..utils import params_size, tree_hasnan
 from .abstract_model import AbstractModel
 from .reporters import AbstractReporter
 
-opts = {'sgd': optax.sgd, 'adam': optax.adam, 'fromage': optax.fromage}
+opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
 
 class_weighting_dict = {
     'none': M.softmax_logits_bce,
@@ -103,9 +105,9 @@ class Trainer(eqx.Module):
     def lr_schedule(lr, decay_rate):
         if decay_rate is None:
             return lr
-        return optax.exponential_decay(lr,
-                                       transition_steps=50,
-                                       decay_rate=decay_rate)
+        return jopt.exponential_decay(lr,
+                                      decay_steps=50,
+                                      decay_rate=decay_rate)
 
     def dx_loss(self):
         return class_weighting_dict[self.class_weighting]
@@ -165,21 +167,46 @@ class Trainer(eqx.Module):
         return loss, preds
 
     def init_opt(self, model):
-        opt = opts[self.opt](self.lr_schedule(self.lr, self.decay_rate))
-        return opt, opt.init(eqx.filter(model, eqx.is_inexact_array))
+        opt_init, opt_update, get_params = opts[self.opt](self.lr_schedule(
+            self.lr, self.decay_rate))
+        opt_state = opt_init(eqx.filter(model, eqx.is_inexact_array))
+        return (opt_update, get_params), opt_state
+
+    def init_from_loaded_optstate(self, optstate, model):
+        opt, _ = self.init_opt(model)
+        optstate = jopt.pack_optimizer_state(optstate)
+        return opt, optstate
+
+    def serializable_optstate(self, optstate):
+        _, optstate = optstate
+        return jopt.unpack_optimizer_state(optstate)
+
+    def update_model(self, model, new_params):
+
+        def _replace(new, old):
+            if new is None:
+                return old
+            else:
+                return new
+
+        def _is_none(x):
+            return x is None
+
+        return jtu.tree_map(_replace, new_params, model, is_leaf=_is_none)
 
     def _post_update_params(self, model: AbstractModel):
         return model
 
-    def step_optimizer(self, opt_state: Any, model: AbstractModel,
+    def step_optimizer(self, step: int, opt_state: Any, model: AbstractModel,
                        subject_interface: Subject_JAX, batch: Tuple[int]):
-        opt, opt_state = opt_state
+        (opt_update, get_params), opt_state = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
         grads, aux = grad_f(model, subject_interface, batch)
-        updates, opt_state = opt.update(grads, opt_state)
-        new_model = eqx.apply_updates(model, updates)
+        opt_state = opt_update(step, grads, opt_state)
+        new_model = self.update_model(model, get_params(opt_state))
         new_model = self._post_update_params(new_model)
-        return (opt, opt_state), new_model, aux
+        opt_state = (opt_update, get_params), opt_state
+        return opt_state, new_model, aux
 
     @classmethod
     def sample_opt(cls, trial: optuna.Trial):
@@ -189,11 +216,22 @@ class Trainer(eqx.Module):
             'adam'  #trial.suggest_categorical('opt', ['adam', 'sgd', 'fromage'])
         }
 
+    def continue_training(self, model, reporters: List[AbstractReporter]):
+        for r in reporters:
+            last_eval_step = r.last_eval_step()
+            if last_eval_step is not None:
+                m, optstate = r.trained_model(model, last_eval_step)
+                optstate = self.init_from_loaded_optstate(optstate, model)
+                return last_eval_step, (m, optstate)
+
+        raise RuntimeError(f'No history to continue training from.')
+
     def __call__(self,
                  model: AbstractModel,
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
                  history: MetricsHistory,
+                 continue_training: bool = False,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
                  reporters: List[AbstractReporter] = []):
@@ -203,26 +241,39 @@ class Trainer(eqx.Module):
         opt_state = self.init_opt(model)
         key = jrandom.PRNGKey(prng_seed)
 
+        train_index = jnp.arange(len(train_ids))
         for r in reporters:
             r.report_config()
             r.report_params_size(params_size(model))
             r.report_steps(iters)
 
-        train_index = jnp.arange(len(train_ids))
-
         eval_steps = sorted(set(np.linspace(0, iters - 1, 100).astype(int)))
+
+        if continue_training:
+            cont_idx, (cont_m,
+                       cont_opt) = self.continue_training(model, reporters)
+
         for i in tqdm(range(iters)):
+            (key, ) = jrandom.split(key, 1)
+
             if datetime.now() > trial_terminate_time:
                 [r.report_timeout() for r in reporters]
                 break
 
-            (key, ) = jrandom.split(key, 1)
+            if continue_training:
+                j = eval_steps[cont_idx]
+                if i <= j:
+                    continue
+                elif i - 1 == j:
+                    model = cont_m
+                    opt_state = cont_opt
+
             shuffled_idx = jrandom.permutation(key, train_index)
             train_batch = [train_ids[i] for i in shuffled_idx[:batch_size]]
 
             try:
                 opt_state, model, _ = self.step_optimizer(
-                    opt_state, model, subject_interface, train_batch)
+                    i, opt_state, model, subject_interface, train_batch)
 
             except RuntimeError as e:
                 [
@@ -255,38 +306,59 @@ class Trainer(eqx.Module):
 
             for r in reporters:
                 r.report_evaluation(history)
-                r.report_params(eval_steps.index(i), model)
+                r.report_params(eval_steps.index(i), model,
+                                self.serializable_optstate(opt_state))
 
         return {'history': history, 'model': model}
 
 
 class Trainer2LR(Trainer):
 
+    def init_from_loaded_optstate(self, optstate, model):
+        optstate = (jopt.pack_optimizer_state(optstate[0]),
+                    jopt.pack_optimizer_state(optstate[1]))
+        opt, _ = self.init_opt(model)
+
+        return opt, optstate
+
+    def serializable_optstate(self, optstate):
+        _, optstate = optstate
+        return (jopt.unpack_optimizer_state(optstate[0]),
+                jopt.unpack_optimizer_state(optstate[1]))
+
     def init_opt(self, model: AbstractModel):
         decay_rate = self.decay_rate
         if not (isinstance(decay_rate, list) or isinstance(decay_rate, tuple)):
             decay_rate = (decay_rate, decay_rate)
 
-        opt1 = opts[self.opt](self.lr_schedule(self.lr[0], decay_rate[0]))
-        opt2 = opts[self.opt](self.lr_schedule(self.lr[1], decay_rate[1]))
+        opt1_i, opt1_u, opt1_p = opts[self.opt](self.lr_schedule(
+            self.lr[0], decay_rate[0]))
+        opt2_i, opt2_u, opt2_p = opts[self.opt](self.lr_schedule(
+            self.lr[1], decay_rate[1]))
         m1, m2 = model.emb_dyn_partition(model)
         m1 = eqx.filter(m1, eqx.is_inexact_array)
         m2 = eqx.filter(m2, eqx.is_inexact_array)
-        return (opt1, opt2), (opt1.init(m1), opt2.init(m2))
+        opt1_s = opt1_i(m1)
+        opt2_s = opt2_i(m2)
+        opt1 = opt1_u, opt1_p
+        opt2 = opt2_u, opt2_p
+        return (opt1, opt2), (opt1_s, opt2_s)
 
-    def step_optimizer(self, opt_state: Any, model: AbstractModel,
+    def step_optimizer(self, step: int, opt_state: Any, model: AbstractModel,
                        subject_interface: Subject_JAX, batch: Tuple[int]):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
+        opt1_u, opt1_p = opt1
+        opt2_u, opt2_p = opt2
+
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
         grads, aux = grad_f(model, subject_interface, batch)
         g1, g2 = model.emb_dyn_partition(grads)
 
-        updates1, opt1_s = opt1.update(g1, opt1_s)
-        updates2, opt2_s = opt2.update(g2, opt2_s)
+        opt1_s = opt1_u(step, g1, opt1_s)
+        opt2_s = opt2_u(step, g2, opt2_s)
 
-        updates = model.emb_dyn_merge(updates1, updates2)
-
-        new_model = eqx.apply_updates(model, updates)
+        new_params = model.emb_dyn_merge(opt1_p(opt1_s), opt2_p(opt2_s))
+        new_model = self.update_model(model, new_params)
 
         return ((opt1, opt2), (opt1_s, opt2_s)), new_model, aux
 
@@ -346,8 +418,7 @@ class ODETrainer(Trainer):
         args['tay_reg'] = self.tay_reg
         res = model(subject_interface, batch, args)
         preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss(),
-                                  model.outcome_mixer())
+        l = preds.prediction_loss(self.dx_loss(), model.outcome_mixer())
 
         integration_weeks = self.odeint_time(preds) / 7
         l1_loss = model.l1()

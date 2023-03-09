@@ -1,6 +1,9 @@
 """."""
 
 import os
+import re
+import pickle
+
 from absl import logging
 import optuna
 
@@ -49,8 +52,14 @@ class AbstractReporter:
     def report_evaluation(self, history):
         pass
 
-    def report_params(self, step, model):
+    def report_params(self, step, model, opt_state):
         pass
+
+    def last_eval_step(self):
+        return None
+
+    def trained_model(self, step):
+        return None
 
 
 class MinibatchLogger(AbstractReporter):
@@ -77,7 +86,7 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self, history: "lib.ml.MetricsHistory"):
+    def report_evaluation(self, history: ".MetricsHistory"):
         h = history
         for name, df in zip(('train', 'val', 'tst'),
                             (h.train_df(), h.validation_df(), h.test_df())):
@@ -94,10 +103,33 @@ class ParamsDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_params(self, step, model):
-        tarname = os.path.join(self.output_dir, f'{self.prefix}params.tar.bz2')
+    def report_params(self, step, model, opt_state):
+        tarname = os.path.join(self.output_dir, f'{self.prefix}params.zip')
         name = f'step{step:04d}.eqx'
+        optstate_name = os.path.join(self.output_dir,
+                                     f'{self.prefix}optstate.pkl')
         U.append_params_to_zip(model, name, tarname)
+
+        with open(optstate_name, "wb") as optstate_file:
+            pickle.dump(opt_state, optstate_file)
+
+    def last_eval_step(self):
+        tarname = os.path.join(self.output_dir, f'{self.prefix}params.zip')
+        filenames = U.zip_members(tarname)
+        numbers = []
+        for fname in filenames:
+            numbers.extend(map(int, re.findall(r'\d+', fname)))
+        return sorted(numbers)[-1]
+
+    def trained_model(self, model, step):
+        tarfname = os.path.join(self.output_dir, f'{self.prefix}params.zip')
+        membername = f'step{step:04d}.eqx'
+        optstate_name = os.path.join(self.output_dir,
+                                     f'{self.prefix}optstate.pkl')
+        model = model.load_params_from_archive(tarfname, membername)
+        with open(optstate_name, "rb") as optstate_file:
+            opt = pickle.load(optstate_file)
+        return model, opt
 
 
 class ConfigDiskWriter(AbstractReporter):
