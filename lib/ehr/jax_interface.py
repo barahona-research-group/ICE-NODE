@@ -1,5 +1,4 @@
 """JAX storage and interface for EHR predictive models"""
-
 from __future__ import annotations
 from collections import defaultdict
 import random
@@ -26,16 +25,20 @@ MixerParams = Tuple[jnp.ndarray, ...]
 
 
 class StaticInfo_JAX(eqx.Module):
+    """JAX storage and interface for static information"""
+
     static_info: StaticInfo
     flags: StaticInfoFlags
     static_control_vec: jnp.ndarray
 
     def __init__(self, static_info, flags):
+        super().__init__()
         self.static_info = static_info
         self.flags = flags
         self.static_control_vec = self._static_control_vector()
 
     def _static_control_vector(self):
+
         vec = []
 
         # Ethnicity
@@ -69,6 +72,7 @@ class StaticInfo_JAX(eqx.Module):
             return jnp.array([])
 
     def _dynamic_control_vector(self, current_date):
+
         vec = []
         if self.flags.age:
             assert self.static_info.date_of_birth is not None, "Age is requested while date of birth is not provided in the dataset."
@@ -87,6 +91,8 @@ class StaticInfo_JAX(eqx.Module):
 
 @dataclass
 class Admission_JAX:
+    """JAX storage and interface for admission information"""
+
     admission_time: int
     los: int
     admission_id: int
@@ -95,25 +101,16 @@ class Admission_JAX:
     pr_vec: jnp.ndarray
     outcome: Outcome
 
-    @property
-    def is_mixed_outcome(self):
-        return isinstance(self.outcome[0], tuple)
-
     def get_outcome(self):
-        if self.is_mixed_outcome:
-            return self.outcome[0][0]
-        else:
-            return self.outcome[0]
+        return self.outcome[0]
 
     def get_mask(self):
-        if self.is_mixed_outcome:
-            return self.outcome[0][1]
-        else:
-            return self.outcome[1]
+        return self.outcome[1]
 
 
 @dataclass
 class SubjectPredictedRisk:
+
     admission: Admission_JAX
     prediction: jnp.ndarray
     trajectory: Optional[jnp.ndarray] = None
@@ -132,6 +129,7 @@ class SubjectPredictedRisk:
 
 
 class BatchPredictedRisks(dict):
+    """JAX storage and interface for batch of predicted risks"""
 
     def __init__(self):
         self.embeddings = dict()
@@ -169,35 +167,16 @@ class BatchPredictedRisks(dict):
         risks = self[subject_id]
         return list(map(risks.get, sorted(risks)))
 
-    def subject_mixed_prediction_loss(self, subject_id, loss_f: LossFunction,
-                                      mixer_params: Optional[MixerParams]):
-        loss = []
-        for r in self[subject_id].values():
-            outcomes = tuple(o[0] for o in r.admission.outcome)
-            masks = tuple(o[1] * m
-                          for o, m in zip(r.admission.outcome, mixer_params))
-            lossval = sum(
-                loss_f(o, r.prediction, m) for o, m in zip(outcomes, masks))
-            loss.append(lossval)
-        return sum(loss) / len(loss)
-
-    def subject_prediction_loss(self, subject_id, loss_f: LossFunction,
-                                mixer_params: Optional[jnp.ndarray]):
-
-        if mixer_params is not None:
-            return self.subject_mixed_prediction_loss(subject_id, loss_f,
-                                                      mixer_params)
+    def subject_prediction_loss(self, subject_id, loss_f: LossFunction):
         loss = [
             loss_f(r.admission.outcome[0], r.prediction,
                    r.admission.outcome[1]) for r in self[subject_id].values()
         ]
         return sum(loss) / len(loss)
 
-    def prediction_loss(self,
-                        loss_f: LossFunction,
-                        mixer_params: Optional[MixerParams] = None):
+    def prediction_loss(self, loss_f: LossFunction):
         loss = [
-            self.subject_prediction_loss(subject_id, loss_f, mixer_params)
+            self.subject_prediction_loss(subject_id, loss_f)
             for subject_id in self.keys()
         ]
         return jnp.nanmean(jnp.array(loss))
@@ -214,7 +193,8 @@ class BatchPredictedRisks(dict):
 
 class Subject_JAX(dict):
     """
-    Class to prepare EHRs information to predictive models.
+    JAX storage and interface for subject information.
+    It prepares EHRs information to predictive models.
     NOTE: admissions with overlapping admission dates for the same patietn
     are merged. Hence, in case patients end up with one admission, they
     are discarded.
@@ -225,6 +205,13 @@ class Subject_JAX(dict):
                  code_scheme: Dict[str, AbstractScheme],
                  static_info_flags: StaticInfoFlags = StaticInfoFlags(),
                  data_max_size_gb=4):
+        """
+        Args:
+            subjects: list of subjects.
+            code_scheme: dictionary of code schemes.
+            static_info_flags: flags for static information.
+            data_max_size_gb: maximum size of data on the JAX device.
+        """
         # If the data size on the JAX device will exceed this preset variable,
         # let the interface contain subject data amounting to that limit, and the
         # remaining subjects will be loaded to the device everytime one of these
@@ -438,6 +425,7 @@ class Subject_JAX(dict):
     def outcome_by_percentiles(self,
                                percentile_range: float = 20,
                                subjects: Optional[List[int]] = None):
+
         subjects = subjects or list(self.keys())
         return self._code_frequency_partitions(
             percentile_range, self.outcome_frequency_vec(subjects))
@@ -746,6 +734,7 @@ class Subject_JAX(dict):
         return features
 
     def tabular_features(self, subjects: List[int]):
+
         features = self._compute_window_features(subjects)
         X = []
         for subj_id in subjects:

@@ -141,21 +141,3 @@ class SurvivalOutcomeExtractor(OutcomeExtractor):
     def outcome_frequency_vec(self, subjects: List[Subject]):
         return sum(outcome[0] * outcome[1] for subj in subjects
                    for outcome in self.subject_outcome(subj))
-
-
-@dataclass
-class MixedOutcomeExtractor(OutcomeExtractor):
-    alpha_mix: jnp.ndarray
-
-    def __post_init__(self):
-        self.alpha_mix = jnp.zeros((self.outcome_dim, ), dtype=float)
-
-    def subject_outcome(self, subject: Subject):
-        vanilla_outcome = OutcomeExtractor.subject_outcome(self, subject)
-        survive_outcome = SurvivalOutcomeExtractor.subject_outcome(
-            self, subject)
-        return list(zip(vanilla_outcome, survive_outcome))
-
-    def mixer_params(self):
-        sigma = jax.nn.sigmoid(self.alpha_mix)
-        return (sigma, 1 - sigma)

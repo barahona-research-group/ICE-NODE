@@ -5,6 +5,7 @@ from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict, 
 from abc import ABC, abstractmethod, ABCMeta
 import zipfile
 
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
@@ -29,12 +30,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def __call__(self, subject_interface: Subject_JAX,
                  subjects_batch: List[int], args):
         pass
-
-    def outcome_mixer(self):
-        if isinstance(self.outcome, MixedOutcomeExtractor):
-            return self.outcome.mixer_params()
-        else:
-            return None
 
     @staticmethod
     def decoder_input_size(expt_config):
