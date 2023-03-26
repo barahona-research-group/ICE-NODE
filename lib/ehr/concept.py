@@ -13,41 +13,56 @@ from .coding_scheme import AbstractScheme, NullScheme
 
 @dataclass
 class AbstractAdmission:
-    admission_id: int
-    admission_dates: Tuple[date, date]
+    """
+    Abstract class for admission data.
+    """
+    admission_id: int  # Unique ID for each admission
+    admission_dates: Tuple[date, date]  # (admission date, discharge date)
 
     @staticmethod
     def days(d1, d2):
+        """Returns the number of days between two dates."""
         return (d1 - d2).days
 
     def admission_day(self, ref_date):
+        """Returns the number of days between admission date and ref_date."""
         return self.days(self.admission_dates[0], ref_date)
 
     def discharge_day(self, ref_date):
+        """Returns the number of days between discharge date and ref_date."""
         return self.days(self.admission_dates[1], ref_date)
 
     @property
     def length_of_stay(self):
-        # Length of Stay
-        # This 0.5 means if a patient is admitted and discharged at
-        # the same day, then we assume 0.5 day as length of stay (12 hours)
-        # In general, this would generalize the assumption to:
-        # Admissions during a day happen at the midnight 00:01
-        # While discharges during a day happen at the afternoon 12:00
+        """Returns the length of stay in days.
+
+        Note: The 0.5 added to address the case when the patient 
+        is admitted and discharged at the same day, then we assume 0.5 day as length of stay (12 hours)
+        In general, this would generalize the assumption to:
+        Admission time is fixed at the midnight 00:01
+        while discharge time is fixed at the midday 12:01        
+        """
+
         return self.days(self.admission_dates[1],
                          self.admission_dates[0]) + 0.5
 
 
 @dataclass
 class Admission(AbstractAdmission):
-    dx_codes: Set[str]
-    pr_codes: Set[str]
-    dx_scheme: AbstractScheme
-    pr_scheme: AbstractScheme
+    """
+    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
+    """
+    dx_codes: Set[str] # Set of diagnostic codes
+    pr_codes: Set[str] # Set of procedure codes
+    dx_scheme: AbstractScheme # Coding scheme for diagnostic codes
+    pr_scheme: AbstractScheme # Coding scheme for procedure codes
 
 
 @dataclass
 class StaticInfo:
+    """
+    StaticInfo class encapsulates the patient static information.
+    """
     gender: Optional[Union[float, np.ndarray]] = None
     date_of_birth: Optional[date] = None
     idx_deprivation: Optional[float] = None
@@ -71,7 +86,6 @@ class Subject:
         - Some admissions for particular patients have the same ADMITTIME.
     For these cases the one with earlier DISCHTIME will be merged to the other.
     """
-
     def __init__(self, subject_id: int, admissions: List[Admission],
                  static_info: StaticInfo):
         self.subject_id = subject_id
@@ -104,8 +118,7 @@ class Subject:
 
     @staticmethod
     def pr_schemes(subjects: List[Subject]):
-        # This function handles the case when coding schemes are not consistent
-        # across admissions.
+        """This function handles the case when coding schemes are not consistent across admissions."""
         schemes = set()
         for s in subjects:
             for a in s.admissions:
@@ -114,6 +127,8 @@ class Subject:
 
     @staticmethod
     def merge_overlaps(admissions):
+        """Merge admissions with overlapping time intervals."""
+
         admissions = sorted(admissions, key=lambda adm: adm.admission_dates[0])
         super_admissions = [admissions[0]]
         for adm in admissions[1:]:
