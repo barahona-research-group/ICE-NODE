@@ -13,7 +13,7 @@ import equinox as eqx
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import Subject_JAX, OutcomeExtractor, MixedOutcomeExtractor
+from ..ehr import Subject_JAX, OutcomeExtractor
 from ..embeddings import embeddings_from_conf
 from ..utils import translate_path
 
@@ -33,7 +33,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
 
     @staticmethod
     def decoder_input_size(expt_config):
-        return expt_config["model"]["state_size"]
+        return expt_config["emb"]["dx"]["embeddings_size"]
 
     def subject_embeddings(self, subject_interface: Subject_JAX,
                            batch: List[int]):

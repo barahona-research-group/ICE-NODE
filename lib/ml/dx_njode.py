@@ -24,6 +24,26 @@ class SubjectState(eqx.Module):
     time: jnp.ndarray  # shape ()
 
 
+class NJBatchPredictedRisks(BatchPredictedRisks):
+    def subject_prediction_loss(self, subject_id):
+        subject_loss = []
+        for prediction in self[subject_id].values():
+            x = prediction.other.x
+            y = prediction.other.y
+            y_hat = prediction.other.y_hat
+            subject_loss.append(
+                jnp.nanmean(jnp.square(jnp.abs(y - y_hat) + jnp.abs(x - y))))
+
+        return jnp.nanmean(jnp.array(subject_loss))
+
+    def prediction_loss(self, ignore=None):
+        loss = [
+            self.subject_prediction_loss(subject_id)
+            for subject_id in self.keys()
+        ]
+        return jnp.nanmean(jnp.array(loss))
+
+
 class NJODE(AbstractModel):
     ode_dyn: eqx.Module
     f_update: eqx.Module
@@ -51,7 +71,7 @@ class NJODE(AbstractModel):
         ode_dyn_f = eqx.nn.MLP(activation=jax.nn.tanh,
                                final_activation=jax.nn.tanh,
                                depth=ode_nlayers - 1,
-                               width_size=input_size,
+                               width_size=3 * dyn_state_size // 2,
                                in_size=input_size,
                                out_size=dyn_state_size,
                                key=key1)
@@ -60,10 +80,7 @@ class NJODE(AbstractModel):
 
         self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=timescale)
 
-        self.f_update = StateUpdate(
-            state_size=self.state_size,
-            embeddings_size=self.dx_emb.embeddings_size,
-            key=key2)
+        self.f_update = None
 
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
@@ -77,7 +94,6 @@ class NJODE(AbstractModel):
                          int_time: jnp.ndarray, ctrl: jnp.ndarray,
                          args: Dict[str, Any]):
         args = dict(control=ctrl, **args)
-        args['sampling_rate'] = args.get('sampling_rate', self.timestep)
         out = self.ode_dyn(int_time, subject_state.state, args)
         if args.get('tay_reg', 0) > 0:
             state, r, traj = out[0][-1], out[1][-1].squeeze(), out[0]
@@ -139,15 +155,17 @@ class NJODE(AbstractModel):
                 risk_prediction.add(subject_id=subj_i,
                                     admission=adm,
                                     prediction=dec_dx,
-                                    trajectory=traj)
+                                    trajectory=traj,
+                                    other=dict(x=adm.dx_vec,
+                                               y_hat=dec_dx,
+                                               y=self.dx_dec(emb)))
                 # NJ Loss:
                 # xi = adm.dx_vec
-                # yi = self.dx_dec(subject_state.state)
-                # yi' = self.dx_dec(emb)
+                # yi_hat = self.dx_dec(subject_state.state)
+                # yi = self.dx_dec(emb)
                 if args.get('return_embeddings', False):
                     risk_prediction.set_subject_embeddings(
                         subject_id=subj_i, embeddings=subject_state.state)
-
 
                 # Jump
                 subject_state = SubjectState(emb, current_disch_time)

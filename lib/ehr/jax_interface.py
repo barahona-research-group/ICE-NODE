@@ -26,7 +26,6 @@ MixerParams = Tuple[jnp.ndarray, ...]
 
 class StaticInfo_JAX(eqx.Module):
     """JAX storage and interface for static information"""
-
     static_info: StaticInfo
     flags: StaticInfoFlags
     static_control_vec: jnp.ndarray
@@ -114,6 +113,7 @@ class SubjectPredictedRisk:
     admission: Admission_JAX
     prediction: jnp.ndarray
     trajectory: Optional[jnp.ndarray] = None
+    other: Optional[Dict[str, jnp.ndarray]] = None
 
     def __str__(self):
         return f"""
@@ -130,7 +130,6 @@ class SubjectPredictedRisk:
 
 class BatchPredictedRisks(dict):
     """JAX storage and interface for batch of predicted risks"""
-
     def __init__(self):
         self.embeddings = dict()
 
@@ -199,7 +198,6 @@ class Subject_JAX(dict):
     are merged. Hence, in case patients end up with one admission, they
     are discarded.
     """
-
     def __init__(self,
                  subjects: List[Subject],
                  code_scheme: Dict[str, AbstractScheme],
@@ -589,7 +587,6 @@ class Subject_JAX(dict):
         return coocurrence_mat
 
     def _jaxify_subject_admissions(self):
-
         def _jaxify_adms(subj):
             outcomes = self.outcome_extractor.subject_outcome(subj)
             adms = []
