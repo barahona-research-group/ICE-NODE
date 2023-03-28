@@ -119,8 +119,7 @@ class Trainer(eqx.Module):
                    args: Dict[str, Any] = dict()):
         res = model(subject_interface, batch, args)
 
-        l = res['predictions'].prediction_loss(self.dx_loss(),
-                                               model.outcome_mixer())
+        l = res['predictions'].prediction_loss(self.dx_loss())
         return l, ({'dx_loss': l}, res['predictions'])
 
     def reg_loss(self,
@@ -129,8 +128,7 @@ class Trainer(eqx.Module):
                  batch: List[int],
                  args: Dict[str, Any] = dict()):
         res = model(subject_interface, batch, args)
-        l = res['predictions'].prediction_loss(self.dx_loss(),
-                                               model.outcome_mixer())
+        l = res['predictions'].prediction_loss(self.dx_loss())
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
@@ -418,7 +416,7 @@ class ODETrainer(Trainer):
         args['tay_reg'] = self.tay_reg
         res = model(subject_interface, batch, args)
         preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss(), model.outcome_mixer())
+        l = preds.prediction_loss(self.dx_loss())
 
         integration_weeks = self.odeint_time(preds) / 7
         l1_loss = model.l1()

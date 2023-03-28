@@ -21,8 +21,6 @@ LossFunction = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
 SingleOutcome = Tuple[jnp.ndarray, jnp.ndarray]
 MixedOutcome = Tuple[SingleOutcome, ...]
 Outcome = Union[SingleOutcome, MixedOutcome]
-MixerParams = Tuple[jnp.ndarray, ...]
-
 
 class StaticInfo_JAX(eqx.Module):
     """JAX storage and interface for static information"""
@@ -151,13 +149,17 @@ class BatchPredictedRisks(dict):
             subject_id: int,
             admission: Admission_JAX,
             prediction: jnp.ndarray,
-            trajectory: Optional[jnp.ndarray] = None):
+            trajectory: Optional[jnp.ndarray] = None,
+            other: Optional[Dict[str, jnp.ndarray]] = None):
 
         if subject_id not in self:
             self[subject_id] = {}
 
         self[subject_id][admission.admission_id] = SubjectPredictedRisk(
-            admission=admission, prediction=prediction, trajectory=trajectory)
+            admission=admission,
+            prediction=prediction,
+            trajectory=trajectory,
+            other=other)
 
     def get_subjects(self):
         return sorted(self.keys())
