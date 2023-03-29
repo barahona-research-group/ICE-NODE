@@ -91,7 +91,7 @@ class Trainer(eqx.Module):
                  batch_size,
                  lr,
                  decay_rate=None,
-                 class_weighting='none',
+                 class_weighting='focal',
                  **kwargs):
         self.opt = opt
         self.reg_hyperparams = reg_hyperparams

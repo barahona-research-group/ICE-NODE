@@ -42,8 +42,8 @@ def softmax_logits_bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray):
       - The predictions `logits`, before applying the Softmax function,
       where each element is a float in :math:`(-\infty, \infty)`.
     """
-    terms = y * jax.nn.log_softmax(logits) + (
-        1 - y) * jnp.log(1 - jax.nn.softmax(logits))
+    terms = y * jax.nn.log_softmax(logits, axis=1) + (
+        1 - y) * jnp.log(1 - jax.nn.softmax(logits, axis=1))
     return -jnp.nanmean(terms, where=mask)
 
 
@@ -59,8 +59,8 @@ def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray,
 def softmax_logits_weighted_bce(y: jnp.ndarray, logits: jnp.ndarray,
                                 mask: jnp.ndarray):
     """Weighted version of ``softmax_logits_bce``."""
-    terms = (y * jax.nn.log_softmax(logits) +
-             (1 - y) * jnp.log(1 - jax.nn.softmax(logits)))
+    terms = (y * jax.nn.log_softmax(logits, axis = 1) +
+             (1 - y) * jnp.log(1 - jax.nn.softmax(logits, axis=1)))
     weights = y.shape[0] / (y.sum(axis=0) + 1)
     return -jnp.nanmean(weights * terms, where=mask)
 
@@ -81,16 +81,16 @@ def balanced_focal_bce(y: jnp.ndarray,
         element is an integer in :math:`\{0, 1\}`.
       - The predictions `logits`, before applying the Sigmoid function, where
       each element is a float in :math:`(-\infty, \infty)`.
-      - `gamma` is the :math:`\gamma` parameter in [1].
-      - `beta` is the :math:`\beta` parameter in [2].
+      - `gamma` is the :math:`\gamma` parameter in [2].
+      - `beta` is the :math:`\beta` parameter in [1].
 
     References:
       [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
       [2] _Lin et al., Focal Loss for Dense Object Detection.
     """
 
-    n1 = jnp.sum(y)
-    n0 = jnp.size(y) - n1
+    n1 = jnp.sum(y, axis=0)
+    n0 = len(y) - n1
     # Effective number of samples.
     e1 = (1 - beta**n1) / (1 - beta) + 1e-1
     e0 = (1 - beta**n0) / (1 - beta) + 1e-1
@@ -122,7 +122,7 @@ def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
     e0 = (1 - beta**n0) / (1 - beta) + 1e-5
 
     # Focal weighting
-    p = jax.nn.softmax(logits)
+    p = jax.nn.softmax(logits, axis=1)
     w1 = jnp.power(1 - p, gamma)
     w0 = jnp.power(p, gamma)
     terms = y * (w1 / e1) * jax.nn.log_softmax(logits) + (1 - y) * (
