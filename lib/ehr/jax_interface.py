@@ -168,11 +168,17 @@ class BatchPredictedRisks(dict):
         return list(map(risks.get, sorted(risks)))
 
     def subject_prediction_loss(self, subject_id, loss_f: LossFunction):
-        loss = [
-            loss_f(r.admission.outcome[0], r.prediction,
-                   r.admission.outcome[1]) for r in self[subject_id].values()
-        ]
-        return sum(loss) / len(loss)
+        outcome = []
+        prediction = []
+        for r in self[subject_id].values():
+            outcome.append(r.admission.get_outcome())
+            prediction.append(r.prediction)
+
+        outcome = jnp.vstack(outcome)
+        prediction = jnp.vstack(prediction)
+        mask = jnp.ones_like(outcome)
+
+        return loss_f(outcome, prediction, mask)
 
     def prediction_loss(self, loss_f: LossFunction):
         loss = [

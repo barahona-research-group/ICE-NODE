@@ -126,14 +126,13 @@ class NJODE(AbstractModel):
         input_size = dyn_state_size + self.control_size + kwargs[
             'dx_emb'].input_size + 1
 
-        key1, key2 = jrandom.split(key, 2)
         ode_dyn_f = eqx.nn.MLP(activation=jax.nn.tanh,
                                final_activation=jax.nn.tanh,
                                depth=ode_nlayers - 1,
                                width_size=3 * dyn_state_size // 2,
                                in_size=input_size,
                                out_size=dyn_state_size,
-                               key=key1)
+                               key=key)
         ode_dyn_f = model_params_scaler(ode_dyn_f, ode_init_var,
                                         eqx.is_inexact_array)
 
