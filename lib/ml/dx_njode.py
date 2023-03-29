@@ -25,18 +25,71 @@ class SubjectState(eqx.Module):
 
 
 class NJBatchPredictedRisks(BatchPredictedRisks):
-    def subject_prediction_loss(self, subject_id):
-        subject_loss = []
-        for risk in self[subject_id].values():
-            y_nominal = risk.admission.get_outcome()
-            y_mask = risk.admission.get_mask()
-            y_pre = risk.other['y_pre']
-            y_post = risk.other['y_post']
-            err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
-            adm_loss = jnp.nanmean(err, where=y_mask)
-            subject_loss.append(adm_loss)
+    # def subject_prediction_loss(self, subject_id):
+    #     subject_loss = []
+    #     for risk in self[subject_id].values():
+    #         y_nominal = risk.admission.get_outcome()
+    #         y_mask = risk.admission.get_mask()
+    #         y_pre = risk.other['y_pre']
+    #         y_post = risk.other['y_post']
+    #         err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
+    #         adm_loss = jnp.nanmean(err, where=y_mask)
+    #         subject_loss.append(adm_loss)
 
-        return jnp.nanmean(jnp.array(subject_loss))
+    #     return jnp.nanmean(jnp.array(subject_loss))
+
+    # Balanced, masked
+    # def subject_prediction_loss(self, subject_id):
+    #     y_nominal = []
+    #     y_mask = []
+    #     y_pre = []
+    #     y_post = []
+
+    #     for risk in self[subject_id].values():
+    #         y_nominal.append(risk.admission.get_outcome())
+    #         y_mask.append(risk.admission.get_mask())
+    #         y_pre.append(risk.other['y_pre'])
+    #         y_post.append(risk.other['y_post'])
+    #     y_nominal = jnp.vstack(y_nominal)
+    #     y_mask = jnp.vstack(y_mask)
+    #     y_pre = jnp.vstack(y_pre)
+    #     y_post = jnp.vstack(y_post)
+
+    #     w1 = jnp.nanmean(y_nominal, axis=0, where=y_mask)
+    #     w0 = 1 - w0
+
+    #     err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
+    #     err0 = err * (1 - y_nominal) * w0
+    #     err1 = err * y_nominal * w1
+    #     return jnp.nanmean(err0 + err1, where=y_mask)
+
+    # Balanced, without mask
+    def subject_prediction_loss(self, subject_id):
+        y_nominal = []
+        y_pre = []
+        y_post = []
+
+        for risk in self[subject_id].values():
+            y_nominal.append(risk.admission.get_outcome())
+            y_pre.append(risk.other['y_pre'])
+            y_post.append(risk.other['y_post'])
+        y_nominal = jnp.vstack(y_nominal)
+        y_pre = jnp.vstack(y_pre)
+        y_post = jnp.vstack(y_post)
+
+        n1 = jnp.sum(y_nominal, axis=0)
+        n0 = len(y_nominal) - n1
+        # Effective number of samples.
+        # [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
+        beta = 0.9
+        e1 = (1 - beta**n1) / (1 - beta)
+        e0 = (1 - beta**n0) / (1 - beta)
+
+        err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
+        err0 = err * (1 - y_nominal) / (e0 + 1e-1)
+        err1 = err * y_nominal / (e1 + 1e-1)
+
+        return jnp.nanmean(err0 + err1)
 
     def prediction_loss(self, ignore=None):
         loss = [

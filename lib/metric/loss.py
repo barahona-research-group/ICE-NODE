@@ -81,8 +81,8 @@ def balanced_focal_bce(y: jnp.ndarray,
         element is an integer in :math:`\{0, 1\}`.
       - The predictions `logits`, before applying the Sigmoid function, where
       each element is a float in :math:`(-\infty, \infty)`.
-      - `gamma` is the :math:`\gamma` parameter in [1].
-      - `beta` is the :math:`\beta` parameter in [2].
+      - `gamma` is the :math:`\gamma` parameter in [2].
+      - `beta` is the :math:`\beta` parameter in [1].
 
     References:
       [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
