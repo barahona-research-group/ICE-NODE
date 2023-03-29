@@ -51,6 +51,10 @@ class NJODE(AbstractModel):
     ode_init_var: float = eqx.static_field()
     timescale: float = eqx.static_field()
 
+    @staticmethod
+    def decoder_input_size(expt_config):
+        return expt_config["emb"]["dx"]["embeddings_size"]
+        
     @property
     def dyn_state_size(self):
         return self.state_size + self.dx_emb.embeddings_size

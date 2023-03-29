@@ -86,7 +86,7 @@ class EvaluationDiskWriter(AbstractReporter):
         self.output_dir = output_dir
         self.prefix = prefix
 
-    def report_evaluation(self, history: ".MetricsHistory"):
+    def report_evaluation(self, history):
         h = history
         for name, df in zip(('train', 'val', 'tst'),
                             (h.train_df(), h.validation_df(), h.test_df())):
