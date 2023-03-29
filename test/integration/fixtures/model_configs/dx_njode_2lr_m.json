@@ -1,0 +1,28 @@
+{
+    "emb": {
+        "dx": {
+           "decoder_n_layers": 2,
+           "classname":  "MatrixEmbeddings",      
+           "embeddings_size": 300
+        }
+    },
+    "model": {
+        "ode_init_var": 1e-7,
+        "timescale": 7,
+        "ode_nlayers": 3
+    },
+    "training": {
+        "batch_size": 16,
+        "decay_rate": [0.27729587471948475, 0.3293406876704547],
+        "lr": [7.156197978746877e-05,  0.0011484691965460785],
+        "epochs": 0.5,
+        "reg_hyperparams": {
+            "L_dyn": 1000.0,
+            "L_l1": 0,
+            "L_l2": 0
+        },
+        "tay_reg": 0,
+        "opt": "adam",
+        "classname": "ODETrainer2LR"
+    }
+}
