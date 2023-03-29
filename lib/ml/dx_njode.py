@@ -13,9 +13,9 @@ import equinox as eqx
 import optuna
 
 from ..utils import model_params_scaler
-from ..ehr import Subject_JAX, Admission_JAX, BatchPredictedRisks
+from ..ehr import Subject_JAX, BatchPredictedRisks
 
-from .base_models import (GRUDynamics, NeuralODE, StateUpdate, NeuralODE_JAX)
+from .base_models import NeuralODE_JAX
 from .abstract_model import AbstractModel
 
 
@@ -27,12 +27,14 @@ class SubjectState(eqx.Module):
 class NJBatchPredictedRisks(BatchPredictedRisks):
     def subject_prediction_loss(self, subject_id):
         subject_loss = []
-        for prediction in self[subject_id].values():
-            x = prediction.other.x
-            y = prediction.other.y
-            y_hat = prediction.other.y_hat
-            subject_loss.append(
-                jnp.nanmean(jnp.square(jnp.abs(y - y_hat) + jnp.abs(x - y))))
+        for risk in self[subject_id].values():
+            y_nominal = risk.admission.get_outcome()
+            y_mask = risk.admission.get_mask()
+            y_pre = risk.other['y_pre']
+            y_post = risk.other['y_post']
+            err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
+            adm_loss = jnp.nanmean(err, where=y_mask)
+            subject_loss.append(adm_loss)
 
         return jnp.nanmean(jnp.array(subject_loss))
 
@@ -54,7 +56,7 @@ class NJODE(AbstractModel):
     @staticmethod
     def decoder_input_size(expt_config):
         return expt_config["emb"]["dx"]["embeddings_size"]
-        
+
     @property
     def dyn_state_size(self):
         return self.state_size + self.dx_emb.embeddings_size
@@ -122,7 +124,7 @@ class NJODE(AbstractModel):
         dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
         dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
         f_emb = partial(self.dx_emb.encode, dx_G)
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = NJBatchPredictedRisks()
         dyn_loss = []
 
         for subj_i in subjects_batch:
@@ -160,11 +162,10 @@ class NJODE(AbstractModel):
                                     admission=adm,
                                     prediction=dec_dx,
                                     trajectory=traj,
-                                    other=dict(x=adm.dx_vec,
-                                               y_hat=dec_dx,
-                                               y=self.dx_dec(emb)))
+                                    other=dict(y_pre=dec_dx,
+                                               y_post=self.dx_dec(emb)))
                 # NJ Loss:
-                # xi = adm.dx_vec
+                # xi = adm.dx_outcome
                 # yi_hat = self.dx_dec(subject_state.state)
                 # yi = self.dx_dec(emb)
                 if args.get('return_embeddings', False):
