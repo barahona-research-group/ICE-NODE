@@ -64,7 +64,7 @@ class ICENODE(AbstractModel):
     @staticmethod
     def decoder_input_size(expt_config):
         return expt_config["emb"]["dx"]["embeddings_size"]
-        
+
     @property
     def dyn_state_size(self):
         return self.state_size + self.dx_emb.embeddings_size
@@ -89,10 +89,6 @@ class ICENODE(AbstractModel):
             state_size=self.state_size,
             embeddings_size=self.dx_emb.embeddings_size,
             key=key2)
-
-    @staticmethod
-    def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
 
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')

@@ -18,9 +18,8 @@ from .coding_scheme import AbstractScheme, NullScheme, HierarchicalScheme
 from .outcome import OutcomeExtractor
 
 LossFunction = Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]
-SingleOutcome = Tuple[jnp.ndarray, jnp.ndarray]
-MixedOutcome = Tuple[SingleOutcome, ...]
-Outcome = Union[SingleOutcome, MixedOutcome]
+Outcome = Tuple[jnp.ndarray, jnp.ndarray]
+
 
 class StaticInfo_JAX(eqx.Module):
     """JAX storage and interface for static information"""
