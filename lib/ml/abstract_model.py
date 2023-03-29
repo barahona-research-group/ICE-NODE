@@ -33,7 +33,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
 
     @staticmethod
     def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
+        return expt_config["model"]["state_size"]
 
     def subject_embeddings(self, subject_interface: Subject_JAX,
                            batch: List[int]):

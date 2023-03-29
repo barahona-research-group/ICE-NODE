@@ -66,7 +66,7 @@ def setUpModule():
         f'test/integration/fixtures/model_configs/{fname}.json')
     fnames = [
         'dx_winlogreg', 'dx_gru_m', 'dx_gru_g', 'dx_retain_m',
-        'dx_icenode_2lr_m'
+        'dx_icenode_2lr_m', 'dx_njode_2lr_m'
     ]
     model_configs = {fname: _loadconfig(fname) for fname in fnames}
     key = jrandom.PRNGKey(443)
@@ -214,6 +214,23 @@ class TestDxICENODE_M(DxCommonTests):
             self.assertEqual(trainer_cls, ml.ODETrainer2LR)
             trainer = trainer_cls(**config["training"])
             self.actors.append(TestActors(model, config, trainer, IF, splits))
+
+
+class TestDxNJODE_M(DxCommonTests):
+
+    def setUp(self):
+        config = model_configs['dx_njode_2lr_m']
+        self.actors = []
+        IFs = [m3_interface['ccs_first_control']]
+        for IF in IFs:
+            splits = IF.random_splits(0.7, 0.85, 42)
+            model = ml.NJODE.from_config(config, IF, splits[0], key)
+            trainer_cls = getattr(ml, config["training"]["classname"])
+            self.assertEqual(trainer_cls, ml.ODETrainer2LR)
+            trainer = trainer_cls(**config["training"])
+            self.actors.append(TestActors(model, config, trainer, IF, splits))
+
+
 
 
 class TestDxICENODE_M_UNIFORM(DxCommonTests):
