@@ -102,11 +102,11 @@ class Trainer(eqx.Module):
         self.class_weighting = class_weighting
 
     @staticmethod
-    def lr_schedule(lr, decay_rate):
+    def lr_schedule(lr, decay_rate, iters):
         if decay_rate is None:
             return lr
         return jopt.exponential_decay(lr,
-                                      decay_steps=50,
+                                      decay_steps=iters // 2,
                                       decay_rate=decay_rate)
 
     def dx_loss(self):
@@ -164,14 +164,14 @@ class Trainer(eqx.Module):
 
         return loss, preds
 
-    def init_opt(self, model):
+    def init_opt(self, model, iters):
         opt_init, opt_update, get_params = opts[self.opt](self.lr_schedule(
-            self.lr, self.decay_rate))
+            self.lr, self.decay_rate, iters))
         opt_state = opt_init(eqx.filter(model, eqx.is_inexact_array))
         return (opt_update, get_params), opt_state
 
-    def init_from_loaded_optstate(self, optstate, model):
-        opt, _ = self.init_opt(model)
+    def init_from_loaded_optstate(self, optstate, model, iters):
+        opt, _ = self.init_opt(model, iters=iters)
         optstate = jopt.pack_optimizer_state(optstate)
         return opt, optstate
 
@@ -180,7 +180,6 @@ class Trainer(eqx.Module):
         return jopt.unpack_optimizer_state(optstate)
 
     def update_model(self, model, new_params):
-
         def _replace(new, old):
             if new is None:
                 return old
@@ -214,12 +213,15 @@ class Trainer(eqx.Module):
             'adam'  #trial.suggest_categorical('opt', ['adam', 'sgd', 'fromage'])
         }
 
-    def continue_training(self, model, reporters: List[AbstractReporter]):
+    def continue_training(self, model, reporters: List[AbstractReporter],
+                          iters: int):
         for r in reporters:
             last_eval_step = r.last_eval_step()
             if last_eval_step is not None:
                 m, optstate = r.trained_model(model, last_eval_step)
-                optstate = self.init_from_loaded_optstate(optstate, model)
+                optstate = self.init_from_loaded_optstate(optstate,
+                                                          model,
+                                                          iters=iters)
                 return last_eval_step, (m, optstate)
 
         raise RuntimeError(f'No history to continue training from.')
@@ -236,7 +238,7 @@ class Trainer(eqx.Module):
         train_ids, valid_ids, test_ids = splits
         batch_size = min(self.batch_size, len(train_ids))
         iters = round(self.epochs * len(train_ids) / batch_size)
-        opt_state = self.init_opt(model)
+        opt_state = self.init_opt(model, iters=iters)
         key = jrandom.PRNGKey(prng_seed)
 
         train_index = jnp.arange(len(train_ids))
@@ -311,11 +313,10 @@ class Trainer(eqx.Module):
 
 
 class Trainer2LR(Trainer):
-
-    def init_from_loaded_optstate(self, optstate, model):
+    def init_from_loaded_optstate(self, optstate, model, iters):
         optstate = (jopt.pack_optimizer_state(optstate[0]),
                     jopt.pack_optimizer_state(optstate[1]))
-        opt, _ = self.init_opt(model)
+        opt, _ = self.init_opt(model, iters=iters)
 
         return opt, optstate
 
@@ -324,15 +325,17 @@ class Trainer2LR(Trainer):
         return (jopt.unpack_optimizer_state(optstate[0]),
                 jopt.unpack_optimizer_state(optstate[1]))
 
-    def init_opt(self, model: AbstractModel):
+    def init_opt(self, model: AbstractModel, iters: int):
         decay_rate = self.decay_rate
         if not (isinstance(decay_rate, list) or isinstance(decay_rate, tuple)):
             decay_rate = (decay_rate, decay_rate)
 
-        opt1_i, opt1_u, opt1_p = opts[self.opt](self.lr_schedule(
-            self.lr[0], decay_rate[0]))
-        opt2_i, opt2_u, opt2_p = opts[self.opt](self.lr_schedule(
-            self.lr[1], decay_rate[1]))
+        opt1_i, opt1_u, opt1_p = opts[self.opt](self.lr_schedule(self.lr[0],
+                                                                 decay_rate[0],
+                                                                 iters=iters))
+        opt2_i, opt2_u, opt2_p = opts[self.opt](self.lr_schedule(self.lr[1],
+                                                                 decay_rate[1],
+                                                                 iters=iters))
         m1, m2 = model.emb_dyn_partition(model)
         m1 = eqx.filter(m1, eqx.is_inexact_array)
         m2 = eqx.filter(m2, eqx.is_inexact_array)
@@ -377,7 +380,6 @@ def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
 
 class LassoNetTrainer(Trainer):
-
     def loss(self,
              model: AbstractModel,
              subject_interface: Subject_JAX,
