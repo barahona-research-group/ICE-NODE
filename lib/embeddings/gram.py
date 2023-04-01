@@ -254,23 +254,12 @@ class LogitsDecoder(eqx.Module):
 
     def __init__(self, n_layers: int, input_size: int, output_size: int,
                  key: "jax.random.PRNGKey"):
-
-        def _act(index):
-            if index < n_layers - 2:
-                return jax.nn.leaky_relu
-            else:
-                return jnp.tanh
-
-        layers = []
-        keys = jrandom.split(key, n_layers)
-        for i in range(n_layers):
-            out_size = input_size if i != n_layers - 1 else output_size
-            layers.append(
-                eqx.nn.Linear(input_size, out_size, use_bias=True,
-                              key=keys[i]))
-            layers.append(eqx.nn.Lambda(_act(i)))
-
-        self.f_dec = eqx.nn.Sequential(layers[:-1])
+        self.f_dec = eqx.nn.MLP(in_size=input_size,
+                                out_size=output_size,
+                                width_size=input_size,
+                                depth=n_layers - 1,
+                                activation=jax.nn.leaky_relu,
+                                key=key)
         self.n_layers = n_layers
         self.input_size = input_size
         self.output_size = output_size

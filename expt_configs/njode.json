@@ -1,7 +1,7 @@
 {
     "emb": {
         "dx": {
-           "decoder_n_layers": 2,
+           "decoder_n_layers": 3,
            "classname":  "MatrixEmbeddings",      
            "embeddings_size": 200
         }
@@ -13,8 +13,8 @@
     },
     "training": {
         "batch_size": 128,
-        "decay_rate": [0.25, 0.33],
-        "lr": [7e-5,  1e-3],
+        "decay_rate": [0.5, 0.66],
+        "lr": [1e-3,  1e-3],
         "epochs": 60,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
