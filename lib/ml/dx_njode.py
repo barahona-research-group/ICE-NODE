@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jax.nn import sigmoid, softplus
 import equinox as eqx
 import optuna
 
@@ -68,11 +69,16 @@ class NJBatchPredictedRisks(BatchPredictedRisks):
         y_nominal = []
         y_pre = []
         y_post = []
+        subject_predictions = self[subject_id]
+        for adm_idx in subject_predictions.keys():
+            _y_nominal = subject_predictions[adm_idx].admission.get_outcome()
+            _y_pre = subject_predictions[adm_idx].other['y_pre']
+            _y_post = subject_predictions[adm_idx].other['y_post']
 
-        for risk in self[subject_id].values():
-            y_nominal.append(risk.admission.get_outcome())
-            y_pre.append(risk.other['y_pre'])
-            y_post.append(risk.other['y_post'])
+            y_nominal.append(_y_nominal)
+            y_pre.append(_y_pre)
+            y_post.append(_y_post)
+
         y_nominal = jnp.vstack(y_nominal)
         y_pre = jnp.vstack(y_pre)
         y_post = jnp.vstack(y_post)
@@ -91,9 +97,80 @@ class NJBatchPredictedRisks(BatchPredictedRisks):
 
         return jnp.nanmean(err0 + err1)
 
+    # Balanced, without mask
+    def subject_prediction_longterm_loss(self, subject_id):
+        y_nominal = []
+        y_pre = []
+        y_post = []
+        subject_predictions = self[subject_id]
+        for adm_idx in sorted(subject_predictions.keys()):
+            y_nominal.append(subject_predictions[adm_idx].admission.get_outcome())
+            y_pre.append(subject_predictions[adm_idx].other['y_pre'])
+            y_post.append(subject_predictions[adm_idx].other['y_post'])
+
+        y_nominal = jnp.vstack(y_nominal)
+        y_pre = jnp.vstack(y_pre)
+        y_post = jnp.vstack(y_post)
+
+        n1 = jnp.sum(y_nominal, axis=0)
+        n0 = len(y_nominal) - n1
+        # Effective number of samples.
+        # [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
+        beta = 0.9
+        e1 = (1 - beta**n1) / (1 - beta)
+        e0 = (1 - beta**n0) / (1 - beta)
+
+        err = jnp.abs(y_nominal - y_post) + jnp.abs(y_post - y_pre)
+        
+        # For long-term prediction, penalize false negatives only when 
+        # the condition is absent from the entire history.
+        err0 = err * jnp.prod(1 - y_nominal, axis=0, keepdims=True) / (e0 + 1e-1)
+        err1 = err * y_nominal / (e1 + 1e-1)
+
+        return jnp.nanmean(err0 + err1)
+    
+    # Balanced, without mask
+    def subject_prediction_longterm_loss_prob(self, subject_id):
+        y_nominal = []
+        y_pre = []
+        y_post = []
+        subject_predictions = self[subject_id]
+        for adm_idx in sorted(subject_predictions.keys()):
+            y_nominal.append(subject_predictions[adm_idx].admission.get_outcome())
+            y_pre.append(subject_predictions[adm_idx].other['y_pre'])
+            y_post.append(subject_predictions[adm_idx].other['y_post'])
+
+        y_nominal = jnp.vstack(y_nominal)
+        ypre = jnp.vstack(y_pre)
+        ypost = jnp.vstack(y_post)
+
+        n1 = jnp.sum(y_nominal, axis=0)
+        n0 = len(y_nominal) - n1
+        # Effective number of samples.
+        # [1] _Cui et al._, Class-Balanced Loss Based on Effective Number of Samples.
+        beta = 0.9
+        e1 = (1 - beta**n1) / (1 - beta)
+        e0 = (1 - beta**n0) / (1 - beta)        
+             
+        # Note: softplus(-logits) = -log(sigmoid(logits)) = -log(p)
+        # Note: softplut(logits) = -log(1 - sigmoid(logits)) = -log(1-p)
+        reconstruction_loss = y_nominal * softplus(-ypost) + (1 - y_nominal) * softplus(ypost)
+
+        q = sigmoid(ypre)
+        prediction_loss = q * (softplus(-ypost) - softplus(-ypre)) + (1 - q) * (softplus(ypost) - softplus(ypre))
+
+        loss = reconstruction_loss + prediction_loss
+
+        # For long-term prediction, penalize false negatives only when 
+        # the condition is absent from the entire history.
+        err0 = loss * jnp.prod(1 - y_nominal, axis=0, keepdims=True) / (e0 + 1e-1)
+        err1 = loss * y_nominal / (e1 + 1e-1)
+
+        return jnp.nanmean(err0 + err1)
+    
     def prediction_loss(self, ignore=None):
         loss = [
-            self.subject_prediction_loss(subject_id)
+            self.subject_prediction_longterm_loss_prob(subject_id)
             for subject_id in self.keys()
         ]
         return jnp.nanmean(jnp.array(loss))
