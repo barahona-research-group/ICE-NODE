@@ -149,19 +149,24 @@ class ICENODE(AbstractModel):
         """
         return t1 - t2
 
+    def init_predictions(self):
+        return BatchPredictedRisks()
+
+    def dx_embed(self, dx_G: jnp.ndarray, adms: List[Admission_JAX]):
+        return  [self.dx_emb.encode(dx_G, adm.dx_vec) for adm in adms]
+
     def __call__(self,
                  subject_interface: Subject_JAX,
                  subjects_batch: List[int],
                  args=dict()):
         dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
         dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
-        f_emb = partial(self.dx_emb.encode, dx_G)
-        risk_prediction = BatchPredictedRisks()
+        risk_prediction = self.init_predictions()
         dyn_loss = []
 
         for subj_i in subjects_batch:
             adms = subject_interface[subj_i]
-            emb_seq = [f_emb(adm.dx_vec) for adm in adms]
+            emb_seq = self.dx_embed(dx_G, adms)
             ctrl_seq = [
                 subject_interface.subject_control(subj_i, adm.admission_date)
                 for adm in adms
@@ -226,3 +231,25 @@ class ICENODE_ZERO(ICENODE_UNIFORM):
     def _integrate_state(self, subject_state, int_time, ctrl, args):
         return SubjectState(subject_state.state,
                             subject_state.time + int_time), 0.0, None
+
+
+
+
+class AICE(ICENODE):
+    in_mix: jnp.ndarray
+    out_mix: jnp.ndarray
+
+    @staticmethod
+    def decoder_input_size(expt_config):
+        return expt_config["emb"]["dx"]["embeddings_size"]
+
+    @property
+    def dyn_state_size(self):
+        return self.state_size + self.dx_emb.embeddings_size
+
+    def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
+        key1, key2, key3 = jax.random.split(key, 3)
+        super().__init__(*args, **kwargs, key=key1)
+
+        self.out_mix = jnp.zeros((self.dx_dec.output_size,), dtype=jnp.float32)
+        self.in_mix = jnp.zeros((self.dx_emb.input_size,), dtype=jnp.float32)

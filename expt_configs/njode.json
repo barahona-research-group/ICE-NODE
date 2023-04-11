@@ -3,7 +3,7 @@
         "dx": {
            "decoder_n_layers": 3,
            "classname":  "MatrixEmbeddings",      
-           "embeddings_size": 15
+           "embeddings_size": 50
         }
     },
     "model": {
