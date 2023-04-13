@@ -1,7 +1,7 @@
 {
     "emb": {
         "dx": {
-           "decoder_n_layers": 3,
+           "decoder_n_layers": 2,
            "classname":  "MatrixEmbeddings",      
            "embeddings_size": 50
         }
