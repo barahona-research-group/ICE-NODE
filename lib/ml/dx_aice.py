@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import partial
 from collections import namedtuple
 from typing import Any, Dict, List
+from dataclasses import dataclass
 
 import jax
 import jax.nn as jnn
@@ -62,6 +63,7 @@ def balanced_focal_bce(y: jnp.ndarray,
         w0 / e0) * jnn.softplus(logits)
     return jnp.nanmean(terms * w_mask)
 
+@dataclass
 class AICEBatchPredictedRisks(BatchPredictedRisks):
     out_mix: jnp.ndarray
 

@@ -227,6 +227,9 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
                  key: "jax.random.PRNGKey"):
         super().__init__(embeddings_size=embeddings_size,
                          input_size=input_size)
+        # self.linear = eqx.nn.MLP(input_size, embeddings_size,
+        #                          width_size=(input_size + embeddings_size) // 2, 
+        #                          depth=2, activation=jnp.tanh, key=key) 
         self.linear = eqx.nn.Linear(input_size,
                                     embeddings_size,
                                     use_bias=True,
