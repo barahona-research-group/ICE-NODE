@@ -251,7 +251,7 @@ class Trainer(eqx.Module):
 
         if continue_training:
             cont_idx, (cont_m,
-                       cont_opt) = self.continue_training(model, reporters)
+                       cont_opt) = self.continue_training(model, reporters, iters=iters)
 
         for i in tqdm(range(iters)):
             (key, ) = jrandom.split(key, 1)
