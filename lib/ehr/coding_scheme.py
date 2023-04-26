@@ -220,7 +220,7 @@ class _CodeMapper(defaultdict):
 
     @staticmethod
     def get_mapper(s_scheme, t_scheme):
-        if any(s is NullScheme() for s in (s_scheme, t_scheme)):
+        if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
             return _NullCodeMapper()
         key = (type(s_scheme), type(t_scheme))
 
@@ -286,7 +286,6 @@ class _CodeMapper(defaultdict):
 
 
 class _IdentityCodeMapper(_CodeMapper):
-
     def __init__(self, scheme, *args):
         super().__init__(s_scheme=scheme,
                          t_scheme=scheme,
@@ -299,7 +298,6 @@ class _IdentityCodeMapper(_CodeMapper):
 
 
 class _NullCodeMapper(_CodeMapper):
-
     def __init__(self, *args):
         super().__init__(s_scheme=NullScheme(),
                          t_scheme=NullScheme(),
@@ -317,9 +315,8 @@ class _NullCodeMapper(_CodeMapper):
 
 
 class AbstractScheme:
-
     def __init__(self, codes, index, desc, name):
-        logging.info(f'Constructing {name} ({type(self)}) scheme')
+        logging.debug(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
         self._index = index
         self._desc = desc
@@ -382,13 +379,11 @@ class AbstractScheme:
 
 
 class NullScheme(AbstractScheme, Singleton):
-
     def __init__(self):
         super().__init__([], {}, {}, 'none')
 
 
 class HierarchicalScheme(AbstractScheme):
-
     def __init__(self,
                  dag_codes=None,
                  dag_index=None,
@@ -593,7 +588,6 @@ class HierarchicalScheme(AbstractScheme):
 
 
 class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
-
     @staticmethod
     @abstractmethod
     def add_dot(code):
@@ -726,7 +720,6 @@ class DxICD10(ICDCommons, Singleton):
         - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
-
     @staticmethod
     def add_dot(code):
         if '.' in code:
@@ -807,7 +800,6 @@ class DxICD10(ICDCommons, Singleton):
 
 
 class PrICD10(ICDCommons, Singleton):
-
     @staticmethod
     def add_dot(code):
         # No decimal point in ICD10-PCS
@@ -989,7 +981,6 @@ class DxICD9(ICDCommons, Singleton):
 
 
 class PrICD9(ICDCommons, Singleton):
-
     @staticmethod
     def add_dot(code):
         if '.' in code:
@@ -1275,7 +1266,7 @@ class DxLTC212FlatCodes(AbstractScheme, Singleton):
 
             medcodes_list = sorted(set(disease_df[medcode_cname]))
 
-            desc[disease_num] = disease_name 
+            desc[disease_num] = disease_name
             system[disease_num] = system_num
             medcodes[disease_num] = medcodes_list
 

@@ -8,23 +8,35 @@
         "required": false
     },
     "--dataset": {
-        "help": "Dataset tag. Accepted values: {dataset_labels}.",
+        "help": "Dataset tag. Accepted values: M3, M4, CPRD.",
         "required": true
     },
+    "--device": {
+	"help": "Device to use for training. Accepted values: cpu, gpu.",
+	"required": true
+    },
     "--dx-scheme": {
-        "help": "Label of the diagnostic coding scheme used in predictive models. tag. Accepted values: {dx_scheme_labels}.",
+        "help": "Label of the diagnostic coding scheme used in predictive models. Example: dx_ccs.",
         "required": true
     },
     "--dx-outcome": {
-        "help": "Label of the outcome/target to be predicted by predictive models. tag. Accepted values: {dx_outcome_labels}.",
+        "help": "Label of the outcome/target to be predicted by predictive models. Example: dx_flatccs_filter_v1.",
         "required": true
     },
+    "--prediction-task": {
+	"help": "Prediction task. Accepted values: all, first.",
+	"required": true
+    },
     "--pr-scheme": {
-        "help": "Label of the procedure coding scheme used in predictive models. tag. Accepted values: {pr_scheme_labels}.",
+        "help": "Label of the procedure coding scheme used in predictive models.",
         "required": false
     },
+    "--static-features": {
+	"help": "Array of static features to be considered, separated by comma. Example: age,gender.",
+	"required": false
+    },
     "--emb": {
-        "help": "Embedding method to use. Accepted values: {emb_labels}.",
+        "help": "Embedding method to use.",
         "required": true
     },
     "--job-id": {
@@ -35,7 +47,7 @@
         "required": true
     },
     "--model": {
-        "help": "Model label. Accepted values: {model_labels}.",
+        "help": "Model label.",
         "required": true
     },
     "--num-processes": {
@@ -57,7 +69,7 @@
         "required": true
     },
     "--study-tag": {
-        "required": true
+        "required": false
     },
     "--training-time-limit": {
         "help": "Number of maximum hours for training in single trial.",

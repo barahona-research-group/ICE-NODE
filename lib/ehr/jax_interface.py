@@ -38,10 +38,10 @@ class StaticInfo_JAX(eqx.Module):
         vec = []
 
         # Ethnicity
-        if isinstance(
-                self.static_info.ethnicity_scheme,
-                AbstractScheme) and self.flags.ethnicity is not NullScheme():
-            assert self.static_info.ethnicity_scheme is not NullScheme(
+        if isinstance(self.static_info.ethnicity_scheme,
+                      AbstractScheme) and self.flags.ethnicity:
+            assert not isinstance(
+                self.static_info.ethnicity_scheme, NullScheme
             ), "Ethnicity info requested while it is not provided in the dataset."
             m = self.static_info.ethnicity_scheme.mapper_to(
                 self.flags.ethnicity)
@@ -232,7 +232,6 @@ class Subject_JAX(dict):
             i: StaticInfo_JAX(subj.static_info, static_info_flags)
             for i, subj in self._subjects.items()
         }
-
         self._dx_scheme = code_scheme['dx']
         self._pr_scheme = code_scheme.get('pr', NullScheme())
 
