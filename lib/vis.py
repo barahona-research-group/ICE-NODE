@@ -95,20 +95,20 @@ def probe_model_snapshots(train_dir: str,
             data[f'{metric}_val'].append(value)
             logging.warning(f'{clf}, {metric}')
             if metric == selection_metric:
-                tarfname = f'{clf_dir}/params.tar.bz2'
+                zipname = f'{clf_dir}/params.zip'
                 membername = f'step{index:04d}.eqx'
                 try:
                     id1 = id(models[clf])
-                    models[clf] = models[clf].load_params_from_tar_archive(
-                        tarfname, membername)
+                    models[clf] = models[clf].load_params_from_archive(
+                        zipname, membername)
                     id2 = id(models[clf])
                     logging.warning(
-                        f'Loaded {clf} from {tarfname}:{membername}. id1: {id1}, id2: {id2}'
+                        f'Loaded {clf} from {zipname}:{membername}. id1: {id1}, id2: {id2}'
                     )
                 except Exception as e:
                     logging.warning(e)
                     logging.warning(
-                        f'tarfname: {tarfname}, membername: {membername}')
+                        f'tarfname: {zipname}, membername: {membername}')
 
     return pd.DataFrame(data, index=data['model'])
 
