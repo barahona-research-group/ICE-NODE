@@ -98,8 +98,13 @@ def probe_model_snapshots(train_dir: str,
                 tarfname = f'{clf_dir}/params.tar.bz2'
                 membername = f'step{index:04d}.eqx'
                 try:
+                    id1 = id(models[clf])
                     models[clf] = models[clf].load_params_from_tar_archive(
                         tarfname, membername)
+                    id2 = id(models[clf])
+                    logging.info(
+                        f'Loaded {clf} from {tarfname}:{membername}. id1: {id1}, id2: {id2}'
+                    )
                 except Exception as e:
                     logging.warning(e)
                     logging.warning(
@@ -250,7 +255,6 @@ def selected_auc_barplot(clfs, auctest_df, horizontal=False, rotate_ccs=True):
 
 def top_k_tables(group_acc_metric: M.CodeGroupTopAlarmAccuracy,
                  results: Dict[str, pd.DataFrame]):
-
     def styled_df(df):
         pd.set_option('precision', 3)
         data_sorted = -np.sort(-df.to_numpy(), axis=0)
