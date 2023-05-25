@@ -99,7 +99,6 @@ if __name__ == '__main__':
         'dx': dx_scheme[args.dx_scheme](),
         'outcome': task[args.prediction_task](args.dx_outcome)
     }
-    print(scheme)
     static_features_dict = {}
     if args.static_features:
         static_features_dict = {
@@ -110,7 +109,7 @@ if __name__ == '__main__':
     interface = Subject_JAX.from_dataset(dataset,
                                          code_scheme=scheme,
                                          static_info_flags=static_features,
-                                         data_max_size_gb=2)
+                                         data_max_size_gb=5)
     logging.info('[DONE] patient interface')
 
     # splits = train:val:test = 0.7:.15:.15

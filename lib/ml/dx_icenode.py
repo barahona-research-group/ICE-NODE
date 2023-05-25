@@ -5,6 +5,7 @@ from collections import namedtuple
 from typing import Any, Dict, List
 import re
 
+from absl import logging
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -153,7 +154,7 @@ class ICENODE(AbstractModel):
         return BatchPredictedRisks()
 
     def dx_embed(self, dx_G: jnp.ndarray, adms: List[Admission_JAX]):
-        return  [self.dx_emb.encode(dx_G, adm.dx_vec) for adm in adms]
+        return [self.dx_emb.encode(dx_G, adm.dx_vec) for adm in adms]
 
     def __call__(self,
                  subject_interface: Subject_JAX,
@@ -163,7 +164,9 @@ class ICENODE(AbstractModel):
         dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
         risk_prediction = self.init_predictions()
         dyn_loss = []
-
+        max_adms = max(
+            len(subject_interface[subj_i]) for subj_i in subjects_batch)
+        logging.info(f'max_adms: {max_adms}')
         for subj_i in subjects_batch:
             adms = subject_interface[subj_i]
             emb_seq = self.dx_embed(dx_G, adms)
@@ -219,20 +222,16 @@ class ICENODE(AbstractModel):
 
 
 class ICENODE_UNIFORM(ICENODE):
-
     @staticmethod
     def _time_diff(t1, t2):
         return 7.0
 
 
 class ICENODE_ZERO(ICENODE_UNIFORM):
-
     @eqx.filter_jit
     def _integrate_state(self, subject_state, int_time, ctrl, args):
         return SubjectState(subject_state.state,
                             subject_state.time + int_time), 0.0, None
-
-
 
 
 class AICE(ICENODE):
@@ -251,5 +250,6 @@ class AICE(ICENODE):
         key1, key2, key3 = jax.random.split(key, 3)
         super().__init__(*args, **kwargs, key=key1)
 
-        self.out_mix = jnp.zeros((self.dx_dec.output_size,), dtype=jnp.float32)
-        self.in_mix = jnp.zeros((self.dx_emb.input_size,), dtype=jnp.float32)
+        self.out_mix = jnp.zeros((self.dx_dec.output_size, ),
+                                 dtype=jnp.float32)
+        self.in_mix = jnp.zeros((self.dx_emb.input_size, ), dtype=jnp.float32)

@@ -98,7 +98,7 @@ def probe_model_snapshots(train_dir: str,
                 tarfname = f'{clf_dir}/params.tar.bz2'
                 membername = f'step{index:04d}.eqx'
                 try:
-                    models[clf].load_params_from_tar_archive(
+                    models[clf] = models[clf].load_params_from_tar_archive(
                         tarfname, membername)
                 except Exception as e:
                     logging.warning(e)
