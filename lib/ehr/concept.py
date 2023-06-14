@@ -36,15 +36,24 @@ class AbstractAdmission:
     def length_of_stay(self):
         """Returns the length of stay in days.
 
-        Note: The 0.5 added to address the case when the patient 
+        Note: The 0.5 added to address the case when the patient
         is admitted and discharged at the same day, then we assume 0.5 day as length of stay (12 hours)
         In general, this would generalize the assumption to:
         Admission time is fixed at the midnight 00:01
-        while discharge time is fixed at the midday 12:01        
+        while discharge time is fixed at the midday 12:01
         """
 
         return self.days(self.admission_dates[1],
                          self.admission_dates[0]) + 0.5
+
+@dataclass
+class NumericMarkers:
+    """
+    NumericMarkers class encapsulates the patient EHRs numeric markers.
+    """
+    values: np.ndarray
+    mask: np.ndarray
+    marker_scheme: AbstractScheme
 
 
 @dataclass
@@ -171,3 +180,5 @@ class Subject:
     @classmethod
     def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
         return dataset.to_subjects()
+
+
