@@ -47,16 +47,6 @@ class AbstractAdmission:
                          self.admission_dates[0]) + 0.5
 
 @dataclass
-class NumericMarkers:
-    """
-    NumericMarkers class encapsulates the patient EHRs numeric markers.
-    """
-    values: np.ndarray
-    mask: np.ndarray
-    marker_scheme: AbstractScheme
-
-
-@dataclass
 class Admission(AbstractAdmission):
     """
     Admission class encapsulates the patient EHRs diagnostic/procedure codes.
