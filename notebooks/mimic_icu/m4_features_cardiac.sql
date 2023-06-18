@@ -7,7 +7,7 @@ WITH trop AS
 )
 SELECT
     c.hadm_id
-    , date_trunc('hour', c.charttime) hround_time
+    , date_trunc('hour', c.charttime) time_bin
     , avg(trop.troponin_t) as troponin_t
     , avg(c.ntprobnp) as ntprobnp
     , avg(c.ck_mb) as ck_mb
@@ -16,4 +16,4 @@ LEFT JOIN mimiciv_derived.cardiac_marker c
   ON a.hadm_id = c.hadm_id
 LEFT JOIN trop
   ON c.specimen_id = trop.specimen_id
-GROUP BY c.hadm_id, hround_time
+GROUP BY c.hadm_id, time_bin
