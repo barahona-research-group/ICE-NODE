@@ -1,0 +1,137 @@
+,icd_code,long_title,icd_version,n_subjects,p_subjects
+5,0014,Injection or infusion of oxazolidinone class of antibiotics,9,301,0.005911233307148468
+25,0040,Procedure on single vessel,9,1359,0.02668892380204242
+26,0041,Procedure on two vessels,9,414,0.008130400628436764
+30,0045,Insertion of one vascular stent,9,801,0.015730557737627653
+31,0046,Insertion of two vascular stents,9,363,0.007128829536527887
+52,0066,Percutaneous transluminal coronary angioplasty [PTCA],9,901,0.017694422623723487
+106,009U3ZX,"Drainage of Spinal Canal, Percutaneous Approach, Diagnostic",10,593,0.01164571877454831
+279,0159,Other excision or destruction of lesion or tissue of brain,9,368,0.0072270227808326785
+334,021009W,"Bypass Coronary Artery, One Artery from Aorta with Autologous Venous Tissue, Open Approach",10,386,0.007580518460329929
+341,02100Z9,"Bypass Coronary Artery, One Artery from Left Internal Mammary, Open Approach",10,1629,0.03199135899450118
+349,021109W,"Bypass Coronary Artery, Two Arteries from Aorta with Autologous Venous Tissue, Open Approach",10,584,0.011468970934799686
+360,021209W,"Bypass Coronary Artery, Three Arteries from Aorta with Autologous Venous Tissue, Open Approach",10,405,0.007953652788688138
+505,02H633Z,"Insertion of Infusion Device into Right Atrium, Percutaneous Approach",10,1128,0.022152395915161036
+507,02H63JZ,"Insertion of Pacemaker Lead into Right Atrium, Percutaneous Approach",10,347,0.006814611154752553
+520,02HK3JZ,"Insertion of Pacemaker Lead into Right Ventricle, Percutaneous Approach",10,406,0.007973291437549096
+542,02HV33Z,"Insertion of Infusion Device into Superior Vena Cava, Percutaneous Approach",10,4999,0.09817360565593088
+607,02RF08Z,"Replacement of Aortic Valve with Zooplastic Tissue, Open Approach",10,626,0.012293794186959937
+646,02UG0JZ,"Supplement Mitral Valve with Synthetic Substitute, Open Approach",10,290,0.0056952081696779264
+727,0331,Spinal tap,9,1070,0.02101335428122545
+777,0390,Insertion of catheter into spinal canal for infusion of therapeutic or palliative substances,9,290,0.0056952081696779264
+794,03BC4ZZ,"Excision of Left Radial Artery, Percutaneous Endoscopic Approach",10,274,0.005380989787902592
+1581,06BP4ZZ,"Excision of Right Saphenous Vein, Percutaneous Endoscopic Approach",10,519,0.010192458758837392
+1584,06BQ4ZZ,"Excision of Left Saphenous Vein, Percutaneous Endoscopic Approach",10,936,0.018381775333857032
+1782,07DR3ZX,"Extraction of Iliac Bone Marrow, Percutaneous Approach, Diagnostic",10,267,0.005243519245875883
+1982,0B113F4,"Bypass Trachea to Cutaneous with Tracheostomy Device, Percutaneous Approach",10,402,0.007894736842105263
+2242,0BH17EZ,"Insertion of Endotracheal Airway into Trachea, Via Natural or Artificial Opening",10,1773,0.034819324430479186
+2252,0BJ08ZZ,"Inspection of Tracheobronchial Tree, Via Natural or Artificial Opening Endoscopic",10,518,0.010172820109976433
+2439,0CJS8ZZ,"Inspection of Larynx, Via Natural or Artificial Opening Endoscopic",10,299,0.005871956009426552
+2678,0DB68ZX,"Excision of Stomach, Via Natural or Artificial Opening Endoscopic, Diagnostic",10,329,0.006461115475255302
+2817,0DH63UZ,"Insertion of Feeding Device into Stomach, Percutaneous Approach",10,875,0.01718381775333857
+2841,0DJ08ZZ,"Inspection of Upper Intestinal Tract, Via Natural or Artificial Opening Endoscopic",10,1425,0.027985074626865673
+2850,0DJD8ZZ,"Inspection of Lower Intestinal Tract, Via Natural or Artificial Opening Endoscopic",10,724,0.014218381775333857
+3100,0F798DZ,"Dilation of Common Bile Duct with Intraluminal Device, Via Natural or Artificial Opening Endoscopic",10,272,0.005341712490180676
+3747,0JH606Z,"Insertion of Pacemaker, Dual Chamber into Chest Subcutaneous Tissue and Fascia, Open Approach",10,326,0.006402199528672427
+3765,0JH63XZ,"Insertion of Tunneled Vascular Access Device into Chest Subcutaneous Tissue and Fascia, Percutaneous Approach",10,323,0.006343283582089552
+5440,0W3P8ZZ,"Control Bleeding in Gastrointestinal Tract, Via Natural or Artificial Opening Endoscopic",10,274,0.005380989787902592
+5467,0W9930Z,"Drainage of Right Pleural Cavity with Drainage Device, Percutaneous Approach",10,595,0.011684996072270228
+5476,0W9B30Z,"Drainage of Left Pleural Cavity with Drainage Device, Percutaneous Approach",10,428,0.00840534171249018
+5507,0W9G3ZX,"Drainage of Peritoneal Cavity, Percutaneous Approach, Diagnostic",10,508,0.00997643362136685
+5508,0W9G3ZZ,"Drainage of Peritoneal Cavity, Percutaneous Approach",10,632,0.012411626080125688
+6131,311,Temporary tracheostomy,9,934,0.018342498036135114
+6135,3142,Laryngoscopy and other tracheoscopy,9,258,0.005066771406127259
+6162,3322,Fiber-optic bronchoscopy,9,524,0.010290652003142184
+6163,3323,Other bronchoscopy,9,563,0.01105655930871956
+6164,3324,Closed [endoscopic] biopsy of bronchus,9,2315,0.045463472113118616
+6187,3404,Insertion of intercostal catheter for drainage,9,930,0.01826394344069128
+6211,3491,Thoracentesis,9,1215,0.023860958366064416
+6219,3521,Open and other replacement of aortic valve with tissue graft,9,564,0.011076197957580518
+6243,3606,Insertion of non-drug-eluting coronary artery stent(s),9,269,0.005282796543597801
+6244,3607,Insertion of drug-eluting coronary artery stent(s),9,607,0.011920659858601728
+6246,3611,(Aorto)coronary bypass of one coronary artery,9,348,0.006834249803613511
+6247,3612,(Aorto)coronary bypass of two coronary arteries,9,662,0.013000785545954439
+6248,3613,(Aorto)coronary bypass of three coronary arteries,9,585,0.011488609583660644
+6250,3615,Single internal mammary-coronary artery bypass,9,1707,0.03352317360565593
+6260,3721,Right heart cardiac catheterization,9,542,0.010644147682639434
+6261,3722,Left heart cardiac catheterization,9,1324,0.026001571091908877
+6262,3723,Combined right and left heart cardiac catheterization,9,749,0.014709347996857816
+6271,3734,"Excision or destruction of other lesion or tissue of heart, endovascular approach",9,265,0.005204241948153967
+6284,3772,Initial insertion of transvenous leads [electrodes] into atrium and ventricle,9,394,0.007737627651217596
+6295,3783,Initial insertion of dual-chamber device,9,395,0.0077572663000785545
+6343,387,Interruption of the vena cava,9,515,0.010113904163393559
+6354,3891,Arterial catheterization,9,1855,0.03642969363707777
+6355,3893,"Venous catheterization, not elsewhere classified",9,5297,0.10402592301649646
+6357,3895,Venous catheterization for renal dialysis,9,1227,0.024096622152395913
+6358,3897,Central venous catheter placement with guidance,9,4494,0.0882560879811469
+6360,3899,Other puncture of vein,9,715,0.014041633935585232
+6376,3950,Angioplasty of other non-coronary vessel(s),9,707,0.013884524744697565
+6386,3961,Extracorporeal circulation auxiliary to open heart surgery,9,2533,0.04974469756480754
+6400,3979,Other endovascular procedures on other vessels,9,359,0.007050274941084053
+6404,3990,Insertion of non-drug-eluting peripheral (non-coronary) vessel stent(s),9,376,0.007384131971720346
+6407,3995,Hemodialysis,9,1807,0.03548703849175177
+6443,3E04305,"Introduction of Other Antineoplastic into Central Vein, Percutaneous Approach",10,390,0.007659073055773763
+6450,3E0436Z,"Introduction of Nutritional Substance into Central Vein, Percutaneous Approach",10,531,0.010428122545168892
+6496,3E0G76Z,"Introduction of Nutritional Substance into Upper GI, Via Natural or Artificial Opening",10,3306,0.06492537313432836
+6503,3E0H76Z,"Introduction of Nutritional Substance into Lower GI, Via Natural or Artificial Opening",10,335,0.006578947368421052
+6566,4011,Biopsy of lymphatic structure,9,280,0.0054988216810683424
+6584,4131,Biopsy of bone marrow,9,478,0.009387274155538099
+6610,4311,Percutaneous [endoscopic] gastrostomy [PEG],9,1120,0.02199528672427337
+6635,4443,Endoscopic control of gastric or duodenal bleeding,9,448,0.008798114689709348
+6656,4513,Other endoscopy of small intestine,9,2187,0.04294972505891595
+6659,4516,Esophagogastroduodenoscopy [EGD] with closed biopsy,9,1180,0.023173605655930872
+6663,4523,Colonoscopy,9,901,0.017694422623723487
+6664,4524,Flexible sigmoidoscopy,9,261,0.005125687352710134
+6665,4525,Closed [endoscopic] biopsy of large intestine,9,575,0.011292223095051061
+6789,4A023N6,"Measurement of Cardiac Sampling and Pressure, Right Heart, Percutaneous Approach",10,523,0.010271013354281225
+6790,4A023N7,"Measurement of Cardiac Sampling and Pressure, Left Heart, Percutaneous Approach",10,446,0.00875883739198743
+6832,5011,Closed (percutaneous) [needle] biopsy of liver,9,357,0.007010997643362137
+6856,5110,Endoscopic retrograde cholangiopancreatography [ERCP],9,284,0.005577376276512176
+6881,5185,Endoscopic sphincterotomy and papillotomy,9,488,0.009583660644147682
+6883,5187,Endoscopic insertion of stent (tube) into bile duct,9,494,0.009701492537313432
+6945,5459,Other lysis of peritoneal adhesions,9,300,0.00589159465828751
+6953,5491,Percutaneous abdominal drainage,9,1414,0.02776904948939513
+7040,5A12012,"Performance of Cardiac Output, Single, Manual",10,264,0.005184603299293008
+7042,5A1221Z,"Performance of Cardiac Output, Continuous",10,2847,0.05591123330714847
+7043,5A1223Z,"Performance of Cardiac Pacing, Continuous",10,279,0.005479183032207384
+7048,5A1935Z,"Respiratory Ventilation, Less than 24 Consecutive Hours",10,406,0.007973291437549096
+7049,5A1945Z,"Respiratory Ventilation, 24-96 Consecutive Hours",10,1068,0.020974076983503533
+7050,5A1955Z,"Respiratory Ventilation, Greater than 96 Consecutive Hours",10,1099,0.021582875098193243
+7052,5A1D60Z,"Performance of Urinary Filtration, Multiple",10,616,0.012097407698350354
+7053,5A1D70Z,"Performance of Urinary Filtration, Intermittent, Less than 6 Hours Per Day",10,740,0.014532600157109192
+7055,5A1D90Z,"Performance of Urinary Filtration, Continuous, Greater than 18 hours Per Day",10,424,0.008326787117046347
+7056,5A2204Z,"Restoration of Cardiac Rhythm, Single",10,529,0.010388845247446975
+7311,7935,"Open reduction of fracture with internal fixation, femur",9,272,0.005341712490180676
+7419,8162,Fusion or refusion of 2-3 vertebrae,9,262,0.005145326001571092
+7420,8163,Fusion or refusion of 4-8 vertebrae,9,264,0.005184603299293008
+7431,8191,Arthrocentesis,9,425,0.008346425765907306
+7526,8604,Other incision with drainage of skin and subcutaneous tissue,9,418,0.008208955223880597
+7531,8611,Closed biopsy of skin and subcutaneous tissue,9,410,0.00805184603299293
+7533,8622,"Excisional debridement of wound, infection, or burn",9,439,0.008621366849960723
+7536,8628,"Nonexcisional debridement of wound, infection or burn",9,502,0.0098586017282011
+7611,8841,Arteriography of cerebral arteries,9,536,0.010526315789473684
+7612,8842,Aortography,9,717,0.014080911233307148
+7616,8847,Arteriography of other intra-abdominal arteries,9,484,0.00950510604870385
+7617,8848,Arteriography of femoral and other lower extremity arteries,9,648,0.012725844461901021
+7622,8853,Angiocardiography of left heart structures,9,265,0.005204241948153967
+7624,8855,Coronary arteriography using a single catheter,9,276,0.005420267085624509
+7625,8856,Coronary arteriography using two catheters,9,2292,0.045011783189316576
+7635,8872,Diagnostic ultrasound of heart,9,1844,0.03621366849960723
+7672,8964,Pulmonary artery wedge monitoring,9,259,0.005086410054988217
+7707,9229,Other radiotherapeutic procedure,9,513,0.010074626865671642
+7744,9604,Insertion of endotracheal tube,9,2707,0.0531618224666143
+7745,9605,Other intubation of respiratory tract,9,387,0.007600157109190888
+7774,966,Enteral infusion of concentrated nutritional substances,9,4711,0.09251767478397487
+7776,9671,Continuous invasive mechanical ventilation for less than 96 consecutive hours,9,2085,0.04094658287509819
+7777,9672,Continuous invasive mechanical ventilation for 96 consecutive hours or more,9,1686,0.033110761979575805
+7830,9904,Transfusion of packed cells,9,898,0.017635506677140613
+7835,9910,Injection or infusion of thrombolytic agent,9,372,0.007305577376276512
+7838,9914,Injection or infusion of immunoglobulin,9,272,0.005341712490180676
+7839,9915,Parenteral infusion of concentrated nutritional substances,9,1525,0.029948939512961507
+7842,9920,Injection or infusion of platelet inhibitor,9,256,0.0050274941084053415
+7845,9925,Injection or infusion of cancer chemotherapeutic substance,9,818,0.016064414768263945
+7853,9960,"Cardiopulmonary resuscitation, not otherwise specified",9,363,0.007128829536527887
+7855,9962,Other electric countershock of heart,9,583,0.011449332285938727
+7883,B2111ZZ,Fluoroscopy of Multiple Coronary Arteries using Low Osmolar Contrast,10,294,0.005773762765121759
+7884,B211YZZ,Fluoroscopy of Multiple Coronary Arteries using Other Contrast,10,1334,0.02619795758051846
+8132,B548ZZA,"Ultrasonography of Superior Vena Cava, Guidance",10,446,0.00875883739198743

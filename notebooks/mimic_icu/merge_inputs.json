@@ -1,0 +1,761 @@
+{
+    "ACD-A Citrate (1000ml)": [
+        "ACD-A Citrate (500ml)",
+        "ACD-A Citrate (1000ml)"
+    ],
+    "Abciximab (Reopro)": [
+        "Abciximab (Reopro)"
+    ],
+    "Acetaminophen-IV": [
+        "Acetaminophen-IV"
+    ],
+    "Acetylcysteine": [
+        "Acetylcysteine"
+    ],
+    "Adenosine": [
+        "Adenosine"
+    ],
+    "Albumin 25%": [
+        "Albumin 5%",
+        "Albumin 25%"
+    ],
+    "Alteplase (TPA)": [
+        "Alteplase (TPA)"
+    ],
+    "Ambisome": [
+        "Ambisome"
+    ],
+    "Amikacin": [
+        "Amikacin"
+    ],
+    "Amino Acids": [
+        "Amino Acids"
+    ],
+    "Aminocaproic acid (Amicar)": [
+        "Aminocaproic acid (Amicar)"
+    ],
+    "Aminophylline": [
+        "Aminophylline"
+    ],
+    "Amiodarone": [
+        "Amiodarone"
+    ],
+    "Amiodarone 450/250": [
+        "Amiodarone 450/250",
+        "Amiodarone 600/500"
+    ],
+    "Ampicillin": [
+        "Ampicillin"
+    ],
+    "Ampicillin/Sulbactam (Unasyn)": [
+        "Ampicillin/Sulbactam (Unasyn)"
+    ],
+    "Angiotensin II (Giapreza)": [
+        "Angiotensin II (Giapreza)"
+    ],
+    "Argatroban": [
+        "Argatroban"
+    ],
+    "Atovaquone": [
+        "Atovaquone"
+    ],
+    "Atropine": [
+        "Atropine"
+    ],
+    "Azithromycin": [
+        "Azithromycin",
+        "Erythromycin"
+    ],
+    "Aztreonam": [
+        "Aztreonam"
+    ],
+    "Bactrim (SMX/TMP)": [
+        "Bactrim (SMX/TMP)"
+    ],
+    "Beneprotein": [
+        "Beneprotein",
+        "Beneprotein."
+    ],
+    "Bivalirudin (Angiomax)": [
+        "Bivalirudin (Angiomax)",
+        "Bivalirudin (Angiomax) (Impella)"
+    ],
+    "Boost Glucose Control (1/2)": [
+        "Boost Glucose Control (1/4)",
+        "Boost Glucose Control (3/4)",
+        "Boost Glucose Control (Full)",
+        "Boost Glucose Control (1/2)"
+    ],
+    "Bumetanide (Bumex)": [
+        "Bumetanide (Bumex)"
+    ],
+    "Potassium Chloride": [
+        "Potassium Chloride"
+    ],
+    "Calcium Chloride": [
+        "Calcium Chloride"
+    ],
+    "Calcium Gluconate": [
+        "Calcium Gluconate",
+        "Calcium Gluconate (Bolus)",
+        "Calcium Gluconate (CRRT)"
+    ],
+    "Carafate (Sucralfate)": [
+        "Carafate (Sucralfate)"
+    ],
+    "Caspofungin": [
+        "Caspofungin"
+    ],
+    "Cath Lab Intake": [
+        "Cath Lab Intake"
+    ],
+    "Cefazolin": [
+        "Cefazolin"
+    ],
+    "Cefepime": [
+        "Cefepime"
+    ],
+    "Ceftaroline": [
+        "Ceftaroline"
+    ],
+    "Ceftazidime": [
+        "Ceftazidime"
+    ],
+    "Ceftriaxone": [
+        "Ceftriaxone"
+    ],
+    "Cell Saver": [
+        "Cell Saver"
+    ],
+    "Chocolate Scandi Shake (mixed)": [
+        "Chocolate Scandi Shake (mixed)"
+    ],
+    "XXXfloxacin": [
+        "Ciprofloxacin",
+        "Levofloxacin",
+        "Moxifloxacin"
+    ],
+    "Cisatracurium": [
+        "Cisatracurium"
+    ],
+    "Citrate": [
+        "Citrate"
+    ],
+    "Clevidipine (Cleviprex)": [
+        "Clevidipine (Cleviprex)"
+    ],
+    "Clindamycin": [
+        "Clindamycin"
+    ],
+    "Colistin": [
+        "Colistin"
+    ],
+    "Coumadin (Warfarin)": [
+        "Coumadin (Warfarin)"
+    ],
+    "Cryoprecipitate": [
+        "Cryoprecipitate"
+    ],
+    "Cyclosporine": [
+        "Cyclosporine"
+    ],
+    "D5 1/2NS": [
+        "D5 1/4NS",
+        "D5 1/2NS"
+    ],
+    "D5LR": [
+        "D5LR"
+    ],
+    "D5NS": [
+        "D5NS"
+    ],
+    "Daptomycin": [
+        "Daptomycin"
+    ],
+    "Dexmedetomidine (Precedex)": [
+        "Dexmedetomidine (Precedex)"
+    ],
+    "Dextran 40": [
+        "Dextran 40"
+    ],
+    "Dextrose 10%": [
+        "Dextrose 50%",
+        "Dextrose 5%",
+        "Dextrose 10%",
+        "Dextrose 30%",
+        "Dextrose 40%",
+        "Dextrose PN",
+        "Dextrose 20%"
+    ],
+    "Diazepam (Valium)": [
+        "Diazepam (Valium)"
+    ],
+    "Digoxin (Lanoxin)": [
+        "Digoxin (Lanoxin)"
+    ],
+    "Dilantin": [
+        "Dilantin"
+    ],
+    "Diltiazem": [
+        "Diltiazem"
+    ],
+    "Dobutamine": [
+        "Dobutamine"
+    ],
+    "Dopamine": [
+        "Dopamine",
+        "Ketamine",
+        "Thiamine"
+    ],
+    "Doxycycline": [
+        "Doxycycline",
+        "Tigecycline"
+    ],
+    "Drotrecogin (Xigris)": [
+        "Drotrecogin (Xigris)"
+    ],
+    "Enlive (Full)": [
+        "Enlive (Full)"
+    ],
+    "Enoxaparin (Lovenox)": [
+        "Enoxaparin (Lovenox)"
+    ],
+    "Ensure": [
+        "Ensure (3/4)",
+        "Ensure Plus (Full)",
+        "Ensure (Full)"
+    ],
+    "Epinephrine": [
+        "Epinephrine",
+        "Epinephrine."
+    ],
+    "Norepinephrine": [
+        "Norepinephrine"
+    ],
+    "Epoprostenol (Veletri)": [
+        "Epoprostenol (Veletri)"
+    ],
+    "Eptifibatide (Integrilin)": [
+        "Eptifibatide (Integrilin)"
+    ],
+    "Ertapenem sodium (Invanz)": [
+        "Ertapenem sodium (Invanz)"
+    ],
+    "Esmolol": [
+        "Esmolol"
+    ],
+    "Esomeprazole (Nexium)": [
+        "Esomeprazole (Nexium)"
+    ],
+    "Ethambutol": [
+        "Ethambutol"
+    ],
+    "Factor VIII": [
+        "Factor VIIa",
+        "Factor VIII"
+    ],
+    "Famotidine (Pepcid)": [
+        "Famotidine (Pepcid)"
+    ],
+    "Fentanyl": [
+        "Fentanyl",
+        "Fentanyl (Concentrate)"
+    ],
+    "Fiber Supplement (i.e. Banana Flakes)": [
+        "Fiber Supplement (i.e. Banana Flakes)"
+    ],
+    "Fibersource HN (1/2)": [
+        "Fibersource HN (Full)",
+        "Fibersource HN (3/4)",
+        "Fibersource HN (1/2)",
+        "Fibersource HN (1/4)"
+    ],
+    "Fluconazole": [
+        "Fluconazole",
+        "Voriconazole"
+    ],
+    "Folic Acid": [
+        "Folic Acid"
+    ],
+    "Fondaparinux": [
+        "Fondaparinux"
+    ],
+    "Foscarnet": [
+        "Foscarnet"
+    ],
+    "Fosphenytoin": [
+        "Fosphenytoin"
+    ],
+    "Free Water": [
+        "Free Water"
+    ],
+    "Fresh Frozen Plasma": [
+        "Fresh Frozen Plasma"
+    ],
+    "Furosemide (Lasix)": [
+        "Furosemide (Lasix)",
+        "Furosemide (Lasix) 250/50"
+    ],
+    "GT Flush": [
+        "GT Flush"
+    ],
+    "Gastric Meds": [
+        "Gastric Meds"
+    ],
+    "Gentamicin": [
+        "Gentamicin"
+    ],
+    "Glucerna (1/2)": [
+        "Glucerna (1/2)",
+        "Glucerna (Full)",
+        "Glucerna 1.2 (Full)",
+        "Glucerna 1.5 (Full)"
+    ],
+    "Glycopyrolate (Robinul)": [
+        "Glycopyrolate (Robinul)"
+    ],
+    "Haloperidol (Haldol)": [
+        "Haloperidol (Haldol)"
+    ],
+    "Heparin Sodium": [
+        "Heparin Sodium",
+        "Heparin Sodium (Impella)",
+        "Heparin Sodium (Prophylaxis)"
+    ],
+    "Hetastarch (Hespan) 6%": [
+        "Hetastarch (Hespan) 6%"
+    ],
+    "Hydralazine": [
+        "Hydralazine"
+    ],
+    "Hydrochloric Acid - HCL": [
+        "Hydrochloric Acid - HCL"
+    ],
+    "Hydromorphone (Dilaudid)": [
+        "Hydromorphone (Dilaudid)"
+    ],
+    "IV Immune Globulin (IVIG)": [
+        "IV Immune Globulin (IVIG)"
+    ],
+    "Imipenem/Cilastatin": [
+        "Imipenem/Cilastatin"
+    ],
+    "Impact (1/2)": [
+        "Impact (Full)",
+        "Impact (1/2)",
+        "Impact (3/4)",
+        "Impact (1/4)",
+        "Impact with Fiber (1/4)",
+        "Impact with Fiber (1/2)",
+        "Impact with Fiber (3/4)",
+        "Impact with Fiber (Full)"
+    ],
+    "Insulin": [
+        "Insulin - NPH",
+        "Insulin - 70/30",
+        "Insulin - U500",
+        "Insulin - Glargine",
+        "Insulin - Humalog",
+        "Insulin - Humalog 75/25",
+        "Insulin - Novolog",
+        "Insulin - Regular"
+    ],
+    "Isoniazid": [
+        "Isoniazid"
+    ],
+    "Isosource 1.5 (1/2)": [
+        "Isosource 1.5 (Full)",
+        "Isosource 1.5 (1/2)",
+        "Isosource 1.5 (1/4)",
+        "Isosource 1.5 (3/4)",
+        "Isosource 1.5 (2/3)"
+    ],
+    "Isuprel": [
+        "Isuprel"
+    ],
+    "Jevity": [
+        "Jevity 1.2 (Full)",
+        "Vital 1.5 (Full)"
+    ],
+    "Vital 1.5 (Full)": [
+        "Vital 1.5 (Full)"
+    ],
+    "K Phos": [
+        "Na Phos",
+        "K Phos"
+    ],
+    "KCL (Bolus)": [
+        "KCL (Bolus)"
+    ],
+    "KCl (CRRT)": [
+        "KCl (CRRT)"
+    ],
+    "Keflex": [
+        "Keflex"
+    ],
+    "Ketorolac (Toradol)": [
+        "Ketorolac (Toradol)"
+    ],
+    "LR": [
+        "LR"
+    ],
+    "Labetalol": [
+        "Labetalol"
+    ],
+    "Lansoprazole (Prevacid)": [
+        "Lansoprazole (Prevacid)"
+    ],
+    "Lepirudin": [
+        "Lepirudin"
+    ],
+    "Levetiracetam (Keppra)": [
+        "Levetiracetam (Keppra)"
+    ],
+    "Lidocaine": [
+        "Lidocaine"
+    ],
+    "Linezolid": [
+        "Linezolid"
+    ],
+    "Lipids (additive)": [
+        "Lipids (additive)"
+    ],
+    "Lipids 10%": [
+        "Lipids 10%",
+        "Lipids 20%"
+    ],
+    "Lorazepam (Ativan)": [
+        "Lorazepam (Ativan)"
+    ],
+    "Magnesium Sulfate": [
+        "Magnesium Sulfate (OB-GYN)",
+        "Magnesium Sulfate",
+        "Magnesium Sulfate (Bolus)"
+    ],
+    "Mannitol": [
+        "Mannitol"
+    ],
+    "Meperidine (Demerol)": [
+        "Meperidine (Demerol)"
+    ],
+    "Meropenem": [
+        "Meropenem"
+    ],
+    "Methadone Hydrochloride": [
+        "Methadone Hydrochloride"
+    ],
+    "Metoprolol": [
+        "Metoprolol"
+    ],
+    "Metronidazole": [
+        "Metronidazole"
+    ],
+    "Micafungin": [
+        "Micafungin"
+    ],
+    "Midazolam (Versed)": [
+        "Midazolam (Versed)"
+    ],
+    "Mighty Shake (Chocolate)": [
+        "Mighty Shake (Chocolate)"
+    ],
+    "Mighty Shake (Vanilla/Strawberry)": [
+        "Mighty Shake (Vanilla/Strawberry)"
+    ],
+    "Mighty Shake (no sugar added)": [
+        "Mighty Shake (no sugar added)"
+    ],
+    "Milrinone": [
+        "Milrinone"
+    ],
+    "Morphine Sulfate": [
+        "Morphine Sulfate"
+    ],
+    "Multivitamins": [
+        "Multivitamins"
+    ],
+    "Mycophenolate mofetil (Cellcept)": [
+        "Mycophenolate mofetil (Cellcept)"
+    ],
+    "NaCl 0.45%": [
+        "NaCl 0.9%",
+        "NaCl 0.45%"
+    ],
+    "NaCl 23.4%": [
+        "NaCl 23.4%"
+    ],
+    "NaCl 3% (Hypertonic Saline)": [
+        "NaCl 3% (Hypertonic Saline)"
+    ],
+    "Nafcillin": [
+        "Nafcillin"
+    ],
+    "Naloxone (Narcan)": [
+        "Naloxone (Narcan)"
+    ],
+    "Neostigmine (Prostigmin)": [
+        "Neostigmine (Prostigmin)"
+    ],
+    "Nepro (1/2)": [
+        "Nepro (1/2)"
+    ],
+    "Nepro (Full)": [
+        "Nepro (Full)"
+    ],
+    "Nesiritide": [
+        "Nesiritide"
+    ],
+    "Nicardipine": [
+        "Nicardipine"
+    ],
+    "Nicardipine 40mg/200": [
+        "Nicardipine 40mg/200"
+    ],
+    "Nitroglycerin": [
+        "Nitroglycerin"
+    ],
+    "Nitroprusside": [
+        "Nitroprusside"
+    ],
+    "NovaSource Renal (1/2)": [
+        "NovaSource Renal (Full)",
+        "NovaSource Renal (1/2)",
+        "NovaSource Renal (3/4)"
+    ],
+    "Nutren 2.0 (1/2)": [
+        "Nutren 2.0 (2/3)",
+        "Nutren 2.0 (3/4)",
+        "Nutren 2.0 (1/4)",
+        "Nutren 2.0 (1/2)",
+        "Nutren 2.0 (Full)"
+    ],
+    "Nutren Pulmonary (1/2)": [
+        "Nutren Pulmonary (3/4)",
+        "Nutren Pulmonary (Full)",
+        "Nutren Pulmonary (1/2)"
+    ],
+    "Nutren Renal (1/2)": [
+        "Nutren Renal (1/2)",
+        "Nutren Renal (Full)",
+        "Nutren Renal (3/4)",
+        "Nutren Renal (1/4)"
+    ],
+    "OR Autologous Blood Intake": [
+        "OR Autologous Blood Intake"
+    ],
+    "OR Cell Saver Intake": [
+        "OR Cell Saver Intake"
+    ],
+    "OR Colloid Intake": [
+        "PACU Colloid Intake",
+        "OR Colloid Intake"
+    ],
+    "OR Cryoprecipitate Intake": [
+        "OR Cryoprecipitate Intake"
+    ],
+    "OR Crystalloid Intake": [
+        "PACU Crystalloid Intake",
+        "OR Crystalloid Intake"
+    ],
+    "OR FFP Intake": [
+        "OR FFP Intake",
+        "PACU FFP Intake"
+    ],
+    "OR Packed RBC Intake": [
+        "PACU Packed RBC Intake",
+        "OR Packed RBC Intake"
+    ],
+    "OR Platelet Intake": [
+        "OR Platelet Intake",
+        "PACU Platelet Intake"
+    ],
+    "Octreotide": [
+        "Octreotide"
+    ],
+    "Omeprazole (Prilosec)": [
+        "Omeprazole (Prilosec)"
+    ],
+    "Ondansetron (Zofran)": [
+        "Ondansetron (Zofran)"
+    ],
+    "Optisource": [
+        "Optisource"
+    ],
+    "Osmolite 1.5 (Full)": [
+        "Osmolite 1.5 (Full)"
+    ],
+    "PACU PO Intake": [
+        "PACU PO Intake",
+        "PO Intake"
+    ],
+    "Packed Red Blood Cells": [
+        "Packed Red Blood Cells"
+    ],
+    "Pamidronate": [
+        "Pamidronate"
+    ],
+    "Pantoprazole (Protonix)": [
+        "Pantoprazole (Protonix)"
+    ],
+    "Penicillin G potassium": [
+        "Penicillin G potassium"
+    ],
+    "Pentobarbital": [
+        "Pentobarbital"
+    ],
+    "Peptamen 1.5 (1/2)": [
+        "Peptamen 1.5 (1/2)",
+        "Peptamen 1.5 (3/4)",
+        "Peptamen 1.5 (Full)",
+        "Peptamen 1.5 (1/4)"
+    ],
+    "Peptamen Bariatric (Full)": [
+        "Peptamen Bariatric (Full)"
+    ],
+    "Peripheral Parenteral Nutrition": [
+        "Peripheral Parenteral Nutrition"
+    ],
+    "Phenylephrine": [
+        "Phenylephrine",
+        "Phenylephrine (200/250)",
+        "Phenylephrine (50/250)"
+    ],
+    "Piggyback": [
+        "Piggyback"
+    ],
+    "Piperacillin": [
+        "Piperacillin"
+    ],
+    "Piperacillin/Tazobactam (Zosyn)": [
+        "Piperacillin/Tazobactam (Zosyn)"
+    ],
+    "Plasma Pheresis": [
+        "Plasma Pheresis"
+    ],
+    "Platelets": [
+        "Platelets"
+    ],
+    "Pre-Admission/Non-ICU Intake": [
+        "Pre-Admission/Non-ICU Intake"
+    ],
+    "ProBalance (Full)": [
+        "ProBalance (Full)"
+    ],
+    "Procainamide": [
+        "Procainamide"
+    ],
+    "Profilnine": [
+        "Profilnine"
+    ],
+    "Promote (Full)": [
+        "Promote (Full)",
+        "Promote with Fiber (Full)"
+    ],
+    "Propofol": [
+        "Propofol"
+    ],
+    "Protamine sulfate": [
+        "Protamine sulfate"
+    ],
+    "Pulmocare (1/2)": [
+        "Pulmocare (1/4)",
+        "Pulmocare (1/2)",
+        "Pulmocare (Full)"
+    ],
+    "Pyrazinamide": [
+        "Pyrazinamide"
+    ],
+    "Quinine": [
+        "Quinine"
+    ],
+    "Ranitidine": [
+        "Ranitidine"
+    ],
+    "Ranitidine (Prophylaxis)": [
+        "Ranitidine (Prophylaxis)"
+    ],
+    "Replete (1/2)": [
+        "Replete (3/4)",
+        "Replete (2/3)",
+        "Replete (1/2)",
+        "Replete (1/4)",
+        "Replete (Full)",
+        "Replete with Fiber (Full)",
+        "Replete with Fiber (3/4)",
+        "Replete with Fiber (2/3)",
+        "Replete with Fiber (1/2)"
+    ],
+    "Resource Fruit Beverage": [
+        "Resource Fruit Beverage"
+    ],
+    "Rifampin": [
+        "Rifampin"
+    ],
+    "Rocuronium": [
+        "Rocuronium",
+        "Vecuronium"
+    ],
+    "Sodium Acetate.": [
+        "Sodium Acetate."
+    ],
+    "Sodium Bicarbonate 8.4%": [
+        "Sodium Bicarbonate 8.4%",
+        "Sodium Bicarbonate 8.4% (Amp)"
+    ],
+    "Solution": [
+        "Solution"
+    ],
+    "Sterile Water": [
+        "Sterile Water"
+    ],
+    "TPN w/ Lipids": [
+        "TPN w/ Lipids"
+    ],
+    "TPN without Lipids": [
+        "TPN without Lipids"
+    ],
+    "Tamiflu": [
+        "Tamiflu"
+    ],
+    "Tirofiban (Aggrastat)": [
+        "Tirofiban (Aggrastat)"
+    ],
+    "Tobramycin": [
+        "Tobramycin"
+    ],
+    "Treprostinil (Remodulin)": [
+        "Treprostinil (Remodulin)"
+    ],
+    "Two Cal HN (1/2)": [
+        "Two Cal HN (Full)",
+        "Two Cal HN (1/2)"
+    ],
+    "Valgancyclovir": [
+        "Acyclovir",
+        "Gancyclovir",
+        "Valgancyclovir"
+    ],
+    "Vancomycin": [
+        "Vancomycin"
+    ],
+    "Vanilla Lactose Free Scandi Shake (mixed)": [
+        "Vanilla Lactose Free Scandi Shake (mixed)"
+    ],
+    "Vasopressin": [
+        "Vasopressin"
+    ],
+    "Verapamil": [
+        "Verapamil"
+    ],
+    "Vital High Protein (Full)": [
+        "Vital High Protein (Full)"
+    ],
+    "Vitamin K (Phytonadione)": [
+        "Vitamin K (Phytonadione)"
+    ],
+    "Vivonex (1/2)": [
+        "Vivonex (Full)",
+        "Vivonex (3/4)",
+        "Vivonex (1/2)"
+    ]
+}
