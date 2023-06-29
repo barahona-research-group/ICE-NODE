@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from collections import namedtuple
 from dataclasses import dataclass
-from typing import List, Tuple, Set, Callable, Optional, Union
+from typing import Tuple, Set, Callable, Optional, Union, List
 from absl import logging
 import numpy as np
 
