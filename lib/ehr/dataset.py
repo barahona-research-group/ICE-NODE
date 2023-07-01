@@ -405,6 +405,16 @@ class CPRDEHRDataset(AbstractEHRDataset):
         meta['df'] = pd.read_csv(filepath, sep='\t', dtype=str)
         return cls(**meta)
 
+class MIMIC4ICUDataset(AbstractEHRDataset):
+    def __init__(self, df, colname, code_scheme, name, **kwargs):
+        self.name = name
+        self.code_scheme = {
+            code_type: eval(f"C.{scheme}")()
+            for code_type, scheme in code_scheme.items()
+        }
+        self.colname = colname
+        self.df = df
+
 
 def load_dataset(label):
 
@@ -414,3 +424,7 @@ def load_dataset(label):
         return MIMIC4EHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
     if label == 'CPRD':
         return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json')
+    if label == 'M4ICU':
+        return MIMIC4ICU.from_meta_json(f'{_META_DIR}/mimic4icu_meta.json')
+
+
