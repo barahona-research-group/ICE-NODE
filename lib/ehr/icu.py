@@ -11,17 +11,8 @@ import pandas as pd
 
 import equinox as eqx
 from .coding_scheme import AbstractScheme, Singleton, _RSC_DIR
+from .concept import StaticInfo, AbstractAdmission
 from .jax_interface import Admission_JAX
-
-
-@dataclass
-class NumericMarkers:
-    """
-    NumericMarkers class encapsulates the patient EHRs numeric markers.
-    """
-    values: np.ndarray
-    mask: np.ndarray
-    marker_scheme: str
 
 
 @dataclass
@@ -56,6 +47,7 @@ class InpatientInput:
         rate = self.rate[mask]
         adm_input = jnp.zeros(self.size)
         return adm_input.at[index].add(rate)
+
 
 @dataclass
 class InpatientObservables:
@@ -93,7 +85,8 @@ class AggregateRepresentation(eqx.Module):
 
     def __call__(self, inpatient_input: InpatientInput, t):
         inin = inpatient_input(t)
-        return jnp.concatenate([agg(inin) for agg in self.aggregators.values()])
+        return jnp.concatenate(
+            [agg(inin) for agg in self.aggregators.values()])
 
 
 class EthMIMICIV(AbstractScheme, Singleton):
@@ -118,6 +111,32 @@ class EthMIMICIV(AbstractScheme, Singleton):
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
                          name=self.NAME)
+
+
+@dataclass
+class DxDischargeCodes(AbstractAdmission):
+    """
+    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
+    """
+    dx_codes: Set[str]  # Set of diagnostic codes
+    dx_scheme: AbstractScheme  # Coding scheme for diagnostic codes
+
+
+@dataclass
+class InpatientAdmission(AbstractAdmission):
+    dx_discharge_codes: DxDischargeCodes
+
+
+@dataclass
+class Inpatient:
+    subject_id: str
+    static_info: StaticInfo
+    admissions: List[InpatientAdmission]
+
+    @classmethod
+    def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
+        return dataset.to_subjects()
+
 
 
 @dataclass

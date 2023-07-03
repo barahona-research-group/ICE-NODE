@@ -14,6 +14,8 @@ from ..utils import load_config, translate_path
 
 from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
+from .icu import (InterventionGroupScheme, InterventionScheme, InpatientInput,
+                  InpatientObservables, Inpatient, InpatientAdmission)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -23,7 +25,6 @@ StrDict = Dict[str, str]
 
 
 class AbstractEHRDataset(metaclass=ABCMeta):
-
     @classmethod
     @abstractmethod
     def from_meta_json(cls, meta_fpath):
@@ -35,7 +36,6 @@ class AbstractEHRDataset(metaclass=ABCMeta):
 
 
 class MIMIC4EHRDataset(AbstractEHRDataset):
-
     def __init__(self, df: Dict[str, pd.DataFrame], code_scheme: Dict[str,
                                                                       StrDict],
                  normalised_scheme: StrDict, code_colname: StrDict,
@@ -222,7 +222,6 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
 
 class MIMIC3EHRDataset(MIMIC4EHRDataset):
-
     def __init__(self, df, code_scheme, code_colname, adm_colname,
                  static_colname, name, **kwargs):
         code_scheme = {
@@ -328,7 +327,6 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
 
 class CPRDEHRDataset(AbstractEHRDataset):
-
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
         self.name = name
@@ -405,15 +403,184 @@ class CPRDEHRDataset(AbstractEHRDataset):
         meta['df'] = pd.read_csv(filepath, sep='\t', dtype=str)
         return cls(**meta)
 
+
 class MIMIC4ICUDataset(AbstractEHRDataset):
     def __init__(self, df, colname, code_scheme, name, **kwargs):
         self.name = name
-        self.code_scheme = {
-            code_type: eval(f"C.{scheme}")()
-            for code_type, scheme in code_scheme.items()
+        self.dx_source_scheme = {
+            version: eval(f"C.{scheme}")()
+            for version, scheme in code_scheme["dx"][0].items()
         }
+
         self.colname = colname
         self.df = df
+        self.dx_target_scheme = eval(f"C.{code_scheme['dx'][1]}")()
+
+        for version, scheme in self.dx_source_scheme.items():
+            c_code = colname["dx"]["code"]
+            c_version = colname["dx"]["version"]
+
+            if isinstance(scheme, C.ICDCommons):
+                ver_mask = df["dx"][c_version].astype(str) == version
+                df["dx"].loc[ver_mask,
+                             c_code] = df["dx"].loc[ver_mask, c_code].apply(
+                                 scheme.add_dot)
+
+            df["dx"] = self._validate_codes(df["dx"], c_code, c_version,
+                                            self.dx_source_scheme)
+
+    @staticmethod
+    def load_dataframes(meta):
+        files = meta['files']
+        base_dir = meta['base_dir']
+        colname = meta['colname']
+        code_scheme = meta['code_scheme']
+
+        dtype = {
+            colname["dx"]["code"]: str,
+            **{colname[f]["admission_id"]: str
+               for f in files.keys()},
+            **{colname[f]["subject_id"]: str
+               for f in files.keys()}
+        }
+
+        df = {
+            pd.read_csv(os.path.join(base_dir, files[k]), dtype=dtype)
+            for k in files.keys()
+        }
+        # Cast timestamps for admissions
+        for time_col in ("admittime", "dischtime"):
+            df["adm"][colname["adm"][time_col]] = pd.to_datetime(
+                df["adm"][colname["adm"][time_col]],
+                infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
+
+        # Cast timestamps for intervensions
+        for time_col in ("start_time", "end_time"):
+            for file in ("int_hospicd", "int_input", "int_icuproc"):
+                df[file][colname[file][time_col]] = pd.to_datetime(
+                    df[file][colname[file][time_col]],
+                    infer_datetime_format=True).dt.normalize(
+                    ).dt.to_pydatetime()
+
+        # Cast timestamps for observables
+        for file in df.keys():
+            if not file.startswith("obs"):
+                continue
+            df[file][colname[file]["timestamp"]] = pd.to_datetime(
+                df[file][colname[file]["timestamp"]],
+                infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
+
+        return df
+
+    @classmethod
+    def from_meta_json(cls, meta_fpath):
+        meta = load_config(meta_fpath)
+        meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        meta['df'] = cls.load_dataframes(meta)
+        return cls(**meta)
+
+    @staticmethod
+    def _validate_codes(df, code_col, version_col, version_map):
+        drop_idx = []
+        for version, version_df in df.groupby(version_col):
+            codeset = set(version_df[code_col])
+            scheme = version_map[str(version)]
+            scheme_codes = set(scheme.codes)
+
+            unrecognised = codeset - scheme_codes
+            if len(unrecognised) > 0:
+                logging.warning(f"""
+                    Unrecognised {type(scheme)} codes ({len(unrecognised)})
+                    to be removed: {sorted(unrecognised)}""")
+
+            # Data Loss!
+            drop_idx.extend(
+                version_df[~version_df[code_col].isin(scheme_codes)].index)
+
+        return df.drop(index=drop_idx)
+
+    def to_subjects(self):
+        c_adm_id = self.colname["adm"]["admission_id"]
+        c_admittime = self.colname["adm"]["admittime"]
+        c_dischtime = self.colname["adm"]["dischtime"]
+        c_adm_subject_id = self.colname["adm"]["subject_id"]
+
+        dx_scheme = self.dx_target_scheme
+
+        gender_dict = {'M': 1.0, 'F': 0.0}
+        static_df = self.df['static']
+        c_subject_id = self.colname["static"]["subject_id"]
+        c_gender = self.colname["static"]["gender"]
+        c_anchor_year = self.colname["static"]["anchor_year"]
+        c_anchor_age = self.colname["static"]["anchor_age"]
+
+        gender_column = static_df[c_gender].map(gender_dict)
+        subject_gender = dict(zip(static_df[c_subject_id], gender_column))
+
+        anchor_date = pd.to_datetime(
+            static_df[c_anchor_year],
+            format='%Y').dt.normalize().dt.to_pydatetime()
+        anchor_age = static_df[c_anchor_age].apply(
+            lambda y: pd.DateOffset(years=-y))
+        dob = anchor_date + anchor_age
+        subject_dob = dict(zip(static_df[c_subject_id], dob))
+
+        subjects = {}
+        # Admissions
+        for subj_id, subj_adms_df in self.df['adm'].groupby(c_adm_subject_id):
+            subj_adms = {}
+
+            for idx, adm_row in subj_adms_df.iterrows():
+                adm_id = adm_row[c_adm_id]
+                subj_adms[adm_id] = dict(admission_id=adm_id,
+                                         admission_dates=(adm_row[c_admittime],
+                                                          adm_row[c_dischtime]),
+                                         dx_codes=set(),
+                                         dx_scheme=dx_scheme)
+
+            static_info = StaticInfo(date_of_birth=subject_dob[subj_id],
+                                     gender=subject_gender[subj_id])
+            subjects[subj_id] = dict(subject_id=subj_id,
+                                     admissions=subj_adms,
+                                     static_info=static_info)
+
+        for subj_id, adm_id, dx_codes in self.codes_extractor("dx"):
+            subjects[subj_id]["admissions"][adm_id]["dx_codes"] = dx_codes
+
+        for subj_id, adm_id, pr_codes in self.codes_extractor("pr"):
+            subjects[subj_id]["admissions"][adm_id]["pr_codes"] = pr_codes
+
+        for subj in subjects.values():
+            subj['admissions'] = [
+                Admission(**adm) for adm in subj['admissions'].values()
+            ]
+        return [Subject(**subj) for subj in subjects.values()]
+
+    def codes_extractor(self, code_type):
+        if any(code_type not in d
+               for d in (self.code_colname, self.code_scheme, self.df)):
+            return
+        if self.normalised_scheme.get(code_type,
+                                      C.NullScheme()) is C.NullScheme():
+            return
+
+        adm_id_col = self.adm_colname["admission_id"]
+        subject_id_col = self.adm_colname["subject_id"]
+
+        code_col = self.code_colname[code_type]
+        version_col = self.code_version_colname[code_type]
+        version_map = self.code_scheme[code_type]
+        t_sch = self.normalised_scheme[code_type]
+        df = self.df[code_type]
+        for subj_id, subj_df in df.groupby(subject_id_col):
+            for adm_id, codes_df in subj_df.groupby(adm_id_col):
+                codeset = set()
+                for version, version_df in codes_df.groupby(version_col):
+                    s_sch = version_map[str(version)]
+                    m = s_sch.mapper_to(t_sch)
+                    codeset.update(m.map_codeset(version_df[code_col]))
+
+                yield subj_id, adm_id, codeset
 
 
 def load_dataset(label):
@@ -425,6 +592,5 @@ def load_dataset(label):
     if label == 'CPRD':
         return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json')
     if label == 'M4ICU':
-        return MIMIC4ICU.from_meta_json(f'{_META_DIR}/mimic4icu_meta.json')
-
-
+        return MIMIC4ICUDataset.from_meta_json(
+            f'{_META_DIR}/mimic4icu_meta.json')

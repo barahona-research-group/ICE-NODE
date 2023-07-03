@@ -5,6 +5,7 @@
     },
     "colname": {
         "dx": {
+            "admission_id": "hadm_id",
             "code": "icd_code",
             "version": "icd_version"
         },
@@ -17,6 +18,7 @@
         "static": {
             "subject_id": "subject_id",
             "gender": "gender",
+            "ethnicity": "race",
             "anchor_age": "anchor_age",
             "anchor_year": "anchor_year"
             },
