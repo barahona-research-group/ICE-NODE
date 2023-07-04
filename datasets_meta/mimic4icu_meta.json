@@ -24,19 +24,11 @@
             "anchor_age": "anchor_age",
             "anchor_year": "anchor_year"
             },
-        "int_hospicdproc": {
+        "int_proc": {
             "admission_id": "hadm_id",
             "start_time": "start_time",
             "end_time": "end_time",
-            "icd_code": "icd_code",
-            "icd_version": "icd_version",
-            "label": "long_title"
-        },
-        "int_icuproc": {
-            "admission_id": "hadm_id",
-            "start_time": "start_time",
-            "end_time": "end_time",
-            "label": "label"
+            "code": "code"
         },
         "int_input": {
             "admission_id": "hadm_id",
@@ -66,12 +58,10 @@
         "obs_renal_creat": "obs_renal_creat.csv.gz",
         "obs_renal_aki": "obs_renal_aki.csv.gz",
         "obs_sofa": "obs_sofa.csv.gz",
-        "int_hospicd": "int_hospicd.csv.gz",
         "int_input": "int_input.csv.gz",
-        "int_icuproc": "int_icuproc.csv.gz",
-        "int_grouper_hospicdproc": "int_grouper_hospicdproc.csv.gz",
+        "int_proc": "int_proc.csv.gz",
         "int_grouper_input": "int_grouper_input.csv.gz",
-        "int_grouper_icuproc": "int_grouper_icuproc.csv"
+        "int_grouper_proc": "int_grouper_proc.csv.gz"
     },
     "name": "MIMIC-IV-ICU",
     "python_class": "MIMIC4ICUDataset",
