@@ -1,10 +1,12 @@
 {
     "base_dir": "$DATA_DIR/mimic4icu-cohort",
     "code_scheme": {
-        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"]
+        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
+        "pr": ["MIMIC4Procedures", "MIMIC4ProcedureGroups"]
     },
     "colname": {
         "dx": {
+            "subject_id": "subject_id",
             "admission_id": "hadm_id",
             "code": "icd_code",
             "version": "icd_version"
@@ -28,15 +30,13 @@
             "end_time": "end_time",
             "icd_code": "icd_code",
             "icd_version": "icd_version",
-            "label": "long_title",
-            "rate": 1.0
+            "label": "long_title"
         },
         "int_icuproc": {
             "admission_id": "hadm_id",
             "start_time": "start_time",
             "end_time": "end_time",
-            "label": "label",
-            "rate": 1.0
+            "label": "label"
         },
         "int_input": {
             "admission_id": "hadm_id",

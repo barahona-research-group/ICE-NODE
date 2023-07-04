@@ -1372,6 +1372,21 @@ class EthCPRD5(EthCPRD, Singleton):
     ETH_DESC_CNAME = 'eth5_desc'
 
 
+class MIMIC4Procedures(AbstractScheme, Singleton):
+    def __init__(self, proc_grouper_df: pd.DataFrame):
+        pass
+
+
+class MIMIC4ProcedureGroups(AbstractScheme, Singleton):
+
+    def __init__(self, icuproc_grouper_df: pd.DataFrame):
+        pass
+
+def register_mimic4proc_mapping(s_scheme: MIMIC4ProcedureGroups,
+
+
+
+
 def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)

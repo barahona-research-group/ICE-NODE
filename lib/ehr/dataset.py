@@ -15,7 +15,8 @@ from ..utils import load_config, translate_path
 from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
 from .icu import (InterventionGroupScheme, InterventionScheme, InpatientInput,
-                  InpatientObservables, Inpatient, InpatientAdmission)
+                  InpatientObservables, Inpatient, InpatientAdmission,
+                  DxDischargeCodes)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -404,7 +405,14 @@ class CPRDEHRDataset(AbstractEHRDataset):
         return cls(**meta)
 
 
+@dataclass
 class MIMIC4ICUDataset(AbstractEHRDataset):
+    colname: Dict[str, Dict[str, str]]
+    name: str
+    df: Dict[str, pd.DataFrame]
+    dx_source_scheme: Dict[str, C.ICDCommons]
+    dx_target_scheme: C.ICDCommons
+
     def __init__(self, df, colname, code_scheme, name, **kwargs):
         self.name = name
         self.dx_source_scheme = {
@@ -503,19 +511,17 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_adm_id = self.colname["adm"]["admission_id"]
         c_admittime = self.colname["adm"]["admittime"]
         c_dischtime = self.colname["adm"]["dischtime"]
-        c_adm_subject_id = self.colname["adm"]["subject_id"]
-
-        dx_scheme = self.dx_target_scheme
+        c_subject_id = self.colname["adm"]["subject_id"]
 
         gender_dict = {'M': 1.0, 'F': 0.0}
         static_df = self.df['static']
-        c_subject_id = self.colname["static"]["subject_id"]
+        c_s_subject_id = self.colname["static"]["subject_id"]
         c_gender = self.colname["static"]["gender"]
         c_anchor_year = self.colname["static"]["anchor_year"]
         c_anchor_age = self.colname["static"]["anchor_age"]
 
         gender_column = static_df[c_gender].map(gender_dict)
-        subject_gender = dict(zip(static_df[c_subject_id], gender_column))
+        subject_gender = dict(zip(static_df[c_s_subject_id], gender_column))
 
         anchor_date = pd.to_datetime(
             static_df[c_anchor_year],
@@ -523,64 +529,47 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         anchor_age = static_df[c_anchor_age].apply(
             lambda y: pd.DateOffset(years=-y))
         dob = anchor_date + anchor_age
-        subject_dob = dict(zip(static_df[c_subject_id], dob))
+        subject_dob = dict(zip(static_df[c_s_subject_id], dob))
 
-        subjects = {}
+        subjects = []
+        dx_codes = dict(self.dx_codes_extractor())
         # Admissions
-        for subj_id, subj_adms_df in self.df['adm'].groupby(c_adm_subject_id):
-            subj_adms = {}
+        for subject_id, subj_adms_df in self.df['adm'].groupby(c_subject_id):
+
+            subject_admissions = []
 
             for idx, adm_row in subj_adms_df.iterrows():
                 adm_id = adm_row[c_adm_id]
-                subj_adms[adm_id] = dict(admission_id=adm_id,
-                                         admission_dates=(adm_row[c_admittime],
-                                                          adm_row[c_dischtime]),
-                                         dx_codes=set(),
-                                         dx_scheme=dx_scheme)
 
-            static_info = StaticInfo(date_of_birth=subject_dob[subj_id],
-                                     gender=subject_gender[subj_id])
-            subjects[subj_id] = dict(subject_id=subj_id,
-                                     admissions=subj_adms,
-                                     static_info=static_info)
+                subject_admissions.append(
+                    InpatientAdmission(admission_id=adm_id,
+                                       admission_dates=(adm_row[c_admittime],
+                                                        adm_row[c_dischtime]),
+                                       dx_discharge_codes=dx_codes[adm_id]))
 
-        for subj_id, adm_id, dx_codes in self.codes_extractor("dx"):
-            subjects[subj_id]["admissions"][adm_id]["dx_codes"] = dx_codes
+            static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
+                                     gender=subject_gender[subject_id])
+            subjects.append(
+                Inpatient(subject_id=subject_id,
+                          admissions=subject_admissions,
+                          static_info=static_info))
 
-        for subj_id, adm_id, pr_codes in self.codes_extractor("pr"):
-            subjects[subj_id]["admissions"][adm_id]["pr_codes"] = pr_codes
+        return subjects
 
-        for subj in subjects.values():
-            subj['admissions'] = [
-                Admission(**adm) for adm in subj['admissions'].values()
-            ]
-        return [Subject(**subj) for subj in subjects.values()]
+    def dx_codes_extractor(self):
+        c_adm_id = self.colname["dx"]["admission_id"]
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
 
-    def codes_extractor(self, code_type):
-        if any(code_type not in d
-               for d in (self.code_colname, self.code_scheme, self.df)):
-            return
-        if self.normalised_scheme.get(code_type,
-                                      C.NullScheme()) is C.NullScheme():
-            return
+        df = self.df["dx"]
+        for adm_id, codes_df in df.groupby(c_adm_id):
+            codeset = set()
+            for version, version_df in codes_df.groupby(c_version):
+                src_scheme = self.dx_source_scheme[str(version)]
+                mapper = src_scheme.mapper_to(self.dx_target_scheme)
+                codeset.update(mapper.map_codeset(version_df[c_code]))
 
-        adm_id_col = self.adm_colname["admission_id"]
-        subject_id_col = self.adm_colname["subject_id"]
-
-        code_col = self.code_colname[code_type]
-        version_col = self.code_version_colname[code_type]
-        version_map = self.code_scheme[code_type]
-        t_sch = self.normalised_scheme[code_type]
-        df = self.df[code_type]
-        for subj_id, subj_df in df.groupby(subject_id_col):
-            for adm_id, codes_df in subj_df.groupby(adm_id_col):
-                codeset = set()
-                for version, version_df in codes_df.groupby(version_col):
-                    s_sch = version_map[str(version)]
-                    m = s_sch.mapper_to(t_sch)
-                    codeset.update(m.map_codeset(version_df[code_col]))
-
-                yield subj_id, adm_id, codeset
+            yield adm_id, DxDischargeCodes(codeset, self.dx_target_scheme)
 
 
 def load_dataset(label):

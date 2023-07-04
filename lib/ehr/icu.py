@@ -114,7 +114,7 @@ class EthMIMICIV(AbstractScheme, Singleton):
 
 
 @dataclass
-class DxDischargeCodes(AbstractAdmission):
+class DxDischargeCodes:
     """
     Admission class encapsulates the patient EHRs diagnostic/procedure codes.
     """
