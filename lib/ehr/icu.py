@@ -16,7 +16,7 @@ from .jax_interface import Admission_JAX
 
 
 @dataclass
-class InterventionGroupScheme:
+class InputGroupScheme:
     """
     InterventionGroup class encapsulates the similar interventions.
     """
@@ -26,10 +26,10 @@ class InterventionGroupScheme:
 
 
 @dataclass
-class InterventionScheme:
+class InputScheme:
     input_index: Dict[str, int]
     output_index: Dict[str, int]
-    groups: Dict[str, InterventionGroupScheme]
+    groups: Dict[str, InputGroupScheme]
     group_name: Dict[str, str]
 
 
@@ -88,31 +88,6 @@ class AggregateRepresentation(eqx.Module):
         return jnp.concatenate(
             [agg(inin) for agg in self.aggregators.values()])
 
-
-class EthMIMICIV(AbstractScheme, Singleton):
-    _SCHEME_FILE = 'mimic4_eth.csv'
-    NAME = 'mimic4_eth'
-    ETH_CODE_CNAME = 'eth'
-    ETH_DESC_CNAME = 'eth_desc'
-
-    def __init__(self):
-        filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
-        df = pd.read_csv(filepath, dtype=str)
-        desc = dict()
-        for eth_code, eth_df in df.groupby(self.ETH_CODE_CNAME):
-            eth_set = set(eth_df[self.ETH_DESC_CNAME])
-            assert len(eth_set) == 1, "Ethnicity description should be unique"
-            (eth_desc, ) = eth_set
-            desc[eth_code] = eth_desc
-
-        codes = sorted(set(df[self.ETH_CODE_CNAME]))
-
-        super().__init__(codes=codes,
-                         index=dict(zip(codes, range(len(codes)))),
-                         desc=desc,
-                         name=self.NAME)
-
-
 @dataclass
 class DxDischargeCodes:
     """
@@ -125,6 +100,9 @@ class DxDischargeCodes:
 @dataclass
 class InpatientAdmission(AbstractAdmission):
     dx_discharge_codes: DxDischargeCodes
+    procedures: InpatientInput
+    inputs: InpatientInput
+
 
 
 @dataclass

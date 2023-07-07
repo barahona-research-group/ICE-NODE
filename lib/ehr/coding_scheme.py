@@ -1372,19 +1372,79 @@ class EthCPRD5(EthCPRD, Singleton):
     ETH_DESC_CNAME = 'eth5_desc'
 
 
+class MIMIC4Eth(AbstractScheme):
+    _SCHEME_FILE = 'mimic4_race_grouper.csv'
+    NAME = 'mimic4_eth32'
+    ETH_CNAME = 'eth32'
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
+        df = pd.read_csv(filepath, dtype=str)
+        desc = dict()
+        for eth_code, eth_df in df.groupby(self.ETH_CNAME):
+            eth_set = set(eth_df[self.ETH_CNAME])
+            assert len(eth_set) == 1, "Ethnicity description should be unique"
+            (eth_desc, ) = eth_set
+            desc[eth_code] = eth_code
+
+        codes = sorted(set(df[self.ETH_CNAME]))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name=self.NAME)
+
+
+class MIMIC4Eth32(MIMIC4Eth, Singleton):
+    NAME = 'mimic4_eth32'
+    ETH_CNAME = 'eth32'
+
+
+class MIMIC4Eth5(MIMIC4Eth, Singleton):
+    NAME = 'mimic4_eth5'
+    ETH_CNAME = 'eth5'
+
+
+def register_mimic4_eth_mapping(s_scheme: MIMIC4Eth32, t_scheme: MIMIC4Eth5):
+    filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
+    df = pd.read_csv(filepath, dtype=str)
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    for eth32, eth_df in df.groupby(s_scheme.ETH_CNAME):
+        m[eth32] = set(eth_df[t_scheme.ETH_CNAME])
+
+
 class MIMIC4Procedures(AbstractScheme, Singleton):
     def __init__(self, proc_grouper_df: pd.DataFrame):
-        pass
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = sorted(set(df.code))
+        desc = dict(zip(codes, df.label))
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_proc')
 
 
 class MIMIC4ProcedureGroups(AbstractScheme, Singleton):
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = sorted(set(df.group))
+        desc = dict(zip(codes, codes))
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_grouped_proc')
 
-    def __init__(self, icuproc_grouper_df: pd.DataFrame):
-        pass
 
 def register_mimic4proc_mapping(s_scheme: MIMIC4ProcedureGroups,
+                                t_scheme: MIMIC4Procedures):
+    filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+    df = pd.read_csv(filepath, dtype=str)
 
-
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    for group, group_df in df.groupby('group'):
+        m.update({c: group for c in group_df.code})
 
 
 def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
@@ -1487,4 +1547,13 @@ load_maps.update({
                                      DxLTC212FlatCodes()),
     (EthCPRD16, EthCPRD5):
     lambda: register_cprd_eth_mapping(EthCPRD16(), EthCPRD5())
+})
+
+# MIMIC4 Inpatient conversions
+load_maps.update({
+    (MIMIC4Procedures, MIMIC4ProcedureGroups):
+    lambda: register_mimic4proc_mapping(MIMIC4Procedures(),
+                                        MIMIC4ProcedureGroups()),
+    (MIMIC4Eth32, MIMIC4Eth5):
+    lambda: register_mimic4_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5())
 })

@@ -23,10 +23,10 @@ icd_code,group,long_title,icd_version
 06BQ4ZZ,vessel_proc,"Excision of Left Saphenous Vein, Percutaneous Endoscopic Approach",10
 0B113F4,bypass_trachea,"Bypass Trachea to Cutaneous with Tracheostomy Device, Percutaneous Approach",10
 0BH17EZ,bypass_trachea,"Insertion of Endotracheal Airway into Trachea, Via Natural or Artificial Opening",10
-0DH63UZ,feeding_device,"Insertion of Feeding Device into Stomach, Percutaneous Approach",10
+0DH63UZ,gi_nutrition,"Insertion of Feeding Device into Stomach, Percutaneous Approach",10
 0F798DZ,bileduct_proc,"Dilation of Common Bile Duct with Intraluminal Device, Via Natural or Artificial Opening Endoscopic",10
 0JH606Z,heart_device,"Insertion of Pacemaker, Dual Chamber into Chest Subcutaneous Tissue and Fascia, Open Approach",10
-0JH63XZ,ivf_device,"Insertion of Tunneled Vascular Access Device into Chest Subcutaneous Tissue and Fascia, Percutaneous Approach",10
+0JH63XZ,ivf,"Insertion of Tunneled Vascular Access Device into Chest Subcutaneous Tissue and Fascia, Percutaneous Approach",10
 0W3P8ZZ,gitract_bleed_ctrl,"Control Bleeding in Gastrointestinal Tract, Via Natural or Artificial Opening Endoscopic",10
 0W9930Z,pleuralcavity_drain,"Drainage of Right Pleural Cavity with Drainage Device, Percutaneous Approach",10
 0W9B30Z,pleuralcavity_drain,"Drainage of Left Pleural Cavity with Drainage Device, Percutaneous Approach",10
@@ -58,7 +58,7 @@ icd_code,group,long_title,icd_version
 3990,vessel_proc,Insertion of non-drug-eluting peripheral (non-coronary) vessel stent(s),9
 3995,dialysis,Hemodialysis,9
 3E04305,cancer_drug,"Introduction of Other Antineoplastic into Central Vein, Percutaneous Approach",10
-3E0436Z,parenteral_nutrition,"Introduction of Nutritional Substance into Central Vein, Percutaneous Approach",10
+3E0436Z,ivf,"Introduction of Nutritional Substance into Central Vein, Percutaneous Approach",10
 3E0G76Z,gi_nutrition,"Introduction of Nutritional Substance into Upper GI, Via Natural or Artificial Opening",10
 3E0H76Z,gi_nutrition,"Introduction of Nutritional Substance into Lower GI, Via Natural or Artificial Opening",10
 4311,gi_device,Percutaneous [endoscopic] gastrostomy [PEG],9
@@ -93,7 +93,7 @@ icd_code,group,long_title,icd_version
 9904,blood_transfusion,Transfusion of packed cells,9
 9910,thrombolytic_agent,Injection or infusion of thrombolytic agent,9
 9914,immunoglobulin,Injection or infusion of immunoglobulin,9
-9915,parenteral_nutrition,Parenteral infusion of concentrated nutritional substances,9
+9915,ivf,Parenteral infusion of concentrated nutritional substances,9
 9920,platelet_inhibitor,Injection or infusion of platelet inhibitor,9
 9925,cancer_drug,Injection or infusion of cancer chemotherapeutic substance,9
 9960,resuscitation_cardioversion_defibrillation,"Cardiopulmonary resuscitation, not otherwise specified",9

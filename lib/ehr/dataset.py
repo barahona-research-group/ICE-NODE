@@ -6,6 +6,7 @@ from typing import Dict
 from collections import defaultdict
 from absl import logging
 from abc import ABC, abstractmethod, ABCMeta
+from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
@@ -434,7 +435,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                              c_code] = df["dx"].loc[ver_mask, c_code].apply(
                                  scheme.add_dot)
 
-            df["dx"] = self._validate_codes(df["dx"], c_code, c_version,
+            df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
                                             self.dx_source_scheme)
 
     @staticmethod
@@ -464,7 +465,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         # Cast timestamps for intervensions
         for time_col in ("start_time", "end_time"):
-            for file in ("int_hospicd", "int_input", "int_icuproc"):
+            for file in ("int_proc", "int_input"):
                 df[file][colname[file][time_col]] = pd.to_datetime(
                     df[file][colname[file][time_col]],
                     infer_datetime_format=True).dt.normalize(
@@ -488,7 +489,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return cls(**meta)
 
     @staticmethod
-    def _validate_codes(df, code_col, version_col, version_map):
+    def _validate_dx_codes(df, code_col, version_col, version_map):
         drop_idx = []
         for version, version_df in df.groupby(version_col):
             codeset = set(version_df[code_col])
