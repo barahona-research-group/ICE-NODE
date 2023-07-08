@@ -1414,7 +1414,7 @@ def register_mimic4_eth_mapping(s_scheme: MIMIC4Eth32, t_scheme: MIMIC4Eth5):
 
 
 class MIMIC4Procedures(AbstractScheme, Singleton):
-    def __init__(self, proc_grouper_df: pd.DataFrame):
+    def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         codes = sorted(set(df.code))
@@ -1437,14 +1437,98 @@ class MIMIC4ProcedureGroups(AbstractScheme, Singleton):
                          name='int_mimic4_grouped_proc')
 
 
-def register_mimic4proc_mapping(s_scheme: MIMIC4ProcedureGroups,
-                                t_scheme: MIMIC4Procedures):
+class MIMIC4InputGroups(AbstractScheme, Singleton):
+    """
+    InterventionGroup class encapsulates the similar interventions.
+    """
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = sorted(set(df.group))
+        desc = dict(zip(codes, codes))
+
+        self._groups = dict()
+        self._aggregation = dict()
+        self._dose_impact = dict()
+        for group, group_df in df.groupby('group'):
+            self._groups[group] = set(group_df['code'])
+            self._aggregation[group] = group_df['group_decision'].iloc[0]
+            self._dose_impact[group] = group_df['dose_impact'].iloc[0]
+
+            assert group_df['group_decision'].nunique(
+            ) == 1, "Group decision should be unique"
+            assert group_df['dose_impact'].nunique(
+            ) == 1, "Dose impact should be unique"
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_input_group')
+
+    @property
+    def groups(self):
+        return self._groups
+
+    @property
+    def aggregation(self):
+        return self._aggregation
+
+    @property
+    def dose_impact(self):
+        return self._dose_impact
+
+
+class MIMIC4Input(AbstractScheme, Singleton):
+    """
+    InterventionGroup class encapsulates the similar interventions.
+    """
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = df.label.tolist()
+        desc = dict(zip(codes, codes))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_input')
+
+
+class MIMIC4Observables(AbstractScheme, Singleton):
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = df.code.tolist()
+        desc = dict(zip(df.code.tolist(), df.label.tolist()))
+        self._groups = dict(zip(df.code.tolist(), df.group.tolist()))
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_obs')
+
+    @property
+    def groups(self):
+        return self._groups
+
+
+def register_mimic4proc_mapping(s_scheme: MIMIC4Procedures,
+                                t_scheme: MIMIC4ProcedureGroups):
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
 
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     for group, group_df in df.groupby('group'):
         m.update({c: group for c in group_df.code})
+
+
+def register_mimic4input_mapping(s_scheme: MIMIC4Input,
+                                 t_schame: MIMIC4InputGroups):
+    filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+    df = pd.read_csv(filepath, dtype=str)
+
+    m = _CodeMapper(s_scheme, t_schame, t_dag_space=False)
+    for group, group_df in df.groupby('group'):
+        m.update({c: group for c in group_df.label})
 
 
 def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
@@ -1554,6 +1638,8 @@ load_maps.update({
     (MIMIC4Procedures, MIMIC4ProcedureGroups):
     lambda: register_mimic4proc_mapping(MIMIC4Procedures(),
                                         MIMIC4ProcedureGroups()),
+    (MIMIC4Input, MIMIC4InputGroups):
+    lambda: register_mimic4input_mapping(MIMIC4Input(), MIMIC4InputGroups()),
     (MIMIC4Eth32, MIMIC4Eth5):
     lambda: register_mimic4_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5())
 })

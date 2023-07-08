@@ -16,24 +16,6 @@ from .jax_interface import Admission_JAX
 
 
 @dataclass
-class InputGroupScheme:
-    """
-    InterventionGroup class encapsulates the similar interventions.
-    """
-    group: List[str]
-    uom: str
-    aggregation: str
-
-
-@dataclass
-class InputScheme:
-    input_index: Dict[str, int]
-    output_index: Dict[str, int]
-    groups: Dict[str, InputGroupScheme]
-    group_name: Dict[str, str]
-
-
-@dataclass
 class InpatientInput:
     index: jnp.ndarray
     rate: jnp.ndarray
