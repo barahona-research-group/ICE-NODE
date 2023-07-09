@@ -2,8 +2,8 @@
     "base_dir": "$DATA_DIR/mimic4icu-cohort",
     "code_scheme": {
         "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
-        "pr": ["MIMIC4Procedures", "MIMIC4ProcedureGroups"],
-        "input": ["MIMIC4Input", "MIMIC4InputGroups"],
+        "int_proc": ["MIMIC4Procedures", "MIMIC4ProcedureGroups"],
+        "int_input": ["MIMIC4Input", "MIMIC4InputGroups"],
         "obs": ["MIMIC4Observables"],
         "ethnicity": ["MIMIC4Eth32", "MIMIC4Eth5"]
     },
@@ -26,7 +26,7 @@
             "ethnicity": "race",
             "anchor_age": "anchor_age",
             "anchor_year": "anchor_year"
-            },
+        },
         "int_proc": {
             "admission_id": "hadm_id",
             "start_time": "start_time",
@@ -37,7 +37,7 @@
             "admission_id": "hadm_id",
             "start_time": "start_time",
             "end_time": "end_time",
-            "label": "label",
+            "code": "label",
             "rate": "normalised_amount_per_hour"
         },
         "obs": {
