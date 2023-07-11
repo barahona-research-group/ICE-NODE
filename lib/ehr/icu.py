@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import pandas as pd
 
 import equinox as eqx
-from .coding_scheme import AbstractScheme, Singleton, _RSC_DIR
 from .concept import StaticInfo, AbstractAdmission
 from .jax_interface import Admission_JAX
 

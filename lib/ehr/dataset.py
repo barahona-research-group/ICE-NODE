@@ -519,24 +519,24 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return df.drop(index=drop_idx)
 
     def to_subjects(self):
-        subjects = []
 
         subject_dob, subject_gender = self.subject_info_extractor()
         adm_dates, admission_ids = self.adm_extractor()
         dx_codes = dict(self.dx_codes_extractor())
+        procedures = dict(self.procedure_extractor(adm_dates))
+        inputs = dict(self.inputs_extractor(adm_dates))
 
-        # Admissions
+        def gen_admission(i):
+            return InpatientAdmission(admission_id=i,
+                                      admission_dates=adm_dates[i],
+                                      dx_discharge_codes=dx_codes[i],
+                                      procedures=procedures[i],
+                                      inputs=inputs[i])
+
+        subjects = []
         for subject_id, subject_admission_ids in admission_ids.items():
-
-            subject_admissions = []
-
-            for adm_id in subject_admission_ids:
-
-                subject_admissions.append(
-                    InpatientAdmission(admission_id=adm_id,
-                                       admission_dates=adm_dates[adm_id],
-                                       dx_discharge_codes=dx_codes[adm_id]))
-
+            subject_admissions = list(map(gen_admission,
+                                          subject_admission_ids))
             static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
                                      gender=subject_gender[subject_id])
             subjects.append(
@@ -604,8 +604,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_start_time = self.colname["int_proc"]["start_time"]
         c_end_time = self.colname["int_proc"]["end_time"]
         scheme = self.int_proc_source_scheme
-        df = self.df['int_proc']
-        for adm_id, proc_df in df.groupby(c_adm_id):
+        for adm_id, proc_df in self.df['int_proc'].groupby(c_adm_id):
             index = []
             rate = []
             start_t = []
@@ -619,11 +618,39 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                     (row[c_start_time] - adm_time).total_seconds() / 3600.0)
                 end_t.append(
                     (row[c_end_time] - adm_time).total_seconds() / 3600.0)
-            yield InpatientInput(index=jnp.array(index),
-                                 rate=jnp.array(rate),
-                                 starttime=jnp.array(start_t),
-                                 endtime=jnp.array(end_t),
-                                 size=len(self.int_proc_source_scheme.index))
+            yield adm_id, InpatientInput(
+                index=jnp.array(index),
+                rate=jnp.array(rate),
+                starttime=jnp.array(start_t),
+                endtime=jnp.array(end_t),
+                size=len(self.int_proc_source_scheme.index))
+
+    def inputs_extractor(self, admission_dates):
+        c_adm_id = self.colname["int_input"]["admission_id"]
+        c_code = self.colname["int_input"]["code"]
+        c_start_time = self.colname["int_input"]["start_time"]
+        c_end_time = self.colname["int_input"]["end_time"]
+        c_rate = self.colname["int_input"]["rate"]
+        scheme = self.int_input_source_scheme
+        for adm_id, input_df in self.df['int_input'].groupby(c_adm_id):
+            index = []
+            rate = []
+            start_t = []
+            end_t = []
+            adm_time = admission_dates[adm_id][0]
+            for idx, row in input_df.iterrows():
+                index.append(scheme.index[row[c_code]])
+                rate.append(row[c_rate])
+                start_t.append(
+                    (row[c_start_time] - adm_time).total_seconds() / 3600.0)
+                end_t.append(
+                    (row[c_end_time] - adm_time).total_seconds() / 3600.0)
+            yield adm_id, InpatientInput(
+                index=jnp.array(index),
+                rate=jnp.array(rate),
+                starttime=jnp.array(start_t),
+                endtime=jnp.array(end_t),
+                size=len(self.int_input_source_scheme.index))
 
 
 def load_dataset(label):
