@@ -7,6 +7,7 @@ from collections import defaultdict
 from absl import logging
 from abc import ABC, abstractmethod, ABCMeta
 from dataclasses import dataclass
+from tqdm import tqdm
 
 import pandas as pd
 import jax.numpy as jnp
@@ -522,16 +523,34 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         subject_dob, subject_gender = self.subject_info_extractor()
         adm_dates, admission_ids = self.adm_extractor()
-        dx_codes = dict(self.dx_codes_extractor())
-        procedures = dict(self.procedure_extractor(adm_dates))
-        inputs = dict(self.inputs_extractor(adm_dates))
+        n = len(admission_ids)
+        dx_codes = {
+            k: v
+            for k, v in tqdm(
+                self.dx_codes_extractor(), total=n, desc="Discharge dx codes")
+        }
+        procedures = {
+            k: v
+            for k, v in tqdm(
+                self.procedure_extractor(), total=n, desc="Procedures")
+        }
+        inputs = {
+            k: v
+            for k, v in tqdm(self.inputs_extractor(), total=n, desc="Inputs")
+        }
+        observables = {
+            k: v
+            for k, v in tqdm(
+                self.observables_extractor(), total=n, desc="Observables")
+        }
 
         def gen_admission(i):
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
                                       dx_discharge_codes=dx_codes[i],
                                       procedures=procedures[i],
-                                      inputs=inputs[i])
+                                      inputs=inputs[i],
+                                      observables=observables[i])
 
         subjects = []
         for subject_id, subject_admission_ids in admission_ids.items():
@@ -598,26 +617,31 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
             yield adm_id, DxDischargeCodes(codeset, self.dx_target_scheme)
 
-    def procedure_extractor(self, admission_dates):
+    def procedure_extractor(self):
         c_adm_id = self.colname["int_proc"]["admission_id"]
         c_code = self.colname["int_proc"]["code"]
         c_start_time = self.colname["int_proc"]["start_time"]
         c_end_time = self.colname["int_proc"]["end_time"]
         scheme = self.int_proc_source_scheme
-        for adm_id, proc_df in self.df['int_proc'].groupby(c_adm_id):
+        c_admittime = self.colname["adm"]["admittime"]
+        df = self.df["int_proc"].merge(self.df["adm"],
+                                       on=c_adm_id,
+                                       how='inner')
+        df[c_start_time] = (df[c_start_time] -
+                            df[c_admittime]).dt.total_seconds() / 3600.0
+        df[c_end_time] = (df[c_end_time] -
+                          df[c_admittime]).dt.total_seconds() / 3600.0
+
+        for adm_id, proc_df in df.groupby(c_adm_id):
             index = []
             rate = []
             start_t = []
             end_t = []
-            adm_time = admission_dates[adm_id][0]
             for idx, row in proc_df.iterrows():
                 index.append(scheme.index[row[c_code]])
                 rate.append(1.0)
-
-                start_t.append(
-                    (row[c_start_time] - adm_time).total_seconds() / 3600.0)
-                end_t.append(
-                    (row[c_end_time] - adm_time).total_seconds() / 3600.0)
+                start_t.append(row[c_start_time])
+                end_t.append(row[c_end_time])
             yield adm_id, InpatientInput(
                 index=jnp.array(index),
                 rate=jnp.array(rate),
@@ -625,32 +649,71 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 endtime=jnp.array(end_t),
                 size=len(self.int_proc_source_scheme.index))
 
-    def inputs_extractor(self, admission_dates):
+    def inputs_extractor(self):
         c_adm_id = self.colname["int_input"]["admission_id"]
         c_code = self.colname["int_input"]["code"]
         c_start_time = self.colname["int_input"]["start_time"]
         c_end_time = self.colname["int_input"]["end_time"]
         c_rate = self.colname["int_input"]["rate"]
+        c_admittime = self.colname["adm"]["admittime"]
+
         scheme = self.int_input_source_scheme
-        for adm_id, input_df in self.df['int_input'].groupby(c_adm_id):
+        df = self.df['int_input'].merge(self.df['adm'],
+                                        on=c_adm_id,
+                                        how='inner')
+        df[c_start_time] = (df[c_start_time] -
+                            df[c_admittime]).dt.total_seconds() / 3600.0
+        df[c_end_time] = (df[c_end_time] -
+                          df[c_admittime]).dt.total_seconds() / 3600.0
+
+        for adm_id, input_df in df.groupby(c_adm_id):
             index = []
             rate = []
             start_t = []
             end_t = []
-            adm_time = admission_dates[adm_id][0]
             for idx, row in input_df.iterrows():
                 index.append(scheme.index[row[c_code]])
                 rate.append(row[c_rate])
-                start_t.append(
-                    (row[c_start_time] - adm_time).total_seconds() / 3600.0)
-                end_t.append(
-                    (row[c_end_time] - adm_time).total_seconds() / 3600.0)
+                start_t.append(row[c_start_time])
+                end_t.append(row[c_end_time])
             yield adm_id, InpatientInput(
                 index=jnp.array(index),
                 rate=jnp.array(rate),
                 starttime=jnp.array(start_t),
                 endtime=jnp.array(end_t),
                 size=len(self.int_input_source_scheme.index))
+
+    def observables_extractor(self):
+        c_adm_id = self.colname["obs"]["admission_id"]
+        c_code = self.colname["obs"]["code"]
+        c_time = self.colname["obs"]["timestamp"]
+        c_value = self.colname["obs"]["value"]
+        scheme = self.obs_scheme
+        df = self.df["obs"].merge(self.df["adm"], on=c_adm_id, how='inner')
+        c_admittime = self.colname["adm"]["admittime"]
+        df[c_time] = (df[c_time] - df[c_admittime]).dt.total_seconds() / 3600.0
+        df['code_index'] = df[c_code].apply(lambda c: scheme.index[c])
+        for adm_id, obs_df in df.groupby(c_adm_id):
+            times = []
+            values = []
+            masks = []
+
+            for time, time_obs_df in obs_df.groupby(c_time):
+                times.append(time)
+                idx = time_obs_df['code_index'].values
+                val = time_obs_df[c_value].values
+                v = jnp.zeros(len(scheme.index))
+                values.append(v.at[idx].set(val))
+                masks.append(v.at[idx].set(1.0))
+
+            times = jnp.array(times)
+            sorter = jnp.argsort(times)
+            values = jnp.vstack(values)[sorter]
+            masks = jnp.vstack(masks)[sorter]
+
+            yield adm_id, InpatientObservables(time=times,
+                                               value=values,
+                                               mask=masks)
 
 
 def load_dataset(label):

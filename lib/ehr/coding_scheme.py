@@ -329,6 +329,9 @@ class AbstractScheme:
 
         _IdentityCodeMapper(self)
 
+    def __len__(self):
+        return len(self.codes)
+
     def __bool__(self):
         return len(self.codes) > 0
 

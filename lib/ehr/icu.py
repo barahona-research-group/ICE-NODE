@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import date, datetime
 import os
-from collections import namedtuple, OrderedDict
+from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict
 from absl import logging
@@ -10,8 +10,73 @@ import jax.numpy as jnp
 import pandas as pd
 
 import equinox as eqx
-from .concept import StaticInfo, AbstractAdmission
+from .concept import StaticInfo, AbstractAdmission, StaticInfoFlags
+from .coding_scheme import AbstractScheme, NullScheme
 from .jax_interface import Admission_JAX
+
+@dataclass
+class InpatientObservables:
+    time: jnp.narray
+    value: jnp.ndarray
+    mask: jnp.ndarray
+
+
+class Aggregator(eqx.Module):
+    subset: jnp.array
+
+    def __call__(self, x):
+        raise NotImplementedError
+
+
+class WeightedSum(Aggregator):
+    linear: eqx.Linear
+
+    def __call__(self, x):
+        return self.linear(x[self.subset])
+
+
+class Sum(Aggregator):
+    def __call__(self, x):
+        return jnp.sum(x[self.subset])
+
+
+class OR(Aggregator):
+    def __call__(self, x):
+        return jnp.any(x[self.subset]) * 1.0
+
+
+class AggregateRepresentation(eqx.Module):
+    aggregators: OrderedDict[str, Aggregator]
+
+    def __call__(self, inpatient_input: InpatientInput, t):
+        inin = inpatient_input(t)
+        return jnp.concatenate(
+            [agg(inin) for agg in self.aggregators.values()])
+
+
+class AggregateRepresentationOR(AggregateRepresentation):
+
+    def __init__(self, source_scheme: AbstractScheme, target_scheme: AbstractScheme):
+        m = source_scheme.mapper_to(target_scheme)
+        one_to_many = defaultdict(list)
+        group_list = [None] * len(target_scheme)
+        for code, group in m.items():
+            one_to_many[group].append(source_scheme.index[code])
+            group_list[target_scheme.index[group]] = group
+
+        self.aggregators = OrderedDict()
+        for group in group_list:
+            assert group is not None, "group is None"
+            self.aggregators[group] = OR(jnp.array(one_to_many[group]))
+
+    def __call__(self, inpatient_input: InpatientInput, t):
+        inin = inpatient_input(t)
+        return jnp.concatenate(
+            [agg(inin) for agg in self.aggregators.values()])
+
+
+    def segment_input(self, inpatient_input: InpatientInput):
+        raise NotImplementedError
 
 
 @dataclass
@@ -30,44 +95,17 @@ class InpatientInput:
         return adm_input.at[index].add(rate)
 
 
-@dataclass
-class InpatientObservables:
-    observed: List[jnp.ndarray]
-    mask: List[jnp.ndarray]
-    time: List[float]
+class InpatientSegmentedInput:
+    time_segments: jnp.ndarray
+    input_segments: jnp.ndarray
 
+    def __init__(self, inpatient_input, AggregateRepresentation):
+        pass
 
-class Aggregator(eqx.Module):
-    partition: Tuple[int, int]
+class InpatientMergedSegments:
+    time_segments: jnp.ndarray
+    input_segments: Tuple[jnp.ndarray, jnp.ndarray]
 
-    def __call__(self, x):
-        raise NotImplementedError
-
-
-class WeightedSum(Aggregator):
-    linear: eqx.Linear
-
-    def __call__(self, x):
-        return self.linear(x[self.partition[0]:self.partition[1]])
-
-
-class Sum(Aggregator):
-    def __call__(self, x):
-        return jnp.sum(x[self.partition[0]:self.partition[1]])
-
-
-class OR(Aggregator):
-    def __call__(self, x):
-        return jnp.any(x[self.partition[0]:self.partition[1]]) * 1.0
-
-
-class AggregateRepresentation(eqx.Module):
-    aggregators: OrderedDict[str, Aggregator]
-
-    def __call__(self, inpatient_input: InpatientInput, t):
-        inin = inpatient_input(t)
-        return jnp.concatenate(
-            [agg(inin) for agg in self.aggregators.values()])
 
 @dataclass
 class DxDischargeCodes:
@@ -81,9 +119,20 @@ class DxDischargeCodes:
 @dataclass
 class InpatientAdmission(AbstractAdmission):
     dx_discharge_codes: DxDischargeCodes
+
     procedures: InpatientInput
+    segmented_procedures: InpatientSegmentedInput
+
     inputs: InpatientInput
 
+    observables: InpatientObservables
+
+
+@dataclass
+class InpatientPrediction:
+    dx_discharge_codes: DxDischargeCodes
+    state_trajectory: InpatientObservables
+    observables: InpatientObservables
 
 
 @dataclass
@@ -97,112 +146,112 @@ class Inpatient:
         return dataset.to_subjects()
 
 
-
 @dataclass
-class Inpatient_JAX:
-    """JAX storage and interface for admission information"""
+class InpatientPredictedRisk:
 
-    admission_time: int
-    los: int
-    admission_id: int
-    admission_date: datetime
-    dx_vec_previous: jnp.array
-    dx_vec_discharge: jnp.array
-    inpatient_input: InpatientInput
-    inpatient_observables: InpatientObservables
-
-
-@dataclass
-class SubjectPredictedRisk:
-
-    admission: Admission_JAX
-    prediction: jnp.ndarray
-    trajectory: Optional[jnp.ndarray] = None
+    admission: InpatientAdmission
+    prediction: InpatientPrediction
     other: Optional[Dict[str, jnp.ndarray]] = None
-
-    def __str__(self):
-        return f"""
-                adm_id: {self.admission.admission_id}\n
-                prediction: {self.prediction}\n
-                """
-
-    def get_outcome(self):
-        return self.admission.get_outcome()
-
-    def get_mask(self):
-        return self.admission.get_mask()
 
 
 class BatchPredictedRisks(dict):
-    """JAX storage and interface for batch of predicted risks"""
-    def __init__(self):
-        self.embeddings = dict()
-
-    def __str__(self):
-        subjects_str = []
-        for subj_id, _risks in self.items():
-            subjects_str.extend([
-                f'subject_id:{subj_id}\n{_risk}' for _risk in _risks.values()
-            ])
-        return '\n========\n'.join(subjects_str)
-
-    def set_subject_embeddings(self, subject_id, embeddings):
-        self.embeddings[subject_id] = embeddings
-
-    def get_subject_embeddings(self, subject_id):
-        return self.embeddings[subject_id]
-
     def add(self,
             subject_id: int,
-            admission: Admission_JAX,
-            prediction: jnp.ndarray,
-            trajectory: Optional[jnp.ndarray] = None,
+            admission: InpatientAdmission,
+            prediction: InpatientPrediction,
             other: Optional[Dict[str, jnp.ndarray]] = None):
 
         if subject_id not in self:
             self[subject_id] = {}
 
-        self[subject_id][admission.admission_id] = SubjectPredictedRisk(
-            admission=admission,
-            prediction=prediction,
-            trajectory=trajectory,
-            other=other)
+        self[subject_id][admission.admission_id] = InpatientPredictedRisk(
+            admission=admission, prediction=prediction, other=other)
 
     def get_subjects(self):
         return sorted(self.keys())
 
-    def get_risks(self, subject_id):
-        risks = self[subject_id]
-        return list(map(risks.get, sorted(risks)))
+    def get_predictions(self, subject_id):
+        predictions = self[subject_id]
+        return list(map(predictions.get, sorted(predictions)))
 
-    def subject_prediction_loss(self, subject_id, loss_f: LossFunction):
-        outcome = []
-        prediction = []
+    def subject_prediction_loss(self, subject_id, dx_code_loss, obs_loss):
+        dx_true, dx_pred, obs_true, obs_pred, obs_mask = [], [], [], [], []
         for r in self[subject_id].values():
-            outcome.append(r.admission.get_outcome())
-            prediction.append(r.prediction)
+            dx_true.append(r.admission.dx_discharge_codes.dx_codes)
+            dx_pred.append(r.prediction.dx_discharge_codes.dx_codes)
+            obs_true.append(r.admission.observables.value)
+            obs_pred.append(r.prediction.observables.value)
+            obs_mask.append(r.admission.observables.mask)
 
-        outcome = jnp.vstack(outcome)
-        prediction = jnp.vstack(prediction)
-        mask = jnp.ones_like(outcome)
+        dx_true = jnp.vstack(dx_true)
+        dx_pred = jnp.vstack(dx_pred)
+        obs_true = jnp.vstack(obs_true)
+        obs_pred = jnp.vstack(obs_pred)
+        obs_mask = jnp.vstack(obs_mask)
 
-        return loss_f(outcome, prediction, mask)
+        return dx_code_loss(dx_true, dx_pred) + obs_loss(
+            obs_true, obs_pred, obs_mask)
 
-    def prediction_loss(self, loss_f: LossFunction):
+    def prediction_loss(self, dx_code_loss, obs_loss):
         loss = [
-            self.subject_prediction_loss(subject_id, loss_f)
+            self.subject_prediction_loss(subject_id, dx_code_loss, obs_loss)
             for subject_id in self.keys()
         ]
         return jnp.nanmean(jnp.array(loss))
 
-    def equals(self, other: BatchPredictedRisks):
-        for subj_i, s_preds in self.items():
-            s_preds_other = other[subj_i]
-            for a, a_oth in zip(s_preds.values(), s_preds_other.values()):
-                if ((a.get_outcome() != a_oth.get_outcome()).any()
-                        or (a.prediction != a_oth.prediction).any()):
-                    return False
-        return True
+class StaticInfo_JAX(eqx.Module):
+    """JAX storage and interface for static information"""
+    static_info: StaticInfo
+    flags: StaticInfoFlags
+    static_control_vec: jnp.ndarray
+
+    def __init__(self, static_info, flags):
+        super().__init__()
+        self.static_info = static_info
+        self.flags = flags
+        self.static_control_vec = self._static_control_vector()
+
+    def _static_control_vector(self):
+
+        vec = []
+
+        # Ethnicity
+        if isinstance(self.static_info.ethnicity_scheme,
+                      AbstractScheme) and self.flags.ethnicity:
+            assert not isinstance(
+                self.static_info.ethnicity_scheme, NullScheme
+            ), "Ethnicity info requested while it is not provided in the dataset."
+            m = self.static_info.ethnicity_scheme.mapper_to(
+                self.flags.ethnicity)
+            codeset = m.map_codeset({self.static_info.ethnicity})
+            vec.append(m.codeset2vec(codeset))
+
+        # Gender
+        if self.flags.gender:
+            assert self.static_info.gender is not None, "Gender info requested while it is not provided in the dataset."
+            vec.append(np.array(self.static_info.gender, dtype=float))
+
+        if len(vec) > 0:
+            return jnp.hstack(vec)
+        else:
+            return jnp.array([])
+
+    def _dynamic_control_vector(self, current_date):
+
+        vec = []
+        if self.flags.age:
+            assert self.static_info.date_of_birth is not None, "Age is requested while date of birth is not provided in the dataset."
+            vec.append(
+                np.array(self.static_info.age(current_date), dtype=float))
+
+        if len(vec) > 0:
+            return jnp.hstack(vec)
+        else:
+            return jnp.array([])
+
+    def control_vector(self, current_date):
+        d_vec = self._dynamic_control_vector(current_date)
+        return jnp.hstack((d_vec, self.static_control_vec))
 
 
 class Subject_JAX(dict):
@@ -214,7 +263,7 @@ class Subject_JAX(dict):
     are discarded.
     """
     def __init__(self,
-                 subjects: List[Subject],
+                 subjects: List[Inpatient],
                  code_scheme: Dict[str, AbstractScheme],
                  static_info_flags: StaticInfoFlags = StaticInfoFlags(),
                  data_max_size_gb=4):
@@ -240,21 +289,8 @@ class Subject_JAX(dict):
             i: StaticInfo_JAX(subj.static_info, static_info_flags)
             for i, subj in self._subjects.items()
         }
-        self._dx_scheme = code_scheme['dx']
-        self._pr_scheme = code_scheme.get('pr', NullScheme())
 
-        self._outcome_extractor = code_scheme['outcome']
-
-        # The interface will map all Dx/Pr codes to DAG space if:
-        # 1. The experiment explicitly requests so through (dx|pr)_dagvec
-        # 2. At least one code mapper maps to DAG space. Note that there might
-        # be multiple code mappers whenthe dataset have mixed coding schemes
-        # for either Pr/Dx. For example, MIMIC-IV have mixed schemes of
-        # ICD9/ICD10 for both Dx/Pr codes.
-        self._dx_dagvec = code_scheme.get('dx_dagvec', False) or any(
-            m.t_dag_space for m in self.dx_mappers)
-        self._pr_dagvec = code_scheme.get('pr_dagvec', False) or any(
-            m.t_dag_space for m in self.pr_mappers)
+        self.scheme = code_scheme
 
         self._jaxify_subject_admissions()
 
