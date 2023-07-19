@@ -11,8 +11,10 @@ import pandas as pd
 
 import equinox as eqx
 from .concept import StaticInfo, AbstractAdmission, StaticInfoFlags
-from .coding_scheme import AbstractScheme, NullScheme
+from .coding_scheme import (AbstractScheme, NullScheme,
+                            AbstractGroupedProcedures)
 from .jax_interface import Admission_JAX
+
 
 @dataclass
 class InpatientObservables:
@@ -48,35 +50,20 @@ class OR(Aggregator):
 class AggregateRepresentation(eqx.Module):
     aggregators: OrderedDict[str, Aggregator]
 
-    def __call__(self, inpatient_input: InpatientInput, t):
-        inin = inpatient_input(t)
-        return jnp.concatenate(
-            [agg(inin) for agg in self.aggregators.values()])
-
-
-class AggregateRepresentationOR(AggregateRepresentation):
-
-    def __init__(self, source_scheme: AbstractScheme, target_scheme: AbstractScheme):
-        m = source_scheme.mapper_to(target_scheme)
-        one_to_many = defaultdict(list)
-        group_list = [None] * len(target_scheme)
-        for code, group in m.items():
-            one_to_many[group].append(source_scheme.index[code])
-            group_list[target_scheme.index[group]] = group
-
+    def __init__(self, source_scheme: AbstractScheme,
+                 target_scheme: AbstractGroupedProcedures):
+        groups = target_scheme.groups
+        aggs = target_scheme.aggregation
+        agg_map = {'or': OR, 'sum': Sum, 'w_sum': WeightedSum}
         self.aggregators = OrderedDict()
-        for group in group_list:
-            assert group is not None, "group is None"
-            self.aggregators[group] = OR(jnp.array(one_to_many[group]))
+        for g in sorted(groups.keys(), key=lambda g: target_scheme.index[g]):
+            subset_index = sorted(target_scheme.index[c] for c in groups[g])
+            agg_cls = agg_map[aggs[g]]
+            self.aggregators[g] = agg_cls(jnp.array(subset_index))
 
-    def __call__(self, inpatient_input: InpatientInput, t):
-        inin = inpatient_input(t)
+    def __call__(self, inpatient_input: jnp.ndarray):
         return jnp.concatenate(
-            [agg(inin) for agg in self.aggregators.values()])
-
-
-    def segment_input(self, inpatient_input: InpatientInput):
-        raise NotImplementedError
+            [agg(inpatient_input) for agg in self.aggregators.values()])
 
 
 @dataclass
@@ -95,16 +82,36 @@ class InpatientInput:
         return adm_input.at[index].add(rate)
 
 
+@dataclass
 class InpatientSegmentedInput:
-    time_segments: jnp.ndarray
-    input_segments: jnp.ndarray
+    time_segments: List[Tuple[float, float]]
+    input_segments: List[jnp.ndarray]
 
-    def __init__(self, inpatient_input, AggregateRepresentation):
-        pass
+    @classmethod
+    def from_input(cls, inpatient_input: InpatientInput,
+                   agg: AggregateRepresentation, start_time: float,
+                   end_time: float):
+        ii = inpatient_input
+        st = set(np.clip(ii.starttime, start_time, end_time))
+        et = set(np.clip(ii.endtime, start_time, end_time))
+        jump_times = sorted(st | et | {start_time, end_time})
+        time_segments = list(zip(jump_times[:-1], jump_times[1:]))
+        input_segments = [agg(ii(t)) for t in jump_times[:-1]]
+        return cls(time_segments, input_segments)
 
-class InpatientMergedSegments:
-    time_segments: jnp.ndarray
-    input_segments: Tuple[jnp.ndarray, jnp.ndarray]
+    def __call__(self, t):
+        included = map(lambda s: s[0] <= t < s[1], self.time_segments)
+        index = list(included).index(True)
+        return self.input_segments[index]
+
+    def concatenate(self, other: InpatientSegmentedInput):
+        timestamps = sorted(
+            set.union(*self.time_segments, *other.time_segments))
+        time_segments = list(zip(timestamps[:-1], timestamps[1:]))
+        input_segments = [
+            jnp.hstack((self(t), other(t))) for t in timestamps[:-1]
+        ]
+        return InpatientSegmentedInput(time_segments, input_segments)
 
 
 @dataclass
@@ -198,6 +205,7 @@ class BatchPredictedRisks(dict):
             for subject_id in self.keys()
         ]
         return jnp.nanmean(jnp.array(loss))
+
 
 class StaticInfo_JAX(eqx.Module):
     """JAX storage and interface for static information"""

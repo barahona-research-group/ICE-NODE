@@ -1428,45 +1428,11 @@ class MIMIC4Procedures(AbstractScheme, Singleton):
                          name='int_mimic4_proc')
 
 
-class MIMIC4ProcedureGroups(AbstractScheme, Singleton):
-    def __init__(self):
-        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
-        df = pd.read_csv(filepath, dtype=str)
-        codes = sorted(set(df.group))
-        desc = dict(zip(codes, codes))
-        super().__init__(codes=codes,
-                         index=dict(zip(codes, range(len(codes)))),
-                         desc=desc,
-                         name='int_mimic4_grouped_proc')
-
-
-class MIMIC4InputGroups(AbstractScheme, Singleton):
-    """
-    InterventionGroup class encapsulates the similar interventions.
-    """
-    def __init__(self):
-        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
-        df = pd.read_csv(filepath, dtype=str)
-        codes = sorted(set(df.group))
-        desc = dict(zip(codes, codes))
-
-        self._groups = dict()
-        self._aggregation = dict()
-        self._dose_impact = dict()
-        for group, group_df in df.groupby('group'):
-            self._groups[group] = set(group_df['code'])
-            self._aggregation[group] = group_df['group_decision'].iloc[0]
-            self._dose_impact[group] = group_df['dose_impact'].iloc[0]
-
-            assert group_df['group_decision'].nunique(
-            ) == 1, "Group decision should be unique"
-            assert group_df['dose_impact'].nunique(
-            ) == 1, "Dose impact should be unique"
-
-        super().__init__(codes=codes,
-                         index=dict(zip(codes, range(len(codes)))),
-                         desc=desc,
-                         name='int_mimic4_input_group')
+class AbstractGroupedProcedures(AbstractScheme):
+    def __init__(self, groups, aggregation, **init_kwargs):
+        super().__init__(**init_kwargs)
+        self._groups = groups
+        self._aggregation = aggregation
 
     @property
     def groups(self):
@@ -1475,6 +1441,58 @@ class MIMIC4InputGroups(AbstractScheme, Singleton):
     @property
     def aggregation(self):
         return self._aggregation
+
+
+class MIMIC4ProcedureGroups(AbstractGroupedProcedures, Singleton):
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = sorted(set(df.group))
+        desc = dict(zip(codes, codes))
+
+        groups = {
+            group: set(group_df['code'])
+            for group, group_df in df.groupby('group')
+        }
+        super().__init__(groups=groups,
+                         aggregation={group: 'or'
+                                      for group in groups},
+                         codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_grouped_proc')
+
+
+class MIMIC4InputGroups(AbstractGroupedProcedures, Singleton):
+    """
+    InterventionGroup class encapsulates the similar interventions.
+    """
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group_decision != 'E']
+        codes = sorted(set(df.group))
+        desc = dict(zip(codes, codes))
+
+        self._dose_impact = dict()
+        groups = dict()
+        aggregation = dict()
+        for group, group_df in df.groupby('group'):
+            groups[group] = set(group_df['code'])
+            aggregation[group] = group_df['group_decision'].iloc[0]
+            self._dose_impact[group] = group_df['dose_impact'].iloc[0]
+
+            assert group_df['group_decision'].nunique(
+            ) == 1, "Group decision should be unique"
+            assert group_df['dose_impact'].nunique(
+            ) == 1, "Dose impact should be unique"
+
+        super().__init__(groups=groups,
+                         aggregation=aggregation,
+                         codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_input_group')
 
     @property
     def dose_impact(self):
