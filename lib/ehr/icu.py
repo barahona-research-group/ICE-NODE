@@ -4,6 +4,7 @@ import os
 from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict
+import random
 from absl import logging
 import numpy as np
 import jax.numpy as jnp
@@ -122,22 +123,25 @@ class DxDischargeCodes:
     dx_codes: Set[str]  # Set of diagnostic codes
     dx_scheme: AbstractScheme  # Coding scheme for diagnostic codes
 
-
 @dataclass
 class InpatientAdmission(AbstractAdmission):
     dx_discharge_codes: DxDischargeCodes
-
     procedures: InpatientInput
-    segmented_procedures: InpatientSegmentedInput
-
     inputs: InpatientInput
-
     observables: InpatientObservables
+
+@dataclass
+class InpatientAdmissionInterface:
+    inpatient_admission: InpatientAdmission
+    segmented_procedures: InpatientSegmentedInput
+    segmented_inputs: Optional[InpatientSegmentedInput]
+    dx_history_vec: jnp.ndarray
+    outcome_vec: jnp.ndarray
 
 
 @dataclass
 class InpatientPrediction:
-    dx_discharge_codes: DxDischargeCodes
+    outcome_vec: jnp.ndarray
     state_trajectory: InpatientObservables
     observables: InpatientObservables
 
@@ -290,8 +294,6 @@ class Subject_JAX(dict):
         # consumption for data loading between host/device memories.
         self._data_max_size_gb = data_max_size_gb
 
-        # Filter subjects with admissions less than two.
-        subjects = [s for s in subjects if len(s.admissions) > 1]
         self._subjects = {s.subject_id: s for s in subjects}
         self._static_info = {
             i: StaticInfo_JAX(subj.static_info, static_info_flags)
@@ -302,50 +304,9 @@ class Subject_JAX(dict):
 
         self._jaxify_subject_admissions()
 
-    @property
-    def dx_dim(self):
-        if self._dx_dagvec:
-            return len(self.dx_scheme.dag_index)
-        else:
-            return len(self.dx_scheme.index)
-
-    @property
-    def pr_dim(self):
-        if self._pr_dagvec:
-            return len(self.pr_scheme.dag_index)
-        else:
-            return len(self.pr_scheme.index)
-
-    @property
-    def control_dim(self):
-        ctrl = self.subject_control(
-            list(self._static_info.keys())[0], datetime.today())
-        if ctrl is None:
-            return 0
-        else:
-            return len(ctrl)
-
-    def subject_control(self, subject_id, current_date):
+    def demographics(self, subject_id, current_date):
         static_info = self._static_info[subject_id]
         return static_info.control_vector(current_date)
-
-    @staticmethod
-    def probe_admission_size_gb(dx_scheme: AbstractScheme, dx_dagvec: bool,
-                                pr_scheme: AbstractScheme, pr_dagvec: bool,
-                                outcome_extractor: OutcomeExtractor):
-
-        if dx_dagvec:
-            dx_index = dx_scheme.dag_index
-        else:
-            dx_index = dx_scheme.index
-
-        if pr_dagvec:
-            pr_index = pr_scheme.dag_index
-        else:
-            pr_index = pr_scheme.index
-
-        n_bytes = len(dx_index) + len(pr_index) + len(outcome_extractor.index)
-        return n_bytes * 2**-30
 
     def __getitem__(self, k):
         v = super().__getitem__(k)
@@ -362,48 +323,6 @@ class Subject_JAX(dict):
     @property
     def subjects(self):
         return self._subjects
-
-    @property
-    def dx_mappers(self):
-        mappers = set()
-        s_schemes = Subject.dx_schemes(self._subjects.values())
-        for s in s_schemes:
-            mappers.add(s.mapper_to(self.dx_scheme))
-        return mappers
-
-    @property
-    def pr_mappers(self):
-        mappers = set()
-        s_schemes = Subject.pr_schemes(self._subjects.values())
-        for s in s_schemes:
-            mappers.add(s.mapper_to(self.pr_scheme))
-        return mappers
-
-    @property
-    def dx_scheme(self) -> AbstractScheme:
-        return self._dx_scheme
-
-    @property
-    def data_max_size_gb(self) -> float:
-        return self._data_max_size_gb
-
-    def dx_make_ancestors_mat(self):
-        return self.dx_scheme.make_ancestors_mat()
-
-    @property
-    def pr_scheme(self) -> AbstractScheme:
-        return self._pr_scheme
-
-    def pr_make_ancestors_mat(self):
-        return self.pr_scheme.make_ancestors_mat()
-
-    @property
-    def outcome_extractor(self):
-        return self._outcome_extractor
-
-    @property
-    def outcome_dim(self):
-        return len(self.outcome_extractor.index)
 
     def random_splits(self,
                       split1: float,
@@ -422,7 +341,7 @@ class Subject_JAX(dict):
         return train_ids, valid_ids, test_ids
 
     def dx_history(self, subject_id, absolute_dates=False):
-        return self.subjects[subject_id].dx_history(self.dx_scheme,
+        return self.subjects[subject_id].dx_history(self.scheme['dx'],
                                                     absolute_dates)
 
     def outcome_history(self, subject_id, absolute_dates=False):
