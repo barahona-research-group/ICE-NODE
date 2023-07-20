@@ -11,7 +11,6 @@ import numpy as np
 from ..utils import load_config
 
 from . import coding_scheme as C
-from .concept import Admission, Subject
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
@@ -72,32 +71,6 @@ class OutcomeExtractor(C.AbstractScheme):
             vec[self.index[c]] = True
         return jnp.array(vec)
 
-    def subject_outcome(self, subject: Subject):
-        mask = jnp.ones((self.outcome_dim, ))
-        return [(self.codeset2vec(adm.dx_codes, adm.dx_scheme), mask)
-                for adm in subject.admissions]
-
-    def outcome_frequency_vec(self, subjects: List[Subject]):
-        outcomes = [
-            outcome[0] for subj in subjects
-            for outcome in self.subject_outcome(subj)
-        ]
-        return sum(outcomes)
-
-    def outcome_history(self,
-                        admissions: List[Admission],
-                        absolute_dates=False):
-        history = defaultdict(list)
-        first_adm_date = admissions[0].admission_dates[0]
-        for adm in admissions:
-            for code in self.map_codeset(adm.dx_codes, adm.dx_scheme):
-                if absolute_dates:
-                    history[code].append(adm.admission_dates)
-                else:
-                    history[code].append(adm.admission_day(first_adm_date),
-                                         adm.discharge_day(first_adm_date))
-        return history
-
     @staticmethod
     def conf_from_json(json_file: str):
         json_file = os.path.join(_OUTCOME_DIR, json_file)
@@ -117,27 +90,3 @@ class OutcomeExtractor(C.AbstractScheme):
             return conf
         elif 'exclude_codes' in conf:
             return conf
-
-
-class SurvivalOutcomeExtractor(OutcomeExtractor):
-
-    def subject_outcome(self, subject: Subject):
-        # The mask elements are ones for each outcome coordinate until
-        # the outcome appears at one admission, the mask will have zero values
-        # for later admissions for that particular coordinate
-        mask = jnp.ones((self.outcome_dim, ), dtype=bool)
-        last_outcome = jnp.zeros((self.outcome_dim, ), dtype=bool)
-        outcomes = []
-        for adm in subject.admissions:
-            outcome = self.codeset2vec(adm.dx_codes, adm.dx_scheme)
-            outcome = outcome | last_outcome
-            outcomes.append((outcome, mask))
-            last_outcome = outcome
-            # set mask[i] to zero if already zero or outcome[i] == 1
-            mask = (mask & ~outcome)
-
-        return outcomes
-
-    def outcome_frequency_vec(self, subjects: List[Subject]):
-        return sum(outcome[0] * outcome[1] for subj in subjects
-                   for outcome in self.subject_outcome(subj))
