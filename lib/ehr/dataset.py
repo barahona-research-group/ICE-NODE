@@ -442,20 +442,17 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         self.eth_target_scheme = eval(f"C.{code_scheme['ethnicity'][1]}")()
         self.obs_scheme = eval(f"C.{code_scheme['obs'][0]}")()
 
+        c_code = colname["dx"]["code"]
+        c_version = colname["dx"]["version"]
         for version, scheme in self.dx_source_scheme.items():
-            c_code = colname["dx"]["code"]
-            c_version = colname["dx"]["version"]
-
             if isinstance(scheme, C.ICDCommons):
                 ver_mask = df["dx"][c_version].astype(str) == version
-                breakpoint()
                 df["dx"].loc[ver_mask,
                              c_code] = df["dx"].loc[ver_mask, c_code].apply(
                                  scheme.add_dot)
-                breakpoint()
 
-            df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
-                                               self.dx_source_scheme)
+        df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
+                                            self.dx_source_scheme)
 
     @staticmethod
     def load_dataframes(meta):
