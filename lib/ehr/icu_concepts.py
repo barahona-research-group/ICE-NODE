@@ -1,17 +1,13 @@
 from __future__ import annotations
-from datetime import date, datetime
-import os
+from datetime import date
 from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
-import random
-from absl import logging
 import numpy as np
 import jax.numpy as jnp
-import pandas as pd
 
 import equinox as eqx
-from .concept import AbstractAdmission, StaticInfoFlags
+from .concept import AbstractAdmission
 from .coding_scheme import (AbstractScheme, NullScheme,
                             AbstractGroupedProcedures)
 
@@ -133,82 +129,6 @@ class InpatientAdmission(AbstractAdmission):
     inputs: InpatientInput
     observables: InpatientObservables
 
-
-@dataclass
-class InpatientPrediction:
-    outcome_vec: jnp.ndarray
-    state_trajectory: InpatientObservables
-    observables: InpatientObservables
-
-
-@dataclass
-class Inpatient:
-    subject_id: str
-    static_info: StaticInfo
-    admissions: List[InpatientAdmission]
-
-    def outcome_frequency_vec(self):
-        return sum(a.outcome.vec for a in self.admissions)
-
-    @classmethod
-    def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
-        return dataset.to_subjects()
-
-
-@dataclass
-class InpatientPredictedRisk:
-
-    admission: InpatientAdmission
-    prediction: InpatientPrediction
-    other: Optional[Dict[str, jnp.ndarray]] = None
-
-
-class BatchPredictedRisks(dict):
-    def add(self,
-            subject_id: int,
-            admission: InpatientAdmission,
-            prediction: InpatientPrediction,
-            other: Optional[Dict[str, jnp.ndarray]] = None):
-
-        if subject_id not in self:
-            self[subject_id] = {}
-
-        self[subject_id][admission.admission_id] = InpatientPredictedRisk(
-            admission=admission, prediction=prediction, other=other)
-
-    def get_subjects(self):
-        return sorted(self.keys())
-
-    def get_predictions(self, subject_id):
-        predictions = self[subject_id]
-        return list(map(predictions.get, sorted(predictions)))
-
-    def subject_prediction_loss(self, subject_id, outcome_loss, obs_loss):
-        outcome_true, outcome_pred, obs_true, obs_pred, obs_mask = [], [], [], [], []
-        for r in self[subject_id].values():
-            outcome_true.append(r.admission.outcome.vec)
-            outcome_pred.append(r.prediction.outcome_vec)
-            obs_true.append(r.admission.observables.value)
-            obs_pred.append(r.prediction.observables.value)
-            obs_mask.append(r.admission.observables.mask)
-
-        outcome_true = jnp.vstack(outcome_true)
-        outcome_pred = jnp.vstack(outcome_pred)
-        obs_true = jnp.vstack(obs_true)
-        obs_pred = jnp.vstack(obs_pred)
-        obs_mask = jnp.vstack(obs_mask)
-
-        return outcome_loss(outcome_true, outcome_pred) + obs_loss(
-            obs_true, obs_pred, obs_mask)
-
-    def prediction_loss(self, outcome_loss, obs_loss):
-        loss = [
-            self.subject_prediction_loss(subject_id, outcome_loss, obs_loss)
-            for subject_id in self.keys()
-        ]
-        return jnp.nanmean(jnp.array(loss))
-
-
 @dataclass
 class StaticInfo:
     gender: str
@@ -232,3 +152,18 @@ class StaticInfo:
 
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec))
+
+@dataclass
+class Inpatient:
+    subject_id: str
+    static_info: StaticInfo
+    admissions: List[InpatientAdmission]
+
+    def outcome_frequency_vec(self):
+        return sum(a.outcome.vec for a in self.admissions)
+
+    @classmethod
+    def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
+        return dataset.to_subjects()
+
+

@@ -1377,7 +1377,7 @@ class EthCPRD5(EthCPRD, Singleton):
 
 
 class MIMIC4Eth(AbstractScheme):
-    _SCHEME_FILE = 'mimic4_race_grouper.csv'
+    _SCHEME_FILE = 'mimic4_race_grouper.csv.gz'
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'
 
@@ -1479,7 +1479,7 @@ class MIMIC4InputGroups(AbstractGroupedProcedures, Singleton):
         groups = dict()
         aggregation = dict()
         for group, group_df in df.groupby('group'):
-            groups[group] = set(group_df['code'])
+            groups[group] = set(group_df['label'])
             aggregation[group] = group_df['group_decision'].iloc[0]
             self._dose_impact[group] = group_df['dose_impact'].iloc[0]
 

@@ -8,6 +8,7 @@ from absl import logging
 from abc import ABC, abstractmethod, ABCMeta
 from dataclasses import dataclass
 from tqdm import tqdm
+import logging
 
 import pandas as pd
 import jax.numpy as jnp
@@ -16,11 +17,12 @@ import numpy as np
 from ..utils import load_config, translate_path
 
 from . import coding_scheme as C
-from .outcome import OutcomeExtractor
+from . import outcome as O
 from .concept import StaticInfo, Subject, Admission
-from .icu import (InpatientInput, InpatientObservables, Inpatient,
-                  InpatientAdmission, Codes, StaticInfo as InpatientStaticInfo,
-                  AggregateRepresentation, InpatientSegmentedInput)
+from .icu_concepts import (InpatientInput, InpatientObservables, Inpatient,
+                           InpatientAdmission, Codes, StaticInfo as
+                           InpatientStaticInfo, AggregateRepresentation,
+                           InpatientSegmentedInput)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -427,7 +429,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         self.colname = colname
         self.df = df
         self.dx_target_scheme = eval(f"C.{code_scheme['dx'][1]}")()
-        self.outcome_scheme = eval(f"C.{code_scheme['outcome']}")()
+        outcome_scheme_str = code_scheme["outcome"]
+        self.outcome_scheme = eval(
+            f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
         self.int_proc_source_scheme = eval(f"C.{code_scheme['int_proc'][0]}")()
         self.int_proc_target_scheme = eval(f"C.{code_scheme['int_proc'][1]}")()
         self.int_input_source_scheme = eval(
@@ -444,9 +448,11 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
             if isinstance(scheme, C.ICDCommons):
                 ver_mask = df["dx"][c_version].astype(str) == version
+                breakpoint()
                 df["dx"].loc[ver_mask,
                              c_code] = df["dx"].loc[ver_mask, c_code].apply(
                                  scheme.add_dot)
+                breakpoint()
 
             df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
                                                self.dx_source_scheme)
@@ -459,30 +465,34 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         code_scheme = meta['code_scheme']
 
         dtype = {
-            colname["dx"]["code"]: str,
-            **{colname[f]["admission_id"]: str
-               for f in files.keys()},
-            **{colname[f]["subject_id"]: str
-               for f in files.keys()}
+            **{col: str
+               for col in colname["dx"].values()},
+            **{
+                colname[f]["admission_id"]: str
+                for f in files.keys() if "admission_id" in colname[f]
+            },
+            **{
+                colname[f]["subject_id"]: str
+                for f in files.keys() if "subject_id" in colname[f]
+            },
         }
 
         df = {
-            pd.read_csv(os.path.join(base_dir, files[k]), dtype=dtype)
+            k: pd.read_csv(os.path.join(base_dir, files[k]), dtype=dtype)
             for k in files.keys()
         }
         # Cast timestamps for admissions
         for time_col in ("admittime", "dischtime"):
             df["adm"][colname["adm"][time_col]] = pd.to_datetime(
                 df["adm"][colname["adm"][time_col]],
-                infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
+                infer_datetime_format=True).dt.to_pydatetime()
 
         # Cast timestamps for intervensions
         for time_col in ("start_time", "end_time"):
             for file in ("int_proc", "int_input"):
                 df[file][colname[file][time_col]] = pd.to_datetime(
                     df[file][colname[file][time_col]],
-                    infer_datetime_format=True).dt.normalize(
-                    ).dt.to_pydatetime()
+                    infer_datetime_format=True).dt.to_pydatetime()
 
         # Cast timestamps for observables
         for file in df.keys():
@@ -490,7 +500,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 continue
             df[file][colname[file]["timestamp"]] = pd.to_datetime(
                 df[file][colname[file]["timestamp"]],
-                infer_datetime_format=True).dt.normalize().dt.to_pydatetime()
+                infer_datetime_format=True).dt.to_pydatetime()
 
         return df
 
@@ -498,7 +508,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     def from_meta_json(cls, meta_fpath):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        logging.debug('Loading dataframes')
         meta['df'] = cls.load_dataframes(meta)
+        logging.debug('[DONE] Loading dataframes')
         return cls(**meta)
 
     @staticmethod
@@ -706,10 +718,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                 starttime=jnp.array(start_t),
                                 endtime=jnp.array(end_t),
                                 size=len(self.int_proc_source_scheme.index))
-            yield adm_id, InpatientSegmentedInput(ii,
-                                                  agg_rep,
-                                                  start_time=0.0,
-                                                  end_time=dischtime[adm_id])
+            yield adm_id, InpatientSegmentedInput.from_input(
+                ii, agg_rep, start_time=0.0, end_time=dischtime[adm_id])
 
     def inputs_extractor(self):
         c_adm_id = self.colname["int_input"]["admission_id"]
@@ -789,3 +799,8 @@ def load_dataset(label):
     if label == 'M4ICU':
         return MIMIC4ICUDataset.from_meta_json(
             f'{_META_DIR}/mimic4icu_meta.json')
+
+
+if __name__ == '__main__':
+    logging.root.level = logging.DEBUG
+    m4inpatient_dataset = load_dataset('M4ICU')

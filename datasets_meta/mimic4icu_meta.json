@@ -2,7 +2,7 @@
     "base_dir": "$DATA_DIR/mimic4icu-cohort",
     "code_scheme": {
         "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
-        "outcome": "dx_icd9_v3_groups.json",
+        "outcome": "dx_icd9_filter_v3_groups",
         "int_proc": ["MIMIC4Procedures", "MIMIC4ProcedureGroups"],
         "int_input": ["MIMIC4Input", "MIMIC4InputGroups"],
         "obs": ["MIMIC4Observables"],

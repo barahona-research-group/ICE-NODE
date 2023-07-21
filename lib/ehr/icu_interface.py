@@ -1,45 +1,93 @@
 from __future__ import annotations
 from datetime import date, datetime
-import os
 from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
 import random
-from absl import logging
-import numpy as np
 import jax.numpy as jnp
+import jax.random as jrandom
 import pandas as pd
 
-import equinox as eqx
 from .dataset import MIMIC4ICUDataset
-from .concept import AbstractAdmission, StaticInfoFlags
-from .coding_scheme import (AbstractScheme, NullScheme,
-                            AbstractGroupedProcedures)
+from .icu_concepts import (InpatientAdmission, Inpatient, InpatientObservables)
+from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
+@dataclass
+class InpatientPrediction:
+    outcome_vec: jnp.ndarray
+    state_trajectory: InpatientObservables
+    observables: InpatientObservables
+
+
+@dataclass
+class InpatientPredictedRisk:
+
+    admission: InpatientAdmission
+    prediction: InpatientPrediction
+    other: Optional[Dict[str, jnp.ndarray]] = None
+
+
+class BatchPredictedRisks(dict):
+    def add(self,
+            subject_id: int,
+            admission: InpatientAdmission,
+            prediction: InpatientPrediction,
+            other: Optional[Dict[str, jnp.ndarray]] = None):
+
+        if subject_id not in self:
+            self[subject_id] = {}
+
+        self[subject_id][admission.admission_id] = InpatientPredictedRisk(
+            admission=admission, prediction=prediction, other=other)
+
+    def get_subjects(self):
+        return sorted(self.keys())
+
+    def get_predictions(self, subject_id):
+        predictions = self[subject_id]
+        return list(map(predictions.get, sorted(predictions)))
+
+    def subject_prediction_loss(self, subject_id, outcome_loss, obs_loss):
+        outcome_true, outcome_pred, obs_true, obs_pred, obs_mask = [], [], [], [], []
+        for r in self[subject_id].values():
+            outcome_true.append(r.admission.outcome.vec)
+            outcome_pred.append(r.prediction.outcome_vec)
+            obs_true.append(r.admission.observables.value)
+            obs_pred.append(r.prediction.observables.value)
+            obs_mask.append(r.admission.observables.mask)
+
+        outcome_true = jnp.vstack(outcome_true)
+        outcome_pred = jnp.vstack(outcome_pred)
+        obs_true = jnp.vstack(obs_true)
+        obs_pred = jnp.vstack(obs_pred)
+        obs_mask = jnp.vstack(obs_mask)
+
+        return outcome_loss(outcome_true, outcome_pred) + obs_loss(
+            obs_true, obs_pred, obs_mask)
+
+    def prediction_loss(self, outcome_loss, obs_loss):
+        loss = [
+            self.subject_prediction_loss(subject_id, outcome_loss, obs_loss)
+            for subject_id in self.keys()
+        ]
+        return jnp.nanmean(jnp.array(loss))
+
+@dataclass
 class Inpatients:
-    """
-    JAX storage and interface for subject information.
-    It prepares EHRs information to predictive models.
-    NOTE: admissions with overlapping admission dates for the same patietn
-    are merged. Hence, in case patients end up with one admission, they
-    are discarded.
-    """
+    dataset: MIMIC4ICUDataset
+    subjects: Dict[int, Inpatient]
 
     def __init__(self, dataset: MIMIC4ICUDataset):
-        self._dataset = dataset
-        self._subjects = dataset.to_subjects()
-
-    @property
-    def subjects(self):
-        return self._subjects
+        self.dataset = dataset
+        self.subjects = dataset.to_subjects()
 
     def random_splits(self,
                       split1: float,
                       split2: float,
                       random_seed: int = 42):
         rng = random.Random(random_seed)
-        subject_ids = list(sorted(self._subjects.keys()))
+        subject_ids = list(sorted(self.subjects.keys()))
         rng.shuffle(subject_ids)
 
         split1 = int(split1 * len(subject_ids))
@@ -51,7 +99,7 @@ class Inpatients:
         return train_ids, valid_ids, test_ids
 
     def outcome_frequency_vec(self, subjects: List[int]):
-        return sum(self._subjects[i].outcome_frequency_vec() for i in subjects)
+        return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
 
     def outcome_frequency_partitions(self, percentile_range,
                                      subjects: List[int]):
@@ -78,73 +126,3 @@ class Inpatients:
             codes_by_percentiles.append(set(codes))
 
         return codes_by_percentiles
-
-    def random_predictions(self, train_split, test_split, seed=0):
-        predictions = BatchPredictedRisks()
-        key = jrandom.PRNGKey(seed)
-
-        for subject_id in test_split:
-            # Skip first admission, not targeted for prediction.
-            adms = self[subject_id][1:]
-            for adm in adms:
-                (key, ) = jrandom.split(key, 1)
-
-                pred = jrandom.normal(key, shape=adm.get_outcome().shape)
-                predictions.add(subject_id=subject_id,
-                                admission=adm,
-                                prediction=pred)
-        return predictions
-
-    def cheating_predictions(self, train_split, test_split):
-        predictions = BatchPredictedRisks()
-        for subject_id in test_split:
-            adms = self[subject_id][1:]
-            for adm in adms:
-                predictions.add(subject_id=subject_id,
-                                admission=adm,
-                                prediction=adm.get_outcome() * 1.0)
-        return predictions
-
-    def mean_predictions(self, train_split, test_split):
-        predictions = BatchPredictedRisks()
-        # Outcomes from training split
-        outcomes = jnp.vstack(
-            [a.get_outcome() for i in train_split for a in self[i]])
-        outcome_mean = jnp.mean(outcomes, axis=0)
-
-        # Train on mean outcomes
-        for subject_id in test_split:
-            adms = self[subject_id][1:]
-            for adm in adms:
-                predictions.add(subject_id=subject_id,
-                                admission=adm,
-                                prediction=outcome_mean)
-        return predictions
-
-    def recency_predictions(self, train_split, test_split):
-        predictions = BatchPredictedRisks()
-
-        # Use last admission outcome as it is
-        for subject_id in test_split:
-            adms = self[subject_id]
-            for i in range(1, len(adms)):
-                predictions.add(subject_id=subject_id,
-                                admission=adms[i],
-                                prediction=adms[i - 1].get_outcome() * 1.0)
-
-        return predictions
-
-    def historical_predictions(self, train_split, test_split):
-        predictions = BatchPredictedRisks()
-
-        # Aggregate all previous history for the particular subject.
-        for subject_id in test_split:
-            adms = self[subject_id]
-            outcome = adms[0].get_outcome()
-            for i in range(1, len(adms)):
-                predictions.add(subject_id=subject_id,
-                                admission=adms[i],
-                                prediction=outcome * 1.0)
-                outcome = jnp.maximum(outcome, adms[i - 1].get_outcome())
-
-        return predictions
