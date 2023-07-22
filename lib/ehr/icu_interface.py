@@ -4,6 +4,7 @@ from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
 import random
+import logging
 import jax.numpy as jnp
 import jax.random as jrandom
 import pandas as pd
@@ -126,3 +127,11 @@ class Inpatients:
             codes_by_percentiles.append(set(codes))
 
         return codes_by_percentiles
+
+
+
+if __name__ == '__main__':
+    from .dataset import load_dataset
+    logging.root.level = logging.DEBUG
+    m4inpatient_dataset = load_dataset('M4ICU')
+    inpatients = Inpatients(m4inpatient_dataset)

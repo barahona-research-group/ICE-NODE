@@ -444,6 +444,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         c_code = colname["dx"]["code"]
         c_version = colname["dx"]["version"]
+        df['dx'][c_code] = df['dx'][c_code].str.strip()
         for version, scheme in self.dx_source_scheme.items():
             if isinstance(scheme, C.ICDCommons):
                 ver_mask = df["dx"][c_version].astype(str) == version
@@ -452,7 +453,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                  scheme.add_dot)
 
         df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
-                                            self.dx_source_scheme)
+                                           self.dx_source_scheme)
 
     @staticmethod
     def load_dataframes(meta):
@@ -475,7 +476,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         }
 
         df = {
-            k: pd.read_csv(os.path.join(base_dir, files[k]), dtype=dtype)
+            k: pd.read_csv(os.path.join(base_dir, files[k]),
+                           usecols=colname[k].values(),
+                           dtype=dtype)
             for k in files.keys()
         }
         # Cast timestamps for admissions
@@ -520,7 +523,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
             unrecognised = codeset - scheme_codes
             if len(unrecognised) > 0:
-                logging.warning(f"""
+                logging.info(
+                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} ({len(unrecognised)/len(codeset):.2%})'
+                )
+                logging.debug(f"""
                     Unrecognised {type(scheme)} codes ({len(unrecognised)})
                     to be removed: {sorted(unrecognised)}""")
 
@@ -535,12 +541,15 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
         )
         adm_dates, admission_ids = self.adm_extractor()
-        n = len(admission_ids)
+        n = len(adm_dates)
         dx_codes = {
             k: v
             for k, v in tqdm(
                 self.dx_codes_extractor(), total=n, desc="Discharge dx codes")
         }
+        sample_dx_codes = next(iter(dx_codes.values()))
+        empty_dx_codes = Codes(set(), jnp.zeros_like(sample_dx_codes.vec),
+                               sample_dx_codes.scheme)
 
         dx_codes_history = {
             k: v
@@ -555,6 +564,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             for k, v in tqdm(
                 self.outcome_extractor(dx_codes), total=n, desc="Outcomes")
         }
+        sample_outcome = next(iter(outcome.values()))
+        empty_outcome = Codes(set(), jnp.zeros_like(sample_outcome.vec),
+                              sample_outcome.scheme)
 
         procedures = {
             k: v
@@ -574,9 +586,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         def gen_admission(i):
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
-                                      dx_codes=dx_codes[i],
-                                      dx_codes_history=dx_codes_history[i],
-                                      outcome=outcome[i],
+                                      dx_codes=dx_codes.get(i, empty_dx_codes),
+                                      dx_codes_history=dx_codes_history.get(
+                                          i, empty_dx_codes),
+                                      outcome=outcome.get(i, empty_outcome),
                                       procedures=procedures[i],
                                       inputs=inputs[i],
                                       observables=observables[i])
@@ -619,10 +632,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         dob = anchor_date + anchor_age
         subject_dob = dict(zip(static_df[c_s_subject_id], dob))
         subject_eth = dict()
-        eth_mapper = self.eth_source_scheme.mapper(self.eth_target_scheme)
+        eth_mapper = self.eth_source_scheme.mapper_to(self.eth_target_scheme)
         for subject_id, subject_df in static_df.groupby(c_s_subject_id):
-            eth = eth_mapper.codeset2vec(subject_df[c_eth].tolist())
-            subject_eth[subject_id] = eth
+            eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
+            subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
 
         return subject_dob, subject_gender, subject_eth
 
@@ -664,14 +677,16 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             history = set()
             vec = jnp.zeros(len(self.dx_target_scheme))
             for adm_id in subject_admission_ids:
-                history.update(dx_codes[adm_id].codeset)
+                if adm_id not in dx_codes:
+                    continue
+                history.update(dx_codes[adm_id].codes)
                 vec = jnp.maximum(vec, dx_codes[adm_id].vec)
                 yield adm_id, Codes(history.copy(), vec, self.dx_target_scheme)
 
     def outcome_extractor(self, dx_codes):
         for adm_id, _dx_codes in dx_codes.items():
             outcome_codes = self.outcome_scheme.map_codeset(
-                _dx_codes.codeset, self.dx_target_scheme)
+                _dx_codes.codes, self.dx_target_scheme)
             outcome_vec = self.outcome_scheme.codeset2vec(
                 outcome_codes, self.dx_target_scheme)
 
@@ -686,6 +701,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         scheme = self.int_proc_source_scheme
         c_admittime = self.colname["adm"]["admittime"]
         c_dischtime = self.colname["adm"]["dischtime"]
+        val_codes = set(self.int_proc_source_scheme.codes)
+        df = self.df['int_proc'][self.df['int_proc'][c_code].isin(val_codes)]
 
         df = self.df["int_proc"].merge(self.df["adm"],
                                        on=c_adm_id,
@@ -727,6 +744,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_admittime = self.colname["adm"]["admittime"]
 
         scheme = self.int_input_source_scheme
+        val_codes = set(self.int_input_source_scheme.codes)
+        df = self.df['int_input'][self.df['int_input'][c_code].isin(val_codes)]
         df = self.df['int_input'].merge(self.df['adm'],
                                         on=c_adm_id,
                                         how='inner')
@@ -796,8 +815,3 @@ def load_dataset(label):
     if label == 'M4ICU':
         return MIMIC4ICUDataset.from_meta_json(
             f'{_META_DIR}/mimic4icu_meta.json')
-
-
-if __name__ == '__main__':
-    logging.root.level = logging.DEBUG
-    m4inpatient_dataset = load_dataset('M4ICU')

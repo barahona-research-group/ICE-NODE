@@ -1421,6 +1421,7 @@ class MIMIC4Procedures(AbstractScheme, Singleton):
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group != 'exclude']
         codes = sorted(set(df.code))
         desc = dict(zip(codes, df.label))
         super().__init__(codes=codes,
@@ -1448,6 +1449,7 @@ class MIMIC4ProcedureGroups(AbstractGroupedProcedures, Singleton):
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group != 'exclude']
         codes = sorted(set(df.group))
         desc = dict(zip(codes, codes))
 
@@ -1507,6 +1509,7 @@ class MIMIC4Input(AbstractScheme, Singleton):
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group_decision != 'E']
         codes = df.label.tolist()
         desc = dict(zip(codes, codes))
 

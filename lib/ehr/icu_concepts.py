@@ -53,17 +53,16 @@ class AggregateRepresentation(eqx.Module):
         agg_map = {'or': OR, 'sum': Sum, 'w_sum': WeightedSum}
         self.aggregators = OrderedDict()
         for g in sorted(groups.keys(), key=lambda g: target_scheme.index[g]):
-            subset_index = sorted(target_scheme.index[c] for c in groups[g])
+            subset_index = sorted(source_scheme.index[c] for c in groups[g])
             agg_cls = agg_map[aggs[g]]
             self.aggregators[g] = agg_cls(jnp.array(subset_index))
 
     def __call__(self, inpatient_input: jnp.ndarray):
-        return jnp.concatenate(
+        return jnp.hstack(
             [agg(inpatient_input) for agg in self.aggregators.values()])
 
 
-@dataclass
-class InpatientInput:
+class InpatientInput(eqx.Module):
     index: jnp.ndarray
     rate: jnp.ndarray
     starttime: jnp.ndarray
@@ -77,9 +76,7 @@ class InpatientInput:
         adm_input = jnp.zeros(self.size)
         return adm_input.at[index].add(rate)
 
-
-@dataclass
-class InpatientSegmentedInput:
+class InpatientSegmentedInput(eqx.Module):
     time_segments: List[Tuple[float, float]]
     input_segments: List[jnp.ndarray]
 
@@ -88,8 +85,8 @@ class InpatientSegmentedInput:
                    agg: AggregateRepresentation, start_time: float,
                    end_time: float):
         ii = inpatient_input
-        st = set(np.clip(ii.starttime, start_time, end_time))
-        et = set(np.clip(ii.endtime, start_time, end_time))
+        st = set(np.asarray(np.clip(ii.starttime, start_time, end_time)))
+        et = set(np.asarray(np.clip(ii.endtime, start_time, end_time)))
         jump_times = sorted(st | et | {start_time, end_time})
         time_segments = list(zip(jump_times[:-1], jump_times[1:]))
         input_segments = [agg(ii(t)) for t in jump_times[:-1]]
@@ -110,8 +107,7 @@ class InpatientSegmentedInput:
         return InpatientSegmentedInput(time_segments, input_segments)
 
 
-@dataclass
-class Codes:
+class Codes(eqx.Module):
     """
     Admission class encapsulates the patient EHRs diagnostic/procedure codes.
     """
@@ -120,8 +116,7 @@ class Codes:
     scheme: AbstractScheme  # Coding scheme for diagnostic codes
 
 
-@dataclass
-class InpatientAdmission(AbstractAdmission):
+class InpatientAdmission(AbstractAdmission, eqx.Module):
     dx_codes: Codes
     dx_codes_history: Codes
     outcome: Codes
@@ -129,8 +124,8 @@ class InpatientAdmission(AbstractAdmission):
     inputs: InpatientInput
     observables: InpatientObservables
 
-@dataclass
-class StaticInfo:
+
+class StaticInfo(eqx.Module):
     gender: str
     date_of_birth: date
     ethnicity: jnp.ndarray
@@ -153,8 +148,7 @@ class StaticInfo:
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec))
 
-@dataclass
-class Inpatient:
+class Inpatient(eqx.Module):
     subject_id: str
     static_info: StaticInfo
     admissions: List[InpatientAdmission]
