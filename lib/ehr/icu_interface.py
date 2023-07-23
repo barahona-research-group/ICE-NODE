@@ -30,6 +30,7 @@ class InpatientPredictedRisk:
 
 
 class BatchPredictedRisks(dict):
+
     def add(self,
             subject_id: int,
             admission: InpatientAdmission,
@@ -74,30 +75,15 @@ class BatchPredictedRisks(dict):
         ]
         return jnp.nanmean(jnp.array(loss))
 
+
 @dataclass
 class Inpatients:
     dataset: MIMIC4ICUDataset
     subjects: Dict[int, Inpatient]
 
-    def __init__(self, dataset: MIMIC4ICUDataset):
+    def __init__(self, dataset: MIMIC4ICUDataset, subject_ids: List[int]):
         self.dataset = dataset
-        self.subjects = dataset.to_subjects()
-
-    def random_splits(self,
-                      split1: float,
-                      split2: float,
-                      random_seed: int = 42):
-        rng = random.Random(random_seed)
-        subject_ids = list(sorted(self.subjects.keys()))
-        rng.shuffle(subject_ids)
-
-        split1 = int(split1 * len(subject_ids))
-        split2 = int(split2 * len(subject_ids))
-
-        train_ids = subject_ids[:split1]
-        valid_ids = subject_ids[split1:split2]
-        test_ids = subject_ids[split2:]
-        return train_ids, valid_ids, test_ids
+        self.subjects = dataset.to_subjects(subject_ids)
 
     def outcome_frequency_vec(self, subjects: List[int]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
@@ -127,7 +113,6 @@ class Inpatients:
             codes_by_percentiles.append(set(codes))
 
         return codes_by_percentiles
-
 
 
 if __name__ == '__main__':

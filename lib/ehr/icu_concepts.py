@@ -34,11 +34,13 @@ class WeightedSum(Aggregator):
 
 
 class Sum(Aggregator):
+
     def __call__(self, x):
         return jnp.sum(x[self.subset])
 
 
 class OR(Aggregator):
+
     def __call__(self, x):
         return jnp.any(x[self.subset]) * 1.0
 
@@ -76,6 +78,12 @@ class InpatientInput(eqx.Module):
         adm_input = jnp.zeros(self.size)
         return adm_input.at[index].add(rate)
 
+    @classmethod
+    def empty(cls, size: int):
+        return cls(jnp.zeros(0), jnp.zeros(0), jnp.zeros(0), jnp.zeros(0),
+                   size)
+
+
 class InpatientSegmentedInput(eqx.Module):
     time_segments: List[Tuple[float, float]]
     input_segments: List[jnp.ndarray]
@@ -106,6 +114,10 @@ class InpatientSegmentedInput(eqx.Module):
         ]
         return InpatientSegmentedInput(time_segments, input_segments)
 
+    @classmethod
+    def empty(cls, start_time: float, end_time: float, size: int):
+        return cls([(start_time, end_time)], [jnp.zeros(size)])
+
 
 class Codes(eqx.Module):
     """
@@ -114,6 +126,10 @@ class Codes(eqx.Module):
     codes: Set[str]  # Set of diagnostic codes
     vec: jnp.ndarray
     scheme: AbstractScheme  # Coding scheme for diagnostic codes
+
+    @classmethod
+    def empty_like(cls, other: Codes):
+        return cls(set(), jnp.zeros_like(other.vec), other.scheme)
 
 
 class InpatientAdmission(AbstractAdmission, eqx.Module):
@@ -148,6 +164,7 @@ class StaticInfo(eqx.Module):
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec))
 
+
 class Inpatient(eqx.Module):
     subject_id: str
     static_info: StaticInfo
@@ -159,5 +176,3 @@ class Inpatient(eqx.Module):
     @classmethod
     def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
         return dataset.to_subjects()
-
-
