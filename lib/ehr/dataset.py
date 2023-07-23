@@ -693,7 +693,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         df = df[df[c_adm_id].isin(set(admission_ids_list))]
         for adm_id, codes_df in df.groupby(c_adm_id):
             codeset = set()
-            vec = jnp.zeros(len(self.dx_target_scheme))
+            vec = jnp.zeros(len(self.dx_target_scheme), dtype=bool)
             for version, version_df in codes_df.groupby(c_version):
                 src_scheme = self.dx_source_scheme[str(version)]
                 mapper = src_scheme.mapper_to(self.dx_target_scheme)
@@ -705,7 +705,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         for subject_id, subject_admission_ids in admission_ids.items():
             subject_admission_ids = sorted(subject_admission_ids)
             history = set()
-            vec = jnp.zeros(len(self.dx_target_scheme))
+            vec = jnp.zeros(len(self.dx_target_scheme), dtype=bool)
             for adm_id in subject_admission_ids:
                 if adm_id not in dx_codes:
                     continue
