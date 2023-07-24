@@ -1,28 +1,28 @@
 from __future__ import annotations
 from datetime import date, datetime
 from collections import namedtuple, OrderedDict, defaultdict
-from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
 import random
 import logging
+import numpy as np
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.tree_util as jtu
 import pandas as pd
+import equinox as eqx
 
 from .dataset import MIMIC4ICUDataset
 from .icu_concepts import (InpatientAdmission, Inpatient, InpatientObservables)
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
-@dataclass
-class InpatientPrediction:
+class InpatientPrediction(eqx.Module):
     outcome_vec: jnp.ndarray
     state_trajectory: InpatientObservables
     observables: InpatientObservables
 
 
-@dataclass
-class InpatientPredictedRisk:
+class InpatientPredictedRisk(eqx.Module):
 
     admission: InpatientAdmission
     prediction: InpatientPrediction
@@ -30,7 +30,6 @@ class InpatientPredictedRisk:
 
 
 class BatchPredictedRisks(dict):
-
     def add(self,
             subject_id: int,
             admission: InpatientAdmission,
@@ -76,14 +75,42 @@ class BatchPredictedRisks(dict):
         return jnp.nanmean(jnp.array(loss))
 
 
-@dataclass
-class Inpatients:
+class Inpatients(eqx.Module):
     dataset: MIMIC4ICUDataset
     subjects: Dict[int, Inpatient]
 
-    def __init__(self, dataset: MIMIC4ICUDataset, subject_ids: List[int]):
+    def __init__(self,
+                 dataset: MIMIC4ICUDataset,
+                 subject_ids: List[int],
+                 max_workers: int = 1):
         self.dataset = dataset
-        self.subjects = dataset.to_subjects(subject_ids)
+        logging.debug('Loading subjects..')
+        subjects_list = dataset.to_subjects(subject_ids,
+                                            max_workers=max_workers)
+        logging.debug('[DONE] Loading subjects')
+        self.subjects = {s.subject_id: s for s in subjects_list}
+
+    @property
+    def size_in_bytes(self):
+        is_arr = eqx.filter(self.subjects, eqx.is_array)
+        arr_size = jtu.tree_map(
+            lambda a, m: a.size * a.itemsize
+            if m is not None else 0, self.subjects, is_arr)
+        return sum(jtu.tree_leaves(arr_size))
+
+    def subject_size_in_bytes(self, subject_id):
+        is_arr = eqx.filter(self.subjects[subject_id], eqx.is_array)
+        arr_size = jtu.tree_map(
+            lambda a, m: a.size * a.itemsize
+            if m is not None else 0, self.subjects[subject_id], is_arr)
+        return sum(jtu.tree_leaves(arr_size))
+
+    def to_jax_arrays(self):
+        arrs, others = eqx.partition(self.subjects, eqx.is_array)
+        arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
+        subjects = eqx.combine(arrs, others)
+        return eqx.tree_at(lambda o: o.subjects, self, subjects)
+
 
     def outcome_frequency_vec(self, subjects: List[int]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
@@ -116,7 +143,8 @@ class Inpatients:
 
 
 if __name__ == '__main__':
-    from .dataset import load_dataset
-    logging.root.level = logging.DEBUG
-    m4inpatient_dataset = load_dataset('M4ICU')
-    inpatients = Inpatients(m4inpatient_dataset)
+    pass
+    # from .dataset import load_dataset
+    # logging.root.level = logging.DEBUG
+    # m4inpatient_dataset = load_dataset('M4ICU')
+    # inpatients = Inpatients(m4inpatient_dataset)

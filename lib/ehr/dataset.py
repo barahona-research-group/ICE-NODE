@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict
 from collections import defaultdict
 from absl import logging
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+
 import random
 from abc import ABC, abstractmethod, ABCMeta
 from dataclasses import dataclass
@@ -12,7 +14,6 @@ from tqdm import tqdm
 import logging
 
 import pandas as pd
-import jax.numpy as jnp
 import numpy as np
 
 from ..utils import load_config, translate_path
@@ -33,7 +34,6 @@ StrDict = Dict[str, str]
 
 
 class AbstractEHRDataset(metaclass=ABCMeta):
-
     @classmethod
     @abstractmethod
     def from_meta_json(cls, meta_fpath):
@@ -45,7 +45,6 @@ class AbstractEHRDataset(metaclass=ABCMeta):
 
 
 class MIMIC4EHRDataset(AbstractEHRDataset):
-
     def __init__(self, df: Dict[str, pd.DataFrame], code_scheme: Dict[str,
                                                                       StrDict],
                  normalised_scheme: StrDict, code_colname: StrDict,
@@ -232,7 +231,6 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
 
 class MIMIC3EHRDataset(MIMIC4EHRDataset):
-
     def __init__(self, df, code_scheme, code_colname, adm_colname,
                  static_colname, name, **kwargs):
         code_scheme = {
@@ -338,7 +336,6 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
 
 class CPRDEHRDataset(AbstractEHRDataset):
-
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
         self.name = name
@@ -468,10 +465,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         code_scheme = meta['code_scheme']
 
         dtype = {
-            **{
-                col: str
-                for col in colname["dx"].values()
-            },
+            **{col: str
+               for col in colname["dx"].values()},
             **{
                 colname[f]["admission_id"]: str
                 for f in files.keys() if "admission_id" in colname[f]
@@ -483,10 +478,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         }
 
         df = {
-            k:
-            pd.read_csv(os.path.join(base_dir, files[k]),
-                        usecols=colname[k].values(),
-                        dtype=dtype)
+            k: pd.read_csv(os.path.join(base_dir, files[k]),
+                           usecols=colname[k].values(),
+                           dtype=dtype)
             for k in files.keys()
         }
         # Cast timestamps for admissions
@@ -544,54 +538,20 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         return df.drop(index=drop_idx)
 
-    def to_subjects(self, subject_ids):
+    def to_subjects(self, subject_ids, max_workers: int = 1):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids)
         adm_dates, admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
-        n = len(adm_ids_list)
-        dx_codes = {
-            k: v
-            for k, v in tqdm(self.dx_codes_extractor(adm_ids_list),
-                             total=n,
-                             desc="Discharge dx codes")
-        }
-        empty_dx_codes = Codes.empty_like(next(iter(dx_codes.values())))
-        empty_adm_list = list(set(adm_ids_list) - set(dx_codes.keys()))
-        dx_codes.update({adm_id: empty_dx_codes for adm_id in empty_adm_list})
-
-        dx_codes_history = {
-            k: v
-            for k, v in tqdm(self.dx_codes_history_extractor(
-                dx_codes, admission_ids),
-                             total=n,
-                             desc="Discharge dx codes history")
-        }
-
-        outcome = {
-            k: v
-            for k, v in tqdm(
-                self.outcome_extractor(dx_codes), total=n, desc="Outcomes")
-        }
-
-        procedures = {
-            k: v
-            for k, v in tqdm(self.procedure_extractor(adm_ids_list),
-                             total=n,
-                             desc="Procedures")
-        }
-        inputs = {
-            k: v
-            for k, v in tqdm(
-                self.inputs_extractor(adm_ids_list), total=n, desc="Inputs")
-        }
-        observables = {
-            k: v
-            for k, v in tqdm(self.observables_extractor(adm_ids_list),
-                             total=n,
-                             desc="Observables")
-        }
+        dx_codes = dict(self.dx_codes_extractor(adm_ids_list, max_workers))
+        dx_codes_history = dict(
+            self.dx_codes_history_extractor(dx_codes, admission_ids))
+        outcome = dict(self.outcome_extractor(dx_codes, max_workers))
+        procedures = dict(self.procedure_extractor(adm_ids_list, max_workers))
+        inputs = dict(self.inputs_extractor(adm_ids_list, max_workers))
+        observables = dict(
+            self.observables_extractor(adm_ids_list, max_workers))
 
         def gen_admission(i):
             return InpatientAdmission(admission_id=i,
@@ -684,46 +644,64 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         return adm_time, subject_admissions
 
-    def dx_codes_extractor(self, admission_ids_list):
+    def dx_codes_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["dx"]["admission_id"]
         c_code = self.colname["dx"]["code"]
         c_version = self.colname["dx"]["version"]
 
         df = self.df["dx"]
         df = df[df[c_adm_id].isin(set(admission_ids_list))]
-        for adm_id, codes_df in df.groupby(c_adm_id):
-            codeset = set()
-            vec = jnp.zeros(len(self.dx_target_scheme), dtype=bool)
-            for version, version_df in codes_df.groupby(c_version):
-                src_scheme = self.dx_source_scheme[str(version)]
-                mapper = src_scheme.mapper_to(self.dx_target_scheme)
-                codeset.update(mapper.map_codeset(version_df[c_code]))
-                vec = jnp.maximum(vec, mapper.codeset2vec(codeset))
-            yield adm_id, Codes(codeset, vec, self.dx_target_scheme)
+        codes_df = {
+            adm_id: codes_df
+            for adm_id, codes_df in df.groupby(c_adm_id)
+        }
+        empty_codes = Codes(set(),
+                            np.zeros(len(self.dx_target_scheme), dtype=bool),
+                            self.dx_target_scheme)
+
+        def _extract_codes(adm_id):
+            _codes_df = codes_df.get(adm_id)
+            if _codes_df is None:
+                return (adm_id, empty_codes)
+            else:
+                codeset = set()
+                vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
+                for version, version_df in _codes_df.groupby(c_version):
+                    src_scheme = self.dx_source_scheme[str(version)]
+                    mapper = src_scheme.mapper_to(self.dx_target_scheme)
+                    codeset.update(mapper.map_codeset(version_df[c_code]))
+                    vec = np.maximum(vec, mapper.codeset2vec(codeset))
+                return (adm_id, Codes(codeset, vec, self.dx_target_scheme))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(_extract_codes, admission_ids_list)
 
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
             subject_admission_ids = sorted(subject_admission_ids)
             history = set()
-            vec = jnp.zeros(len(self.dx_target_scheme), dtype=bool)
+            vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
             for adm_id in subject_admission_ids:
                 if adm_id not in dx_codes:
                     continue
                 history.update(dx_codes[adm_id].codes)
-                vec = jnp.maximum(vec, dx_codes[adm_id].vec)
+                vec = np.maximum(vec, dx_codes[adm_id].vec)
                 yield adm_id, Codes(history.copy(), vec, self.dx_target_scheme)
 
-    def outcome_extractor(self, dx_codes):
-        for adm_id, _dx_codes in dx_codes.items():
+    def outcome_extractor(self, dx_codes, max_workers: int):
+        def _extract_outcome(adm_id):
+            _dx_codes = dx_codes[adm_id]
             outcome_codes = self.outcome_scheme.map_codeset(
                 _dx_codes.codes, self.dx_target_scheme)
             outcome_vec = self.outcome_scheme.codeset2vec(
                 outcome_codes, self.dx_target_scheme)
+            return (adm_id,
+                    Codes(outcome_codes, outcome_vec, self.outcome_scheme))
 
-            yield adm_id, Codes(outcome_codes, outcome_vec,
-                                self.outcome_scheme)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(_extract_outcome, dx_codes.keys())
 
-    def procedure_extractor(self, admission_ids_list):
+    def procedure_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_proc"]["admission_id"]
         c_code = self.colname["int_proc"]["code"]
         c_start_time = self.colname["int_proc"]["start_time"]
@@ -753,7 +731,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         proc_df = {adm_id: proc_df for adm_id, proc_df in df.groupby(c_adm_id)}
 
-        for adm_id in admission_ids_list:
+        def _extract_procedures(adm_id):
             index = []
             rate = []
             start_t = []
@@ -764,15 +742,22 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 rate.append(1.0)
                 start_t.append(row[c_start_time])
                 end_t.append(row[c_end_time])
-            ii = InpatientInput(index=jnp.array(index, dtype=int),
-                                rate=jnp.array(rate),
-                                starttime=jnp.array(start_t),
-                                endtime=jnp.array(end_t),
+            ii = InpatientInput(index=np.array(index, dtype=int),
+                                rate=np.array(rate),
+                                starttime=np.array(start_t),
+                                endtime=np.array(end_t),
                                 size=len(self.int_proc_source_scheme.index))
-            yield adm_id, InpatientSegmentedInput.from_input(
-                ii, agg_rep, start_time=0.0, end_time=dischtime[adm_id])
+            return (adm_id,
+                    InpatientSegmentedInput.from_input(
+                        ii,
+                        agg_rep,
+                        start_time=0.0,
+                        end_time=dischtime[adm_id]))
 
-    def inputs_extractor(self, admission_ids_list):
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(_extract_procedures, admission_ids_list)
+
+    def inputs_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_input"]["admission_id"]
         c_code = self.colname["int_input"]["code"]
         c_start_time = self.colname["int_input"]["start_time"]
@@ -796,7 +781,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             adm_id: input_df
             for adm_id, input_df in df.groupby(c_adm_id)
         }
-        for adm_id in admission_ids_list:
+
+        def _extract_inputs(adm_id):
             index = []
             rate = []
             start_t = []
@@ -807,14 +793,18 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 rate.append(row[c_rate])
                 start_t.append(row[c_start_time])
                 end_t.append(row[c_end_time])
-            yield adm_id, InpatientInput(
-                index=jnp.array(index, dtype=int),
-                rate=jnp.array(rate),
-                starttime=jnp.array(start_t),
-                endtime=jnp.array(end_t),
-                size=len(self.int_input_source_scheme.index))
+            return (adm_id,
+                    InpatientInput(index=np.array(index, dtype=int),
+                                   rate=np.array(rate),
+                                   starttime=np.array(start_t),
+                                   endtime=np.array(end_t),
+                                   size=len(
+                                       self.int_input_source_scheme.index)))
 
-    def observables_extractor(self, admission_ids_list):
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(_extract_inputs, admission_ids_list)
+
+    def observables_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["obs"]["admission_id"]
         c_code = self.colname["obs"]["code"]
         c_time = self.colname["obs"]["timestamp"]
@@ -828,7 +818,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         df['code_index'] = df[c_code].apply(lambda c: scheme.index[c])
         obs_df = {adm_id: obs_df for adm_id, obs_df in df.groupby(c_adm_id)}
 
-        for adm_id in admission_ids_list:
+        def _extract_observables(adm_id):
             times = []
             values = []
             masks = []
@@ -838,22 +828,27 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 times.append(time)
                 idx = time_obs_df['code_index'].values
                 val = time_obs_df[c_value].values
-                v = jnp.zeros(obs_dim)
-                values.append(v.at[idx].set(val))
-                masks.append(v.at[idx].set(1.0))
+                v = np.zeros(obs_dim)
+                v[idx] = val
+                m = np.zeros(obs_dim, dtype=bool)
+                m[idx] = 1
+                values.append(v)
+                masks.append(m)
             if len(times) > 0:
-                times = jnp.array(times)
-                sorter = jnp.argsort(times)
-                values = jnp.vstack(values)[sorter]
-                masks = jnp.vstack(masks)[sorter]
+                times = np.array(times)
+                sorter = np.argsort(times)
+                values = np.vstack(values)[sorter]
+                masks = np.vstack(masks)[sorter]
             else:
-                times = jnp.empty(shape=(0, ))
-                values = jnp.empty(shape=(0, obs_dim))
-                masks = jnp.empty(shape=(0, obs_dim))
+                times = np.empty(shape=(0, ))
+                values = np.empty(shape=(0, obs_dim))
+                masks = np.empty(shape=(0, obs_dim))
 
-            yield adm_id, InpatientObservables(time=times,
-                                               value=values,
-                                               mask=masks)
+            return (adm_id,
+                    InpatientObservables(time=times, value=values, mask=masks))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return executor.map(_extract_observables, admission_ids_list)
 
 
 def load_dataset(label):

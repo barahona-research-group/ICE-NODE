@@ -12,8 +12,7 @@ from .coding_scheme import (AbstractScheme, NullScheme,
                             AbstractGroupedProcedures)
 
 
-@dataclass
-class InpatientObservables:
+class InpatientObservables(eqx.Module):
     time: jnp.narray
     value: jnp.ndarray
     mask: jnp.ndarray
@@ -34,15 +33,13 @@ class WeightedSum(Aggregator):
 
 
 class Sum(Aggregator):
-
     def __call__(self, x):
-        return jnp.sum(x[self.subset])
+        return x[self.subset].sum()
 
 
 class OR(Aggregator):
-
     def __call__(self, x):
-        return jnp.any(x[self.subset]) * 1.0
+        return x[self.subset].any() * 1.0
 
 
 class AggregateRepresentation(eqx.Module):
@@ -57,10 +54,15 @@ class AggregateRepresentation(eqx.Module):
         for g in sorted(groups.keys(), key=lambda g: target_scheme.index[g]):
             subset_index = sorted(source_scheme.index[c] for c in groups[g])
             agg_cls = agg_map[aggs[g]]
-            self.aggregators[g] = agg_cls(jnp.array(subset_index))
+            self.aggregators[g] = agg_cls(np.array(subset_index))
 
     def __call__(self, inpatient_input: jnp.ndarray):
-        return jnp.hstack(
+        if isinstance(inpatient_input, np.ndarray):
+            _np = np
+        else:
+            _np = jnp
+
+        return _np.hstack(
             [agg(inpatient_input) for agg in self.aggregators.values()])
 
 
@@ -75,12 +77,18 @@ class InpatientInput(eqx.Module):
         mask = (self.starttime <= t) & (t < self.endtime)
         index = self.index[mask]
         rate = self.rate[mask]
-        adm_input = jnp.zeros(self.size)
-        return adm_input.at[index].add(rate)
+
+        if isinstance(rate, np.ndarray):
+            adm_input = np.zeros(self.size)
+            adm_input[index] = rate
+            return adm_input
+        else:
+            adm_input = jnp.zeros(self.size)
+            return adm_input.at[index].add(rate)
 
     @classmethod
     def empty(cls, size: int):
-        return cls(jnp.zeros(0), jnp.zeros(0), jnp.zeros(0), jnp.zeros(0),
+        return cls(np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0),
                    size)
 
 
@@ -93,9 +101,9 @@ class InpatientSegmentedInput(eqx.Module):
                    agg: AggregateRepresentation, start_time: float,
                    end_time: float):
         ii = inpatient_input
-        st = set(np.asarray(np.clip(ii.starttime, start_time, end_time)))
-        et = set(np.asarray(np.clip(ii.endtime, start_time, end_time)))
-        jump_times = sorted(st | et | {start_time, end_time})
+        times = set.union(set(ii.starttime.tolist()), set(ii.endtime.tolist()))
+        times = set(t for t in times if t > start_time and t < end_time)
+        jump_times = sorted(times | {start_time, end_time})
         time_segments = list(zip(jump_times[:-1], jump_times[1:]))
         input_segments = [agg(ii(t)) for t in jump_times[:-1]]
         return cls(time_segments, input_segments)
@@ -129,7 +137,7 @@ class Codes(eqx.Module):
 
     @classmethod
     def empty_like(cls, other: Codes):
-        return cls(set(), jnp.zeros_like(other.vec), other.scheme)
+        return cls(set(), np.zeros_like(other.vec), other.scheme)
 
 
 class InpatientAdmission(AbstractAdmission, eqx.Module):

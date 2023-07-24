@@ -4,7 +4,7 @@ data structures to support conversion between CCS and ICD9."""
 from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
-
+from threading import Lock
 import re
 import os
 import gzip
@@ -44,20 +44,23 @@ Ideas in mapping
 """
 
 
+singleton_lock = Lock()
+maps_lock = Lock()
+
 class Singleton(object):
     _instances = {}
 
     def __new__(cls, *args, **kwargs):
-        if cls._instances.get(cls, None) is None:
-            cls._instances[cls] = super(Singleton,
-                                        cls).__new__(cls, *args, **kwargs)
+        with singleton_lock:
+            if cls._instances.get(cls, None) is None:
+                cls._instances[cls] = super(Singleton,
+                                            cls).__new__(cls, *args, **kwargs)
 
         return Singleton._instances[cls]
 
 
 class _CodeMapper(defaultdict):
     maps = {}
-
     def __init__(self, s_scheme, t_scheme, t_dag_space, *args, **kwargs):
         """
         Constructor of _CodeMapper object.
@@ -219,28 +222,29 @@ class _CodeMapper(defaultdict):
     def t_dag_space(self):
         return self._t_dag_space
 
-    @staticmethod
-    def get_mapper(s_scheme, t_scheme):
-        if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
-            return _NullCodeMapper()
-        key = (type(s_scheme), type(t_scheme))
+    @classmethod
+    def get_mapper(cls, s_scheme, t_scheme):
+        with maps_lock:
+            if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
+                return _NullCodeMapper()
+            key = (type(s_scheme), type(t_scheme))
 
-        if key in _CodeMapper.maps:
-            return _CodeMapper.maps[key]
+            if key in _CodeMapper.maps:
+                return _CodeMapper.maps[key]
 
-        if key[0] == key[1]:
-            return _IdentityCodeMapper(s_scheme)
+            if key[0] == key[1]:
+                return _IdentityCodeMapper(s_scheme)
 
-        if key in load_maps:
-            load_maps[key]()
+            if key in load_maps:
+                load_maps[key]()
 
-        mapper = _CodeMapper.maps.get(key)
-        if mapper:
-            mapper.report_discrepancy()
-        else:
-            logging.warning(f'Mapping {key} is not available')
+            mapper = _CodeMapper.maps.get(key)
+            if mapper:
+                mapper.report_discrepancy()
+            else:
+                logging.warning(f'Mapping {key} is not available')
 
-        return mapper
+            return mapper
 
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
