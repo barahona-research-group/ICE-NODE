@@ -105,8 +105,12 @@ class Inpatients(eqx.Module):
             if m is not None else 0, self.subjects[subject_id], is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
-    def to_jax_arrays(self):
-        arrs, others = eqx.partition(self.subjects, eqx.is_array)
+    def to_jax_arrays(self, subject_ids: Optional[List[str]]=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
+        subjects = {i: self.subjects[i] for i in subject_ids}
+        arrs, others = eqx.partition(subjects, eqx.is_array)
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         subjects = eqx.combine(arrs, others)
         return eqx.tree_at(lambda o: o.subjects, self, subjects)

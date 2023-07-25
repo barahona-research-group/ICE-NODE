@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict
 from collections import defaultdict
 from absl import logging
-from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED, as_completed
 
 import random
 from abc import ABC, abstractmethod, ABCMeta
@@ -14,6 +14,7 @@ from tqdm import tqdm
 import logging
 
 import pandas as pd
+from pandarallel import pandarallel
 import numpy as np
 
 from ..utils import load_config, translate_path
@@ -421,7 +422,14 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     dx_source_scheme: Dict[str, C.ICDCommons]
     dx_target_scheme: C.ICDCommons
 
-    def __init__(self, df, colname, code_scheme, name, **kwargs):
+    def __init__(self,
+                 df,
+                 colname,
+                 code_scheme,
+                 name,
+                 max_workers=1,
+                 **kwargs):
+        pandarallel.initialize(nb_workers=max_workers)
         self.name = name
         self.dx_source_scheme = {
             version: eval(f"C.{scheme}")()
@@ -451,8 +459,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             if isinstance(scheme, C.ICDCommons):
                 ver_mask = df["dx"][c_version].astype(str) == version
                 df["dx"].loc[ver_mask,
-                             c_code] = df["dx"].loc[ver_mask, c_code].apply(
-                                 scheme.add_dot)
+                             c_code] = df["dx"].loc[ver_mask,
+                                                    c_code].parallel_apply(
+                                                        scheme.add_dot)
 
         df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
                                            self.dx_source_scheme)
@@ -539,19 +548,32 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return df.drop(index=drop_idx)
 
     def to_subjects(self, subject_ids, max_workers: int = 1):
+        pandarallel.initialize(nb_workers=max_workers)
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids)
         adm_dates, admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
+        logging.debug('Extracting dx codes...')
         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, max_workers))
+        logging.debug('[DONE] Extracting dx codes')
+        logging.debug('Extracting dx codes history...')
         dx_codes_history = dict(
             self.dx_codes_history_extractor(dx_codes, admission_ids))
+        logging.debug('[DONE] Extracting dx codes history')
+        logging.debug('Extracting outcome...')
         outcome = dict(self.outcome_extractor(dx_codes, max_workers))
+        logging.debug('[DONE] Extracting outcome')
+        logging.debug('Extracting procedures...')
         procedures = dict(self.procedure_extractor(adm_ids_list, max_workers))
+        logging.debug('[DONE] Extracting procedures')
+        logging.debug('Extracting inputs...')
         inputs = dict(self.inputs_extractor(adm_ids_list, max_workers))
+        logging.debug('[DONE] Extracting inputs')
+        logging.debug('Extracting observables...')
         observables = dict(
             self.observables_extractor(adm_ids_list, max_workers))
+        logging.debug('[DONE] Extracting observables')
 
         def gen_admission(i):
             return InpatientAdmission(admission_id=i,
@@ -563,23 +585,24 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                       inputs=inputs[i],
                                       observables=observables[i])
 
-        subjects = []
-        for subject_id, subject_admission_ids in admission_ids.items():
-            subject_admission_ids = sorted(subject_admission_ids)
+        def _gen_subject(subject_id):
 
-            subject_admissions = list(map(gen_admission,
-                                          subject_admission_ids))
+            _admission_ids = admission_ids[subject_id]
+            # for subject_id, subject_admission_ids in admission_ids.items():
+            _admission_ids = sorted(_admission_ids)
+
+            subject_admissions = list(map(gen_admission, _admission_ids))
             static_info = InpatientStaticInfo(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
                 ethnicity=subject_eth[subject_id],
                 ethnicity_scheme=self.eth_target_scheme)
-            subjects.append(
-                Inpatient(subject_id=subject_id,
-                          admissions=subject_admissions,
-                          static_info=static_info))
+            return Inpatient(subject_id=subject_id,
+                             admissions=subject_admissions,
+                             static_info=static_info)
 
-        return subjects
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(_gen_subject, subject_ids))
 
     def random_splits(self,
                       split1: float,
@@ -615,7 +638,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         anchor_date = pd.to_datetime(
             static_df[c_anchor_year],
             format='%Y').dt.normalize().dt.to_pydatetime()
-        anchor_age = static_df[c_anchor_age].apply(
+        anchor_age = static_df[c_anchor_age].parallel_apply(
             lambda y: pd.DateOffset(years=-y))
         dob = anchor_date + anchor_age
         subject_dob = dict(zip(static_df[c_s_subject_id], dob))
@@ -722,6 +745,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                             df[c_admittime]).dt.total_seconds() / 3600.0
         df[c_end_time] = (df[c_end_time] -
                           df[c_admittime]).dt.total_seconds() / 3600.0
+        df['code_index'] = df[c_code].parallel_apply(lambda x: scheme.index[x])
+
         dischtime = (adm_df[c_dischtime] -
                      adm_df[c_admittime]).dt.total_seconds() / 3600.0
         dischtime = dict(zip(adm_df[c_adm_id], dischtime))
@@ -729,33 +754,36 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         agg_rep = AggregateRepresentation(self.int_proc_source_scheme,
                                           self.int_proc_target_scheme)
 
-        proc_df = {adm_id: proc_df for adm_id, proc_df in df.groupby(c_adm_id)}
+        def group_fun(cidx, start_t, end_t):
+            return pd.Series({
+                'code_index': cidx.to_numpy(),
+                c_start_time: start_t.to_numpy(),
+                c_end_time: end_t.to_numpy()
+            })
 
-        def _extract_procedures(adm_id):
-            index = []
-            rate = []
-            start_t = []
-            end_t = []
-            _proc_df = proc_df.get(adm_id, pd.DataFrame())
-            for idx, row in _proc_df.iterrows():
-                index.append(scheme.index[row[c_code]])
-                rate.append(1.0)
-                start_t.append(row[c_start_time])
-                end_t.append(row[c_end_time])
-            ii = InpatientInput(index=np.array(index, dtype=int),
-                                rate=np.array(rate),
-                                starttime=np.array(start_t),
-                                endtime=np.array(end_t),
-                                size=len(self.int_proc_source_scheme.index))
-            return (adm_id,
-                    InpatientSegmentedInput.from_input(
-                        ii,
-                        agg_rep,
-                        start_time=0.0,
-                        end_time=dischtime[adm_id]))
+        grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
+            x['code_index'], x[c_start_time], x[c_end_time]))
+        adm_arr = grouped.index.tolist()
+        input_size = len(self.int_proc_source_scheme.index)
+        for i in range(len(adm_arr)):
+            ii = InpatientInput(index=grouped['code_index'][i],
+                                rate=np.ones_like(grouped['code_index'][i],
+                                                  dtype=bool),
+                                starttime=grouped[c_start_time][i],
+                                endtime=grouped[c_end_time][i],
+                                size=input_size)
+            yield (adm_arr[i],
+                   InpatientSegmentedInput.from_input(
+                       ii,
+                       agg_rep,
+                       start_time=0.0,
+                       end_time=dischtime[adm_arr[i]]))
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return executor.map(_extract_procedures, admission_ids_list)
+        for adm_id in set(admission_ids_list) - set(adm_arr):
+            yield (adm_id,
+                   InpatientSegmentedInput.empty(start_time=0.0,
+                                                 end_time=dischtime[adm_id],
+                                                 size=input_size))
 
     def inputs_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_input"]["admission_id"]
@@ -776,33 +804,29 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                             df[c_admittime]).dt.total_seconds() / 3600.0
         df[c_end_time] = (df[c_end_time] -
                           df[c_admittime]).dt.total_seconds() / 3600.0
+        df['code_index'] = df[c_code].parallel_apply(lambda c: scheme.index[c])
 
-        input_df = {
-            adm_id: input_df
-            for adm_id, input_df in df.groupby(c_adm_id)
-        }
+        def group_fun(cidx, rate, start_t, end_t):
+            return pd.Series({
+                'code_index': cidx.to_numpy(),
+                c_rate: rate.to_numpy(),
+                c_start_time: start_t.to_numpy(),
+                c_end_time: end_t.to_numpy()
+            })
 
-        def _extract_inputs(adm_id):
-            index = []
-            rate = []
-            start_t = []
-            end_t = []
-            _input_df = input_df.get(adm_id, pd.DataFrame())
-            for idx, row in _input_df.iterrows():
-                index.append(scheme.index[row[c_code]])
-                rate.append(row[c_rate])
-                start_t.append(row[c_start_time])
-                end_t.append(row[c_end_time])
-            return (adm_id,
-                    InpatientInput(index=np.array(index, dtype=int),
-                                   rate=np.array(rate),
-                                   starttime=np.array(start_t),
-                                   endtime=np.array(end_t),
-                                   size=len(
-                                       self.int_input_source_scheme.index)))
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return executor.map(_extract_inputs, admission_ids_list)
+        grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
+            x['code_index'], x[c_rate], x[c_start_time], x[c_end_time]))
+        adm_arr = grouped.index.tolist()
+        input_size = len(self.int_input_source_scheme.index)
+        for i in range(len(adm_arr)):
+            yield (adm_arr[i],
+                   InpatientInput(index=grouped['code_index'][i],
+                                  rate=grouped[c_rate][i],
+                                  starttime=grouped[c_start_time][i],
+                                  endtime=grouped[c_end_time][i],
+                                  size=input_size))
+        for adm_id in set(admission_ids_list) - set(adm_arr):
+            yield (adm_id, InpatientInput.empty(input_size))
 
     def observables_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["obs"]["admission_id"]
@@ -815,40 +839,43 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         df = df.merge(self.df["adm"], on=c_adm_id, how='inner')
         c_admittime = self.colname["adm"]["admittime"]
         df[c_time] = (df[c_time] - df[c_admittime]).dt.total_seconds() / 3600.0
-        df['code_index'] = df[c_code].apply(lambda c: scheme.index[c])
-        obs_df = {adm_id: obs_df for adm_id, obs_df in df.groupby(c_adm_id)}
+        df['code_index'] = df[c_code].parallel_apply(lambda c: scheme.index[c])
+        obs_dim = len(scheme.index)
+
+        def ret_put(a, *args):
+            np.put(a, *args)
+            return a
+
+        def val_mask(idx, v):
+            return pd.Series({
+                'val':
+                ret_put(np.empty(obs_dim), idx, v),
+                'msk':
+                ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
+            })
+
+        value_mask = df.groupby([
+            c_adm_id, c_time
+        ]).parallel_apply(lambda x: val_mask(x.code_index, x[c_value]))
 
         def _extract_observables(adm_id):
-            times = []
-            values = []
-            masks = []
-            _obs_df = obs_df.get(adm_id, pd.DataFrame(columns=df.columns))
-            obs_dim = len(scheme.index)
-            for time, time_obs_df in _obs_df.groupby(c_time):
-                times.append(time)
-                idx = time_obs_df['code_index'].values
-                val = time_obs_df[c_value].values
-                v = np.zeros(obs_dim)
-                v[idx] = val
-                m = np.zeros(obs_dim, dtype=bool)
-                m[idx] = 1
-                values.append(v)
-                masks.append(m)
-            if len(times) > 0:
-                times = np.array(times)
-                sorter = np.argsort(times)
-                values = np.vstack(values)[sorter]
-                masks = np.vstack(masks)[sorter]
-            else:
-                times = np.empty(shape=(0, ))
-                values = np.empty(shape=(0, obs_dim))
-                masks = np.empty(shape=(0, obs_dim))
+            value_mask_df = value_mask.loc[adm_id]
+            masks = value_mask_df['msk']
+            values = value_mask_df['val']
+            times = masks.index.to_numpy()
+            masks = np.vstack(masks.values).reshape((len(times), obs_dim))
+            values = np.vstack(values.values).reshape((len(times), obs_dim))
 
             return (adm_id,
                     InpatientObservables(time=times, value=values, mask=masks))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return executor.map(_extract_observables, admission_ids_list)
+            for adm_id, obs in executor.map(_extract_observables,
+                                            value_mask.index.levels[0]):
+                yield (adm_id, obs)
+        for adm_id in set(admission_ids_list) - set(
+                value_mask.index.levels[0]):
+            yield (adm_id, InpatientObservables.empty(obs_dim))
 
 
 def load_dataset(label):

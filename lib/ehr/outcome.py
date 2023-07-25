@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import os
 from collections import defaultdict
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from ..utils import load_config
@@ -26,8 +25,8 @@ outcome_conf_files = {
     'dx_icd9_filter_v3_groups': 'dx_icd9_v3_groups.json'
 }
 
-Outcome = jnp.ndarray
-Mask = jnp.ndarray
+Outcome = np.ndarray
+Mask = np.ndarray
 SingleOutcome = Tuple[Outcome, Mask]
 MaskedOutcome = Tuple[SingleOutcome, SingleOutcome]
 
@@ -69,7 +68,7 @@ class OutcomeExtractor(C.AbstractScheme):
         vec = np.zeros(len(self.index), dtype=bool)
         for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True
-        return jnp.array(vec)
+        return np.array(vec)
 
     @staticmethod
     def conf_from_json(json_file: str):

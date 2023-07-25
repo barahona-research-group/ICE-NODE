@@ -12,7 +12,6 @@ import xml.etree.ElementTree as ET
 from absl import logging
 
 import numpy as np
-import jax.numpy as jnp
 import pandas as pd
 
 try:
@@ -265,7 +264,7 @@ class _CodeMapper(defaultdict):
             logging.error(
                 f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
-        return jnp.array(vec)
+        return vec
 
     def codeset2dagset(self, codeset: Set[str]):
         if self._t_dag_space == False:
@@ -287,7 +286,7 @@ class _CodeMapper(defaultdict):
             logging.error(
                 f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
-        return jnp.array(vec)
+        return vec
 
 
 class _IdentityCodeMapper(_CodeMapper):
@@ -443,7 +442,7 @@ class HierarchicalScheme(AbstractScheme):
                 j = self._dag_index[ancestor_j]
                 ancestors_mat[i, j] = 1
 
-        return jnp.array(ancestors_mat)
+        return ancestors_mat
 
     @property
     def dag_index(self):

@@ -17,6 +17,10 @@ class InpatientObservables(eqx.Module):
     value: jnp.ndarray
     mask: jnp.ndarray
 
+    @staticmethod
+    def empty(size: int):
+        return InpatientObservables(
+            time=np.zeros(0), value=np.zeros((0, size)), mask=np.zeros(0))
 
 class Aggregator(eqx.Module):
     subset: jnp.array
@@ -88,8 +92,7 @@ class InpatientInput(eqx.Module):
 
     @classmethod
     def empty(cls, size: int):
-        return cls(np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0),
-                   size)
+        return cls(np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0), size)
 
 
 class InpatientSegmentedInput(eqx.Module):
@@ -123,8 +126,8 @@ class InpatientSegmentedInput(eqx.Module):
         return InpatientSegmentedInput(time_segments, input_segments)
 
     @classmethod
-    def empty(cls, start_time: float, end_time: float, size: int):
-        return cls([(start_time, end_time)], [jnp.zeros(size)])
+    def empty(cls, start_time: float, end_time: float, size: int, _np=np):
+        return cls([(start_time, end_time)], [_np.zeros(size)])
 
 
 class Codes(eqx.Module):
@@ -163,7 +166,7 @@ class StaticInfo(eqx.Module):
         self.date_of_birth = date_of_birth
         self.ethnicity = ethnicity
         self.ethnicity_scheme = ethnicity_scheme
-        self.constant_vec = jnp.hstack(
+        self.constant_vec = np.hstack(
             (self.ethnicity, self.gender_dict[self.gender]))
 
     def age(self, current_date: date):
