@@ -1004,7 +1004,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             yield (adm_id,
                    InpatientSegmentedInput.empty(
                        start_time=0.0,
-                       end_time=adm_df.loc[adm_id].item(),
+                       end_time=adm_df.loc[adm_id, c_adm_interval].item(),
                        size=input_size))
 
     def inputs_extractor(self, admission_ids_list, max_workers: int):
