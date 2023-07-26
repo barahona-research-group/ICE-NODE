@@ -42,9 +42,9 @@ Ideas in mapping
 - Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
 """
 
-
 singleton_lock = Lock()
 maps_lock = Lock()
+
 
 class Singleton(object):
     _instances = {}
@@ -60,6 +60,7 @@ class Singleton(object):
 
 class _CodeMapper(defaultdict):
     maps = {}
+
     def __init__(self, s_scheme, t_scheme, t_dag_space, *args, **kwargs):
         """
         Constructor of _CodeMapper object.
@@ -325,6 +326,9 @@ class AbstractScheme:
         self._index = index
         self._desc = desc
         self._name = name
+        self._index2code = {idx: code for code, idx in index.items()}
+        self._index2desc = {index[code]: desc for code, desc in desc.items()}
+
 
         for collection in [codes, index, desc]:
             assert all(
@@ -363,12 +367,12 @@ class AbstractScheme:
         return self._name
 
     @property
-    def idx2code(self):
-        return {idx: code for code, idx in self.index.items()}
+    def index2code(self):
+        return self._index2code
 
     @property
-    def idx2desc(self):
-        return {self.index[code]: desc for code, desc in self.desc.items()}
+    def index2desc(self):
+        return self._index2desc
 
     def search_regex(self, query, regex_flags=re.I):
         """

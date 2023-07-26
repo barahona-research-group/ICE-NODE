@@ -4,7 +4,9 @@ from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
 import numpy as np
+import jax
 import jax.numpy as jnp
+import jax.random as jrandom
 
 import equinox as eqx
 from .concept import AbstractAdmission
@@ -19,8 +21,11 @@ class InpatientObservables(eqx.Module):
 
     @staticmethod
     def empty(size: int):
-        return InpatientObservables(
-            time=np.zeros(0), value=np.zeros((0, size)), mask=np.zeros(0))
+        return InpatientObservables(time=np.zeros(0),
+                                    value=np.zeros((0, size),
+                                                   dtype=np.float16),
+                                    mask=np.zeros(0, dtype=bool))
+
 
 class Aggregator(eqx.Module):
     subset: jnp.array
@@ -31,6 +36,13 @@ class Aggregator(eqx.Module):
 
 class WeightedSum(Aggregator):
     linear: eqx.Linear
+
+    def __init__(self, subset: jnp.ndarray, key: "jax.random.PRNGKey"):
+        self.subset = subset
+        self.linear = eqx.nn.Linear(subset.shape[0],
+                                    1,
+                                    use_bias=False,
+                                    key=key)
 
     def __call__(self, x):
         return self.linear(x[self.subset])
@@ -43,7 +55,7 @@ class Sum(Aggregator):
 
 class OR(Aggregator):
     def __call__(self, x):
-        return x[self.subset].any() * 1.0
+        return x[self.subset].any()
 
 
 class AggregateRepresentation(eqx.Module):
@@ -67,7 +79,8 @@ class AggregateRepresentation(eqx.Module):
             _np = jnp
 
         return _np.hstack(
-            [agg(inpatient_input) for agg in self.aggregators.values()])
+            [agg(inpatient_input) for agg in self.aggregators.values()],
+            dtype=_np.float16)
 
 
 class InpatientInput(eqx.Module):
@@ -83,8 +96,8 @@ class InpatientInput(eqx.Module):
         rate = self.rate[mask]
 
         if isinstance(rate, np.ndarray):
-            adm_input = np.zeros(self.size)
-            adm_input[index] = rate
+            adm_input = np.zeros(self.size, dtype=np.float16)
+            adm_input[index] += rate
             return adm_input
         else:
             adm_input = jnp.zeros(self.size)
@@ -92,7 +105,8 @@ class InpatientInput(eqx.Module):
 
     @classmethod
     def empty(cls, size: int):
-        return cls(np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0), size)
+        zvec = np.zeros(0, dtype=np.float16)
+        return cls(zvec.astype(int), zvec, zvec, zvec, size)
 
 
 class InpatientSegmentedInput(eqx.Module):
@@ -104,10 +118,12 @@ class InpatientSegmentedInput(eqx.Module):
                    agg: AggregateRepresentation, start_time: float,
                    end_time: float):
         ii = inpatient_input
-        times = set.union(set(ii.starttime.tolist()), set(ii.endtime.tolist()))
-        times = set(t for t in times if t > start_time and t < end_time)
-        jump_times = sorted(times | {start_time, end_time})
-        time_segments = list(zip(jump_times[:-1], jump_times[1:]))
+        starttime = np.clip(ii.starttime, start_time, end_time)
+        endtime = np.clip(ii.endtime, start_time, end_time)
+        jump_times = np.unique(
+            np.hstack((ii.starttime, ii.endtime, start_time, end_time)))
+        time_segments = list(
+            zip(jump_times[:-1].tolist(), jump_times[1:].tolist()))
         input_segments = [agg(ii(t)) for t in jump_times[:-1]]
         return cls(time_segments, input_segments)
 
@@ -127,26 +143,34 @@ class InpatientSegmentedInput(eqx.Module):
 
     @classmethod
     def empty(cls, start_time: float, end_time: float, size: int, _np=np):
-        return cls([(start_time, end_time)], [_np.zeros(size)])
+        return cls([(start_time, end_time)],
+                   [_np.zeros(size, dtype=_np.float16)])
 
 
-class Codes(eqx.Module):
+class CodesVector(eqx.Module):
     """
     Admission class encapsulates the patient EHRs diagnostic/procedure codes.
     """
-    codes: Set[str]  # Set of diagnostic codes
     vec: jnp.ndarray
     scheme: AbstractScheme  # Coding scheme for diagnostic codes
 
     @classmethod
-    def empty_like(cls, other: Codes):
-        return cls(set(), np.zeros_like(other.vec), other.scheme)
+    def empty_like(cls, other: CodesVector):
+        return cls(np.zeros_like(other.vec), other.scheme)
+
+    @classmethod
+    def empty(cls, scheme: AbstractScheme):
+        return cls(np.zeros(len(scheme), dtype=bool), scheme)
+
+    def to_codeset(self):
+        index = self.vec.nonzero()[0]
+        return set(self.scheme.index2code[i] for i in index)
 
 
 class InpatientAdmission(AbstractAdmission, eqx.Module):
-    dx_codes: Codes
-    dx_codes_history: Codes
-    outcome: Codes
+    dx_codes: CodesVector
+    dx_codes_history: CodesVector
+    outcome: CodesVector
     procedures: InpatientSegmentedInput
     inputs: InpatientInput
     observables: InpatientObservables
@@ -158,7 +182,7 @@ class StaticInfo(eqx.Module):
     ethnicity: jnp.ndarray
     ethnicity_scheme: AbstractScheme
     constant_vec: jnp.ndarray
-    gender_dict: ClassVar[Dict[str, float]] = {'M': 1.0, 'F': 0.0}
+    gender_dict: ClassVar[Dict[str, bool]] = {'M': 1, 'F': 0}
 
     def __init__(self, gender: str, date_of_birth: date, ethnicity: str,
                  ethnicity_scheme: AbstractScheme):
@@ -167,13 +191,14 @@ class StaticInfo(eqx.Module):
         self.ethnicity = ethnicity
         self.ethnicity_scheme = ethnicity_scheme
         self.constant_vec = np.hstack(
-            (self.ethnicity, self.gender_dict[self.gender]))
+            (self.ethnicity, self.gender_dict[self.gender]), dtype=bool)
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
 
     def demographic_vector(self, current_date):
-        return jnp.hstack((self.age(current_date), self.constant_vec))
+        return jnp.hstack((self.age(current_date), self.constant_vec),
+                          dtype=jnp.float16)
 
 
 class Inpatient(eqx.Module):

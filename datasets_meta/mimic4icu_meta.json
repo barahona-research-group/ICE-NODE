@@ -19,7 +19,7 @@
             "admittime": "admittime",
             "dischtime": "dischtime",
             "subject_id": "subject_id",
-            "admission_id": "hadm_id"
+            "index": "hadm_id"
         },
         "static": {
             "subject_id": "subject_id",

@@ -2,10 +2,10 @@
 
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 from collections import defaultdict
 from absl import logging
-from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 import random
 from abc import ABC, abstractmethod, ABCMeta
@@ -19,11 +19,11 @@ import numpy as np
 
 from ..utils import load_config, translate_path
 
-from . import coding_scheme as C
 from . import outcome as O
+from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
 from .icu_concepts import (InpatientInput, InpatientObservables, Inpatient,
-                           InpatientAdmission, Codes, StaticInfo as
+                           InpatientAdmission, CodesVector, StaticInfo as
                            InpatientStaticInfo, AggregateRepresentation,
                            InpatientSegmentedInput)
 
@@ -34,10 +34,50 @@ _META_DIR = os.path.join(_PROJECT_DIR, 'datasets_meta')
 StrDict = Dict[str, str]
 
 
+@dataclass
+class OutlierRemover:
+    c_value: str
+    c_code_index: str
+    min_val: pd.Series
+    max_val: pd.Series
+
+    def __call__(self, df):
+        min_val = df[self.c_code_index].parallel_map(self.min_val)
+        max_val = df[self.c_code_index].parallel_map(self.max_val)
+        df = df[df[self.c_value].between(min_val, max_val)]
+        return df
+
+
+@dataclass
+class ZScoreScaler:
+    c_value: str
+    c_code_index: str
+    mean: pd.Series
+    std: pd.Series
+
+    def __call__(self, df):
+        mean = df[self.c_code_index].parallel_map(self.mean)
+        std = df[self.c_code_index].parallel_map(self.std)
+        df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
+        return df
+
+
+@dataclass
+class MaxScaler:
+    c_value: str
+    c_code_index: str
+    max_val: pd.Series
+
+    def __call__(self, df):
+        max_val = df[self.c_code_index].parallel_map(self.max_val)
+        df.loc[:, self.c_value] = df[self.c_value] / max_val
+        return df
+
+
 class AbstractEHRDataset(metaclass=ABCMeta):
     @classmethod
     @abstractmethod
-    def from_meta_json(cls, meta_fpath):
+    def from_meta_json(cls, meta_fpath, **init_kwargs):
         pass
 
     @abstractmethod
@@ -224,11 +264,11 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
                 yield subj_id, adm_id, codeset
 
     @classmethod
-    def from_meta_json(cls, meta_fpath):
+    def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
         meta['df'] = cls.load_dataframes(meta)
-        return cls(**meta)
+        return cls(**meta, **init_kwargs)
 
 
 class MIMIC3EHRDataset(MIMIC4EHRDataset):
@@ -407,11 +447,11 @@ class CPRDEHRDataset(AbstractEHRDataset):
         return list(subjects.values())
 
     @classmethod
-    def from_meta_json(cls, meta_fpath):
+    def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         filepath = translate_path(meta['filepath'])
         meta['df'] = pd.read_csv(filepath, sep='\t', dtype=str)
-        return cls(**meta)
+        return cls(**meta, **init_kwargs)
 
 
 @dataclass
@@ -421,6 +461,173 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     df: Dict[str, pd.DataFrame]
     dx_source_scheme: Dict[str, C.ICDCommons]
     dx_target_scheme: C.ICDCommons
+
+    def _dx_fix_icd_dots(self):
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
+        df = self.df
+        df['dx'][c_code] = df['dx'][c_code].str.strip()
+        for version, scheme in self.dx_source_scheme.items():
+            if isinstance(scheme, C.ICDCommons):
+                ver_mask = df["dx"][c_version].astype(str) == version
+                df["dx"].loc[ver_mask,
+                             c_code] = df["dx"].loc[ver_mask,
+                                                    c_code].parallel_apply(
+                                                        scheme.add_dot)
+
+    def _dx_filter_unsupported_icd(self):
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
+        self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
+                                                c_version,
+                                                self.dx_source_scheme)
+
+    @staticmethod
+    def _add_code_source_index(df, source_scheme, colname):
+        c_code = colname["code"]
+        colname["code_source_index"] = "code_source_index"
+        df["code_source_index"] = df[c_code].parallel_map(
+            source_scheme.index).astype(int)
+
+    def _adm_add_adm_interval(self, seconds_scaler=1 / 3600.0):
+        c_admittime = self.colname["adm"]["admittime"]
+        c_dischtime = self.colname["adm"]["dischtime"]
+
+        df = self.df["adm"]
+        df["adm_interval"] = (df[c_dischtime] - df[c_admittime]
+                              ).dt.total_seconds() * seconds_scaler
+        self.colname["adm"]["adm_interval"] = "adm_interval"
+
+    @staticmethod
+    def _int_set_relative_times(df_dict,
+                                colname,
+                                int_df_name,
+                                seconds_scaler=1 / 3600.0):
+        c_admittime = colname["adm"]["admittime"]
+        c_dischtime = colname["adm"]["dischtime"]
+        c_adm_interval = colname["adm"]["adm_interval"]
+        c_adm_id = colname[int_df_name]["admission_id"]
+        c_start_time = colname[int_df_name]["start_time"]
+        c_end_time = colname[int_df_name]["end_time"]
+
+        int_df = df_dict[int_df_name]
+        adm_df = df_dict["adm"][[c_admittime, c_dischtime, c_adm_interval]]
+        df = int_df.merge(adm_df,
+                          left_on=c_adm_id,
+                          right_index=True,
+                          how='left')
+
+        int_df[c_start_time] = (df[c_start_time] - df[c_admittime]
+                                ).dt.total_seconds() * seconds_scaler
+        int_df[c_end_time] = (df[c_end_time] - df[c_admittime]
+                              ).dt.total_seconds() * seconds_scaler
+        int_df["adm_interval"] = df[c_adm_interval]
+
+        df_dict[int_df_name] = int_df
+        colname[int_df_name]["adm_interval"] = "adm_interval"
+
+    @staticmethod
+    def _obs_set_relative_times(df_dict, colname, seconds_scaler=1 / 3600.0):
+        c_admittime = colname["adm"]["admittime"]
+        c_adm_id = colname["obs"]["admission_id"]
+        c_time = colname["obs"]["timestamp"]
+
+        obs_df = df_dict["obs"]
+        adm_df = df_dict["adm"][[c_admittime]]
+        df = obs_df.merge(adm_df,
+                          left_on=c_adm_id,
+                          right_index=True,
+                          how='left')
+
+        obs_df[c_time] = (df[c_time] -
+                          df[c_admittime]).dt.total_seconds() * seconds_scaler
+        df_dict["obs"] = obs_df
+
+    def _fit_obs_preprocessing(self, admission_ids, outlier_q1, outlier_q2,
+                               outlier_iqr_scale, outlier_z1, outlier_z2):
+        c_code_index = self.colname["obs"]["code_source_index"]
+        c_value = self.colname["obs"]["value"]
+        c_adm_id = self.colname["obs"]["admission_id"]
+        df = self.df['obs'][[c_code_index, c_value, c_adm_id]]
+        df = df[df[c_adm_id].isin(admission_ids)]
+        outlier_q = np.array([outlier_q1, outlier_q2])
+        q = df.groupby(c_code_index).parallel_apply(
+            lambda x: x[c_value].quantile(outlier_q))
+        q.columns = ['q1', 'q2']
+        q['iqr'] = q['q2'] - q['q1']
+        q['out_q1'] = q['q1'] - outlier_iqr_scale * q['iqr']
+        q['out_q2'] = q['q2'] + outlier_iqr_scale * q['iqr']
+
+        z = df.groupby(c_code_index).parallel_apply(
+            lambda x: pd.Series({
+                'mu': x[c_value].mean(),
+                'sigma': x[c_value].std()
+            }))
+        z['out_z1'] = z['mu'] - outlier_z1 * z['sigma']
+        z['out_z2'] = z['mu'] + outlier_z2 * z['sigma']
+
+        zscaler = ZScoreScaler(c_value=c_value,
+                               c_code_index=c_code_index,
+                               mean=z['mu'],
+                               std=z['sigma'])
+        remover = OutlierRemover(c_value=c_value,
+                                 c_code_index=c_code_index,
+                                 min_val=np.minimum(q['out_q1'], z['out_z1']),
+                                 max_val=np.maximum(q['out_q2'], z['out_z2']))
+        return {'scaler': zscaler, 'outlier_remover': remover}
+
+    def _fit_int_input_processing(self, admission_ids):
+        c_adm_id = self.colname["int_input"]["admission_id"]
+        c_code_index = self.colname["int_input"]["code_source_index"]
+        c_rate = self.colname["int_input"]["rate"]
+        df = self.df["int_input"][[c_adm_id, c_code_index, c_rate]]
+        df = df[df[c_adm_id].isin(admission_ids)]
+        return {
+            'scaler':
+            MaxScaler(c_value=c_rate,
+                      c_code_index=c_code_index,
+                      max_val=df.groupby(c_code_index).parallel_apply(
+                          lambda x: x[c_rate].max()))
+        }
+
+    def fit_preprocessing(self,
+                          subject_ids: List[str] = None,
+                          outlier_q1=0.25,
+                          outlier_q2=0.75,
+                          outlier_iqr_scale=1.5,
+                          outlier_z1=-2.5,
+                          outlier_z2=2.5):
+
+        c_subject = self.colname["adm"]["subject_id"]
+        adm_df = self.df["adm"]
+        if subject_ids is None:
+            train_adms = adm_df.index
+        else:
+            train_adms = adm_df[adm_df[c_subject].isin(subject_ids)].index
+        preprocessor = {}
+        preprocessor['obs'] = self._fit_obs_preprocessing(
+            admission_ids=train_adms,
+            outlier_q1=outlier_q1,
+            outlier_q2=outlier_q2,
+            outlier_iqr_scale=outlier_iqr_scale,
+            outlier_z1=outlier_z1,
+            outlier_z2=outlier_z2)
+        preprocessor['int_input'] = self._fit_int_input_processing(train_adms)
+        return preprocessor
+
+    def apply_preprocessing(self, preprocessor):
+        for df_name, _preprocessor in preprocessor.items():
+            if 'outlier_remover' in _preprocessor:
+                remover = _preprocessor['outlier_remover']
+                n1 = self.df[df_name].shape[0]
+                self.df[df_name] = remover(self.df[df_name])
+                n2 = self.df[df_name].shape[0]
+                logging.debug(
+                    f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) outliers from {df_name}'
+                )
+            if 'scaler' in _preprocessor:
+                scaler = _preprocessor['scaler']
+                self.df[df_name] = scaler(self.df[df_name])
 
     def __init__(self,
                  df,
@@ -452,26 +659,50 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         self.eth_target_scheme = eval(f"C.{code_scheme['ethnicity'][1]}")()
         self.obs_scheme = eval(f"C.{code_scheme['obs'][0]}")()
 
-        c_code = colname["dx"]["code"]
-        c_version = colname["dx"]["version"]
-        df['dx'][c_code] = df['dx'][c_code].str.strip()
-        for version, scheme in self.dx_source_scheme.items():
-            if isinstance(scheme, C.ICDCommons):
-                ver_mask = df["dx"][c_version].astype(str) == version
-                df["dx"].loc[ver_mask,
-                             c_code] = df["dx"].loc[ver_mask,
-                                                    c_code].parallel_apply(
-                                                        scheme.add_dot)
+        logging.debug("Dataframes validation and time conversion")
+        self._dx_fix_icd_dots()
+        self._dx_filter_unsupported_icd()
 
-        df["dx"] = self._validate_dx_codes(df["dx"], c_code, c_version,
-                                           self.dx_source_scheme)
+        def _filter_codes(df, c_code, source_scheme):
+            mask = df[c_code].isin(source_scheme.codes)
+            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
+            return df[mask]
+
+        self.df["int_proc"] = _filter_codes(self.df["int_proc"],
+                                            self.colname["int_proc"]["code"],
+                                            self.int_proc_source_scheme)
+        self.df["int_input"] = _filter_codes(self.df["int_input"],
+                                             self.colname["int_input"]["code"],
+                                             self.int_input_source_scheme)
+        self.df["obs"] = _filter_codes(self.df["obs"],
+                                       self.colname["obs"]["code"],
+                                       self.obs_scheme)
+
+        self._add_code_source_index(self.df["int_proc"],
+                                    self.int_proc_source_scheme,
+                                    self.colname["int_proc"])
+        self._add_code_source_index(self.df["int_input"],
+                                    self.int_input_source_scheme,
+                                    self.colname["int_input"])
+        self._add_code_source_index(self.df["obs"], self.obs_scheme,
+                                    self.colname["obs"])
+
+        seconds_scaler = 1 / 3600.0  # convert seconds to hours
+        self._adm_add_adm_interval(seconds_scaler)
+        self._int_set_relative_times(self.df, self.colname, "int_proc",
+                                     seconds_scaler)
+        self._int_set_relative_times(self.df, self.colname, "int_input",
+                                     seconds_scaler)
+        self._obs_set_relative_times(self.df,
+                                     self.colname,
+                                     seconds_scaler=seconds_scaler)
+        logging.debug("[DONE] Dataframes validation and time conversion")
 
     @staticmethod
     def load_dataframes(meta):
         files = meta['files']
         base_dir = meta['base_dir']
         colname = meta['colname']
-        code_scheme = meta['code_scheme']
 
         dtype = {
             **{col: str
@@ -486,12 +717,31 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             },
         }
 
+        logging.debug('Loading dataframe files')
         df = {
             k: pd.read_csv(os.path.join(base_dir, files[k]),
                            usecols=colname[k].values(),
                            dtype=dtype)
             for k in files.keys()
         }
+        logging.debug('[DONE] Loading dataframe files')
+
+        # admission_id matching
+        logging.debug("Matching admission_id")
+        df["adm"] = df["adm"].set_index(colname["adm"]["index"])
+
+        df_with_adm_id = {
+            name: df[name]
+            for name in df if "admission_id" in colname[name]
+        }
+        df_with_adm_id = {
+            name: _df[_df[colname[name]["admission_id"]].isin(df["adm"].index)]
+            for name, _df in df_with_adm_id.items()
+        }
+        df.update(df_with_adm_id)
+        logging.debug("[DONE] Matching admission_id")
+
+        logging.debug("Time casting..")
         # Cast timestamps for admissions
         for time_col in ("admittime", "dischtime"):
             df["adm"][colname["adm"][time_col]] = pd.to_datetime(
@@ -506,23 +756,18 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                     infer_datetime_format=True).dt.to_pydatetime()
 
         # Cast timestamps for observables
-        for file in df.keys():
-            if not file.startswith("obs"):
-                continue
-            df[file][colname[file]["timestamp"]] = pd.to_datetime(
-                df[file][colname[file]["timestamp"]],
-                infer_datetime_format=True).dt.to_pydatetime()
-
+        df["obs"][colname["obs"]["timestamp"]] = pd.to_datetime(
+            df["obs"][colname["obs"]["timestamp"]],
+            infer_datetime_format=True).dt.to_pydatetime()
+        logging.debug("[DONE] Time casting..")
         return df
 
     @classmethod
-    def from_meta_json(cls, meta_fpath):
+    def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
-        logging.debug('Loading dataframes')
         meta['df'] = cls.load_dataframes(meta)
-        logging.debug('[DONE] Loading dataframes')
-        return cls(**meta)
+        return cls(**meta, **init_kwargs)
 
     @staticmethod
     def _validate_dx_codes(df, code_col, version_col, version_map):
@@ -638,7 +883,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         anchor_date = pd.to_datetime(
             static_df[c_anchor_year],
             format='%Y').dt.normalize().dt.to_pydatetime()
-        anchor_age = static_df[c_anchor_age].parallel_apply(
+        anchor_age = static_df[c_anchor_age].parallel_map(
             lambda y: pd.DateOffset(years=-y))
         dob = anchor_date + anchor_age
         subject_dob = dict(zip(static_df[c_s_subject_id], dob))
@@ -651,19 +896,17 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return subject_dob, subject_gender, subject_eth
 
     def adm_extractor(self, subject_ids):
-        c_adm_id = self.colname["adm"]["admission_id"]
         c_admittime = self.colname["adm"]["admittime"]
         c_dischtime = self.colname["adm"]["dischtime"]
         c_subject_id = self.colname["adm"]["subject_id"]
 
         df = self.df["adm"]
         df = df[df[c_subject_id].isin(subject_ids)]
-        adm_time = dict(
-            zip(df[c_adm_id], zip(df[c_admittime], df[c_dischtime])))
-        subject_admissions = {}
-
-        for subject_id, subject_df in df.groupby(c_subject_id):
-            subject_admissions[subject_id] = subject_df[c_adm_id].tolist()
+        adm_time = dict(zip(df.index, zip(df[c_admittime], df[c_dischtime])))
+        subject_admissions = {
+            subject_id: subject_df.index.tolist()
+            for subject_id, subject_df in df.groupby(c_subject_id)
+        }
 
         return adm_time, subject_admissions
 
@@ -673,28 +916,25 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_version = self.colname["dx"]["version"]
 
         df = self.df["dx"]
-        df = df[df[c_adm_id].isin(set(admission_ids_list))]
+        df = df[df[c_adm_id].isin(admission_ids_list)]
         codes_df = {
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_codes = Codes(set(),
-                            np.zeros(len(self.dx_target_scheme), dtype=bool),
-                            self.dx_target_scheme)
+        empty_codes = CodesVector.empty(self.dx_target_scheme)
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
             if _codes_df is None:
                 return (adm_id, empty_codes)
-            else:
-                codeset = set()
-                vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
-                for version, version_df in _codes_df.groupby(c_version):
-                    src_scheme = self.dx_source_scheme[str(version)]
-                    mapper = src_scheme.mapper_to(self.dx_target_scheme)
-                    codeset.update(mapper.map_codeset(version_df[c_code]))
-                    vec = np.maximum(vec, mapper.codeset2vec(codeset))
-                return (adm_id, Codes(codeset, vec, self.dx_target_scheme))
+
+            vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
+            for version, version_df in _codes_df.groupby(c_version):
+                src_scheme = self.dx_source_scheme[str(version)]
+                mapper = src_scheme.mapper_to(self.dx_target_scheme)
+                codeset = mapper.map_codeset(version_df[c_code])
+                vec = np.maximum(vec, mapper.codeset2vec(codeset))
+            return (adm_id, CodesVector(vec, self.dx_target_scheme))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return executor.map(_extract_codes, admission_ids_list)
@@ -702,145 +942,112 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
             subject_admission_ids = sorted(subject_admission_ids)
-            history = set()
             vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
             for adm_id in subject_admission_ids:
                 if adm_id not in dx_codes:
                     continue
-                history.update(dx_codes[adm_id].codes)
                 vec = np.maximum(vec, dx_codes[adm_id].vec)
-                yield adm_id, Codes(history.copy(), vec, self.dx_target_scheme)
+                yield adm_id, CodesVector(vec, self.dx_target_scheme)
 
     def outcome_extractor(self, dx_codes, max_workers: int):
         def _extract_outcome(adm_id):
             _dx_codes = dx_codes[adm_id]
             outcome_codes = self.outcome_scheme.map_codeset(
-                _dx_codes.codes, self.dx_target_scheme)
+                _dx_codes.to_codeset(), self.dx_target_scheme)
             outcome_vec = self.outcome_scheme.codeset2vec(
                 outcome_codes, self.dx_target_scheme)
-            return (adm_id,
-                    Codes(outcome_codes, outcome_vec, self.outcome_scheme))
+            return (adm_id, CodesVector(outcome_vec, self.outcome_scheme))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return executor.map(_extract_outcome, dx_codes.keys())
 
     def procedure_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_proc"]["admission_id"]
-        c_code = self.colname["int_proc"]["code"]
+        c_code_index = self.colname["int_proc"]["code_source_index"]
         c_start_time = self.colname["int_proc"]["start_time"]
         c_end_time = self.colname["int_proc"]["end_time"]
-        scheme = self.int_proc_source_scheme
-        c_admittime = self.colname["adm"]["admittime"]
-        c_dischtime = self.colname["adm"]["dischtime"]
-        val_codes = set(self.int_proc_source_scheme.codes)
+        c_adm_interval = self.colname["int_proc"]["adm_interval"]
         df = self.df["int_proc"]
-        df = df[df[c_adm_id].isin(set(admission_ids_list))]
-        df = df[df[c_code].isin(val_codes)]
-
         adm_df = self.df["adm"]
-        adm_df = adm_df[adm_df[c_adm_id].isin(set(admission_ids_list))]
-
-        df = df.merge(adm_df, on=c_adm_id, how='inner')
-        df[c_start_time] = (df[c_start_time] -
-                            df[c_admittime]).dt.total_seconds() / 3600.0
-        df[c_end_time] = (df[c_end_time] -
-                          df[c_admittime]).dt.total_seconds() / 3600.0
-        df['code_index'] = df[c_code].parallel_apply(lambda x: scheme.index[x])
-
-        dischtime = (adm_df[c_dischtime] -
-                     adm_df[c_admittime]).dt.total_seconds() / 3600.0
-        dischtime = dict(zip(adm_df[c_adm_id], dischtime))
+        df = df[df[c_adm_id].isin(admission_ids_list)]
 
         agg_rep = AggregateRepresentation(self.int_proc_source_scheme,
                                           self.int_proc_target_scheme)
 
-        def group_fun(cidx, start_t, end_t):
+        def group_fun(cidx, start_t, end_t, adm_interval):
             return pd.Series({
-                'code_index': cidx.to_numpy(),
-                c_start_time: start_t.to_numpy(),
-                c_end_time: end_t.to_numpy()
+                0: cidx.to_numpy(),
+                1: start_t.to_numpy(),
+                2: end_t.to_numpy(),
+                3: adm_interval.max()
             })
 
-        grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
-            x['code_index'], x[c_start_time], x[c_end_time]))
+        grouped = df.groupby(c_adm_id).apply(
+            lambda x: group_fun(x[c_code_index], x[c_start_time], x[
+                c_end_time], x[c_adm_interval]))
         adm_arr = grouped.index.tolist()
         input_size = len(self.int_proc_source_scheme.index)
         for i in range(len(adm_arr)):
-            ii = InpatientInput(index=grouped['code_index'][i],
-                                rate=np.ones_like(grouped['code_index'][i],
-                                                  dtype=bool),
-                                starttime=grouped[c_start_time][i],
-                                endtime=grouped[c_end_time][i],
+            ii = InpatientInput(index=grouped[0][i],
+                                rate=np.ones_like(grouped[0][i], dtype=bool),
+                                starttime=grouped[1][i],
+                                endtime=grouped[2][i],
                                 size=input_size)
             yield (adm_arr[i],
                    InpatientSegmentedInput.from_input(
                        ii,
                        agg_rep,
                        start_time=0.0,
-                       end_time=dischtime[adm_arr[i]]))
+                       end_time=grouped[3][i].item()))
 
         for adm_id in set(admission_ids_list) - set(adm_arr):
             yield (adm_id,
-                   InpatientSegmentedInput.empty(start_time=0.0,
-                                                 end_time=dischtime[adm_id],
-                                                 size=input_size))
+                   InpatientSegmentedInput.empty(
+                       start_time=0.0,
+                       end_time=adm_df.loc[adm_id].item(),
+                       size=input_size))
 
     def inputs_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_input"]["admission_id"]
-        c_code = self.colname["int_input"]["code"]
         c_start_time = self.colname["int_input"]["start_time"]
         c_end_time = self.colname["int_input"]["end_time"]
         c_rate = self.colname["int_input"]["rate"]
-        c_admittime = self.colname["adm"]["admittime"]
+        c_code_index = self.colname["int_input"]["code_source_index"]
 
-        scheme = self.int_input_source_scheme
-        val_codes = set(self.int_input_source_scheme.codes)
         df = self.df["int_input"]
-        df = df[df[c_adm_id].isin(set(admission_ids_list))]
-        df = df[df[c_code].isin(val_codes)]
-
-        df = df.merge(self.df['adm'], on=c_adm_id, how='inner')
-        df[c_start_time] = (df[c_start_time] -
-                            df[c_admittime]).dt.total_seconds() / 3600.0
-        df[c_end_time] = (df[c_end_time] -
-                          df[c_admittime]).dt.total_seconds() / 3600.0
-        df['code_index'] = df[c_code].parallel_apply(lambda c: scheme.index[c])
+        df = df[df[c_adm_id].isin(admission_ids_list)]
 
         def group_fun(cidx, rate, start_t, end_t):
             return pd.Series({
-                'code_index': cidx.to_numpy(),
-                c_rate: rate.to_numpy(),
-                c_start_time: start_t.to_numpy(),
-                c_end_time: end_t.to_numpy()
+                0: cidx.to_numpy(),
+                1: rate.to_numpy(),
+                2: start_t.to_numpy(),
+                3: end_t.to_numpy()
             })
 
         grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
-            x['code_index'], x[c_rate], x[c_start_time], x[c_end_time]))
+            x[c_code_index], x[c_rate], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
         input_size = len(self.int_input_source_scheme.index)
         for i in range(len(adm_arr)):
             yield (adm_arr[i],
-                   InpatientInput(index=grouped['code_index'][i],
-                                  rate=grouped[c_rate][i],
-                                  starttime=grouped[c_start_time][i],
-                                  endtime=grouped[c_end_time][i],
+                   InpatientInput(index=grouped[0][i],
+                                  rate=grouped[1][i],
+                                  starttime=grouped[2][i],
+                                  endtime=grouped[3][i],
                                   size=input_size))
         for adm_id in set(admission_ids_list) - set(adm_arr):
             yield (adm_id, InpatientInput.empty(input_size))
 
     def observables_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["obs"]["admission_id"]
-        c_code = self.colname["obs"]["code"]
         c_time = self.colname["obs"]["timestamp"]
         c_value = self.colname["obs"]["value"]
-        scheme = self.obs_scheme
+        c_code_index = self.colname["obs"]["code_source_index"]
+
         df = self.df["obs"]
-        df = df[df[c_adm_id].isin(set(admission_ids_list))]
-        df = df.merge(self.df["adm"], on=c_adm_id, how='inner')
-        c_admittime = self.colname["adm"]["admittime"]
-        df[c_time] = (df[c_time] - df[c_admittime]).dt.total_seconds() / 3600.0
-        df['code_index'] = df[c_code].parallel_apply(lambda c: scheme.index[c])
-        obs_dim = len(scheme.index)
+        df = df[df[c_adm_id].isin(admission_ids_list)]
+        obs_dim = len(self.obs_scheme)
 
         def ret_put(a, *args):
             np.put(a, *args)
@@ -848,20 +1055,20 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         def val_mask(idx, v):
             return pd.Series({
-                'val':
+                0:
                 ret_put(np.empty(obs_dim), idx, v),
-                'msk':
+                1:
                 ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
             })
 
         value_mask = df.groupby([
             c_adm_id, c_time
-        ]).parallel_apply(lambda x: val_mask(x.code_index, x[c_value]))
+        ]).parallel_apply(lambda x: val_mask(x[c_code_index], x[c_value]))
 
         def _extract_observables(adm_id):
             value_mask_df = value_mask.loc[adm_id]
-            masks = value_mask_df['msk']
-            values = value_mask_df['val']
+            values = value_mask_df[0]
+            masks = value_mask_df[1]
             times = masks.index.to_numpy()
             masks = np.vstack(masks.values).reshape((len(times), obs_dim))
             values = np.vstack(values.values).reshape((len(times), obs_dim))
@@ -878,14 +1085,17 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             yield (adm_id, InpatientObservables.empty(obs_dim))
 
 
-def load_dataset(label):
+def load_dataset(label, **init_kwargs):
 
     if label == 'M3':
-        return MIMIC3EHRDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json')
+        return MIMIC3EHRDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json',
+                                               **init_kwargs)
     if label == 'M4':
-        return MIMIC4EHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json')
+        return MIMIC4EHRDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
+                                               **init_kwargs)
     if label == 'CPRD':
-        return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json')
+        return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json',
+                                             **init_kwargs)
     if label == 'M4ICU':
         return MIMIC4ICUDataset.from_meta_json(
-            f'{_META_DIR}/mimic4icu_meta.json')
+            f'{_META_DIR}/mimic4icu_meta.json', **init_kwargs)
