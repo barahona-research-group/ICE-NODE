@@ -55,7 +55,7 @@ class Sum(Aggregator):
 
 class OR(Aggregator):
     def __call__(self, x):
-        return x[self.subset].any()
+        return x[self.subset].any().astype(bool)
 
 
 class AggregateRepresentation(eqx.Module):
@@ -79,8 +79,7 @@ class AggregateRepresentation(eqx.Module):
             _np = jnp
 
         return _np.hstack(
-            [agg(inpatient_input) for agg in self.aggregators.values()],
-            dtype=_np.float16)
+            [agg(inpatient_input) for agg in self.aggregators.values()])
 
 
 class InpatientInput(eqx.Module):
@@ -96,7 +95,7 @@ class InpatientInput(eqx.Module):
         rate = self.rate[mask]
 
         if isinstance(rate, np.ndarray):
-            adm_input = np.zeros(self.size, dtype=np.float16)
+            adm_input = np.zeros(self.size, dtype=rate.dtype)
             adm_input[index] += rate
             return adm_input
         else:
@@ -105,46 +104,46 @@ class InpatientInput(eqx.Module):
 
     @classmethod
     def empty(cls, size: int):
-        zvec = np.zeros(0, dtype=np.float16)
+        zvec = np.zeros(0, dtype=bool)
         return cls(zvec.astype(int), zvec, zvec, zvec, size)
 
 
-class InpatientSegmentedInput(eqx.Module):
-    time_segments: List[Tuple[float, float]]
-    input_segments: List[jnp.ndarray]
+class InpatientInterventions(eqx.Module):
+    proc: Optional[InpatientInput]
+    input_: Optional[InpatientInput]
 
-    @classmethod
-    def from_input(cls, inpatient_input: InpatientInput,
-                   agg: AggregateRepresentation, start_time: float,
-                   end_time: float):
-        ii = inpatient_input
-        starttime = np.clip(ii.starttime, start_time, end_time)
-        endtime = np.clip(ii.endtime, start_time, end_time)
-        jump_times = np.unique(
-            np.hstack((ii.starttime, ii.endtime, start_time, end_time)))
-        time_segments = list(
-            zip(jump_times[:-1].tolist(), jump_times[1:].tolist()))
-        input_segments = [agg(ii(t)) for t in jump_times[:-1]]
-        return cls(time_segments, input_segments)
+    time: List[Tuple[float, float]]
+    segmented_input: Optional[List[np.ndarray]]
+    segmented_proc: Optional[List[np.ndarray]]
 
-    def __call__(self, t):
-        included = map(lambda s: s[0] <= t < s[1], self.time_segments)
-        index = list(included).index(True)
-        return self.input_segments[index]
+    def __init__(self, proc: InpatientInput, input_: InpatientInput,
+                 adm_interval: float):
+        self.proc = proc
+        self.input_ = input_
+        self.segmented_proc = None
+        self.segmented_input = None
 
-    def concatenate(self, other: InpatientSegmentedInput):
-        timestamps = sorted(
-            set.union(*self.time_segments, *other.time_segments))
-        time_segments = list(zip(timestamps[:-1], timestamps[1:]))
-        input_segments = [
-            jnp.hstack((self(t), other(t))) for t in timestamps[:-1]
+        time = [
+            np.clip(t, 0.0, adm_interval)
+            for t in (proc.starttime, proc.endtime, input_.starttime,
+                      input_.endtime)
         ]
-        return InpatientSegmentedInput(time_segments, input_segments)
+        time = np.unique(np.hstack(time + [0.0, adm_interval])).tolist()
+        self.time = list(zip(time[:-1], time[1:]))
 
-    @classmethod
-    def empty(cls, start_time: float, end_time: float, size: int, _np=np):
-        return cls([(start_time, end_time)],
-                   [_np.zeros(size, dtype=_np.float16)])
+    def segment_proc(self, proc_repr: AggregateRepresentation):
+        proc_segments = [proc_repr(self.proc(t[0])) for t in self.time]
+        update = eqx.tree_at(lambda x: x.segmented_proc, self, proc_segments,
+                             is_leaf=lambda x: x is None)
+        update = eqx.tree_at(lambda x: x.proc, update, None)
+        return update
+
+    def segment_input(self, input_repr: AggregateRepresentation):
+        input_segments = [input_repr(self.input_(t)) for t in self.time[:-1]]
+        update = eqx.tree_at(lambda x: x.segmented_iinput, input_segments,
+                             self)
+        update = eqx.tree_at(lambda x: x.input_, None, update)
+        return update
 
 
 class CodesVector(eqx.Module):
@@ -171,9 +170,8 @@ class InpatientAdmission(AbstractAdmission, eqx.Module):
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    procedures: InpatientSegmentedInput
-    inputs: InpatientInput
     observables: InpatientObservables
+    interventions: InpatientInterventions
 
 
 class StaticInfo(eqx.Module):
@@ -182,7 +180,7 @@ class StaticInfo(eqx.Module):
     ethnicity: jnp.ndarray
     ethnicity_scheme: AbstractScheme
     constant_vec: jnp.ndarray
-    gender_dict: ClassVar[Dict[str, bool]] = {'M': 1, 'F': 0}
+    gender_dict: ClassVar[Dict[str, bool]] = {'M': bool(1), 'F': bool(0)}
 
     def __init__(self, gender: str, date_of_birth: date, ethnicity: str,
                  ethnicity_scheme: AbstractScheme):
@@ -191,7 +189,7 @@ class StaticInfo(eqx.Module):
         self.ethnicity = ethnicity
         self.ethnicity_scheme = ethnicity_scheme
         self.constant_vec = np.hstack(
-            (self.ethnicity, self.gender_dict[self.gender]), dtype=bool)
+            (self.ethnicity, self.gender_dict[self.gender]))
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25

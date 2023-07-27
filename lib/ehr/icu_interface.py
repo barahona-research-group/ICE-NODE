@@ -101,19 +101,22 @@ class Inpatients(eqx.Module):
     def _unscaled_observation(self, obs: InpatientObservables):
         # (T, D)
         obs = obs.value
+        obs_idx = np.arange(obs.shape[1])
         obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
-
-
-        def _unscaled_vec(vec):
-            pass
+        mu = obs_scaler.loc[obs_idx, 'mu'].values
+        sigma = obs_scaler.loc[obs_idx, 'sigma'].values
+        return obs * sigma + mu
 
     def _unscaled_admission(self, inpatient_admission: InpatientAdmission):
-        pass
+        return eqx.tree_at(
+            lambda o: o.observables, inpatient_admission,
+            self._unscaled_observation(inpatient_admission.observables))
 
     def unscaled_subject(self, subject_id: str):
         s = self.subjects[subject_id]
-
-
+        adms = s.admissions
+        adms = [self._unscaled_admission(a) for a in adms]
+        return eqx.tree_at(lambda o: o.admissions, s, adms)
 
     def subject_size_in_bytes(self, subject_id):
         is_arr = eqx.filter(self.subjects[subject_id], eqx.is_array)
@@ -122,7 +125,7 @@ class Inpatients(eqx.Module):
             if m is not None else 0, self.subjects[subject_id], is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
-    def to_jax_arrays(self, subject_ids: Optional[List[str]]=None):
+    def to_jax_arrays(self, subject_ids: Optional[List[str]] = None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -131,7 +134,6 @@ class Inpatients(eqx.Module):
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         subjects = eqx.combine(arrs, others)
         return eqx.tree_at(lambda o: o.subjects, self, subjects)
-
 
     def outcome_frequency_vec(self, subjects: List[int]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)

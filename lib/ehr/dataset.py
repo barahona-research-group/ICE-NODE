@@ -25,7 +25,7 @@ from .concept import StaticInfo, Subject, Admission
 from .icu_concepts import (InpatientInput, InpatientObservables, Inpatient,
                            InpatientAdmission, CodesVector, StaticInfo as
                            InpatientStaticInfo, AggregateRepresentation,
-                           InpatientSegmentedInput)
+                           InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -471,8 +471,6 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     obs_scheme: C.MIMIC4Observables
     preprocessing_history: List[Dict[str, Any]]
 
-
-
     def __init__(self,
                  df,
                  colname,
@@ -534,15 +532,15 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         seconds_scaler = 1 / 3600.0  # convert seconds to hours
         self._adm_add_adm_interval(seconds_scaler)
-        self._int_set_relative_times(self.df, self.colname, "int_proc",
-                                     seconds_scaler)
-        self._int_set_relative_times(self.df, self.colname, "int_input",
-                                     seconds_scaler)
-        self._obs_set_relative_times(self.df,
-                                     self.colname,
-                                     seconds_scaler=seconds_scaler)
+        self._set_relative_times(self.df, self.colname, "int_proc",
+                                 ["start_time", "end_time"], seconds_scaler)
+        self._set_relative_times(self.df, self.colname, "int_input",
+                                 ["start_time", "end_time"], seconds_scaler)
+        self._set_relative_times(self.df,
+                                 self.colname,
+                                 "obs", ["timestamp"],
+                                 seconds_scaler=seconds_scaler)
         logging.debug("[DONE] Dataframes validation and time conversion")
-
 
     def _dx_fix_icd_dots(self):
         c_code = self.colname["dx"]["code"]
@@ -581,49 +579,27 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         self.colname["adm"]["adm_interval"] = "adm_interval"
 
     @staticmethod
-    def _int_set_relative_times(df_dict,
-                                colname,
-                                int_df_name,
-                                seconds_scaler=1 / 3600.0):
+    def _set_relative_times(df_dict,
+                            colname,
+                            df_name,
+                            time_cols,
+                            seconds_scaler=1 / 3600.0):
         c_admittime = colname["adm"]["admittime"]
-        c_dischtime = colname["adm"]["dischtime"]
-        c_adm_interval = colname["adm"]["adm_interval"]
-        c_adm_id = colname[int_df_name]["admission_id"]
-        c_start_time = colname[int_df_name]["start_time"]
-        c_end_time = colname[int_df_name]["end_time"]
+        c_adm_id = colname[df_name]["admission_id"]
 
-        int_df = df_dict[int_df_name]
-        adm_df = df_dict["adm"][[c_admittime, c_dischtime, c_adm_interval]]
-        df = int_df.merge(adm_df,
-                          left_on=c_adm_id,
-                          right_index=True,
-                          how='left')
-
-        int_df[c_start_time] = (df[c_start_time] - df[c_admittime]
-                                ).dt.total_seconds() * seconds_scaler
-        int_df[c_end_time] = (df[c_end_time] - df[c_admittime]
-                              ).dt.total_seconds() * seconds_scaler
-        int_df["adm_interval"] = df[c_adm_interval]
-
-        df_dict[int_df_name] = int_df
-        colname[int_df_name]["adm_interval"] = "adm_interval"
-
-    @staticmethod
-    def _obs_set_relative_times(df_dict, colname, seconds_scaler=1 / 3600.0):
-        c_admittime = colname["adm"]["admittime"]
-        c_adm_id = colname["obs"]["admission_id"]
-        c_time = colname["obs"]["timestamp"]
-
-        obs_df = df_dict["obs"]
+        target_df = df_dict[df_name]
         adm_df = df_dict["adm"][[c_admittime]]
-        df = obs_df.merge(adm_df,
-                          left_on=c_adm_id,
-                          right_index=True,
-                          how='left')
+        df = target_df.merge(adm_df,
+                             left_on=c_adm_id,
+                             right_index=True,
+                             how='left')
 
-        obs_df[c_time] = (df[c_time] -
-                          df[c_admittime]).dt.total_seconds() * seconds_scaler
-        df_dict["obs"] = obs_df
+        for time_col in time_cols:
+            col = colname[df_name][time_col]
+            target_df[col] = (
+                df[col] - df[c_admittime]).dt.total_seconds() * seconds_scaler
+
+        df_dict[df_name] = target_df
 
     def _fit_obs_preprocessing(self, admission_ids, outlier_q1, outlier_q2,
                                outlier_iqr_scale, outlier_z1, outlier_z2):
@@ -814,7 +790,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids)
-        adm_dates, admission_ids = self.adm_extractor(subject_ids)
+        admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
         logging.debug('Extracting dx codes...')
         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, max_workers))
@@ -837,15 +813,28 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             self.observables_extractor(adm_ids_list, max_workers))
         logging.debug('[DONE] Extracting observables')
 
+        c_admittime = self.colname['adm']['admittime']
+        c_dischtime = self.colname['adm']['dischtime']
+        c_adm_interval = self.colname['adm']['adm_interval']
+        adf = self.df['adm']
+        adm_dates = dict(
+            zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
+        proc_repr = AggregateRepresentation(self.int_proc_source_scheme,
+                                            self.int_proc_target_scheme)
+
         def gen_admission(i):
+            adm_interval = adf.loc[i, c_adm_interval].item()
+            interventions = InpatientInterventions(proc=procedures[i],
+                                                   input_=inputs[i],
+                                                   adm_interval=adm_interval)
+            interventions = interventions.segment_proc(proc_repr)
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
                                       dx_codes=dx_codes[i],
                                       dx_codes_history=dx_codes_history[i],
                                       outcome=outcome[i],
-                                      procedures=procedures[i],
-                                      inputs=inputs[i],
-                                      observables=observables[i])
+                                      observables=observables[i],
+                                      interventions=interventions)
 
         def _gen_subject(subject_id):
 
@@ -913,19 +902,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return subject_dob, subject_gender, subject_eth
 
     def adm_extractor(self, subject_ids):
-        c_admittime = self.colname["adm"]["admittime"]
-        c_dischtime = self.colname["adm"]["dischtime"]
         c_subject_id = self.colname["adm"]["subject_id"]
-
         df = self.df["adm"]
         df = df[df[c_subject_id].isin(subject_ids)]
-        adm_time = dict(zip(df.index, zip(df[c_admittime], df[c_dischtime])))
-        subject_admissions = {
+        return {
             subject_id: subject_df.index.tolist()
             for subject_id, subject_df in df.groupby(c_subject_id)
         }
-
-        return adm_time, subject_admissions
 
     def dx_codes_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["dx"]["admission_id"]
@@ -983,46 +966,30 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_code_index = self.colname["int_proc"]["code_source_index"]
         c_start_time = self.colname["int_proc"]["start_time"]
         c_end_time = self.colname["int_proc"]["end_time"]
-        c_adm_interval = self.colname["int_proc"]["adm_interval"]
         df = self.df["int_proc"]
-        adm_df = self.df["adm"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
 
-        agg_rep = AggregateRepresentation(self.int_proc_source_scheme,
-                                          self.int_proc_target_scheme)
-
-        def group_fun(cidx, start_t, end_t, adm_interval):
+        def group_fun(cidx, start_t, end_t):
             return pd.Series({
                 0: cidx.to_numpy(),
                 1: start_t.to_numpy(),
-                2: end_t.to_numpy(),
-                3: adm_interval.max()
+                2: end_t.to_numpy()
             })
 
-        grouped = df.groupby(c_adm_id).apply(
-            lambda x: group_fun(x[c_code_index], x[c_start_time], x[
-                c_end_time], x[c_adm_interval]))
+        grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
+            x[c_code_index], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
         input_size = len(self.int_proc_source_scheme.index)
         for i in range(len(adm_arr)):
-            ii = InpatientInput(index=grouped[0][i],
-                                rate=np.ones_like(grouped[0][i], dtype=bool),
-                                starttime=grouped[1][i],
-                                endtime=grouped[2][i],
-                                size=input_size)
             yield (adm_arr[i],
-                   InpatientSegmentedInput.from_input(
-                       ii,
-                       agg_rep,
-                       start_time=0.0,
-                       end_time=grouped[3][i].item()))
+                   InpatientInput(index=grouped[0][i],
+                                  rate=np.ones_like(grouped[0][i], dtype=bool),
+                                  starttime=grouped[1][i],
+                                  endtime=grouped[2][i],
+                                  size=input_size))
 
         for adm_id in set(admission_ids_list) - set(adm_arr):
-            yield (adm_id,
-                   InpatientSegmentedInput.empty(
-                       start_time=0.0,
-                       end_time=adm_df.loc[adm_id, c_adm_interval].item(),
-                       size=input_size))
+            yield (adm_id, InpatientInput.empty(input_size))
 
     def inputs_extractor(self, admission_ids_list, max_workers: int):
         c_adm_id = self.colname["int_input"]["admission_id"]
