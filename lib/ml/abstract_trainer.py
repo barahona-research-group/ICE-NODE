@@ -231,6 +231,7 @@ class Trainer(eqx.Module):
                  subject_interface: Subject_JAX,
                  splits: Tuple[List[int], ...],
                  history: MetricsHistory,
+                 n_evals=100,
                  continue_training: bool = False,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max,
@@ -247,11 +248,13 @@ class Trainer(eqx.Module):
             r.report_params_size(params_size(model))
             r.report_steps(iters)
 
-        eval_steps = sorted(set(np.linspace(0, iters - 1, 100).astype(int)))
+        eval_steps = sorted(set(
+            np.linspace(0, iters - 1, n_evals).astype(int)))
 
         if continue_training:
-            cont_idx, (cont_m,
-                       cont_opt) = self.continue_training(model, reporters, iters=iters)
+            cont_idx, (cont_m, cont_opt) = self.continue_training(model,
+                                                                  reporters,
+                                                                  iters=iters)
 
         for i in tqdm(range(iters)):
             (key, ) = jrandom.split(key, 1)
