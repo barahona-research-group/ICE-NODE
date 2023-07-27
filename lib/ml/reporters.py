@@ -27,7 +27,6 @@ class AbstractReporter:
         4. evaluation disk writer
         5. parameters disk writer
     """
-
     def report_config(self):
         pass
 
@@ -63,7 +62,6 @@ class AbstractReporter:
 
 
 class MinibatchLogger(AbstractReporter):
-
     def __init__(self, config):
         self.config = config
 
@@ -81,7 +79,6 @@ class MinibatchLogger(AbstractReporter):
 
 
 class EvaluationDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir, prefix=''):
         self.output_dir = output_dir
         self.prefix = prefix
@@ -94,11 +91,13 @@ class EvaluationDiskWriter(AbstractReporter):
                 continue
             fname = f'{self.prefix}_{name}_evals.csv.gz'
             fpath = os.path.join(self.output_dir, fname)
-            df.to_csv(fpath, compression="gzip")
+            df.to_csv(fpath,
+                      compression="gzip",
+                      mode='a',
+                      header=not os.path.exists(fpath))
 
 
 class ParamsDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir, prefix=''):
         self.output_dir = output_dir
         self.prefix = prefix
@@ -133,7 +132,6 @@ class ParamsDiskWriter(AbstractReporter):
 
 
 class ConfigDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir, config, prefix=''):
         self.output_dir = output_dir
         self.config = config
@@ -145,7 +143,6 @@ class ConfigDiskWriter(AbstractReporter):
 
 
 class OptunaReporter(AbstractReporter):
-
     def __init__(self, trial, objective):
         self.trial = trial
 
