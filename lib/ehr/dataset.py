@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Any
 from collections import defaultdict
 from absl import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -461,6 +461,88 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     df: Dict[str, pd.DataFrame]
     dx_source_scheme: Dict[str, C.ICDCommons]
     dx_target_scheme: C.ICDCommons
+    outcome_scheme: O.OutcomeExtractor
+    int_proc_source_scheme: C.MIMIC4Procedures
+    int_proc_target_scheme: C.MIMIC4ProcedureGroups
+    int_input_source_scheme: C.MIMIC4Input
+    int_input_target_scheme: C.MIMIC4InputGroups
+    eth_source_scheme: C.MIMIC4Eth
+    eth_target_scheme: C.MIMIC4Eth
+    obs_scheme: C.MIMIC4Observables
+    preprocessing_history: List[Dict[str, Any]]
+
+
+
+    def __init__(self,
+                 df,
+                 colname,
+                 code_scheme,
+                 name,
+                 max_workers=1,
+                 **kwargs):
+        pandarallel.initialize(nb_workers=max_workers)
+        self.name = name
+        self.dx_source_scheme = {
+            version: eval(f"C.{scheme}")()
+            for version, scheme in code_scheme["dx"][0].items()
+        }
+
+        self.colname = colname
+        self.df = df
+        self.dx_target_scheme = eval(f"C.{code_scheme['dx'][1]}")()
+        outcome_scheme_str = code_scheme["outcome"]
+        self.outcome_scheme = eval(
+            f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
+        self.int_proc_source_scheme = eval(f"C.{code_scheme['int_proc'][0]}")()
+        self.int_proc_target_scheme = eval(f"C.{code_scheme['int_proc'][1]}")()
+        self.int_input_source_scheme = eval(
+            f"C.{code_scheme['int_input'][0]}")()
+        self.int_input_target_scheme = eval(
+            f"C.{code_scheme['int_input'][1]}")()
+        self.eth_source_scheme = eval(f"C.{code_scheme['ethnicity'][0]}")()
+        self.eth_target_scheme = eval(f"C.{code_scheme['ethnicity'][1]}")()
+        self.obs_scheme = eval(f"C.{code_scheme['obs'][0]}")()
+        self.preprocessing_history = []
+
+        logging.debug("Dataframes validation and time conversion")
+        self._dx_fix_icd_dots()
+        self._dx_filter_unsupported_icd()
+
+        def _filter_codes(df, c_code, source_scheme):
+            mask = df[c_code].isin(source_scheme.codes)
+            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
+            return df[mask]
+
+        self.df["int_proc"] = _filter_codes(self.df["int_proc"],
+                                            self.colname["int_proc"]["code"],
+                                            self.int_proc_source_scheme)
+        self.df["int_input"] = _filter_codes(self.df["int_input"],
+                                             self.colname["int_input"]["code"],
+                                             self.int_input_source_scheme)
+        self.df["obs"] = _filter_codes(self.df["obs"],
+                                       self.colname["obs"]["code"],
+                                       self.obs_scheme)
+
+        self._add_code_source_index(self.df["int_proc"],
+                                    self.int_proc_source_scheme,
+                                    self.colname["int_proc"])
+        self._add_code_source_index(self.df["int_input"],
+                                    self.int_input_source_scheme,
+                                    self.colname["int_input"])
+        self._add_code_source_index(self.df["obs"], self.obs_scheme,
+                                    self.colname["obs"])
+
+        seconds_scaler = 1 / 3600.0  # convert seconds to hours
+        self._adm_add_adm_interval(seconds_scaler)
+        self._int_set_relative_times(self.df, self.colname, "int_proc",
+                                     seconds_scaler)
+        self._int_set_relative_times(self.df, self.colname, "int_input",
+                                     seconds_scaler)
+        self._obs_set_relative_times(self.df,
+                                     self.colname,
+                                     seconds_scaler=seconds_scaler)
+        logging.debug("[DONE] Dataframes validation and time conversion")
+
 
     def _dx_fix_icd_dots(self):
         c_code = self.colname["dx"]["code"]
@@ -616,6 +698,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return preprocessor
 
     def apply_preprocessing(self, preprocessor):
+        assert len(self.preprocessing_history) == 0, \
+            "Preprocessing can only be applied once."
+
+        self.preprocessing_history.append(preprocessor)
         for df_name, _preprocessor in preprocessor.items():
             if 'outlier_remover' in _preprocessor:
                 remover = _preprocessor['outlier_remover']
@@ -628,75 +714,6 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             if 'scaler' in _preprocessor:
                 scaler = _preprocessor['scaler']
                 self.df[df_name] = scaler(self.df[df_name])
-
-    def __init__(self,
-                 df,
-                 colname,
-                 code_scheme,
-                 name,
-                 max_workers=1,
-                 **kwargs):
-        pandarallel.initialize(nb_workers=max_workers)
-        self.name = name
-        self.dx_source_scheme = {
-            version: eval(f"C.{scheme}")()
-            for version, scheme in code_scheme["dx"][0].items()
-        }
-
-        self.colname = colname
-        self.df = df
-        self.dx_target_scheme = eval(f"C.{code_scheme['dx'][1]}")()
-        outcome_scheme_str = code_scheme["outcome"]
-        self.outcome_scheme = eval(
-            f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
-        self.int_proc_source_scheme = eval(f"C.{code_scheme['int_proc'][0]}")()
-        self.int_proc_target_scheme = eval(f"C.{code_scheme['int_proc'][1]}")()
-        self.int_input_source_scheme = eval(
-            f"C.{code_scheme['int_input'][0]}")()
-        self.int_input_target_scheme = eval(
-            f"C.{code_scheme['int_input'][1]}")()
-        self.eth_source_scheme = eval(f"C.{code_scheme['ethnicity'][0]}")()
-        self.eth_target_scheme = eval(f"C.{code_scheme['ethnicity'][1]}")()
-        self.obs_scheme = eval(f"C.{code_scheme['obs'][0]}")()
-
-        logging.debug("Dataframes validation and time conversion")
-        self._dx_fix_icd_dots()
-        self._dx_filter_unsupported_icd()
-
-        def _filter_codes(df, c_code, source_scheme):
-            mask = df[c_code].isin(source_scheme.codes)
-            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
-            return df[mask]
-
-        self.df["int_proc"] = _filter_codes(self.df["int_proc"],
-                                            self.colname["int_proc"]["code"],
-                                            self.int_proc_source_scheme)
-        self.df["int_input"] = _filter_codes(self.df["int_input"],
-                                             self.colname["int_input"]["code"],
-                                             self.int_input_source_scheme)
-        self.df["obs"] = _filter_codes(self.df["obs"],
-                                       self.colname["obs"]["code"],
-                                       self.obs_scheme)
-
-        self._add_code_source_index(self.df["int_proc"],
-                                    self.int_proc_source_scheme,
-                                    self.colname["int_proc"])
-        self._add_code_source_index(self.df["int_input"],
-                                    self.int_input_source_scheme,
-                                    self.colname["int_input"])
-        self._add_code_source_index(self.df["obs"], self.obs_scheme,
-                                    self.colname["obs"])
-
-        seconds_scaler = 1 / 3600.0  # convert seconds to hours
-        self._adm_add_adm_interval(seconds_scaler)
-        self._int_set_relative_times(self.df, self.colname, "int_proc",
-                                     seconds_scaler)
-        self._int_set_relative_times(self.df, self.colname, "int_input",
-                                     seconds_scaler)
-        self._obs_set_relative_times(self.df,
-                                     self.colname,
-                                     seconds_scaler=seconds_scaler)
-        logging.debug("[DONE] Dataframes validation and time conversion")
 
     @staticmethod
     def load_dataframes(meta):

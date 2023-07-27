@@ -98,6 +98,23 @@ class Inpatients(eqx.Module):
             if m is not None else 0, self.subjects, is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
+    def _unscaled_observation(self, obs: InpatientObservables):
+        # (T, D)
+        obs = obs.value
+        obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
+
+
+        def _unscaled_vec(vec):
+            pass
+
+    def _unscaled_admission(self, inpatient_admission: InpatientAdmission):
+        pass
+
+    def unscaled_subject(self, subject_id: str):
+        s = self.subjects[subject_id]
+
+
+
     def subject_size_in_bytes(self, subject_id):
         is_arr = eqx.filter(self.subjects[subject_id], eqx.is_array)
         arr_size = jtu.tree_map(
