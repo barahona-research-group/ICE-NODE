@@ -12,7 +12,8 @@ import pandas as pd
 import equinox as eqx
 
 from .dataset import MIMIC4ICUDataset
-from .icu_concepts import (InpatientAdmission, Inpatient, InpatientObservables)
+from .inpatient_concepts import (InpatientAdmission, Inpatient,
+                                 InpatientObservables, InpatientInterventions)
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
@@ -81,10 +82,12 @@ class Inpatients(eqx.Module):
 
     def __init__(self,
                  dataset: MIMIC4ICUDataset,
-                 subject_ids: List[int],
+                 subject_ids: List[int] = None,
                  max_workers: int = 1):
         self.dataset = dataset
         logging.debug('Loading subjects..')
+        if subject_ids is None:
+            subject_ids = dataset.subject_ids
         subjects_list = dataset.to_subjects(subject_ids,
                                             max_workers=max_workers)
         logging.debug('[DONE] Loading subjects')
@@ -100,12 +103,21 @@ class Inpatients(eqx.Module):
 
     def _unscaled_observation(self, obs: InpatientObservables):
         # (T, D)
-        obs = obs.value
-        obs_idx = np.arange(obs.shape[1])
+        value = obs.value
+        obs_idx = np.arange(value.shape[1])
         obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
-        mu = obs_scaler.loc[obs_idx, 'mu'].values
-        sigma = obs_scaler.loc[obs_idx, 'sigma'].values
-        return obs * sigma + mu
+        mu = obs_scaler.mean.loc[obs_idx].values
+        sigma = obs_scaler.std.loc[obs_idx].values
+        return eqx.tree_at(lambda o: o.value, obs, value * sigma + mu)
+
+    def _unscaled_input(self, input_: InpatientInterventions):
+        # (T, D)
+        scaled_rate = input_.segmented_input
+        input_idx = np.arange(scaled_rate[0].shape[0])
+        input_scaler = self.dataset.preprocessing_history[0]['input']['scaler']
+        mx = input_scaler.max_val.loc[input_idx].values
+        unscaled_rate = [rate * mx for rate in scaled_rate]
+        return eqx.tree_at(lambda o: o.segmented_input, input_, unscaled_rate)
 
     def _unscaled_admission(self, inpatient_admission: InpatientAdmission):
         return eqx.tree_at(

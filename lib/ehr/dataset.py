@@ -22,10 +22,11 @@ from ..utils import load_config, translate_path
 from . import outcome as O
 from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
-from .icu_concepts import (InpatientInput, InpatientObservables, Inpatient,
-                           InpatientAdmission, CodesVector, StaticInfo as
-                           InpatientStaticInfo, AggregateRepresentation,
-                           InpatientInterventions)
+from .inpatient_concepts import (InpatientInput, InpatientObservables,
+                                 Inpatient, InpatientAdmission, CodesVector,
+                                 StaticInfo as InpatientStaticInfo,
+                                 AggregateRepresentation,
+                                 InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -855,13 +856,17 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return list(executor.map(_gen_subject, subject_ids))
 
+    @property
+    def subject_ids(self):
+        return sorted(
+            self.df['adm'][self.colname['adm']['subject_id']].unique())
+
     def random_splits(self,
                       split1: float,
                       split2: float,
                       random_seed: int = 42):
         rng = random.Random(random_seed)
-        c_subject = self.colname["adm"]["subject_id"]
-        subject_ids = sorted(self.df['adm'][c_subject].unique())
+        subject_ids = self.subject_ids
 
         rng.shuffle(subject_ids)
 
@@ -1040,7 +1045,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         def val_mask(idx, v):
             return pd.Series({
                 0:
-                ret_put(np.empty(obs_dim), idx, v),
+                ret_put(np.empty(obs_dim, dtype=np.float16), idx, v),
                 1:
                 ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
             })
