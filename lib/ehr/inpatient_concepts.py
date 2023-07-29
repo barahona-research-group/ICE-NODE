@@ -2,7 +2,8 @@ from __future__ import annotations
 from datetime import date
 from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
+from typing import (List, Tuple, Set, Callable, Optional, Union, Dict,
+                    ClassVar, Union)
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,21 @@ class InpatientObservables(eqx.Module):
                                     value=np.zeros((0, size),
                                                    dtype=np.float16),
                                     mask=np.zeros(0, dtype=bool))
+
+    def segment(self, time: List[Tuple[float, float]]):
+        if len(time) == 1:
+            return [self]
+
+        time = np.array([t[0] for t in time][1:], dtype=np.float64)
+        split = np.searchsorted(self.time, time)
+        time = np.hsplit(self.time, split)
+        value = np.hsplit(self.value, split)
+        mask = np.hsplit(self.mask, split)
+
+        return [
+            InpatientObservables(t, v, m)
+            for t, v, m in zip(time, value, mask)
+        ]
 
 
 class Aggregator(eqx.Module):
@@ -49,11 +65,13 @@ class WeightedSum(Aggregator):
 
 
 class Sum(Aggregator):
+
     def __call__(self, x):
         return x[self.subset].sum()
 
 
 class OR(Aggregator):
+
     def __call__(self, x):
         return x[self.subset].any().astype(bool)
 
@@ -133,7 +151,9 @@ class InpatientInterventions(eqx.Module):
 
     def segment_proc(self, proc_repr: AggregateRepresentation):
         proc_segments = [proc_repr(self.proc(t[0])) for t in self.time]
-        update = eqx.tree_at(lambda x: x.segmented_proc, self, proc_segments,
+        update = eqx.tree_at(lambda x: x.segmented_proc,
+                             self,
+                             proc_segments,
                              is_leaf=lambda x: x is None)
         update = eqx.tree_at(lambda x: x.proc, update, None)
         return update
@@ -170,7 +190,7 @@ class InpatientAdmission(AbstractAdmission, eqx.Module):
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    observables: InpatientObservables
+    observables: List[InpatientObservables]
     interventions: InpatientInterventions
 
 

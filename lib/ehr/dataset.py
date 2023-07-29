@@ -76,6 +76,7 @@ class MaxScaler:
 
 
 class AbstractEHRDataset(metaclass=ABCMeta):
+
     @classmethod
     @abstractmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):
@@ -87,6 +88,7 @@ class AbstractEHRDataset(metaclass=ABCMeta):
 
 
 class MIMIC4EHRDataset(AbstractEHRDataset):
+
     def __init__(self, df: Dict[str, pd.DataFrame], code_scheme: Dict[str,
                                                                       StrDict],
                  normalised_scheme: StrDict, code_colname: StrDict,
@@ -273,6 +275,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
 
 class MIMIC3EHRDataset(MIMIC4EHRDataset):
+
     def __init__(self, df, code_scheme, code_colname, adm_colname,
                  static_colname, name, **kwargs):
         code_scheme = {
@@ -378,6 +381,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
 
 class CPRDEHRDataset(AbstractEHRDataset):
+
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
         self.name = name
@@ -699,8 +703,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         colname = meta['colname']
 
         dtype = {
-            **{col: str
-               for col in colname["dx"].values()},
+            **{
+                col: str
+                for col in colname["dx"].values()
+            },
             **{
                 colname[f]["admission_id"]: str
                 for f in files.keys() if "admission_id" in colname[f]
@@ -713,9 +719,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         logging.debug('Loading dataframe files')
         df = {
-            k: pd.read_csv(os.path.join(base_dir, files[k]),
-                           usecols=colname[k].values(),
-                           dtype=dtype)
+            k:
+            pd.read_csv(os.path.join(base_dir, files[k]),
+                        usecols=colname[k].values(),
+                        dtype=dtype)
             for k in files.keys()
         }
         logging.debug('[DONE] Loading dataframe files')
@@ -814,6 +821,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             self.observables_extractor(adm_ids_list, max_workers))
         logging.debug('[DONE] Extracting observables')
 
+        logging.debug('Compiling admissions...')
         c_admittime = self.colname['adm']['admittime']
         c_dischtime = self.colname['adm']['dischtime']
         c_adm_interval = self.colname['adm']['adm_interval']
@@ -829,12 +837,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                                    input_=inputs[i],
                                                    adm_interval=adm_interval)
             interventions = interventions.segment_proc(proc_repr)
+            obs = observables[i].segment(interventions.time)
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
                                       dx_codes=dx_codes[i],
                                       dx_codes_history=dx_codes_history[i],
                                       outcome=outcome[i],
-                                      observables=observables[i],
+                                      observables=obs,
                                       interventions=interventions)
 
         def _gen_subject(subject_id):
@@ -955,6 +964,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 yield adm_id, CodesVector(vec, self.dx_target_scheme)
 
     def outcome_extractor(self, dx_codes, max_workers: int):
+
         def _extract_outcome(adm_id):
             _dx_codes = dx_codes[adm_id]
             outcome_codes = self.outcome_scheme.map_codeset(

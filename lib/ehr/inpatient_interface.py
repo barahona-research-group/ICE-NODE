@@ -31,6 +31,7 @@ class InpatientPredictedRisk(eqx.Module):
 
 
 class BatchPredictedRisks(dict):
+
     def add(self,
             subject_id: int,
             admission: InpatientAdmission,
@@ -94,6 +95,16 @@ class Inpatients(eqx.Module):
         self.subjects = {s.subject_id: s for s in subjects_list}
 
     @property
+    def n_admissions(self):
+        return sum(len(s.admissions) for s in self.subjects.values())
+
+    @property
+    def n_segments(self):
+        return sum(
+            len(a.interventions.time) for s in self.subjects.values()
+            for a in s.admissions)
+
+    @property
     def size_in_bytes(self):
         is_arr = eqx.filter(self.subjects, eqx.is_array)
         arr_size = jtu.tree_map(
@@ -101,14 +112,17 @@ class Inpatients(eqx.Module):
             if m is not None else 0, self.subjects, is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
-    def _unscaled_observation(self, obs: InpatientObservables):
-        # (T, D)
-        value = obs.value
-        obs_idx = np.arange(value.shape[1])
+    def _unscaled_observation(self, obs_l: List[InpatientObservables]):
         obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
-        mu = obs_scaler.mean.loc[obs_idx].values
-        sigma = obs_scaler.std.loc[obs_idx].values
-        return eqx.tree_at(lambda o: o.value, obs, value * sigma + mu)
+        unscaled_obs = []
+        for obs in obs_l:
+            value = obs.value
+            obs_idx = np.arange(value.shape[1])
+            mu = obs_scaler.mean.loc[obs_idx].values
+            sigma = obs_scaler.std.loc[obs_idx].values
+            unscaled_obs.append(
+                eqx.tree_at(lambda o: o.value, obs, value * sigma + mu))
+        return unscaled_obs
 
     def _unscaled_input(self, input_: InpatientInterventions):
         # (T, D)
