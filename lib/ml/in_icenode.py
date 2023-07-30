@@ -254,20 +254,6 @@ class ICENODE(AbstractModel):
     def dyn_state_size(self):
         return self.state_size + self.dx_emb.embeddings_size
 
-    def __init__(self, ode_dyn_label: str, ode_init_var: float,
-                 timescale: float, key: "jax.random.PRNGKey", *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.timescale = timescale
-        self.ode_init_var = ode_init_var
-        key1, key2 = jrandom.split(key, 2)
-        ode_dyn_f = ode_dyn(ode_dyn_label,
-                            state_size=self.state_size,
-                            embeddings_size=self.dx_emb.embeddings_size,
-                            control_size=self.control_size,
-                            key=key1)
-        ode_dyn_f =
-
-        self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=timescale)
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
