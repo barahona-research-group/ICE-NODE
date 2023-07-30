@@ -24,8 +24,7 @@ from . import coding_scheme as C
 from .concept import StaticInfo, Subject, Admission
 from .inpatient_concepts import (InpatientInput, InpatientObservables,
                                  Inpatient, InpatientAdmission, CodesVector,
-                                 StaticInfo as InpatientStaticInfo,
-                                 AggregateRepresentation,
+                                 InpatientStaticInfo, AggregateRepresentation,
                                  InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
@@ -460,20 +459,47 @@ class CPRDEHRDataset(AbstractEHRDataset):
 
 
 @dataclass
+class MIMIC4ICUDatasetScheme:
+    dx_source: Dict[str, C.ICDCommons]
+    dx_target: C.ICDCommons
+    outcome: O.OutcomeExtractor
+    int_proc_source: C.MIMIC4Procedures
+    int_proc_target: C.MIMIC4ProcedureGroups
+    int_input_source: C.MIMIC4Input
+    int_input_target: C.MIMIC4InputGroups
+    eth_source: C.MIMIC4Eth
+    eth_target: C.MIMIC4Eth
+    obs: C.MIMIC4Observables
+
+    def __init__(self, code_scheme: Dict[str, Any]):
+        self.dx_source = {
+            version: eval(f"C.{scheme}")()
+            for version, scheme in code_scheme["dx"][0].items()
+        }
+        self.dx_target = eval(f"C.{code_scheme['dx'][1]}")()
+        outcome_scheme_str = code_scheme["outcome"]
+        self.outcome = eval(f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
+        self.int_proc_source = eval(f"C.{code_scheme['int_proc'][0]}")()
+        self.int_proc_target = eval(f"C.{code_scheme['int_proc'][1]}")()
+        self.int_input_source = eval(f"C.{code_scheme['int_input'][0]}")()
+        self.int_input_target = eval(f"C.{code_scheme['int_input'][1]}")()
+        self.eth_source = eval(f"C.{code_scheme['ethnicity'][0]}")()
+        self.eth_target = eval(f"C.{code_scheme['ethnicity'][1]}")()
+        self.obs = eval(f"C.{code_scheme['obs'][0]}")()
+
+    def dx_mapper(self, version):
+        return self.dx_source[version].mapper_to(self.dx_target)
+
+    def eth_mapper(self):
+        return self.eth_source.mapper_to(self.eth_target)
+
+
+@dataclass
 class MIMIC4ICUDataset(AbstractEHRDataset):
     colname: Dict[str, Dict[str, str]]
     name: str
     df: Dict[str, pd.DataFrame]
-    dx_source_scheme: Dict[str, C.ICDCommons]
-    dx_target_scheme: C.ICDCommons
-    outcome_scheme: O.OutcomeExtractor
-    int_proc_source_scheme: C.MIMIC4Procedures
-    int_proc_target_scheme: C.MIMIC4ProcedureGroups
-    int_input_source_scheme: C.MIMIC4Input
-    int_input_target_scheme: C.MIMIC4InputGroups
-    eth_source_scheme: C.MIMIC4Eth
-    eth_target_scheme: C.MIMIC4Eth
-    obs_scheme: C.MIMIC4Observables
+    scheme: MIMIC4ICUDatasetScheme
     preprocessing_history: List[Dict[str, Any]]
 
     def __init__(self,
@@ -485,26 +511,11 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                  **kwargs):
         pandarallel.initialize(nb_workers=max_workers)
         self.name = name
-        self.dx_source_scheme = {
-            version: eval(f"C.{scheme}")()
-            for version, scheme in code_scheme["dx"][0].items()
-        }
 
+        self.scheme = MIMIC4ICUDatasetScheme(code_scheme)
         self.colname = colname
         self.df = df
-        self.dx_target_scheme = eval(f"C.{code_scheme['dx'][1]}")()
-        outcome_scheme_str = code_scheme["outcome"]
-        self.outcome_scheme = eval(
-            f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
-        self.int_proc_source_scheme = eval(f"C.{code_scheme['int_proc'][0]}")()
-        self.int_proc_target_scheme = eval(f"C.{code_scheme['int_proc'][1]}")()
-        self.int_input_source_scheme = eval(
-            f"C.{code_scheme['int_input'][0]}")()
-        self.int_input_target_scheme = eval(
-            f"C.{code_scheme['int_input'][1]}")()
-        self.eth_source_scheme = eval(f"C.{code_scheme['ethnicity'][0]}")()
-        self.eth_target_scheme = eval(f"C.{code_scheme['ethnicity'][1]}")()
-        self.obs_scheme = eval(f"C.{code_scheme['obs'][0]}")()
+
         self.preprocessing_history = []
 
         logging.debug("Dataframes validation and time conversion")
@@ -518,21 +529,21 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         self.df["int_proc"] = _filter_codes(self.df["int_proc"],
                                             self.colname["int_proc"]["code"],
-                                            self.int_proc_source_scheme)
+                                            self.scheme.int_proc_source)
         self.df["int_input"] = _filter_codes(self.df["int_input"],
                                              self.colname["int_input"]["code"],
-                                             self.int_input_source_scheme)
+                                             self.scheme.int_input_source)
         self.df["obs"] = _filter_codes(self.df["obs"],
                                        self.colname["obs"]["code"],
-                                       self.obs_scheme)
+                                       self.scheme.obs)
 
         self._add_code_source_index(self.df["int_proc"],
-                                    self.int_proc_source_scheme,
+                                    self.scheme.int_proc_source,
                                     self.colname["int_proc"])
         self._add_code_source_index(self.df["int_input"],
-                                    self.int_input_source_scheme,
+                                    self.scheme.int_input_source,
                                     self.colname["int_input"])
-        self._add_code_source_index(self.df["obs"], self.obs_scheme,
+        self._add_code_source_index(self.df["obs"], self.scheme.obs,
                                     self.colname["obs"])
 
         seconds_scaler = 1 / 3600.0  # convert seconds to hours
@@ -552,7 +563,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_version = self.colname["dx"]["version"]
         df = self.df
         df['dx'][c_code] = df['dx'][c_code].str.strip()
-        for version, scheme in self.dx_source_scheme.items():
+        for version, scheme in self.scheme.dx_source.items():
             if isinstance(scheme, C.ICDCommons):
                 ver_mask = df["dx"][c_version].astype(str) == version
                 df["dx"].loc[ver_mask,
@@ -565,7 +576,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_version = self.colname["dx"]["version"]
         self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
                                                 c_version,
-                                                self.dx_source_scheme)
+                                                self.scheme.dx_source)
 
     @staticmethod
     def _add_code_source_index(df, source_scheme, colname):
@@ -828,8 +839,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         adf = self.df['adm']
         adm_dates = dict(
             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
-        proc_repr = AggregateRepresentation(self.int_proc_source_scheme,
-                                            self.int_proc_target_scheme)
+        proc_repr = AggregateRepresentation(self.scheme.int_proc_source,
+                                            self.scheme.int_proc_target)
 
         def gen_admission(i):
             adm_interval = adf.loc[i, c_adm_interval].item()
@@ -837,6 +848,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                                    input_=inputs[i],
                                                    adm_interval=adm_interval)
             interventions = interventions.segment_proc(proc_repr)
+
             obs = observables[i].segment(interventions.time)
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
@@ -852,12 +864,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids)
 
-            subject_admissions = list(map(gen_admission, _admission_ids))
             static_info = InpatientStaticInfo(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
                 ethnicity=subject_eth[subject_id],
-                ethnicity_scheme=self.eth_target_scheme)
+                ethnicity_scheme=self.scheme.eth_target)
+
+            subject_admissions = list(map(gen_admission, _admission_ids))
             return Inpatient(subject_id=subject_id,
                              admissions=subject_admissions,
                              static_info=static_info)
@@ -908,7 +921,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         dob = anchor_date + anchor_age
         subject_dob = dict(zip(static_df[c_s_subject_id], dob))
         subject_eth = dict()
-        eth_mapper = self.eth_source_scheme.mapper_to(self.eth_target_scheme)
+        eth_mapper = self.scheme.eth_mapper()
         for subject_id, subject_df in static_df.groupby(c_s_subject_id):
             eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
             subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
@@ -935,20 +948,19 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_codes = CodesVector.empty(self.dx_target_scheme)
+        empty_codes = CodesVector.empty(self.scheme.dx_target)
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
             if _codes_df is None:
                 return (adm_id, empty_codes)
 
-            vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
+            vec = np.zeros(len(self.scheme.dx_target), dtype=bool)
             for version, version_df in _codes_df.groupby(c_version):
-                src_scheme = self.dx_source_scheme[str(version)]
-                mapper = src_scheme.mapper_to(self.dx_target_scheme)
+                mapper = self.scheme.dx_mapper(str(version))
                 codeset = mapper.map_codeset(version_df[c_code])
                 vec = np.maximum(vec, mapper.codeset2vec(codeset))
-            return (adm_id, CodesVector(vec, self.dx_target_scheme))
+            return (adm_id, CodesVector(vec, self.scheme.dx_target))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return executor.map(_extract_codes, admission_ids_list)
@@ -956,22 +968,22 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
             subject_admission_ids = sorted(subject_admission_ids)
-            vec = np.zeros(len(self.dx_target_scheme), dtype=bool)
+            vec = np.zeros(len(self.scheme.dx_target), dtype=bool)
             for adm_id in subject_admission_ids:
                 if adm_id not in dx_codes:
                     continue
                 vec = np.maximum(vec, dx_codes[adm_id].vec)
-                yield adm_id, CodesVector(vec, self.dx_target_scheme)
+                yield adm_id, CodesVector(vec, self.scheme.dx_target)
 
     def outcome_extractor(self, dx_codes, max_workers: int):
 
         def _extract_outcome(adm_id):
             _dx_codes = dx_codes[adm_id]
-            outcome_codes = self.outcome_scheme.map_codeset(
-                _dx_codes.to_codeset(), self.dx_target_scheme)
-            outcome_vec = self.outcome_scheme.codeset2vec(
-                outcome_codes, self.dx_target_scheme)
-            return (adm_id, CodesVector(outcome_vec, self.outcome_scheme))
+            outcome_codes = self.scheme.outcome.map_codeset(
+                _dx_codes.to_codeset(), self.scheme.dx_target)
+            outcome_vec = self.scheme.outcome.codeset2vec(
+                outcome_codes, self.scheme.dx_target)
+            return (adm_id, CodesVector(outcome_vec, self.scheme.outcome))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             return executor.map(_extract_outcome, dx_codes.keys())
@@ -994,7 +1006,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
             x[c_code_index], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
-        input_size = len(self.int_proc_source_scheme.index)
+        input_size = len(self.scheme.int_proc_source)
         for i in range(len(adm_arr)):
             yield (adm_arr[i],
                    InpatientInput(index=grouped[0][i],
@@ -1027,7 +1039,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         grouped = df.groupby(c_adm_id).apply(lambda x: group_fun(
             x[c_code_index], x[c_rate], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
-        input_size = len(self.int_input_source_scheme.index)
+        input_size = len(self.scheme.int_input_source)
         for i in range(len(adm_arr)):
             yield (adm_arr[i],
                    InpatientInput(index=grouped[0][i],
@@ -1046,7 +1058,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         df = self.df["obs"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
-        obs_dim = len(self.obs_scheme)
+        obs_dim = len(self.scheme.obs)
 
         def ret_put(a, *args):
             np.put(a, *args)

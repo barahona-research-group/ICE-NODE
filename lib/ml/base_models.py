@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jax.experimental.jet import jet
 from jax.experimental.ode import odeint
-from jax.nn import sigmoid
+import jax.nn as jnn
 import jax.tree_util as jtu
 import equinox as eqx
 
@@ -28,8 +28,8 @@ class GRUDynamics(eqx.Module):
                  key: "jax.random.PRNGKey"):
         k0, k1, k2, k3 = jrandom.split(key, 4)
         self.x_x = self.shallow_net(input_size, state_size, lambda x: x, k0)
-        self.x_r = self.shallow_net(input_size, state_size, sigmoid, k1)
-        self.x_z = self.shallow_net(input_size, state_size, sigmoid, k2)
+        self.x_r = self.shallow_net(input_size, state_size, jnn.sigmoid, k1)
+        self.x_z = self.shallow_net(input_size, state_size, jnn.sigmoid, k2)
         self.rx_g = self.shallow_net(input_size, state_size, jax.nn.tanh, k3)
 
     @staticmethod
@@ -185,10 +185,12 @@ class NeuralODE(eqx.Module):
 
         dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, args)
         sampling_rate = args.get('sampling_rate', None)
-        if sampling_rate:
-            t = timesamples(float(t), sampling_rate)
-        else:
-            t = jnp.linspace(0.0, t / self.timescale, 2)
+
+        if isinstance(t, float):
+            if sampling_rate:
+                t = timesamples(float(t), sampling_rate)
+            else:
+                t = jnp.linspace(0.0, t / self.timescale, 2)
 
         term = self.ode_term(args)
         saveat = SaveAt(ts=t)
@@ -250,6 +252,35 @@ class NeuralODE(eqx.Module):
                        (0.01 / jnp.max(d1 + d2))**(1. / (order + 1.)))
 
         return jnp.minimum(100. * h0, h1)
+
+
+class ObsStateUpdate(eqx.Module):
+    """Implements discrete update based on the received observations."""
+    f_project_error: Callable
+    f_update: Callable
+
+    def __init__(self, state_size: int, obs_size: int,
+                 key: "jax.random.PRNGKey"):
+        key1, key2 = jrandom.split(key, 2)
+
+        self.f_project_error = eqx.nn.MLP(obs_size,
+                                          obs_size,
+                                          width_size=obs_size * 5,
+                                          depth=1,
+                                          use_bias=True,
+                                          activation=jnn.relu,
+                                          final_activation=jnn.tanh,
+                                          key=key1)
+        self.f_update = eqx.nn.GRUCell(obs_size,
+                                       state_size,
+                                       use_bias=True,
+                                       key=key2)
+
+    def __call__(self, state: jnp.ndarray, predicted_obs: jnp.ndarray,
+                 true_obs: jnp.ndarray, mask_obs) -> jnp.ndarray:
+        error = jnp.where(mask_obs, predicted_obs - true_obs, 0.0)
+        projected_error = self.f_project_error(error)
+        return self.f_update(projected_error, state)
 
 
 class StateUpdate(eqx.Module):

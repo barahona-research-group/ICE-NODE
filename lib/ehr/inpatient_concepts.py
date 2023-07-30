@@ -54,6 +54,7 @@ class WeightedSum(Aggregator):
     linear: eqx.Linear
 
     def __init__(self, subset: jnp.ndarray, key: "jax.random.PRNGKey"):
+        super().__init__()
         self.subset = subset
         self.linear = eqx.nn.Linear(subset.shape[0],
                                     1,
@@ -81,6 +82,7 @@ class AggregateRepresentation(eqx.Module):
 
     def __init__(self, source_scheme: AbstractScheme,
                  target_scheme: AbstractGroupedProcedures):
+        super().__init__()
         groups = target_scheme.groups
         aggs = target_scheme.aggregation
         agg_map = {'or': OR, 'sum': Sum, 'w_sum': WeightedSum}
@@ -136,6 +138,7 @@ class InpatientInterventions(eqx.Module):
 
     def __init__(self, proc: InpatientInput, input_: InpatientInput,
                  adm_interval: float):
+        super().__init__()
         self.proc = proc
         self.input_ = input_
         self.segmented_proc = None
@@ -187,6 +190,8 @@ class CodesVector(eqx.Module):
 
 
 class InpatientAdmission(AbstractAdmission, eqx.Module):
+    admission_id: str
+    admission_dates: Tuple[date, date]
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
@@ -194,7 +199,7 @@ class InpatientAdmission(AbstractAdmission, eqx.Module):
     interventions: InpatientInterventions
 
 
-class StaticInfo(eqx.Module):
+class InpatientStaticInfo(eqx.Module):
     gender: str
     date_of_birth: date
     ethnicity: jnp.ndarray
@@ -204,6 +209,7 @@ class StaticInfo(eqx.Module):
 
     def __init__(self, gender: str, date_of_birth: date, ethnicity: str,
                  ethnicity_scheme: AbstractScheme):
+        super().__init__()
         self.gender = gender
         self.date_of_birth = date_of_birth
         self.ethnicity = ethnicity
@@ -214,6 +220,7 @@ class StaticInfo(eqx.Module):
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
 
+    @eqx.filter_jit
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec),
                           dtype=jnp.float16)
@@ -221,7 +228,7 @@ class StaticInfo(eqx.Module):
 
 class Inpatient(eqx.Module):
     subject_id: str
-    static_info: StaticInfo
+    static_info: InpatientStaticInfo
     admissions: List[InpatientAdmission]
 
     def outcome_frequency_vec(self):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 from functools import partial
 from collections import namedtuple
+from datetime import date
 from typing import (Any, Dict, List, TYPE_CHECKING, Callable, Union, Tuple,
                     Optional)
 import re
@@ -9,6 +10,7 @@ import re
 from absl import logging
 import jax
 import jax.numpy as jnp
+import jax.nn as jnn
 import jax.random as jrandom
 import jax.tree_util as jtu
 import equinox as eqx
@@ -16,9 +18,10 @@ import optuna
 
 from ..utils import model_params_scaler
 from ..ehr import (Inpatients, Inpatient, InpatientAdmission,
-                   BatchPredictedRisks)
+                   InpatientStaticInfo, BatchPredictedRisks,
+                   MIMIC4ICUDatasetScheme, AggregateRepresentation)
 
-from .base_models import (GRUDynamics, NeuralODE, StateUpdate)
+from .base_models import (GRUDynamics, NeuralODE, ObsStateUpdate)
 from abc import ABC, abstractmethod, ABCMeta
 import zipfile
 
@@ -26,17 +29,100 @@ from ..utils import translate_path
 
 
 class EmbeddedAdmission(eqx.Module):
-    state_e0: jnp.ndarray
+    state_dx_e0: jnp.ndarray
     int_e: List[jnp.ndarray]
 
 
-class AdmissionEmbedding(eqx.Module):
+class InICENODEDimensions(eqx.Module):
+    state_m: int = 15
+    state_dx_e: int = 30
+    state_obs_e: int = 25
+    input_e: int = 10
+    proc_e: int = 10
+    demo_e: int = 5
+    int_e: int = 15
+
+
+class InpatientEmbedding(eqx.Module):
     f_dx_emb: Callable  # TODO: state_e(0) = f_dxemb(dx_history)
+    f_dem_emb: Callable  # TODO: two layers embeddings for demographics. d=5
     f_inp_agg: Callable  # TODO: aggregator (learnable for weighted sum nns)
     f_inp_emb: Callable  # TODO: int_e = f_inpemb(input_e) d=10
     f_proc_emb: Callable  # TODO: two layers embeddings for procedures. d=10
-    f_dem_emb: Callable  # TODO: two layers embeddings for demographics. d=5
     f_int_emb: Callable  # TODO: two layers embeddings f_int_emb(inp_e, proc_e, demo_e). d=15
+
+    def __init__(self, scheme: MIMIC4ICUDatasetScheme,
+                 dims: InICENODEDimensions, prng_key: "jax.random.PRNGKey"):
+        super().__init__()
+        (dx_emb_key, inp_agg_key, inp_emb_key, proc_emb_key, dem_emb_key,
+         int_emb_key) = jrandom.split(prng_key, 6)
+
+        self.f_dx_emb = eqx.nn.MLP(len(scheme.dx_target),
+                                   dims.state_dx_e,
+                                   dims.state_dx_e * 5,
+                                   depth=1,
+                                   key=dx_emb_key)
+        self.f_inp_agg = AggregateRepresentation(scheme.int_input_source,
+                                                 scheme.int_input_target)
+        self.f_inp_emb = eqx.nn.MLP(len(scheme.int_input_target),
+                                    dims.input_e,
+                                    dims.input_e * 5,
+                                    depth=1,
+                                    key=inp_emb_key)
+        self.f_proc_emb = eqx.nn.MLP(len(scheme.proc_target),
+                                     dims.proc_e,
+                                     dims.proc_e * 5,
+                                     depth=1,
+                                     key=proc_emb_key)
+
+        # demo-dims: age(1) + gender(2) + target_ethnicity.
+        self.f_dem_emb = eqx.nn.MLP(1 + 2 + len(scheme.eth_target),
+                                    dims.demo_e,
+                                    dims.demo_e * 5,
+                                    depth=1,
+                                    key=dem_emb_key)
+        self.f_int_emb = eqx.nn.MLP(dims.input_e + dims.proc_e + dims.demo_e,
+                                    dims.int_e,
+                                    dims.int_e * 5,
+                                    depth=1,
+                                    key=int_emb_key)
+
+    @eqx.filter_jit
+    def embed_segment(self, inp: jnp.ndarray, proc: jnp.ndarray,
+                      demo: jnp.ndarray) -> jnp.ndarray:
+        inp_emb = self.f_inp_emb(inp)
+        proc_emb = self.f_proc_emb(proc)
+        demo_emb = self.f_dem_emb(demo)
+        return self.f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_emb]))
+
+    @eqx.filter_jit
+    def embed_demo(self, static_info: InpatientStaticInfo,
+                   admission_date: date) -> jnp.ndarray:
+        demo_vec = static_info.demographic_vector(admission_date)
+        return self.f_dem_emb(demo_vec)
+
+    @eqx.filter_jit
+    def embed_dx(self, admission: InpatientAdmission) -> jnp.ndarray:
+        return self.f_dx_emb(admission.dx_history.vec)
+
+    def embed_admission(self, static_info: InpatientStaticInfo,
+                        admission: InpatientAdmission) -> EmbeddedAdmission:
+        demo_emb = self.embed_demo(static_info, admission.admission_dates[0])
+        dx_emb = self.f_dx_emb(admission)
+        int_ = admission.interventions.segment_input(self.f_inp_agg)
+        int_inp = int_.segmented_input
+        int_proc = int_.segmented_proc
+        int_e = [
+            self.embed_segment(inp, proc, demo_emb)
+            for inp, proc in zip(int_inp, int_proc)
+        ]
+        return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
+
+    def embed_subject(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
+        return [
+            self.embed_admission(inpatient.static_info, admission)
+            for admission in inpatient.admissions
+        ]
 
 
 class InICENODE(eqx.Module, metaclass=ABCMeta):
@@ -48,8 +134,42 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
     f_dyn: Callable
     f_update: Callable
 
-    state_size: int
-    control_size: int
+    scheme: MIMIC4ICUDatasetScheme = eqx.static_field()
+    dims: InICENODEDimensions = eqx.static_field()
+
+    def __init__(self, scheme: MIMIC4ICUDatasetScheme,
+                 dims: InICENODEDimensions, prng_key: "jax.random.PRNGKey"):
+        super().__init__()
+        self.dims = dims
+        self.scheme = scheme
+        (emb_key, obs_dec_key, dx_dec_key, dyn_key,
+         update_key) = jrandom.split(prng_key, 5)
+        self.f_emb = InpatientEmbedding(scheme, dims, emb_key)
+        self.f_obs_dec = eqx.nn.MLP(dims.state_obs_e,
+                                    len(scheme.obs),
+                                    dims.state_obs_e * 5,
+                                    depth=1,
+                                    key=obs_dec_key)
+        self.f_dx_dec = eqx.nn.MLP(dims.state_dx_e,
+                                   len(scheme.dx_target),
+                                   dims.state_dx_e * 5,
+                                   depth=1,
+                                   key=dx_dec_key)
+        dyn_state_size = dims.state_obs_e + dims.state_dx_e + dims.state_m
+        dyn_input_size = dyn_state_size + dims.int_e
+
+        f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
+                                out_size=dyn_state_size,
+                                activation=jnn.tanh,
+                                depth=3,
+                                width_size=dyn_state_size * 5,
+                                key=dyn_key)
+        f_dyn = model_params_scaler(f_dyn, 1e-5,
+                                        eqx.is_inexact_array)
+        self.f_dyn = NeuralODE(f_dyn, timescale=24.0)
+        self.f_update = ObsStateUpdate(dyn_state_size,
+                                       len(scheme.obs),
+                                       key=update_key)
 
     @abstractmethod
     def __call__(self, inpatients: Inpatients, subjects_batch: List[str],
@@ -79,15 +199,16 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
     @classmethod
     def from_config(cls, conf: Dict[str, Any], inpatients: Inpatients,
                     train_split: List[int], key: "jax.random.PRNGKey"):
-        decoder_input_size = cls.decoder_input_size(conf)
-        emb_models = embeddings_from_conf(conf["emb"], subject_interface,
-                                          train_split, decoder_input_size)
-        control_size = subject_interface.control_dim
-        return cls(**emb_models,
-                   **conf["model"],
-                   outcome=subject_interface.outcome_extractor,
-                   control_size=control_size,
-                   key=key)
+        # decoder_input_size = cls.decoder_input_size(conf)
+        # emb_models = embeddings_from_conf(conf["emb"], subject_interface,
+        # train_split, decoder_input_size)
+        # control_size = subject_interface.control_dim
+        # return cls(**emb_models,
+        # **conf["model"],
+        # outcome=subject_interface.outcome_extractor,
+        # control_size=control_size,
+        # key=key)
+        pass
 
     def load_params(self, params_file):
         """
@@ -111,36 +232,6 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
                              mode="r") as archive:
             with archive.open(params_fname, "r") as zip_member:
                 return eqx.tree_deserialise_leaves(zip_member, self)
-
-
-def ode_dyn(label, state_size, embeddings_size, control_size, key):
-    if 'mlp' in label:
-        nlayers = int(re.findall(r'\d+\b', label)[0])
-        label = 'mlp'
-    else:
-        nlayers = 0
-
-    dyn_state_size = state_size + embeddings_size
-    input_size = state_size + embeddings_size + control_size
-
-    nn_kwargs = {
-        'mlp':
-        dict(activation=jax.nn.tanh,
-             final_activation=jax.nn.tanh,
-             depth=nlayers - 1,
-             width_size=input_size,
-             in_size=input_size,
-             out_size=dyn_state_size),
-        'gru':
-        dict(input_size=input_size, state_size=dyn_state_size)
-    }
-
-    if label == 'mlp':
-        return eqx.nn.MLP(**nn_kwargs['mlp'], key=key)
-    if label == 'gru':
-        return GRUDynamics(**nn_kwargs['gru'], key=key)
-
-    raise RuntimeError(f'Unexpected dynamics label: {label}')
 
 
 class SubjectState(eqx.Module):
@@ -174,16 +265,9 @@ class ICENODE(AbstractModel):
                             embeddings_size=self.dx_emb.embeddings_size,
                             control_size=self.control_size,
                             key=key1)
-        ode_dyn_f = model_params_scaler(ode_dyn_f, ode_init_var,
-                                        eqx.is_inexact_array)
+        ode_dyn_f =
 
         self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=timescale)
-
-        self.f_update = StateUpdate(
-            state_size=self.state_size,
-            embeddings_size=self.dx_emb.embeddings_size,
-            key=key2)
-
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
@@ -315,12 +399,14 @@ class ICENODE(AbstractModel):
 
 
 class ICENODE_UNIFORM(ICENODE):
+
     @staticmethod
     def _time_diff(t1, t2):
         return 7.0
 
 
 class ICENODE_ZERO(ICENODE_UNIFORM):
+
     @eqx.filter_jit
     def _integrate_state(self, subject_state, int_time, ctrl, args):
         return SubjectState(subject_state.state,
