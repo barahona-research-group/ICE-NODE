@@ -13,35 +13,32 @@ import equinox as eqx
 
 from .dataset import MIMIC4ICUDataset
 from .inpatient_concepts import (InpatientAdmission, Inpatient,
-                                 InpatientObservables, InpatientInterventions)
+                                 InpatientObservables, InpatientInterventions,
+                                 CodesVector)
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
-class InpatientPrediction(eqx.Module):
-    outcome_vec: jnp.ndarray
-    state_trajectory: InpatientObservables
+class AdmissionPrediction(eqx.Module):
+    outcome: CodesVector
     observables: InpatientObservables
 
-
-class InpatientPredictedRisk(eqx.Module):
-
+class AdmissionResults(eqx.Module):
     admission: InpatientAdmission
-    prediction: InpatientPrediction
-    other: Optional[Dict[str, jnp.ndarray]] = None
-
+    prediction: AdmissionPrediction
+    other: Dict[str, jnp.ndarray] = None
 
 class BatchPredictedRisks(dict):
 
     def add(self,
             subject_id: int,
             admission: InpatientAdmission,
-            prediction: InpatientPrediction,
+            prediction: AdmissionPrediction,
             other: Optional[Dict[str, jnp.ndarray]] = None):
 
         if subject_id not in self:
             self[subject_id] = {}
 
-        self[subject_id][admission.admission_id] = InpatientPredictedRisk(
+        self[subject_id][admission.admission_id] = AdmissionResults(
             admission=admission, prediction=prediction, other=other)
 
     def get_subjects(self):
@@ -52,7 +49,8 @@ class BatchPredictedRisks(dict):
         return list(map(predictions.get, sorted(predictions)))
 
     def subject_prediction_loss(self, subject_id, outcome_loss, obs_loss):
-        outcome_true, outcome_pred, obs_true, obs_pred, obs_mask = [], [], [], [], []
+        (outcome_true, outcome_pred, obs_true, obs_pred,
+         obs_mask) = [], [], [], [], []
         for r in self[subject_id].values():
             outcome_true.append(r.admission.outcome.vec)
             outcome_pred.append(r.prediction.outcome_vec)
@@ -104,6 +102,30 @@ class Inpatients(eqx.Module):
         return sum(
             len(a.interventions.time) for s in self.subjects.values()
             for a in s.admissions)
+
+    @property
+    def n_obs_times(self):
+        return sum(
+            len(o.time) for s in self.subjects.values() for a in s.admissions
+            for o in a.observables)
+
+    @property
+    def p_obs(self):
+        return sum(o.mask.sum() for s in self.subjects.values()
+                   for a in s.admissions
+                   for o in a.observables) / self.n_obs_times / len(
+                       self.dataset.scheme.obs)
+
+    @property
+    def obs_coocurrence_matrix(self):
+        obs = []
+        for s in self.subjects.values():
+            for a in s.admissions:
+                for o in a.observables:
+                    if len(o.time) > 0:
+                        obs.append(o.mask)
+        obs = jnp.vstack(obs, dtype=int)
+        return obs.T @ obs
 
     @property
     def size_in_bytes(self):
@@ -165,31 +187,15 @@ class Inpatients(eqx.Module):
     def outcome_frequency_vec(self, subjects: List[int]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
 
-    def outcome_frequency_partitions(self, percentile_range,
-                                     subjects: List[int]):
+    def outcome_frequency_partitions(self, n_partitions, subjects: List[int]):
         frequency_vec = self.outcome_frequency_vec(subjects)
-
-        sections = list(range(0, 100, percentile_range)) + [100]
-        sections[0] = -1
-
-        frequency_df = pd.DataFrame({
-            'code': range(len(frequency_vec)),
-            'frequency': frequency_vec
-        })
-
-        frequency_df = frequency_df.sort_values('frequency')
-        frequency_df['cum_sum'] = frequency_df['frequency'].cumsum()
-        frequency_df['cum_perc'] = 100 * frequency_df[
-            'cum_sum'] / frequency_df["frequency"].sum()
-
-        codes_by_percentiles = []
-        for i in range(1, len(sections)):
-            l, u = sections[i - 1], sections[i]
-            codes = frequency_df[(frequency_df['cum_perc'] > l)
-                                 & (frequency_df['cum_perc'] <= u)].code
-            codes_by_percentiles.append(set(codes))
-
-        return codes_by_percentiles
+        frequency_vec = frequency_vec / frequency_vec.sum()
+        sorted_codes = np.argsort(frequency_vec)
+        frequency_vec = frequency_vec[sorted_codes]
+        cumsum = np.cumsum(frequency_vec)
+        partitions = np.linspace(0, 1, n_partitions + 1)[1:-1]
+        splitters = np.searchsorted(cumsum, partitions)
+        return np.hsplit(sorted_codes, splitters)
 
 
 if __name__ == '__main__':

@@ -118,7 +118,7 @@ class InpatientEmbedding(eqx.Module):
         ]
         return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
 
-    def embed_subject(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
+    def __call__(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
         return [
             self.embed_admission(inpatient.static_info, admission)
             for admission in inpatient.admissions
@@ -159,27 +159,42 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
         dyn_input_size = dyn_state_size + dims.int_e
 
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
-                                out_size=dyn_state_size,
-                                activation=jnn.tanh,
-                                depth=3,
-                                width_size=dyn_state_size * 5,
-                                key=dyn_key)
-        f_dyn = model_params_scaler(f_dyn, 1e-5,
-                                        eqx.is_inexact_array)
+                           out_size=dyn_state_size,
+                           activation=jnn.tanh,
+                           depth=3,
+                           width_size=dyn_state_size * 5,
+                           key=dyn_key)
+        f_dyn = model_params_scaler(f_dyn, 1e-5, eqx.is_inexact_array)
         self.f_dyn = NeuralODE(f_dyn, timescale=24.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
                                        key=update_key)
 
-    @abstractmethod
-    def __call__(self, inpatients: Inpatients, subjects_batch: List[str],
-                 args):
+    def join_state(self, mem, obs, dx):
+        if mem is None:
+            mem = jnp.zeros((self.dims.state_m, ))
+        return jnp.stack((mem, obs, dx), axis=-1)
+
+    def split_state_emb(self, state: jnp.ndarray):
+        return jnp.split(state, (self.dims.state_m, self.dims.state_obs_e),
+                         axis=-1)
+
+    def __call__(self, admission: InpatientAdmission,
+                 embedded_admission: EmbeddedAdmission):
         pass
 
-    def subject_embeddings(self, subject_interface: Inpatients,
-                           batch: List[str]):
-        out = self(subject_interface, batch, dict(return_embeddings=True))
-        return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
+    def batch_predict(self, inpatients: Inpatients, subjects_batch: List[str],
+                      args):
+        results = BatchPredictedRisks()
+        inpatients_emb = {i: self.f_emb(inpatients[i]) for i in subjects_batch}
+        for i in subjects_batch:
+            inpatient = inpatients[i]
+            embedded_admissions = inpatients_emb[i]
+            for adm, adm_e in zip(inpatient.admissions, embedded_admissions):
+                results.add(subject_id=i,
+                            admission=adm,
+                            prediction=self(adm, adm_e))
+        return results
 
     @staticmethod
     def emb_dyn_partition(pytree: InICENODE):
@@ -212,7 +227,8 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
 
     def load_params(self, params_file):
         """
-        Load the parameters in `params_file` filepath and return as PyTree Object.
+        Load the parameters in `params_file` filepath and
+        return as PyTree Object.
         """
         with open(translate_path(params_file), 'rb') as file_rsc:
             return eqx.tree_deserialise_leaves(file_rsc, self)
@@ -233,41 +249,12 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
             with archive.open(params_fname, "r") as zip_member:
                 return eqx.tree_deserialise_leaves(zip_member, self)
 
-
-class SubjectState(eqx.Module):
-    state: jnp.ndarray
-    time: jnp.ndarray  # shape ()
-
-
-class ICENODE(AbstractModel):
-    ode_dyn: eqx.Module
-    f_update: eqx.Module
-
-    ode_init_var: float = eqx.static_field()
-    timescale: float = eqx.static_field()
-
-    @staticmethod
-    def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
-
-    @property
-    def dyn_state_size(self):
-        return self.state_size + self.dx_emb.embeddings_size
-
     def weights(self):
         has_weight = lambda leaf: hasattr(leaf, 'weight')
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
         return tuple(x.weight
                      for x in jtu.tree_leaves(self, is_leaf=has_weight)
                      if has_weight(x))
-
-    def join_state_emb(self, state, emb):
-        if state is None:
-            state = jnp.zeros((self.state_size, ))
-        return jnp.hstack((state, emb))
-
-    def split_state_emb(self, state: SubjectState):
-        return jnp.split(state.state, (self.state_size, ), axis=-1)
 
     @eqx.filter_jit
     def _integrate_state(self, subject_state: SubjectState,
@@ -282,10 +269,6 @@ class ICENODE(AbstractModel):
 
         return SubjectState(state, subject_state.time + int_time), r, traj
 
-    @eqx.filter_jit
-    def _jitted_update(self, *args):
-        return self.f_update(*args)
-
     def _update_state(self, subject_state: SubjectState,
                       adm_info: Admission_JAX,
                       dx_emb: jnp.ndarray) -> jnp.ndarray:
@@ -293,31 +276,6 @@ class ICENODE(AbstractModel):
         state = self._jitted_update(state, dx_emb_hat, dx_emb)
         return SubjectState(self.join_state_emb(state, dx_emb),
                             jnp.array(adm_info.admission_time + adm_info.los))
-
-    @eqx.filter_jit
-    def _decode(self, subject_state: SubjectState):
-        _, dx_emb_hat = self.split_state_emb(subject_state)
-        return self.dx_dec(dx_emb_hat)
-
-    @eqx.filter_jit
-    def _decode_trajectory(self, traj: SubjectState):
-        _, dx_emb_hat = self.split_state_emb(traj)
-        return jax.vmap(self.dx_dec)(dx_emb_hat)
-
-    @staticmethod
-    def _time_diff(t1, t2):
-        """
-        This static method is created to simplify creating a variant of
-        ICE-NODE (i.e. ICE-NODE_UNIFORM) that integrates with a
-        fixed-time interval. So only this method that needs to be overriden.
-        """
-        return t1 - t2
-
-    def init_predictions(self):
-        return BatchPredictedRisks()
-
-    def dx_embed(self, dx_G: jnp.ndarray, adms: List[Admission_JAX]):
-        return [self.dx_emb.encode(dx_G, adm.dx_vec) for adm in adms]
 
     def __call__(self,
                  subject_interface: Subject_JAX,
@@ -382,39 +340,3 @@ class ICENODE(AbstractModel):
             'timescale':
             7
         }
-
-
-class ICENODE_UNIFORM(ICENODE):
-
-    @staticmethod
-    def _time_diff(t1, t2):
-        return 7.0
-
-
-class ICENODE_ZERO(ICENODE_UNIFORM):
-
-    @eqx.filter_jit
-    def _integrate_state(self, subject_state, int_time, ctrl, args):
-        return SubjectState(subject_state.state,
-                            subject_state.time + int_time), 0.0, None
-
-
-class AICE(ICENODE):
-    in_mix: jnp.ndarray
-    out_mix: jnp.ndarray
-
-    @staticmethod
-    def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
-
-    @property
-    def dyn_state_size(self):
-        return self.state_size + self.dx_emb.embeddings_size
-
-    def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
-        key1, key2, key3 = jax.random.split(key, 3)
-        super().__init__(*args, **kwargs, key=key1)
-
-        self.out_mix = jnp.zeros((self.dx_dec.output_size, ),
-                                 dtype=jnp.float32)
-        self.in_mix = jnp.zeros((self.dx_emb.input_size, ), dtype=jnp.float32)

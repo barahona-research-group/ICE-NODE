@@ -33,9 +33,9 @@ class InpatientObservables(eqx.Module):
 
         time = np.array([t[0] for t in time][1:], dtype=np.float64)
         split = np.searchsorted(self.time, time)
-        time = np.hsplit(self.time, split)
-        value = np.hsplit(self.value, split)
-        mask = np.hsplit(self.mask, split)
+        time = np.split(self.time, split)
+        value = np.vsplit(self.value, split)
+        mask = np.vsplit(self.mask, split)
 
         return [
             InpatientObservables(t, v, m)
@@ -223,7 +223,7 @@ class InpatientStaticInfo(eqx.Module):
     @eqx.filter_jit
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec),
-                          dtype=jnp.float16)
+                         dtype=jnp.float16)
 
 
 class Inpatient(eqx.Module):
