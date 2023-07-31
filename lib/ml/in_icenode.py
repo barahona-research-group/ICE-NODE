@@ -1,30 +1,23 @@
 """."""
 from __future__ import annotations
-from functools import partial
-from collections import namedtuple
 from datetime import date
-from typing import (Any, Dict, List, TYPE_CHECKING, Callable, Union, Tuple,
-                    Optional)
-import re
+from typing import (Any, Dict, List, Callable)
+import zipfile
 
-from absl import logging
 import jax
 import jax.numpy as jnp
 import jax.nn as jnn
 import jax.random as jrandom
 import jax.tree_util as jtu
 import equinox as eqx
-import optuna
 
 from ..utils import model_params_scaler
 from ..ehr import (Inpatients, Inpatient, InpatientAdmission,
-                   InpatientStaticInfo, BatchPredictedRisks,
+                   InpatientObservables, InpatientStaticInfo,
+                   AdmissionPrediction, InpatientsPredictions,
                    MIMIC4ICUDatasetScheme, AggregateRepresentation)
 
-from .base_models import (GRUDynamics, NeuralODE, ObsStateUpdate)
-from abc import ABC, abstractmethod, ABCMeta
-import zipfile
-
+from .base_models import (NeuralODE, ObsStateUpdate)
 from ..utils import translate_path
 
 
@@ -44,12 +37,18 @@ class InICENODEDimensions(eqx.Module):
 
 
 class InpatientEmbedding(eqx.Module):
-    f_dx_emb: Callable  # TODO: state_e(0) = f_dxemb(dx_history)
-    f_dem_emb: Callable  # TODO: two layers embeddings for demographics. d=5
-    f_inp_agg: Callable  # TODO: aggregator (learnable for weighted sum nns)
-    f_inp_emb: Callable  # TODO: int_e = f_inpemb(input_e) d=10
-    f_proc_emb: Callable  # TODO: two layers embeddings for procedures. d=10
-    f_int_emb: Callable  # TODO: two layers embeddings f_int_emb(inp_e, proc_e, demo_e). d=15
+    """
+    Embeds an inpatient admission into fixed vectors:
+        - Embdedded discharge codes history.
+        - A sequence of embedded vectors each fusing the input, procedure \
+            and demographic information.
+    """
+    f_dx_emb: Callable
+    f_dem_emb: Callable
+    f_inp_agg: Callable
+    f_inp_emb: Callable
+    f_proc_emb: Callable
+    f_int_emb: Callable
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
                  dims: InICENODEDimensions, prng_key: "jax.random.PRNGKey"):
@@ -90,6 +89,10 @@ class InpatientEmbedding(eqx.Module):
     @eqx.filter_jit
     def embed_segment(self, inp: jnp.ndarray, proc: jnp.ndarray,
                       demo: jnp.ndarray) -> jnp.ndarray:
+        """
+        Embeds a single segment of the intervention (procedures and inputs) \
+        and demographics into a fixed vector.
+        """
         inp_emb = self.f_inp_emb(inp)
         proc_emb = self.f_proc_emb(proc)
         demo_emb = self.f_dem_emb(demo)
@@ -98,15 +101,21 @@ class InpatientEmbedding(eqx.Module):
     @eqx.filter_jit
     def embed_demo(self, static_info: InpatientStaticInfo,
                    admission_date: date) -> jnp.ndarray:
+        """
+        Embeds the demographic information of the patient at the admission \
+        date into a fixed vector.
+        """
         demo_vec = static_info.demographic_vector(admission_date)
         return self.f_dem_emb(demo_vec)
 
     @eqx.filter_jit
     def embed_dx(self, admission: InpatientAdmission) -> jnp.ndarray:
+        """Embeds the discharge codes history into a fixed vector."""
         return self.f_dx_emb(admission.dx_history.vec)
 
     def embed_admission(self, static_info: InpatientStaticInfo,
                         admission: InpatientAdmission) -> EmbeddedAdmission:
+        """ Embeds an admission into fixed vectors as described above."""
         demo_emb = self.embed_demo(static_info, admission.admission_dates[0])
         dx_emb = self.f_dx_emb(admission)
         int_ = admission.interventions.segment_input(self.f_inp_agg)
@@ -119,18 +128,28 @@ class InpatientEmbedding(eqx.Module):
         return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
 
     def __call__(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
+        """
+        Embeds all the admissions of an inpatient into fixed vectors as \
+        described above.
+        """
         return [
             self.embed_admission(inpatient.static_info, admission)
             for admission in inpatient.admissions
         ]
 
 
-class InICENODE(eqx.Module, metaclass=ABCMeta):
-    f_emb: Callable[[
-        InpatientAdmission
-    ], EmbeddedAdmission]  # TODO: two layers int_e = f_int(input_e, proc_e)
-    f_obs_dec: Callable  # TODO: predictor f_obsdec(state) // loss = l2
-    f_dx_dec: Callable  # TODO: predictor f_dec(state) // lo
+class InICENODE(eqx.Module):
+    """
+    The InICENODE model. It is composed of the following components:
+        - f_emb: Embedding function.
+        - f_obs_dec: Observation decoder.
+        - f_dx_dec: Discharge codes decoder.
+        - f_dyn: Dynamics function.
+        - f_update: Update function.
+    """
+    f_emb: Callable[[InpatientAdmission], EmbeddedAdmission]
+    f_obs_dec: Callable
+    f_dx_dec: Callable
     f_dyn: Callable
     f_update: Callable
 
@@ -138,12 +157,12 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
     dims: InICENODEDimensions = eqx.static_field()
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
-                 dims: InICENODEDimensions, prng_key: "jax.random.PRNGKey"):
+                 dims: InICENODEDimensions, key: "jax.random.PRNGKey"):
         super().__init__()
         self.dims = dims
         self.scheme = scheme
         (emb_key, obs_dec_key, dx_dec_key, dyn_key,
-         update_key) = jrandom.split(prng_key, 5)
+         update_key) = jrandom.split(key, 5)
         self.f_emb = InpatientEmbedding(scheme, dims, emb_key)
         self.f_obs_dec = eqx.nn.MLP(dims.state_obs_e,
                                     len(scheme.obs),
@@ -170,22 +189,53 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
                                        len(scheme.obs),
                                        key=update_key)
 
+    @eqx.filter_jit
     def join_state(self, mem, obs, dx):
         if mem is None:
             mem = jnp.zeros((self.dims.state_m, ))
+        if obs is None:
+            obs = jnp.zeros((self.dims.state_obs_e, ))
         return jnp.stack((mem, obs, dx), axis=-1)
 
-    def split_state_emb(self, state: jnp.ndarray):
+    @eqx.filter_jit
+    def split_state(self, state: jnp.ndarray):
         return jnp.split(state, (self.dims.state_m, self.dims.state_obs_e),
                          axis=-1)
 
+    def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
+                     obs: InpatientObservables, t0: float, t1: float):
+        preds = []
+        t = t0
+        for to, val, mask in zip(obs.times, obs.value, obs.mask):
+            dt = to - t
+            state = self.f_dyn(dt, state, args=dict(control=int_e))
+            _, obs_e, _ = self.split_state(state)
+            pred_obs = self.f_obs_dec(obs_e)
+            state = self.f_update(state, pred_obs, val, mask)
+            t = to
+            preds.append(pred_obs)
+
+        dt = t1 - t
+        state = self.f_dyn(dt, state, args=dict(control=int_e))
+        pred_obs_val = jnp.vstack(preds)
+        return state, InpatientObservables(obs.times, pred_obs_val, obs.mask)
+
     def __call__(self, admission: InpatientAdmission,
-                 embedded_admission: EmbeddedAdmission):
-        pass
+                 embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
+        state = self.join_state(None, None, embedded_admission.state_dx_e0)
+        int_e = embedded_admission.int_e
+        pred_obs_l = []
+        for i in range(len(int_e)):
+            state, pred_obs = self.step_segment(state, int_e[i],
+                                                admission.obs[i],
+                                                *admission.admission_dates[i])
+            pred_obs_l.append(pred_obs)
+        pred_dx = self.f_dx_dec(self.split_state(state)[2])
+        return AdmissionPrediction(pred_dx, pred_obs_l)
 
     def batch_predict(self, inpatients: Inpatients, subjects_batch: List[str],
                       args):
-        results = BatchPredictedRisks()
+        results = InpatientsPredictions()
         inpatients_emb = {i: self.f_emb(inpatients[i]) for i in subjects_batch}
         for i in subjects_batch:
             inpatient = inpatients[i]
@@ -212,18 +262,10 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
         return eqx.combine(emb_tree, dyn_tree)
 
     @classmethod
-    def from_config(cls, conf: Dict[str, Any], inpatients: Inpatients,
-                    train_split: List[int], key: "jax.random.PRNGKey"):
-        # decoder_input_size = cls.decoder_input_size(conf)
-        # emb_models = embeddings_from_conf(conf["emb"], subject_interface,
-        # train_split, decoder_input_size)
-        # control_size = subject_interface.control_dim
-        # return cls(**emb_models,
-        # **conf["model"],
-        # outcome=subject_interface.outcome_extractor,
-        # control_size=control_size,
-        # key=key)
-        pass
+    def from_config(cls, conf: Dict[str, Any], scheme: MIMIC4ICUDatasetScheme,
+                    key: "jax.random.PRNGKey"):
+        dims = InICENODEDimensions(**conf)
+        return cls(dims=dims, scheme=scheme, key=key)
 
     def load_params(self, params_file):
         """
@@ -255,88 +297,3 @@ class InICENODE(eqx.Module, metaclass=ABCMeta):
         return tuple(x.weight
                      for x in jtu.tree_leaves(self, is_leaf=has_weight)
                      if has_weight(x))
-
-    @eqx.filter_jit
-    def _integrate_state(self, subject_state: SubjectState,
-                         int_time: jnp.ndarray, ctrl: jnp.ndarray,
-                         args: Dict[str, Any]):
-        args = dict(control=ctrl, **args)
-        out = self.ode_dyn(int_time, subject_state.state, args)
-        if args.get('tay_reg', 0) > 0:
-            state, r, traj = out[0][-1], out[1][-1].squeeze(), out[0]
-        else:
-            state, r, traj = out[-1], 0.0, out
-
-        return SubjectState(state, subject_state.time + int_time), r, traj
-
-    def _update_state(self, subject_state: SubjectState,
-                      adm_info: Admission_JAX,
-                      dx_emb: jnp.ndarray) -> jnp.ndarray:
-        state, dx_emb_hat = self.split_state_emb(subject_state)
-        state = self._jitted_update(state, dx_emb_hat, dx_emb)
-        return SubjectState(self.join_state_emb(state, dx_emb),
-                            jnp.array(adm_info.admission_time + adm_info.los))
-
-    def __call__(self,
-                 subject_interface: Subject_JAX,
-                 subjects_batch: List[int],
-                 args=dict()):
-        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
-        dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
-        risk_prediction = self.init_predictions()
-        dyn_loss = []
-        max_adms = max(
-            len(subject_interface[subj_i]) for subj_i in subjects_batch)
-        logging.info(f'max_adms: {max_adms}')
-        for subj_i in subjects_batch:
-            adms = subject_interface[subj_i]
-            emb_seq = self.dx_embed(dx_G, adms)
-            ctrl_seq = [
-                subject_interface.subject_control(subj_i, adm.admission_date)
-                for adm in adms
-            ]
-            subject_state = SubjectState(
-                self.join_state_emb(None, emb_seq[0]),
-                jnp.array(adms[0].admission_time + adms[0].los))
-
-            for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[:-1]):
-
-                # Discharge-to-discharge time.
-                d2d_time = jnp.array(
-                    self._time_diff(adm.admission_time + adm.los,
-                                    subject_state.time))
-
-                # Integrate until next discharge
-                subject_state, r, traj = self._integrate_state(
-                    subject_state, d2d_time, ctrl, args)
-                dyn_loss.append(r)
-
-                dec_dx = self._decode(subject_state)
-
-                risk_prediction.add(subject_id=subj_i,
-                                    admission=adm,
-                                    prediction=dec_dx,
-                                    trajectory=traj)
-
-                if args.get('return_embeddings', False):
-                    risk_prediction.set_subject_embeddings(
-                        subject_id=subj_i, embeddings=subject_state.state)
-
-                # Update state at discharge
-                subject_state = self._update_state(subject_state, adm, emb)
-
-        return {'predictions': risk_prediction, 'dyn_loss': sum(dyn_loss)}
-
-    @classmethod
-    def sample_model_config(cls, trial: optuna.Trial):
-        return {
-            'ode_dyn':
-            trial.suggest_categorical('ode_dyn',
-                                      ['mlp1', 'mlp2', 'mlp3', 'gru']),
-            'ode_init_var':
-            trial.suggest_float('ode_i', 1e-8, 1e1, log=True),
-            'state_size':
-            trial.suggest_int('s', 10, 100, 10),
-            'timescale':
-            7
-        }

@@ -1,33 +1,29 @@
 from __future__ import annotations
-from datetime import date, datetime
-from collections import namedtuple, OrderedDict, defaultdict
-from typing import List, Tuple, Set, Callable, Optional, Union, Dict, ClassVar
-import random
+from typing import List, Optional, Dict
 import logging
 import numpy as np
 import jax.numpy as jnp
-import jax.random as jrandom
 import jax.tree_util as jtu
-import pandas as pd
 import equinox as eqx
 
 from .dataset import MIMIC4ICUDataset
 from .inpatient_concepts import (InpatientAdmission, Inpatient,
                                  InpatientObservables, InpatientInterventions,
                                  CodesVector)
-from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
 class AdmissionPrediction(eqx.Module):
     outcome: CodesVector
-    observables: InpatientObservables
+    observables: List[InpatientObservables]
+
 
 class AdmissionResults(eqx.Module):
     admission: InpatientAdmission
     prediction: AdmissionPrediction
     other: Dict[str, jnp.ndarray] = None
 
-class BatchPredictedRisks(dict):
+
+class InpatientsPredictions(dict):
 
     def add(self,
             subject_id: int,
@@ -161,7 +157,7 @@ class Inpatients(eqx.Module):
             lambda o: o.observables, inpatient_admission,
             self._unscaled_observation(inpatient_admission.observables))
 
-    def unscaled_subject(self, subject_id: str):
+    def unscaled_subject(self, subject_id: int):
         s = self.subjects[subject_id]
         adms = s.admissions
         adms = [self._unscaled_admission(a) for a in adms]
@@ -174,7 +170,7 @@ class Inpatients(eqx.Module):
             if m is not None else 0, self.subjects[subject_id], is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
-    def to_jax_arrays(self, subject_ids: Optional[List[str]] = None):
+    def to_jax_arrays(self, subject_ids: Optional[List[int]] = None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 

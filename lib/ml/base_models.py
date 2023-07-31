@@ -180,6 +180,7 @@ class NeuralODE(eqx.Module):
     ode_dyn: Callable
     timescale: float = eqx.static_field()
 
+    @eqx.filter_jit
     def __call__(self, t, x, args=dict()):
         x0 = self.get_x0(x, args)
 
@@ -190,7 +191,7 @@ class NeuralODE(eqx.Module):
             if sampling_rate:
                 t = timesamples(float(t), sampling_rate)
             else:
-                t = jnp.linspace(0.0, t / self.timescale, 2)
+                t = jnp.array([0.0, t / self.timescale])
 
         term = self.ode_term(args)
         saveat = SaveAt(ts=t)
@@ -276,6 +277,7 @@ class ObsStateUpdate(eqx.Module):
                                        use_bias=True,
                                        key=key2)
 
+    @eqx.filter_jit
     def __call__(self, state: jnp.ndarray, predicted_obs: jnp.ndarray,
                  true_obs: jnp.ndarray, mask_obs) -> jnp.ndarray:
         error = jnp.where(mask_obs, predicted_obs - true_obs, 0.0)

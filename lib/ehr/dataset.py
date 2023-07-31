@@ -4,13 +4,11 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any
 from collections import defaultdict
-from absl import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import random
 from abc import ABC, abstractmethod, ABCMeta
 from dataclasses import dataclass
-from tqdm import tqdm
 import logging
 
 import pandas as pd
@@ -665,7 +663,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         }
 
     def fit_preprocessing(self,
-                          subject_ids: List[str] = None,
+                          subject_ids: List[int] = None,
                           outlier_q1=0.25,
                           outlier_q2=0.75,
                           outlier_iqr_scale=1.5,
@@ -719,11 +717,11 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 for col in colname["dx"].values()
             },
             **{
-                colname[f]["admission_id"]: str
+                colname[f]["admission_id"]: int
                 for f in files.keys() if "admission_id" in colname[f]
             },
             **{
-                colname[f]["subject_id"]: str
+                colname[f]["subject_id"]: int
                 for f in files.keys() if "subject_id" in colname[f]
             },
         }
@@ -1021,12 +1019,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             x[c_code_index], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
         input_size = len(self.scheme.int_proc_source)
-        for i in range(len(adm_arr)):
-            yield (adm_arr[i],
-                   InpatientInput(index=grouped[0][i],
-                                  rate=np.ones_like(grouped[0][i], dtype=bool),
-                                  starttime=grouped[1][i],
-                                  endtime=grouped[2][i],
+        for i in adm_arr:
+            yield (i,
+                   InpatientInput(index=grouped.loc[i, 0],
+                                  rate=np.ones_like(grouped.loc[i, 0],
+                                                    dtype=bool),
+                                  starttime=grouped.loc[i, 1],
+                                  endtime=grouped.loc[i, 2],
                                   size=input_size))
 
         for adm_id in set(admission_ids_list) - set(adm_arr):
@@ -1054,12 +1053,12 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             x[c_code_index], x[c_rate], x[c_start_time], x[c_end_time]))
         adm_arr = grouped.index.tolist()
         input_size = len(self.scheme.int_input_source)
-        for i in range(len(adm_arr)):
-            yield (adm_arr[i],
-                   InpatientInput(index=grouped[0][i],
-                                  rate=grouped[1][i],
-                                  starttime=grouped[2][i],
-                                  endtime=grouped[3][i],
+        for i in adm_arr:
+            yield (i,
+                   InpatientInput(index=grouped.loc[i, 0],
+                                  rate=grouped.loc[i, 1],
+                                  starttime=grouped.loc[i, 2],
+                                  endtime=grouped.loc[i, 3],
                                   size=input_size))
         for adm_id in set(admission_ids_list) - set(adm_arr):
             yield (adm_id, InpatientInput.empty(input_size))
@@ -1070,8 +1069,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_value = self.colname["obs"]["value"]
         c_code_index = self.colname["obs"]["code_source_index"]
 
-        df = self.df["obs"]
+        df = self.df["obs"][[c_adm_id, c_time, c_value, c_code_index]]
+        logging.debug("obs: filter adms")
         df = df[df[c_adm_id].isin(admission_ids_list)]
+
         obs_dim = len(self.scheme.obs)
 
         def ret_put(a, *args):
@@ -1086,6 +1087,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
             })
 
+        logging.debug("obs: groupby")
         value_mask = df.groupby([
             c_adm_id, c_time
         ]).parallel_apply(lambda x: val_mask(x[c_code_index], x[c_value]))
@@ -1101,10 +1103,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             return (adm_id,
                     InpatientObservables(time=times, value=values, mask=masks))
 
+        logging.debug("obs: extract")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             for adm_id, obs in executor.map(_extract_observables,
                                             value_mask.index.levels[0]):
                 yield (adm_id, obs)
+
+        logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(
                 value_mask.index.levels[0]):
             yield (adm_id, InpatientObservables.empty(obs_dim))

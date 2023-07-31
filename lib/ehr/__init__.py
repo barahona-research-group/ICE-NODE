@@ -8,5 +8,5 @@ from .outcome import (OutcomeExtractor, outcome_conf_files)
 from .inpatient_concepts import (InpatientAdmission, Inpatient,
                                  InpatientObservables, InpatientInterventions,
                                  AggregateRepresentation, InpatientStaticInfo)
-from .inpatient_interface import (InpatientPrediction, InpatientPredictedRisk,
+from .inpatient_interface import (AdmissionPrediction, InpatientsPredictions,
                                   Inpatients)

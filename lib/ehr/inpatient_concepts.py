@@ -42,6 +42,9 @@ class InpatientObservables(eqx.Module):
             for t, v, m in zip(time, value, mask)
         ]
 
+    def __len__(self):
+        return len(self.time)
+
 
 class Aggregator(eqx.Module):
     subset: jnp.array
@@ -223,7 +226,7 @@ class InpatientStaticInfo(eqx.Module):
     @eqx.filter_jit
     def demographic_vector(self, current_date):
         return jnp.hstack((self.age(current_date), self.constant_vec),
-                         dtype=jnp.float16)
+                          dtype=jnp.float16)
 
 
 class Inpatient(eqx.Module):
