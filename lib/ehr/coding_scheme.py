@@ -13,15 +13,6 @@ from absl import logging
 
 import numpy as np
 import pandas as pd
-
-try:
-    import networkx as nx
-except ImportError:
-    logging.warning('networkx library is not available')
-    _has_networkx = False
-else:
-    _has_networkx = True
-
 from ..utils import write_config
 
 _DIR = os.path.dirname(__file__)
@@ -601,7 +592,7 @@ class HierarchicalScheme(AbstractScheme):
 class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
     @staticmethod
     @abstractmethod
-    def add_dot(code):
+    def add_dots(code):
         pass
 
     @staticmethod
@@ -630,8 +621,8 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
         df['combination'] = df['meta'].apply(lambda s: s[2])
         df['scenario'] = df['meta'].apply(lambda s: s[3])
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
-        df['source'] = df['source'].map(s_scheme.add_dot)
-        df['target'] = df['target'].map(t_scheme.add_dot)
+        df['source'] = df['source'].map(s_scheme.add_dots)
+        df['target'] = df['target'].map(t_scheme.add_dots)
 
         valid_target = df['target'].isin(t_scheme.index)
         unrecognised_target = set(df[~valid_target]["target"])
@@ -732,9 +723,9 @@ class DxICD10(ICDCommons, Singleton):
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if len(code) > 3:
             return code[:3] + '.' + code[3:]
@@ -812,7 +803,7 @@ class DxICD10(ICDCommons, Singleton):
 
 class PrICD10(ICDCommons, Singleton):
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         # No decimal point in ICD10-PCS
         return code
 
@@ -882,9 +873,9 @@ class DxICD9(ICDCommons, Singleton):
     _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
 
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if code[0] == 'E':
             if len(code) > 4:
@@ -993,9 +984,9 @@ class DxICD9(ICDCommons, Singleton):
 
 class PrICD9(ICDCommons, Singleton):
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if len(code) > 2:
             return code[:2] + '.' + code[2:]
@@ -1038,7 +1029,7 @@ class CCSCommons(HierarchicalScheme):
         icd_cname = '\'ICD-9-CM CODE\''
 
         df[icd_cname] = df[icd_cname].apply(lambda l: l.strip('\'').strip())
-        df[icd_cname] = df[icd_cname].map(icd9_scheme.add_dot)
+        df[icd_cname] = df[icd_cname].map(icd9_scheme.add_dots)
         valid_icd = df[icd_cname].isin(icd9_scheme.index)
         unrecognised_icd9 = set(df[~valid_icd][icd_cname])
         df = df[valid_icd]
@@ -1177,7 +1168,7 @@ class FlatCCSCommons(AbstractScheme):
         cat_cname = '\'CCS CATEGORY\''
         desc_cname = '\'CCS CATEGORY DESCRIPTION\''
         df[icd9_cname] = df[icd9_cname].map(lambda c: c.strip('\'').strip())
-        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dot)
+        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dots)
 
         valid_icd9 = df[icd9_cname].isin(icd9_scheme.index)
 

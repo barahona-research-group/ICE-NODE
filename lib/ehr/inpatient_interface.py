@@ -78,14 +78,13 @@ class Inpatients(eqx.Module):
     def __init__(self,
                  dataset: MIMIC4ICUDataset,
                  subject_ids: List[int] = None,
-                 max_workers: int = 1):
+                 num_workers=1):
         super().__init__()
         self.dataset = dataset
         logging.debug('Loading subjects..')
         if subject_ids is None:
             subject_ids = dataset.subject_ids
-        subjects_list = dataset.to_subjects(subject_ids,
-                                            max_workers=max_workers)
+        subjects_list = dataset.to_subjects(subject_ids, num_workers)
         logging.debug('[DONE] Loading subjects')
         self.subjects = {s.subject_id: s for s in subjects_list}
 

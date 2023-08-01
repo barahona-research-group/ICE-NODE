@@ -28,9 +28,10 @@ class InpatientObservables(eqx.Module):
                                     mask=np.zeros(0, dtype=bool))
 
     def segment(self, time: List[Tuple[float, float]]):
+        if len(time) == 0:
+            return []
         if len(time) == 1:
             return [self]
-
         time = np.array([t[0] for t in time][1:], dtype=np.float64)
         split = np.searchsorted(self.time, time)
         time = np.split(self.time, split)

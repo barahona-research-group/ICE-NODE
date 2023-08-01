@@ -44,7 +44,10 @@ class OutcomeExtractor(C.AbstractScheme):
 
         index = dict(zip(codes, range(len(codes))))
         desc = {c: self.t_scheme.desc[c] for c in codes}
-        super().__init__(codes=codes, index=index, desc=desc, name=conf)
+        super().__init__(codes=codes,
+                         index=index,
+                         desc=desc,
+                         name=outcome_space)
 
     @property
     def t_scheme(self):
