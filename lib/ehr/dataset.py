@@ -1065,7 +1065,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         def group_fun(x):
             return pd.Series({
                 0: x[c_code_index].to_numpy(),
-                1: x[c_rate].to_numpy(),
+                1: x[c_rate].to_numpy().astype(np.float16),
                 2: x[c_start_time].to_numpy(),
                 3: x[c_end_time].to_numpy()
             })

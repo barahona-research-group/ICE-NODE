@@ -199,6 +199,13 @@ class InICENODE(eqx.Module):
         t = t0
         for to, val, mask in zip(obs.time, obs.value, obs.mask):
             dt = to.item() - t
+            if dt < 0:
+                jax.debug.print("obs.time: {}, {}", obs.time)
+                jax.debug.print("t0: {}", t0)
+                jax.debug.print("t1: {}", t1)
+                if jnp.abs(dt) < 1e-5:
+                    dt = 0.0
+
             state = self.f_dyn(dt, state, args=dict(control=int_e))[-1]
             _1, obs_e, _2 = self.split_state(state)
             pred_obs = self.f_obs_dec(obs_e)
