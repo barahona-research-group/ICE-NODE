@@ -25,7 +25,7 @@ class InpatientObservables(eqx.Module):
         return InpatientObservables(time=np.zeros(0),
                                     value=np.zeros((0, size),
                                                    dtype=np.float16),
-                                    mask=np.zeros(0, dtype=bool))
+                                    mask=np.zeros((0, size), dtype=bool))
 
     def segment(self, time: List[Tuple[float, float]]):
         if len(time) == 0:
@@ -58,8 +58,7 @@ class WeightedSum(Aggregator):
     linear: eqx.Linear
 
     def __init__(self, subset: jnp.ndarray, key: "jax.random.PRNGKey"):
-        super().__init__()
-        self.subset = subset
+        super().__init__(subset)
         self.linear = eqx.nn.Linear(subset.shape[0],
                                     1,
                                     use_bias=False,
@@ -84,17 +83,26 @@ class OR(Aggregator):
 class AggregateRepresentation(eqx.Module):
     aggregators: OrderedDict[str, Aggregator]
 
-    def __init__(self, source_scheme: AbstractScheme,
-                 target_scheme: AbstractGroupedProcedures):
+    def __init__(self,
+                 source_scheme: AbstractScheme,
+                 target_scheme: AbstractGroupedProcedures,
+                 key: "jax.random.PRNGKey" = None):
         super().__init__()
         groups = target_scheme.groups
-        aggs = target_scheme.aggregation
-        agg_map = {'or': OR, 'sum': Sum, 'w_sum': WeightedSum}
         self.aggregators = OrderedDict()
         for g in sorted(groups.keys(), key=lambda g: target_scheme.index[g]):
             subset_index = sorted(source_scheme.index[c] for c in groups[g])
-            agg_cls = agg_map[aggs[g]]
-            self.aggregators[g] = agg_cls(np.array(subset_index))
+            if target_scheme.aggregation[g] == 'w_sum':
+                self.aggregators[g] = WeightedSum(np.array(subset_index), key)
+                (key, ) = jrandom.split(key, 1)
+            elif target_scheme.aggregation[g] == 'sum':
+                self.aggregators[g] = Sum(np.array(subset_index))
+            elif target_scheme.aggregation[g] == 'or':
+                self.aggregators[g] = OR(np.array(subset_index))
+            else:
+                raise ValueError(
+                    f"Aggregation {target_scheme.aggregation[g]} not supported"
+                )
 
     def __call__(self, inpatient_input: jnp.ndarray):
         if isinstance(inpatient_input, np.ndarray):
@@ -166,10 +174,12 @@ class InpatientInterventions(eqx.Module):
         return update
 
     def segment_input(self, input_repr: AggregateRepresentation):
-        input_segments = [input_repr(self.input_(t)) for t in self.time[:-1]]
-        update = eqx.tree_at(lambda x: x.segmented_iinput, input_segments,
-                             self)
-        update = eqx.tree_at(lambda x: x.input_, None, update)
+        inp_segments = [input_repr(self.input_(t[0])) for t in self.time]
+        update = eqx.tree_at(lambda x: x.segmented_input,
+                             self,
+                             inp_segments,
+                             is_leaf=lambda x: x is None)
+        update = eqx.tree_at(lambda x: x.input_, update, None)
         return update
 
 

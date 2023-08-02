@@ -1,6 +1,6 @@
 absl-py==1.0.0
-diffrax==0.2.2
-equinox==0.9.2
+diffrax==0.4.0
+equinox==0.10.11
 optax==0.1.4
 jax==0.4.1
 jaxlib==0.4.1

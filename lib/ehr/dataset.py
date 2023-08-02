@@ -548,6 +548,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         seconds_scaler = 1 / 3600.0  # convert seconds to hours
         self._adm_add_adm_interval(seconds_scaler)
+        self._adm_remove_subjects_with_negative_adm_interval()
         self._set_relative_times(self.df, self.colname, "int_proc",
                                  ["start_time", "end_time"], seconds_scaler)
         self._set_relative_times(self.df, self.colname, "int_input",
@@ -622,6 +623,18 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         delta = df[c_dischtime] - df[c_admittime]
         df = df.assign(adm_interval=delta.dt.total_seconds() * seconds_scaler)
         self.colname["adm"]["adm_interval"] = "adm_interval"
+        self.df["adm"] = df
+
+    def _adm_remove_subjects_with_negative_adm_interval(self):
+        c_adm_interval = self.colname["adm"]["adm_interval"]
+        c_subject = self.colname["adm"]["subject_id"]
+
+        df = self.df["adm"]
+        subjects_neg_intervals = df[df[c_adm_interval] < 0][c_subject].unique()
+        logging.debug(
+            f"Removing subjects with at least one negative adm_interval: {len(subjects_neg_intervals)}"
+        )
+        df = df[~df[c_subject].isin(subjects_neg_intervals)]
         self.df["adm"] = df
 
     @staticmethod
@@ -879,9 +892,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 ethnicity=subject_eth[subject_id],
                 ethnicity_scheme=self.scheme.eth_target)
 
-            subject_admissions = list(map(gen_admission, _admission_ids))
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                admissions = list(executor.map(gen_admission, _admission_ids))
             return Inpatient(subject_id=subject_id,
-                             admissions=subject_admissions,
+                             admissions=admissions,
                              static_info=static_info)
 
         return list(map(_gen_subject, subject_ids))
@@ -987,12 +1001,13 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
-            subject_admission_ids = sorted(subject_admission_ids)
+            _adm_ids = sorted(subject_admission_ids)
             vec = np.zeros(len(self.scheme.dx_target), dtype=bool)
-            for adm_id in subject_admission_ids:
-                if adm_id not in dx_codes:
-                    continue
-                vec = np.maximum(vec, dx_codes[adm_id].vec)
+            yield _adm_ids[0], CodesVector(vec, self.scheme.dx_target)
+
+            for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
+                if prev_adm_id in dx_codes:
+                    vec = np.maximum(vec, dx_codes[prev_adm_id].vec)
                 yield adm_id, CodesVector(vec, self.scheme.dx_target)
 
     def outcome_extractor(self, dx_codes):
@@ -1100,29 +1115,22 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             value = np.vstack(value.values).reshape((len(time), obs_dim))
             return InpatientObservables(time=time, value=value, mask=mask)
 
+        def partition_fun(part_df):
+            g = part_df.groupby([c_adm_id, c_time], sort=True, as_index=False)
+            return g.apply(val_mask).groupby(0).apply(gen_observation)
+
         logging.debug("obs: dasking")
         df = df.set_index(c_adm_id)
-        df = dd.from_pandas(df, npartitions=25, sort=True)
+        df = dd.from_pandas(df, npartitions=12, sort=True)
         logging.debug("obs: groupby")
-        obs_obj_df = df.map_partitions(lambda part: part.groupby(
-            [c_adm_id, c_time], sort=True, as_index=False).apply(val_mask).
-                                       groupby(0).apply(gen_observation),
-                                       meta=(None, object))
-
-        #         def _extract_observables(adm_id):
-        #             value_mask_df = value_mask.loc[adm_id]
-        #             values = value_mask_df[0]
-        #             masks = value_mask_df[1]
-        #             times = masks.index.to_numpy()
-        #             masks = np.vstack(masks.values).reshape((len(times), obs_dim))
-        #             values = np.vstack(values.values).reshape((len(times), obs_dim))
-
-        #             return (adm_id,
-        #                     InpatientObservables(time=times, value=values, mask=masks))
-
+        obs_obj_df = df.map_partitions(partition_fun, meta=(None, object))
         logging.debug("obs: undasking")
         obs_obj_df = obs_obj_df.compute()
         logging.debug("obs: extract")
+
+        collected_adm_ids = obs_obj_df.index.tolist()
+        assert len(collected_adm_ids) == len(set(collected_adm_ids)), \
+            "Duplicate admission ids in obs"
 
         for adm_id, obs in obs_obj_df.items():
             yield (adm_id, obs)

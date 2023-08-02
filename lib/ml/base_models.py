@@ -10,8 +10,7 @@ import jax.nn as jnn
 import jax.tree_util as jtu
 import equinox as eqx
 
-from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
-                     NoAdjoint)
+from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint)
 
 
 class GRUDynamics(eqx.Module):
@@ -192,24 +191,16 @@ class NeuralODE(eqx.Module):
                 t = timesamples(float(t), sampling_rate)
             else:
                 t = jnp.array([0.0, t / self.timescale])
-
         term = self.ode_term(args)
         saveat = SaveAt(ts=t)
-        solver = Dopri5()
-
-        eval_only = args.get('eval_only', False)
-        if eval_only:
-            adjoint = NoAdjoint()
-        else:
-            adjoint = BacksolveAdjoint(solver=Dopri5())
         return diffeqsolve(term,
-                           solver,
+                           Dopri5(),
                            t[0],
                            t[-1],
                            dt0=dt0,
                            y0=x0,
                            args=args,
-                           adjoint=adjoint,
+                           adjoint=BacksolveAdjoint(solver=Dopri5()),
                            saveat=saveat,
                            max_steps=2**20).ys
 

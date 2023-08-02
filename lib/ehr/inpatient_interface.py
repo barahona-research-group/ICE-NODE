@@ -88,30 +88,45 @@ class Inpatients(eqx.Module):
         logging.debug('[DONE] Loading subjects')
         self.subjects = {s.subject_id: s for s in subjects_list}
 
-    @property
-    def n_admissions(self):
-        return sum(len(s.admissions) for s in self.subjects.values())
+    def n_admissions(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+        return sum(len(self.subjects[s].admissions) for s in subject_ids)
 
-    @property
-    def n_segments(self):
+    def n_segments(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
         return sum(
-            len(a.interventions.time) for s in self.subjects.values()
-            for a in s.admissions)
+            len(a.interventions.time) for s in subject_ids
+            for a in self.subjects[s].admissions)
 
-    @property
-    def n_obs_times(self):
+    def n_obs_times(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
         return sum(
-            len(o.time) for s in self.subjects.values() for a in s.admissions
-            for o in a.observables)
+            len(o.time) for s in subject_ids
+            for a in self.subjects[s].admissions for o in a.observables)
 
-    @property
-    def p_obs(self):
-        return sum(o.mask.sum() for s in self.subjects.values()
-                   for a in s.admissions
-                   for o in a.observables) / self.n_obs_times / len(
+    def intervals_sum(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+        delta = lambda t: t[-1][1] - t[0][0]
+
+        return sum(
+            delta(a.interventions.time) for s in subject_ids
+            for a in self.subjects[s].admissions)
+
+    def p_obs(self, subject_ids=None):
+        if subject_ids is None:
+
+            subject_ids = self.subjects.keys()
+        return sum(o.mask.sum() for s in subject_ids
+                   for a in self.subjects[s].admissions
+                   for o in a.observables) / self.n_obs_times() / len(
                        self.dataset.scheme.obs)
 
-    @property
     def obs_coocurrence_matrix(self):
         obs = []
         for s in self.subjects.values():
@@ -122,7 +137,6 @@ class Inpatients(eqx.Module):
         obs = jnp.vstack(obs, dtype=int)
         return obs.T @ obs
 
-    @property
     def size_in_bytes(self):
         is_arr = eqx.filter(self.subjects, eqx.is_array)
         arr_size = jtu.tree_map(
