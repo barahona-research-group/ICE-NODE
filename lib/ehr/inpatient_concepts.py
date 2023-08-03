@@ -22,18 +22,16 @@ class InpatientObservables(eqx.Module):
 
     @staticmethod
     def empty(size: int):
-        return InpatientObservables(time=np.zeros(0),
+        return InpatientObservables(time=np.zeros(0, dtype=np.float32),
                                     value=np.zeros((0, size),
                                                    dtype=np.float16),
                                     mask=np.zeros((0, size), dtype=bool))
 
-    def segment(self, time: List[Tuple[float, float]]):
-        if len(time) == 0:
-            return []
-        if len(time) == 1:
+    def segment(self, t_sep: jnp.ndarray):
+        if len(t_sep) == 0:
             return [self]
-        time = np.array([t[0] for t in time][1:], dtype=np.float64)
-        split = np.searchsorted(self.time, time)
+
+        split = np.searchsorted(self.time, t_sep)
         time = np.split(self.time, split)
         value = np.vsplit(self.value, split)
         mask = np.vsplit(self.mask, split)
@@ -64,6 +62,7 @@ class WeightedSum(Aggregator):
                                     use_bias=False,
                                     key=key)
 
+    @eqx.filter_jit
     def __call__(self, x):
         return self.linear(x[self.subset])
 
@@ -104,14 +103,17 @@ class AggregateRepresentation(eqx.Module):
                     f"Aggregation {target_scheme.aggregation[g]} not supported"
                 )
 
-    def __call__(self, inpatient_input: jnp.ndarray):
-        if isinstance(inpatient_input, np.ndarray):
-            _np = np
-        else:
-            _np = jnp
-
-        return _np.hstack(
+    def np_agg(self, inpatient_input: np.ndarray):
+        return np.hstack(
             [agg(inpatient_input) for agg in self.aggregators.values()])
+
+    @eqx.filter_jit
+    def jnp_agg(self, inpatient_input: jnp.ndarray):
+        return jnp.hstack(
+            [agg(inpatient_input) for agg in self.aggregators.values()])
+
+
+maximum_padding = 50
 
 
 class InpatientInput(eqx.Module):
@@ -120,6 +122,27 @@ class InpatientInput(eqx.Module):
     starttime: jnp.ndarray
     endtime: jnp.ndarray
     size: int
+
+    @staticmethod
+    def pad_array(array: np.ndarray):
+        n = len(array)
+        n_pad = maximum_padding - (n % maximum_padding)
+        if n_pad == maximum_padding:
+            return array
+
+        return np.pad(array,
+                      pad_width=(0, n_pad),
+                      mode='constant',
+                      constant_values=0)
+
+    def __init__(self, index: np.ndarray, rate: np.ndarray,
+                 starttime: np.ndarray, endtime: np.ndarray, size: int):
+        super().__init__()
+        self.index = self.pad_array(index)
+        self.rate = self.pad_array(rate)
+        self.starttime = self.pad_array(starttime)
+        self.endtime = self.pad_array(endtime)
+        self.size = size
 
     def __call__(self, t):
         mask = (self.starttime <= t) & (t < self.endtime)
@@ -144,7 +167,7 @@ class InpatientInterventions(eqx.Module):
     proc: Optional[InpatientInput]
     input_: Optional[InpatientInput]
 
-    time: List[Tuple[float, float]]
+    time: jnp.ndarray
     segmented_input: Optional[List[np.ndarray]]
     segmented_proc: Optional[List[np.ndarray]]
 
@@ -161,11 +184,31 @@ class InpatientInterventions(eqx.Module):
             for t in (proc.starttime, proc.endtime, input_.starttime,
                       input_.endtime)
         ]
-        time = np.unique(np.hstack(time + [0.0, adm_interval])).tolist()
-        self.time = list(zip(time[:-1], time[1:]))
+        self.time = np.unique(
+            np.hstack(time + [0.0, adm_interval], dtype=np.float32))
+
+    @property
+    def t0(self):
+        """Start times for segmenting the interventions"""
+        return self.time[:-1]
+
+    @property
+    def t1(self):
+        """End times for segmenting the interventions"""
+        return self.time[1:]
+
+    @property
+    def t_sep(self):
+        """Separation times for segmenting the interventions"""
+        return self.time[1:-1]
+
+    @property
+    def interval(self):
+        """Length of the admission interval"""
+        return self.time[-1] - self.time[0]
 
     def segment_proc(self, proc_repr: AggregateRepresentation):
-        proc_segments = [proc_repr(self.proc(t[0])) for t in self.time]
+        proc_segments = [proc_repr.np_agg(self.proc(t)) for t in self.t0]
         update = eqx.tree_at(lambda x: x.segmented_proc,
                              self,
                              proc_segments,
@@ -174,7 +217,7 @@ class InpatientInterventions(eqx.Module):
         return update
 
     def segment_input(self, input_repr: AggregateRepresentation):
-        inp_segments = [input_repr(self.input_(t[0])) for t in self.time]
+        inp_segments = [input_repr.jnp_agg(self.input_(t)) for t in self.t0]
         update = eqx.tree_at(lambda x: x.segmented_input,
                              self,
                              inp_segments,
@@ -213,8 +256,13 @@ class InpatientAdmission(AbstractAdmission, eqx.Module):
     interventions: InpatientInterventions
 
 
+@jax.jit
+def demographic_vector(age, vec):
+    return jnp.hstack((age, vec), dtype=jnp.float16)
+
+
 class InpatientStaticInfo(eqx.Module):
-    gender: str
+    gender: jnp.ndarray
     date_of_birth: date
     ethnicity: jnp.ndarray
     ethnicity_scheme: AbstractScheme
@@ -224,20 +272,17 @@ class InpatientStaticInfo(eqx.Module):
     def __init__(self, gender: str, date_of_birth: date, ethnicity: str,
                  ethnicity_scheme: AbstractScheme):
         super().__init__()
-        self.gender = gender
+        self.gender = np.array(self.gender_dict[gender])
         self.date_of_birth = date_of_birth
         self.ethnicity = ethnicity
         self.ethnicity_scheme = ethnicity_scheme
-        self.constant_vec = np.hstack(
-            (self.ethnicity, self.gender_dict[self.gender]))
+        self.constant_vec = np.hstack((self.ethnicity, self.gender))
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
 
-    @eqx.filter_jit
-    def demographic_vector(self, current_date):
-        return jnp.hstack((self.age(current_date), self.constant_vec),
-                          dtype=jnp.float16)
+    def demographic_vector(self, current_date: date):
+        return demographic_vector(self.age(current_date), self.constant_vec)
 
 
 class Inpatient(eqx.Module):

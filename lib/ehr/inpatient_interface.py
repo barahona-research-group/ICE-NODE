@@ -112,11 +112,9 @@ class Inpatients(eqx.Module):
     def intervals_sum(self, subject_ids=None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
-        delta = lambda t: t[-1][1] - t[0][0]
 
-        return sum(
-            delta(a.interventions.time) for s in subject_ids
-            for a in self.subjects[s].admissions)
+        return sum(a.interventions.interval.sum() for s in subject_ids
+                   for a in self.subjects[s].admissions)
 
     def p_obs(self, subject_ids=None):
         if subject_ids is None:

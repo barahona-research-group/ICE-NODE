@@ -60,11 +60,16 @@ class ZScoreScaler:
     c_code_index: str
     mean: pd.Series
     std: pd.Series
+    use_float16: bool = True
 
     def __call__(self, df):
         mean = df[self.c_code_index].map(self.mean)
         std = df[self.c_code_index].map(self.std)
-        df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
+        if self.use_float16:
+            df.loc[:, self.c_value] = ((df[self.c_value] - mean) / std).astype(
+                np.float16)
+        else:
+            df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
         return df
 
 
@@ -73,10 +78,15 @@ class MaxScaler:
     c_value: str
     c_code_index: str
     max_val: pd.Series
+    use_float16: bool = True
 
     def __call__(self, df):
         max_val = df[self.c_code_index].map(self.max_val)
-        df.loc[:, self.c_value] = df[self.c_value] / max_val
+        if self.use_float16:
+            df.loc[:, self.c_value] = (df[self.c_value] / max_val).astype(
+                np.float16)
+        else:
+            df.loc[:, self.c_value] = df[self.c_value] / max_val
         return df
 
 
@@ -621,7 +631,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         df = self.df["adm"]
         delta = df[c_dischtime] - df[c_admittime]
-        df = df.assign(adm_interval=delta.dt.total_seconds() * seconds_scaler)
+        df = df.assign(adm_interval=(delta.dt.total_seconds() *
+                                     seconds_scaler).astype(np.float32))
         self.colname["adm"]["adm_interval"] = "adm_interval"
         self.df["adm"] = df
 
@@ -657,7 +668,10 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             col = colname[df_name][time_col]
             delta = df[col] - df[c_admittime]
             target_df = target_df.assign(
-                **{col: delta.dt.total_seconds() * seconds_scaler})
+                **{
+                    col: (delta.dt.total_seconds() *
+                          seconds_scaler).astype(np.float32)
+                })
 
         df_dict[df_name] = target_df
 
@@ -871,7 +885,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                                    input_=inputs[i],
                                                    adm_interval=adm_interval)
             interventions = interventions.segment_proc(proc_repr)
-            obs = observables[i].segment(interventions.time)
+            obs = observables[i].segment(interventions.t_sep)
             return InpatientAdmission(admission_id=i,
                                       admission_dates=adm_dates[i],
                                       dx_codes=dx_codes[i],
@@ -1065,7 +1079,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         def group_fun(x):
             return pd.Series({
                 0: x[c_code_index].to_numpy(),
-                1: x[c_rate].to_numpy().astype(np.float16),
+                1: x[c_rate].to_numpy(),
                 2: x[c_start_time].to_numpy(),
                 3: x[c_end_time].to_numpy()
             })

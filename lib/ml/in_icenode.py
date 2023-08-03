@@ -100,14 +100,14 @@ class InpatientEmbedding(eqx.Module):
         return self.f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_emb]))
 
     @eqx.filter_jit
-    def embed_dx(self, admission: InpatientAdmission) -> jnp.ndarray:
+    def embed_dx(self, x: jnp.ndarray) -> jnp.ndarray:
         """Embeds the discharge codes history into a fixed vector."""
-        return self.f_dx_emb(admission.dx_history.vec)
+        return self.f_dx_emb(x)
 
     def embed_admission(self, static_info: InpatientStaticInfo,
                         admission: InpatientAdmission) -> EmbeddedAdmission:
         """ Embeds an admission into fixed vectors as described above."""
-        dx_emb = self.f_dx_emb(admission.dx_codes_history.vec)
+        dx_emb = self.embed_dx(admission.dx_codes_history.vec)
 
         demo = static_info.demographic_vector(admission.admission_dates[0])
         int_ = admission.interventions.segment_input(self.f_inp_agg)
@@ -174,7 +174,7 @@ class InICENODE(eqx.Module):
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
         f_dyn = model_params_scaler(f_dyn, 1e-5, eqx.is_inexact_array)
-        self.f_dyn = NeuralODE(f_dyn, timescale=24.0)
+        self.f_dyn = NeuralODE(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
                                        key=update_key)
@@ -197,24 +197,20 @@ class InICENODE(eqx.Module):
                      obs: InpatientObservables, t0: float, t1: float):
         preds = []
         t = t0
-        for to, val, mask in zip(obs.time, obs.value, obs.mask):
-            dt = to.item() - t
-            if dt < 0:
+        for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
+            if (t_obs - t < 0).any():
                 jax.debug.print("obs.time: {}, {}", obs.time)
                 jax.debug.print("t0: {}", t0)
                 jax.debug.print("t1: {}", t1)
-                if jnp.abs(dt) < 1e-5:
-                    dt = 0.0
 
-            state = self.f_dyn(dt, state, args=dict(control=int_e))[-1]
-            _1, obs_e, _2 = self.split_state(state)
+            state = self.f_dyn(t_obs - t, state, args=dict(control=int_e))[-1]
+            _, obs_e, _ = self.split_state(state)
             pred_obs = self.f_obs_dec(obs_e)
             state = self.f_update(state, pred_obs, val, mask)
-            t = to.item()
+            t = t_obs
             preds.append(pred_obs)
 
-        dt = t1 - t
-        state = self.f_dyn(dt, state, args=dict(control=int_e))[-1]
+        state = self.f_dyn(t1 - t, state, args=dict(control=int_e))[-1]
 
         if len(preds) > 0:
             pred_obs_val = jnp.vstack(preds)
@@ -224,38 +220,43 @@ class InICENODE(eqx.Module):
         return state, InpatientObservables(obs.time, pred_obs_val, obs.mask)
 
     def __call__(self, admission: InpatientAdmission,
-                 embedded_admission: EmbeddedAdmission,
-                 progress_update: Callable) -> AdmissionPrediction:
+                 embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
         state = self.join_state(None, None, embedded_admission.state_dx_e0)
         int_e = embedded_admission.int_e
         obs = admission.observables
         pred_obs_l = []
+        t0 = admission.interventions.t0
+        t1 = admission.interventions.t1
         for i in range(len(int_e)):
-            t = admission.interventions.time[i]
+            t = t0[i], t1[i]
             state, pred_obs = self.step_segment(state, int_e[i], obs[i], *t)
             pred_obs_l.append(pred_obs)
-            progress_update(t[1] - t[0])
         pred_dx = self.f_dx_dec(self.split_state(state)[2])
         return AdmissionPrediction(pred_dx, pred_obs_l)
 
     def batch_predict(self, inpatients: Inpatients, subjects_batch: List[str]):
-        results = InpatientsPredictions()
+        total_int_hours = inpatients.intervals_sum(subjects_batch).item()
+
         inpatients_emb = {
             i: self.f_emb(inpatients.subjects[i])
-            for i in subjects_batch
+            for i in tqdm(subjects_batch, desc="Embedding")
         }
 
-        total_int_hours = inpatients.intervals_sum(subjects_batch)
-
-        with tqdm(total=total_int_hours) as pbar:
-            for i in subjects_batch:
-                inpatient = inpatients.subjects[i]
-                embedded_admissions = inpatients_emb[i]
+        r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+        bar_format = '{l_bar}{bar}' + r_bar
+        with tqdm(total=total_int_hours, bar_format=bar_format) as pbar:
+            results = InpatientsPredictions()
+            for i, subject_id in enumerate(subjects_batch):
+                inpatient = inpatients.subjects[subject_id]
+                embedded_admissions = inpatients_emb[subject_id]
                 for adm, adm_e in zip(inpatient.admissions,
                                       embedded_admissions):
-                    results.add(subject_id=i,
+                    results.add(subject_id=subject_id,
                                 admission=adm,
-                                prediction=self(adm, adm_e, pbar.update))
+                                prediction=self(adm, adm_e))
+                    pbar.update(adm.interventions.interval.item())
+                    pbar.set_description(
+                        f"Subject {i+1}/{len(subjects_batch)}")
             return results
 
     @staticmethod
