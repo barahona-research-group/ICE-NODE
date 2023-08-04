@@ -15,7 +15,8 @@ from ..utils import model_params_scaler
 from ..ehr import (Inpatients, Inpatient, InpatientAdmission,
                    InpatientObservables, InpatientStaticInfo,
                    AdmissionPrediction, InpatientsPredictions,
-                   MIMIC4ICUDatasetScheme, AggregateRepresentation)
+                   MIMIC4ICUDatasetScheme, AggregateRepresentation,
+                   InpatientInput)
 
 from .base_models import (NeuralODE, ObsStateUpdate)
 from ..utils import translate_path
@@ -23,7 +24,7 @@ from ..utils import translate_path
 
 class EmbeddedAdmission(eqx.Module):
     state_dx_e0: jnp.ndarray
-    int_e: List[jnp.ndarray]
+    int_e: jnp.ndarray
 
 
 class InICENODEDimensions(eqx.Module):
@@ -88,16 +89,20 @@ class InpatientEmbedding(eqx.Module):
                                     key=int_emb_key)
 
     @eqx.filter_jit
-    def embed_segment(self, inp: jnp.ndarray, proc: jnp.ndarray,
-                      demo: jnp.ndarray) -> jnp.ndarray:
+    def _embed_demo(self, demo: jnp.ndarray) -> jnp.ndarray:
+        """Embeds the demographics into a fixed vector."""
+        return self.f_dem_emb(demo)
+
+    @eqx.filter_jit
+    def _embed_segments(self, inp: InpatientInput, proc: InpatientInput,
+                        demo_e: jnp.ndarray) -> jnp.ndarray:
         """
         Embeds a single segment of the intervention (procedures and inputs) \
         and demographics into a fixed vector.
         """
-        inp_emb = self.f_inp_emb(inp)
-        proc_emb = self.f_proc_emb(proc)
-        demo_emb = self.f_dem_emb(demo)
-        return self.f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_emb]))
+        inp_emb = jax.filter_vmap(self.f_inp_emb)(inp)
+        proc_emb = jax.filter_vmap(self.f_proc_emb)(proc)
+        return self.f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_e]))
 
     @eqx.filter_jit
     def embed_dx(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -110,11 +115,12 @@ class InpatientEmbedding(eqx.Module):
         dx_emb = self.embed_dx(admission.dx_codes_history.vec)
 
         demo = static_info.demographic_vector(admission.admission_dates[0])
+        demo_e = self._embed_demo(demo)
+
         int_ = admission.interventions.segment_input(self.f_inp_agg)
-        int_e = [
-            self.embed_segment(inp, proc, demo)
-            for inp, proc in zip(int_.segmented_input, int_.segmented_proc)
-        ]
+        int_e = eqx.filter_vmap(
+            lambda inp, proc: self._embed_segments(inp, proc, demo_e))(
+                int_.segmented_input, int_.segmented_proc)
         return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
 
     def __call__(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
@@ -235,16 +241,18 @@ class InICENODE(eqx.Module):
         return AdmissionPrediction(pred_dx, pred_obs_l)
 
     def batch_predict(self, inpatients: Inpatients, subjects_batch: List[str]):
-        total_int_hours = inpatients.intervals_sum(subjects_batch).item()
+        total_int_days = inpatients.interval_days(subjects_batch)
 
         inpatients_emb = {
             i: self.f_emb(inpatients.subjects[i])
-            for i in tqdm(subjects_batch, desc="Embedding")
+            for i in tqdm(subjects_batch, desc="Embedding", unit='subject')
         }
 
         r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
         bar_format = '{l_bar}{bar}' + r_bar
-        with tqdm(total=total_int_hours, bar_format=bar_format) as pbar:
+        with tqdm(total=total_int_days,
+                  bar_format=bar_format,
+                  unit='odeint-days') as pbar:
             results = InpatientsPredictions()
             for i, subject_id in enumerate(subjects_batch):
                 inpatient = inpatients.subjects[subject_id]
@@ -254,7 +262,7 @@ class InICENODE(eqx.Module):
                     results.add(subject_id=subject_id,
                                 admission=adm,
                                 prediction=self(adm, adm_e))
-                    pbar.update(adm.interventions.interval.item())
+                    pbar.update(adm.interval_days)
                     pbar.set_description(
                         f"Subject {i+1}/{len(subjects_batch)}")
             return results

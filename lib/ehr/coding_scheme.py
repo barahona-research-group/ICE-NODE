@@ -9,7 +9,7 @@ import re
 import os
 import gzip
 import xml.etree.ElementTree as ET
-from absl import logging
+import logging
 
 import numpy as np
 import pandas as pd
@@ -116,8 +116,10 @@ class _CodeMapper(defaultdict):
                     'n': len(uncovered),
                     'p': len(uncovered) / len(self._s_scheme.index),
                     'codes': sorted(uncovered),
-                    'desc': {c: self._s_scheme.desc[c]
-                             for c in uncovered}
+                    'desc': {
+                        c: self._s_scheme.desc[c]
+                        for c in uncovered
+                    }
                 }, json_fname)
 
     def report_discrepancy(self):
@@ -282,6 +284,7 @@ class _CodeMapper(defaultdict):
 
 
 class _IdentityCodeMapper(_CodeMapper):
+
     def __init__(self, scheme, *args):
         super().__init__(s_scheme=scheme,
                          t_scheme=scheme,
@@ -294,6 +297,7 @@ class _IdentityCodeMapper(_CodeMapper):
 
 
 class _NullCodeMapper(_CodeMapper):
+
     def __init__(self, *args):
         super().__init__(s_scheme=NullScheme(),
                          t_scheme=NullScheme(),
@@ -311,6 +315,7 @@ class _NullCodeMapper(_CodeMapper):
 
 
 class AbstractScheme:
+
     def __init__(self, codes, index, desc, name):
         logging.debug(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
@@ -319,7 +324,6 @@ class AbstractScheme:
         self._name = name
         self._index2code = {idx: code for code, idx in index.items()}
         self._index2desc = {index[code]: desc for code, desc in desc.items()}
-
 
         for collection in [codes, index, desc]:
             assert all(
@@ -380,12 +384,14 @@ class AbstractScheme:
         return _CodeMapper.get_mapper(self, target_scheme)
 
 
-class NullScheme(AbstractScheme, Singleton):
+class NullScheme(Singleton, AbstractScheme):
+
     def __init__(self):
         super().__init__([], {}, {}, 'none')
 
 
 class HierarchicalScheme(AbstractScheme):
+
     def __init__(self,
                  dag_codes=None,
                  dag_index=None,
@@ -590,6 +596,7 @@ class HierarchicalScheme(AbstractScheme):
 
 
 class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
+
     @staticmethod
     @abstractmethod
     def add_dots(code):
@@ -714,7 +721,7 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
             #     mapping[code] = represent
 
 
-class DxICD10(ICDCommons, Singleton):
+class DxICD10(Singleton, ICDCommons):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
         - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
@@ -722,6 +729,7 @@ class DxICD10(ICDCommons, Singleton):
         - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
+
     @staticmethod
     def add_dots(code):
         if '.' in code:
@@ -801,7 +809,8 @@ class DxICD10(ICDCommons, Singleton):
                          name='dx_icd10')
 
 
-class PrICD10(ICDCommons, Singleton):
+class PrICD10(Singleton, ICDCommons):
+
     @staticmethod
     def add_dots(code):
         # No decimal point in ICD10-PCS
@@ -867,7 +876,7 @@ class PrICD10(ICDCommons, Singleton):
                          name='pr_icd10')
 
 
-class DxICD9(ICDCommons, Singleton):
+class DxICD9(Singleton, ICDCommons):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
     _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
     _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
@@ -982,7 +991,8 @@ class DxICD9(ICDCommons, Singleton):
                          name='dx_icd9')
 
 
-class PrICD9(ICDCommons, Singleton):
+class PrICD9(Singleton, ICDCommons):
+
     @staticmethod
     def add_dots(code):
         if '.' in code:
@@ -1121,7 +1131,7 @@ class CCSCommons(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
-class DxCCS(CCSCommons, Singleton):
+class DxCCS(Singleton, CCSCommons):
     _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
     _N_LEVELS = 4
 
@@ -1139,7 +1149,7 @@ class DxCCS(CCSCommons, Singleton):
                          name='dx_ccs')
 
 
-class PrCCS(CCSCommons, Singleton):
+class PrCCS(Singleton, CCSCommons):
     _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
     _N_LEVELS = 3
 
@@ -1212,7 +1222,7 @@ class FlatCCSCommons(AbstractScheme):
             icd92flatccs[icode].add(ccode)
 
 
-class DxFlatCCS(FlatCCSCommons, Singleton):
+class DxFlatCCS(Singleton, FlatCCSCommons):
 
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
@@ -1225,7 +1235,7 @@ class DxFlatCCS(FlatCCSCommons, Singleton):
                          name='dx_flatccs')
 
 
-class PrFlatCCS(FlatCCSCommons, Singleton):
+class PrFlatCCS(Singleton, FlatCCSCommons):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
     def __init__(self):
@@ -1237,7 +1247,7 @@ class PrFlatCCS(FlatCCSCommons, Singleton):
                          name='pr_flatccs')
 
 
-class DxLTC212FlatCodes(AbstractScheme, Singleton):
+class DxLTC212FlatCodes(Singleton, AbstractScheme):
     _SCHEME_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 
     def __init__(self):
@@ -1290,7 +1300,7 @@ class DxLTC212FlatCodes(AbstractScheme, Singleton):
         return self._system
 
 
-class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
+class DxLTC9809FlatMedcodes(Singleton, AbstractScheme):
     _SCHEME_FILE = 'CPRD_212_LTC_ALL.csv.gz'
 
     def __init__(self):
@@ -1362,13 +1372,13 @@ class EthCPRD(AbstractScheme):
                          name=self.NAME)
 
 
-class EthCPRD16(EthCPRD, Singleton):
+class EthCPRD16(Singleton, EthCPRD):
     NAME = 'eth_cprd_16'
     ETH_CODE_CNAME = 'eth16'
     ETH_DESC_CNAME = 'eth16_desc'
 
 
-class EthCPRD5(EthCPRD, Singleton):
+class EthCPRD5(Singleton, EthCPRD):
     NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'
@@ -1397,12 +1407,12 @@ class MIMIC4Eth(AbstractScheme):
                          name=self.NAME)
 
 
-class MIMIC4Eth32(MIMIC4Eth, Singleton):
+class MIMIC4Eth32(Singleton, MIMIC4Eth):
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'
 
 
-class MIMIC4Eth5(MIMIC4Eth, Singleton):
+class MIMIC4Eth5(Singleton, MIMIC4Eth):
     NAME = 'mimic4_eth5'
     ETH_CNAME = 'eth5'
 
@@ -1415,13 +1425,16 @@ def register_mimic4_eth_mapping(s_scheme: MIMIC4Eth32, t_scheme: MIMIC4Eth5):
         m[eth32] = set(eth_df[t_scheme.ETH_CNAME])
 
 
-class MIMIC4Procedures(AbstractScheme, Singleton):
+class MIMIC4Procedures(Singleton, AbstractScheme):
+
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         df = df[df.group != 'exclude']
-        codes = sorted(set(df.code))
-        desc = dict(zip(codes, df.label))
+        df = df.sort_values(['group', 'label'])
+        codes = df.code.tolist()
+        labels = df.label.tolist()
+        desc = dict(zip(codes, labels))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
@@ -1429,10 +1442,12 @@ class MIMIC4Procedures(AbstractScheme, Singleton):
 
 
 class AbstractGroupedProcedures(AbstractScheme):
-    def __init__(self, groups, aggregation, **init_kwargs):
+
+    def __init__(self, groups, aggregation, aggregation_groups, **init_kwargs):
         super().__init__(**init_kwargs)
         self._groups = groups
         self._aggregation = aggregation
+        self._aggregation_groups = aggregation_groups
 
     @property
     def groups(self):
@@ -1442,54 +1457,64 @@ class AbstractGroupedProcedures(AbstractScheme):
     def aggregation(self):
         return self._aggregation
 
+    @property
+    def aggregation_groups(self):
+        return self._aggregation_groups
 
-class MIMIC4ProcedureGroups(AbstractGroupedProcedures, Singleton):
+
+class MIMIC4ProcedureGroups(Singleton, AbstractGroupedProcedures):
+
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         df = df[df.group != 'exclude']
-        codes = sorted(set(df.group))
+        df = df.sort_values(['group', 'label'])
+        codes = df.group.unique().tolist()
         desc = dict(zip(codes, codes))
 
         groups = {
             group: set(group_df['code'])
             for group, group_df in df.groupby('group')
         }
+        aggregation_groups = {'or': set(codes)}
+
         super().__init__(groups=groups,
-                         aggregation={group: 'or'
-                                      for group in groups},
+                         aggregation=['or'],
+                         aggregation_groups=aggregation_groups,
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
                          name='int_mimic4_grouped_proc')
 
 
-class MIMIC4InputGroups(AbstractGroupedProcedures, Singleton):
+class MIMIC4InputGroups(Singleton, AbstractGroupedProcedures):
     """
     InterventionGroup class encapsulates the similar interventions.
     """
+
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         df = df[df.group_decision != 'E']
-        codes = sorted(set(df.group))
+        df = df.sort_values(by=['group_decision', 'group', 'label'])
+        codes = df.group.unique().tolist()
         desc = dict(zip(codes, codes))
 
-        self._dose_impact = dict()
-        groups = dict()
-        aggregation = dict()
-        for group, group_df in df.groupby('group'):
-            groups[group] = set(group_df['label'])
-            aggregation[group] = group_df['group_decision'].iloc[0]
-            self._dose_impact[group] = group_df['dose_impact'].iloc[0]
+        aggs = df.group_decision.unique().tolist()
 
-            assert group_df['group_decision'].nunique(
-            ) == 1, "Group decision should be unique"
-            assert group_df['dose_impact'].nunique(
-            ) == 1, "Dose impact should be unique"
+        self._dose_impact = dict()
+        aggregation_groups = dict()
+        groups = dict()
+        for agg, agg_df in df.groupby('group_decision'):
+            aggregation_groups[agg] = set(agg_df['group'])
+            for group, group_df in agg_df.groupby('group'):
+                assert group not in groups, "Group should be unique"
+                groups[group] = set(group_df['label'])
+                self._dose_impact[group] = group_df['dose_impact'].iloc[0]
 
         super().__init__(groups=groups,
-                         aggregation=aggregation,
+                         aggregation=aggs,
+                         aggregation_groups=aggregation_groups,
                          codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,
@@ -1500,15 +1525,17 @@ class MIMIC4InputGroups(AbstractGroupedProcedures, Singleton):
         return self._dose_impact
 
 
-class MIMIC4Input(AbstractScheme, Singleton):
+class MIMIC4Input(Singleton, AbstractScheme):
     """
     InterventionGroup class encapsulates the similar interventions.
     """
+
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         df = df[df.group_decision != 'E']
-        codes = df.label.tolist()
+        df = df.sort_values(by=['group_decision', 'group', 'label'])
+        codes = df.label.unique().tolist()
         desc = dict(zip(codes, codes))
 
         super().__init__(codes=codes,
@@ -1517,13 +1544,14 @@ class MIMIC4Input(AbstractScheme, Singleton):
                          name='int_mimic4_input')
 
 
-class MIMIC4Observables(AbstractScheme, Singleton):
+class MIMIC4Observables(Singleton, AbstractScheme):
+
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
         df = pd.read_csv(filepath, dtype=str)
         codes = df.code.tolist()
-        desc = dict(zip(df.code.tolist(), df.label.tolist()))
-        self._groups = dict(zip(df.code.tolist(), df.group.tolist()))
+        desc = dict(zip(codes, df.label.tolist()))
+        self._groups = dict(zip(codes, df.group.tolist()))
         super().__init__(codes=codes,
                          index=dict(zip(codes, range(len(codes)))),
                          desc=desc,

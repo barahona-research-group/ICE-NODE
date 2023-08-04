@@ -109,11 +109,18 @@ class Inpatients(eqx.Module):
             len(o.time) for s in subject_ids
             for a in self.subjects[s].admissions for o in a.observables)
 
-    def intervals_sum(self, subject_ids=None):
+    def interval_days(self, subject_ids=None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
-        return sum(a.interventions.interval.sum() for s in subject_ids
+        return sum(a.interval_days for s in subject_ids
+                   for a in self.subjects[s].admissions)
+
+    def interval_hours(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
+        return sum(a.interval_hours for s in subject_ids
                    for a in self.subjects[s].admissions)
 
     def p_obs(self, subject_ids=None):

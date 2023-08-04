@@ -7,6 +7,7 @@ from .coding_scheme import AbstractScheme
 from .outcome import (OutcomeExtractor, outcome_conf_files)
 from .inpatient_concepts import (InpatientAdmission, Inpatient,
                                  InpatientObservables, InpatientInterventions,
-                                 AggregateRepresentation, InpatientStaticInfo)
+                                 AggregateRepresentation, InpatientStaticInfo,
+                                 InpatientInput)
 from .inpatient_interface import (AdmissionPrediction, InpatientsPredictions,
                                   Inpatients)

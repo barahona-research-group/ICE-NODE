@@ -45,75 +45,127 @@ class InpatientObservables(eqx.Module):
         return len(self.time)
 
 
-class Aggregator(eqx.Module):
-    subset: jnp.array
+class MaskedAggregator(eqx.Module):
+    mask: jnp.array = eqx.static_field()
+
+    def __init__(self,
+                 subsets: List[np.ndarray],
+                 input_size: int,
+                 backend: str = 'jax'):
+        super().__init__()
+        mask = np.zeros((len(subsets), input_size), dtype=bool)
+        for i, s in enumerate(subsets):
+            mask[i, s] = True
+        if backend == 'jax':
+            self.mask = jnp.array(mask)
+        else:
+            self.mask = mask
 
     def __call__(self, x):
         raise NotImplementedError
 
 
-class WeightedSum(Aggregator):
+class MaskedPerceptron(MaskedAggregator):
     linear: eqx.Linear
 
-    def __init__(self, subset: jnp.ndarray, key: "jax.random.PRNGKey"):
-        super().__init__(subset)
-        self.linear = eqx.nn.Linear(subset.shape[0],
-                                    1,
+    def __init__(self,
+                 subsets: jnp.ndarray,
+                 input_size: int,
+                 key: "jax.random.PRNGKey",
+                 backend: str = 'jax'):
+        super().__init__(subsets, input_size, backend)
+        self.linear = eqx.nn.Linear(input_size,
+                                    len(subsets),
                                     use_bias=False,
                                     key=key)
 
+    @property
+    def weight(self):
+        return self.linear.weight
+
     @eqx.filter_jit
     def __call__(self, x):
-        return self.linear(x[self.subset])
+        return (self.weight * self.mask) @ x
 
 
-class Sum(Aggregator):
-
-    def __call__(self, x):
-        return x[self.subset].sum()
-
-
-class OR(Aggregator):
+class MaskedSum(MaskedAggregator):
 
     def __call__(self, x):
-        return x[self.subset].any().astype(bool)
+        return self.mask @ x
+
+
+class MaskedOr(MaskedAggregator):
+
+    def __call__(self, x):
+        if isinstance(x, np.ndarray):
+            return np.any(self.mask & x, axis=1)
+        else:
+            return jnp.any(self.mask & x, axis=1)
 
 
 class AggregateRepresentation(eqx.Module):
-    aggregators: OrderedDict[str, Aggregator]
+    aggregators: List[MaskedAggregator]
+    splits: jnp.ndarray
 
     def __init__(self,
                  source_scheme: AbstractScheme,
                  target_scheme: AbstractGroupedProcedures,
-                 key: "jax.random.PRNGKey" = None):
+                 key: "jax.random.PRNGKey" = None,
+                 backend: str = 'numpy'):
         super().__init__()
-        groups = target_scheme.groups
-        self.aggregators = OrderedDict()
-        for g in sorted(groups.keys(), key=lambda g: target_scheme.index[g]):
-            subset_index = sorted(source_scheme.index[c] for c in groups[g])
-            if target_scheme.aggregation[g] == 'w_sum':
-                self.aggregators[g] = WeightedSum(np.array(subset_index), key)
-                (key, ) = jrandom.split(key, 1)
-            elif target_scheme.aggregation[g] == 'sum':
-                self.aggregators[g] = Sum(np.array(subset_index))
-            elif target_scheme.aggregation[g] == 'or':
-                self.aggregators[g] = OR(np.array(subset_index))
-            else:
-                raise ValueError(
-                    f"Aggregation {target_scheme.aggregation[g]} not supported"
+        self.aggregators = []
+        aggs = target_scheme.aggregation
+        agg_grps = target_scheme.aggregation_groups
+        grps = target_scheme.groups
+        splits = []
+
+        def is_contagious(x):
+            return x.max() - x.min() == len(x) - 1 and len(set(x)) == len(x)
+
+        for agg in aggs:
+            selectors = []
+            agg_offset = len(source_scheme)
+            for grp in agg_grps[agg]:
+                input_codes = grps[grp]
+                input_index = sorted(source_scheme.index[c]
+                                     for c in input_codes)
+                input_index = np.array(input_index, dtype=np.int32)
+                assert is_contagious(input_index), (
+                    f"Selectors must be contiguous, but {input_index} is not. Codes: {input_codes}. Group: {grp}"
                 )
+                agg_offset = min(input_index.min(), agg_offset)
+                selectors.append(input_index)
+            selectors = [s - agg_offset for s in selectors]
+            agg_input_size = sum(len(s) for s in selectors)
+            max_index = max(s.max() for s in selectors)
+            assert max_index == agg_input_size - 1, (
+                f"Selectors must be contiguous, max index is {max_index} but size is {agg_input_size}"
+            )
+            splits.append(agg_input_size)
 
-    def np_agg(self, inpatient_input: np.ndarray):
-        return np.hstack(
-            [agg(inpatient_input) for agg in self.aggregators.values()])
+            if agg == 'w_sum':
+                self.aggregators.append(
+                    MaskedPerceptron(selectors, agg_input_size, key, backend))
+                (key, ) = jrandom.split(key, 1)
+            elif agg == 'sum':
+                self.aggregators.append(
+                    MaskedSum(selectors, agg_input_size, backend))
+            elif agg == 'or':
+                self.aggregators.append(
+                    MaskedOr(selectors, agg_input_size, backend))
+            else:
+                raise ValueError(f"Aggregation {agg} not supported")
+        self.splits = np.cumsum([0] + splits)[1:-1]
 
-    @eqx.filter_jit
-    def jnp_agg(self, inpatient_input: jnp.ndarray):
-        return jnp.hstack(
-            [agg(inpatient_input) for agg in self.aggregators.values()])
+    def __call__(self, inpatient_input: Union[jnp.ndarray, np.ndarray]):
+        if isinstance(inpatient_input, np.ndarray):
+            _np = np
+        else:
+            _np = jnp
 
-
-maximum_padding = 50
+        splitted = _np.hsplit(inpatient_input, self.splits)
+        return _np.hstack(
+            [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
 class InpatientInput(eqx.Module):
@@ -124,7 +176,12 @@ class InpatientInput(eqx.Module):
     size: int
 
     @staticmethod
-    def pad_array(array: np.ndarray):
+    def pad_array(array: np.ndarray, maximum_padding: int = 100):
+        """
+        Pad array to be a multiple of maximum_padding. This is efficient to
+        avoid jit-compiling a different function for each array shape.
+        """
+
         n = len(array)
         n_pad = maximum_padding - (n % maximum_padding)
         if n_pad == maximum_padding:
@@ -168,8 +225,8 @@ class InpatientInterventions(eqx.Module):
     input_: Optional[InpatientInput]
 
     time: jnp.ndarray
-    segmented_input: Optional[List[np.ndarray]]
-    segmented_proc: Optional[List[np.ndarray]]
+    segmented_input: Optional[np.ndarray]
+    segmented_proc: Optional[np.ndarray]
 
     def __init__(self, proc: InpatientInput, input_: InpatientInput,
                  adm_interval: float):
@@ -207,8 +264,26 @@ class InpatientInterventions(eqx.Module):
         """Length of the admission interval"""
         return self.time[-1] - self.time[0]
 
+    @eqx.filter_jit
+    def _jax_segment_proc(self, proc_repr: AggregateRepresentation):
+        return eqx.filter_vmap(lambda t: proc_repr(self.proc(t)))(self.t0)
+
+    def _np_segment_proc(self, proc_repr: AggregateRepresentation):
+        return np.vstack([proc_repr(self.proc(t)) for t in self.t0])
+
+    @eqx.filter_jit
+    def _jax_segment_input(self, input_repr: AggregateRepresentation):
+        return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
+
+    def _np_segment_input(self, input_repr: AggregateRepresentation):
+        return np.vstack([input_repr(self.input_(t)) for t in self.t0])
+
     def segment_proc(self, proc_repr: AggregateRepresentation):
-        proc_segments = [proc_repr.np_agg(self.proc(t)) for t in self.t0]
+        if isinstance(self.proc.index, np.ndarray):
+            proc_segments = self._np_segment_proc(proc_repr)
+        else:
+            proc_segments = self._jax_segment_proc(proc_repr)
+
         update = eqx.tree_at(lambda x: x.segmented_proc,
                              self,
                              proc_segments,
@@ -217,7 +292,11 @@ class InpatientInterventions(eqx.Module):
         return update
 
     def segment_input(self, input_repr: AggregateRepresentation):
-        inp_segments = [input_repr.jnp_agg(self.input_(t)) for t in self.t0]
+        if isinstance(self.input_, np.ndarray):
+            inp_segments = self._np_segment_input(input_repr)
+        else:
+            inp_segments = self._jax_segment_input(input_repr)
+
         update = eqx.tree_at(lambda x: x.segmented_input,
                              self,
                              inp_segments,
@@ -254,6 +333,15 @@ class InpatientAdmission(AbstractAdmission, eqx.Module):
     outcome: CodesVector
     observables: List[InpatientObservables]
     interventions: InpatientInterventions
+
+    @property
+    def interval_hours(self):
+        return (self.admission_dates[1] -
+                self.admission_dates[0]).total_seconds() / 3600
+
+    @property
+    def interval_days(self):
+        return self.interval_hours / 24
 
 
 @jax.jit
