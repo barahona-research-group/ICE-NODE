@@ -89,13 +89,11 @@ class MaskedPerceptron(MaskedAggregator):
 
 
 class MaskedSum(MaskedAggregator):
-
     def __call__(self, x):
         return self.mask @ x
 
 
 class MaskedOr(MaskedAggregator):
-
     def __call__(self, x):
         if isinstance(x, np.ndarray):
             return np.any(self.mask & x, axis=1)
@@ -155,7 +153,12 @@ class AggregateRepresentation(eqx.Module):
                     MaskedOr(selectors, agg_input_size, backend))
             else:
                 raise ValueError(f"Aggregation {agg} not supported")
-        self.splits = np.cumsum([0] + splits)[1:-1]
+        splits = np.cumsum([0] + splits)[1:-1]
+
+        if backend == 'jax':
+            self.splits = jnp.array(splits)
+        else:
+            self.splits = splits
 
     def __call__(self, inpatient_input: Union[jnp.ndarray, np.ndarray]):
         if isinstance(inpatient_input, np.ndarray):
@@ -203,15 +206,16 @@ class InpatientInput(eqx.Module):
 
     def __call__(self, t):
         mask = (self.starttime <= t) & (t < self.endtime)
-        index = self.index[mask]
-        rate = self.rate[mask]
-
-        if isinstance(rate, np.ndarray):
+        if isinstance(self.index, np.ndarray):
+            index = self.index[mask]
+            rate = self.rate[mask]
             adm_input = np.zeros(self.size, dtype=rate.dtype)
             adm_input[index] += rate
             return adm_input
         else:
-            adm_input = jnp.zeros(self.size)
+            index = jnp.where(mask, self.index, 0)
+            rate = jnp.where(mask, self.rate, 0.0)
+            adm_input = jnp.zeros(self.size, dtype=rate.dtype)
             return adm_input.at[index].add(rate)
 
     @classmethod
@@ -273,6 +277,7 @@ class InpatientInterventions(eqx.Module):
 
     @eqx.filter_jit
     def _jax_segment_input(self, input_repr: AggregateRepresentation):
+        jax.debug.print("inp: {}", self.input_(self.t0[0]))
         return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
 
     def _np_segment_input(self, input_repr: AggregateRepresentation):

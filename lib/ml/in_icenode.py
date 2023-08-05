@@ -64,7 +64,8 @@ class InpatientEmbedding(eqx.Module):
                                    key=dx_emb_key)
         self.f_inp_agg = AggregateRepresentation(scheme.int_input_source,
                                                  scheme.int_input_target,
-                                                 inp_agg_key)
+                                                 inp_agg_key,
+                                                 'jax')
         self.f_inp_emb = eqx.nn.MLP(len(scheme.int_input_target),
                                     dims.input_e,
                                     dims.input_e * 5,
