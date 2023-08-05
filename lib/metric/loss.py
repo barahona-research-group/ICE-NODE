@@ -42,8 +42,8 @@ def softmax_logits_bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray):
       - The predictions `logits`, before applying the Softmax function,
       where each element is a float in :math:`(-\infty, \infty)`.
     """
-    terms = y * jax.nn.log_softmax(logits, axis=1) + (
-        1 - y) * jnp.log(1 - jax.nn.softmax(logits, axis=1))
+    terms = y * jax.nn.log_softmax(
+        logits, axis=1) + (1 - y) * jnp.log(1 - jax.nn.softmax(logits, axis=1))
     return -jnp.nanmean(terms, where=mask)
 
 
@@ -59,7 +59,7 @@ def weighted_bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray,
 def softmax_logits_weighted_bce(y: jnp.ndarray, logits: jnp.ndarray,
                                 mask: jnp.ndarray):
     """Weighted version of ``softmax_logits_bce``."""
-    terms = (y * jax.nn.log_softmax(logits, axis = 1) +
+    terms = (y * jax.nn.log_softmax(logits, axis=1) +
              (1 - y) * jnp.log(1 - jax.nn.softmax(logits, axis=1)))
     weights = y.shape[0] / (y.sum(axis=0) + 1)
     return -jnp.nanmean(weights * terms, where=mask)
@@ -128,6 +128,12 @@ def softmax_logits_balanced_focal_bce(y: jnp.ndarray,
     terms = y * (w1 / e1) * jax.nn.log_softmax(logits) + (1 - y) * (
         w0 / e0) * jnp.log(1 - p)
     return -jnp.nanmean(terms, where=mask)
+
+
+@jax.jit
+def masked_l2(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray):
+    """Masked L2 loss."""
+    return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask)
 
 
 @jax.jit

@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import date
 from collections import namedtuple, OrderedDict, defaultdict
 from dataclasses import dataclass
+from functools import partial
 from typing import (List, Tuple, Set, Callable, Optional, Union, Dict,
                     ClassVar, Union)
 import numpy as np
@@ -89,21 +90,23 @@ class MaskedPerceptron(MaskedAggregator):
 
 
 class MaskedSum(MaskedAggregator):
+
     def __call__(self, x):
         return self.mask @ x
 
 
 class MaskedOr(MaskedAggregator):
+
     def __call__(self, x):
         if isinstance(x, np.ndarray):
-            return np.any(self.mask & x, axis=1)
+            return np.any(self.mask & (x != 0), axis=1)
         else:
-            return jnp.any(self.mask & x, axis=1)
+            return jnp.any(self.mask & (x != 0), axis=1)
 
 
 class AggregateRepresentation(eqx.Module):
     aggregators: List[MaskedAggregator]
-    splits: jnp.ndarray
+    splits: Tuple[int] = eqx.static_field()
 
     def __init__(self,
                  source_scheme: AbstractScheme,
@@ -154,20 +157,16 @@ class AggregateRepresentation(eqx.Module):
             else:
                 raise ValueError(f"Aggregation {agg} not supported")
         splits = np.cumsum([0] + splits)[1:-1]
-
-        if backend == 'jax':
-            self.splits = jnp.array(splits)
-        else:
-            self.splits = splits
+        self.splits = tuple(splits.tolist())
 
     def __call__(self, inpatient_input: Union[jnp.ndarray, np.ndarray]):
         if isinstance(inpatient_input, np.ndarray):
-            _np = np
-        else:
-            _np = jnp
+            splitted = np.hsplit(inpatient_input, self.splits)
+            return np.hstack(
+                [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
-        splitted = _np.hsplit(inpatient_input, self.splits)
-        return _np.hstack(
+        splitted = jnp.hsplit(inpatient_input, self.splits)
+        return jnp.hstack(
             [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
@@ -277,7 +276,6 @@ class InpatientInterventions(eqx.Module):
 
     @eqx.filter_jit
     def _jax_segment_input(self, input_repr: AggregateRepresentation):
-        jax.debug.print("inp: {}", self.input_(self.t0[0]))
         return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
 
     def _np_segment_input(self, input_repr: AggregateRepresentation):
@@ -301,7 +299,6 @@ class InpatientInterventions(eqx.Module):
             inp_segments = self._np_segment_input(input_repr)
         else:
             inp_segments = self._jax_segment_input(input_repr)
-
         update = eqx.tree_at(lambda x: x.segmented_input,
                              self,
                              inp_segments,

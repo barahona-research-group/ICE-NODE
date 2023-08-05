@@ -60,7 +60,7 @@ class InpatientsPredictions(dict):
         obs_pred = jnp.vstack(obs_pred)
         obs_mask = jnp.vstack(obs_mask)
 
-        return outcome_loss(outcome_true, outcome_pred) + obs_loss(
+        return outcome_loss(outcome_true, outcome_pred), obs_loss(
             obs_true, obs_pred, obs_mask)
 
     def prediction_loss(self, outcome_loss, obs_loss):

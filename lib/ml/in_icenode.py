@@ -95,14 +95,15 @@ class InpatientEmbedding(eqx.Module):
         return self.f_dem_emb(demo)
 
     @eqx.filter_jit
-    def _embed_segments(self, inp: InpatientInput, proc: InpatientInput,
+    def _embed_segment(self, inp: InpatientInput, proc: InpatientInput,
                         demo_e: jnp.ndarray) -> jnp.ndarray:
         """
-        Embeds a single segment of the intervention (procedures and inputs) \
+        Embeds a  of the intervention (procedures and inputs) \
         and demographics into a fixed vector.
         """
-        inp_emb = jax.filter_vmap(self.f_inp_emb)(inp)
-        proc_emb = jax.filter_vmap(self.f_proc_emb)(proc)
+
+        inp_emb = self.f_inp_emb(inp)
+        proc_emb = self.f_proc_emb(proc)
         return self.f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_e]))
 
     @eqx.filter_jit
@@ -119,9 +120,9 @@ class InpatientEmbedding(eqx.Module):
         demo_e = self._embed_demo(demo)
 
         int_ = admission.interventions.segment_input(self.f_inp_agg)
-        int_e = eqx.filter_vmap(
-            lambda inp, proc: self._embed_segments(inp, proc, demo_e))(
-                int_.segmented_input, int_.segmented_proc)
+        int_e = jnp.vstack([self._embed_segment(inp, proc, demo_e)
+                            for inp, proc in 
+                            zip(int_.segmented_input, int_.segmented_proc)])
         return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
 
     def __call__(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
@@ -205,11 +206,6 @@ class InICENODE(eqx.Module):
         preds = []
         t = t0
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
-            if (t_obs - t < 0).any():
-                jax.debug.print("obs.time: {}, {}", obs.time)
-                jax.debug.print("t0: {}", t0)
-                jax.debug.print("t1: {}", t1)
-
             state = self.f_dyn(t_obs - t, state, args=dict(control=int_e))[-1]
             _, obs_e, _ = self.split_state(state)
             pred_obs = self.f_obs_dec(obs_e)

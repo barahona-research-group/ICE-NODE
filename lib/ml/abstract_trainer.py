@@ -13,7 +13,9 @@ import jax.tree_util as jtu
 import equinox as eqx
 import optuna
 
-from ..ehr import Subject_JAX, BatchPredictedRisks
+from ..ehr import (Subject_JAX, BatchPredictedRisks, Inpatients,
+                   InpatientsPredictions)
+from .in_icenode import InICENode
 from .. import metric as M
 from ..utils import params_size, tree_hasnan
 from .abstract_model import AbstractModel
@@ -180,6 +182,7 @@ class Trainer(eqx.Module):
         return jopt.unpack_optimizer_state(optstate)
 
     def update_model(self, model, new_params):
+
         def _replace(new, old):
             if new is None:
                 return old
@@ -316,6 +319,7 @@ class Trainer(eqx.Module):
 
 
 class Trainer2LR(Trainer):
+
     def init_from_loaded_optstate(self, optstate, model, iters):
         optstate = (jopt.pack_optimizer_state(optstate[0]),
                     jopt.pack_optimizer_state(optstate[1]))
@@ -383,6 +387,7 @@ def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
 
 class LassoNetTrainer(Trainer):
+
     def loss(self,
              model: AbstractModel,
              subject_interface: Subject_JAX,
@@ -450,5 +455,48 @@ class ODETrainer(Trainer):
         }
 
 
+class InTrainer(Trainer):
+
+    def dx_loss(self):
+        return M.balanced_focal_bce
+
+    def obs_loss(self):
+        return M.masked_l2
+
+    def reg_loss(self,
+                 model: InICENode,
+                 inpatients: Inpatients,
+                 batch: List[int],
+                 args: Dict[str, Any] = dict()):
+        return self.unreg_loss(model, inpatients, batch, args)
+
+    def unreg_loss(self,
+                   model: InICENode,
+                   inpatients: Inpatients,
+                   batch: List[int],
+                   args: Dict[str, float] = dict()):
+        preds = model.batch_predict(inpatients, batch)
+        dx_loss, obs_loss = preds.prediction_loss(self.dx_loss(),
+                                                  self.obs_loss())
+        loss = dx_loss + obs_loss
+        return loss, ({
+            'dx_loss': dx_loss,
+            'obs_loss': obs_loss,
+            'loss': loss
+        }, preds)
+
+    @classmethod
+    def sample_reg_hyperparams(cls, trial: optuna.Trial):
+        return {
+            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
+            'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
+            'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
+        }
+
+
 class ODETrainer2LR(ODETrainer, Trainer2LR):
+    pass
+
+
+class InODETrainer2LR(InTrainer, Trainer2LR):
     pass
