@@ -10,6 +10,24 @@ import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_leaves
 import equinox as eqx
 
+from tqdm import tqdm
+from tqdm.notebook import tqdm as tqdm_notebook
+
+
+def _tqdm_backend():
+    """Return the appropriate constructor of tqdm based on the executor
+    interpreter, i.e. if it is running on a notebook or not."""
+    try:
+        ipy_str = str(type(get_ipython()))
+        if 'zmqshell' in ipy_str:
+            return tqdm_notebook
+    except NameError:
+        pass
+    return tqdm
+
+
+tqdm_constructor = _tqdm_backend()
+
 
 def params_size(m):
     """Return the parameters count in a PyTree object."""
@@ -65,7 +83,6 @@ def append_params_to_zip(model, params_name, zipfile_fname):
                          mode="a") as archive:
         with archive.open(params_name, "w") as zip_member:
             eqx.tree_serialise_leaves(zip_member, model)
-
 
 
 def zip_members(zipfile_fname):

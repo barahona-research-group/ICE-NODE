@@ -191,7 +191,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
             unrecognised = codeset - scheme_codes
             if len(unrecognised) > 0:
-                logging.warning(f"""
+                logging.debug(f"""
                     Unrecognised {type(scheme)} codes ({len(unrecognised)})
                     to be removed: {sorted(unrecognised)}""")
 
@@ -319,7 +319,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
         scheme_codes = set(scheme.codes)
         unrecognised = codeset - scheme_codes
         if len(unrecognised) > 0:
-            logging.warning(f"""
+            logging.debug(f"""
                 Unrecognised {type(scheme)} codes ({len(unrecognised)})
                 to be removed: {sorted(unrecognised)}""")
 
@@ -769,7 +769,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                       splits: List[float],
                       subject_ids: Optional[List[int]] = None,
                       random_seed: int = 42,
-                      balanced: str = 'subjects'):
+                      balanced: str = 'subjects',
+                      ignore_first_admission: bool = False):
         if subject_ids is None:
             subject_ids = self.subject_ids
         subject_ids = sorted(subject_ids)
@@ -780,12 +781,15 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         c_subject_id = self.colname['adm']['subject_id']
         c_adm_interval = self.colname['adm']['adm_interval']
         adm_df = self.df['adm']
+        adm_df = adm_df[adm_df[c_subject_id].isin(subject_ids)]
 
         if balanced == 'subjects':
             probs = (np.ones(len(subject_ids)) / len(subject_ids)).cumsum()
 
         elif balanced == 'admissions':
             n_adms = adm_df.groupby(c_subject_id).size()
+            if ignore_first_admission:
+                n_adms = n_adms - 1
             p_adms = n_adms.loc[subject_ids] / n_adms.sum()
             probs = p_adms.values.cumsum()
 
@@ -910,14 +914,15 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         adf = self.df['adm']
         adm_dates = dict(
             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
+        adm_interval = dict(zip(adf.index, adf[c_adm_interval]))
         proc_repr = AggregateRepresentation(self.scheme.int_proc_source,
                                             self.scheme.int_proc_target)
 
         def gen_admission(i):
-            adm_interval = adf.loc[i, c_adm_interval].item()
-            interventions = InpatientInterventions(proc=procedures[i],
-                                                   input_=inputs[i],
-                                                   adm_interval=adm_interval)
+            interventions = InpatientInterventions(
+                proc=procedures[i],
+                input_=inputs[i],
+                adm_interval=adm_interval[i])
             interventions = interventions.segment_proc(proc_repr)
             obs = observables[i].segment(interventions.t_sep)
             return InpatientAdmission(admission_id=i,

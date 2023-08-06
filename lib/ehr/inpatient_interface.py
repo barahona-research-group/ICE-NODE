@@ -1,12 +1,15 @@
 from __future__ import annotations
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Callable
+from functools import lru_cache
 import random
 import logging
 import numpy as np
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
+from ..utils import tqdm_constructor
 from .dataset import MIMIC4ICUDataset
 from .inpatient_concepts import (InpatientAdmission, Inpatient,
                                  InpatientObservables, InpatientInterventions,
@@ -75,12 +78,14 @@ class InpatientsPredictions(dict):
 
 class Inpatients(eqx.Module):
     dataset: MIMIC4ICUDataset
-    subjects: Dict[int, Inpatient]
+    subjects: Optional[Dict[int, Inpatient]]
 
-    def __init__(self, dataset: MIMIC4ICUDataset):
+    def __init__(self,
+                 dataset: MIMIC4ICUDataset,
+                 subjects: Optional[Dict[int, Inpatient]] = None):
         super().__init__()
         self.dataset = dataset
-        self.subjects = {}
+        self.subjects = subjects
 
     def random_splits(self,
                       splits: List[float],
@@ -90,27 +95,74 @@ class Inpatients(eqx.Module):
         return self.dataset.random_splits(splits, subject_ids, random_seed,
                                           balanced)
 
-    def load_subjects(self, subject_ids, num_workers=1):
+    def __len__(self):
+        return len(self.subjects)
+
+    def load_subjects(self,
+                      subject_ids: Optional[List[int]] = None,
+                      num_workers: int = 1):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
         subjects = self.dataset.to_subjects(subject_ids, num_workers)
         subjects = {s.subject_id: s for s in subjects}
+        return Inpatients(dataset=self.dataset, subjects=subjects)
 
-        return eqx.tree_at(lambda m: m.subjects, self, subjects)
-
-    def to_jax_arrays(self, subject_ids: Optional[List[int]] = None):
-        if subject_ids is None:
-            subject_ids = self.subjects.keys()
-
-        subjects = {i: self.subjects[i] for i in subject_ids}
-        arrs, others = eqx.partition(subjects, eqx.is_array)
+    def _subject_to_device(self, subject_id: int):
+        s = self.subjects[subject_id]
+        arrs, others = eqx.partition(s, eqx.is_array)
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
-        subjects = eqx.combine(arrs, others)
-        return eqx.tree_at(lambda o: o.subjects, self, subjects)
+        return eqx.combine(arrs, others)
 
-    def n_admissions(self, subject_ids=None):
+    def device_batch(self, subject_ids: Optional[List[int]] = None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
+
+        subjects = {
+            i: jax.block_until_ready(self._subject_to_device(i))
+            for i in tqdm_constructor(
+                subject_ids, desc="Loading to device", unit='subject')
+        }
+        return Inpatients(dataset=self.dataset, subjects=subjects)
+
+    def batch_gen(self,
+                  subject_ids,
+                  batch_n_admissions: int,
+                  ignore_first_admission: bool = False):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
+        n_splits = self.n_admissions(
+            subject_ids, ignore_first_admission) // batch_n_admissions
+        if n_splits == 0:
+            n_splits = 1
+        p_splits = np.linspace(0, 1, n_splits + 1)[1:-1]
+
+        subject_ids = np.array(subject_ids)
+
+        c_subject_id = self.dataset.colname['adm']['subject_id']
+        adm_df = self.dataset.df['adm']
+        adm_df = adm_df[adm_df[c_subject_id].isin(subject_ids)]
+
+        n_adms = adm_df.groupby(c_subject_id).size()
+        if ignore_first_admission:
+            n_adms = n_adms - 1
+        w_adms = n_adms.loc[subject_ids] / n_adms.sum()
+        weights = w_adms.values.cumsum()
+        splits = np.searchsorted(weights, p_splits)
+        splits = [a.tolist() for a in np.split(subject_ids, splits)]
+        splits = [s for s in splits if len(s) > 0]
+
+        for split in splits:
+            yield self.device_batch(split)
+
+    def n_admissions(self,
+                     subject_ids=None,
+                     ignore_first_admission: bool = False):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+        if ignore_first_admission:
+            return sum(
+                len(self.subjects[s].admissions) - 1 for s in subject_ids)
         return sum(len(self.subjects[s].admissions) for s in subject_ids)
 
     def n_segments(self, subject_ids=None):

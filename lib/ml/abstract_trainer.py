@@ -15,9 +15,9 @@ import optuna
 
 from ..ehr import (Subject_JAX, BatchPredictedRisks, Inpatients,
                    InpatientsPredictions)
-from .in_icenode import InICENode
+from .in_icenode import InICENODE
 from .. import metric as M
-from ..utils import params_size, tree_hasnan
+from ..utils import params_size, tree_hasnan, tqdm_constructor
 from .abstract_model import AbstractModel
 from .reporters import AbstractReporter
 
@@ -28,6 +28,14 @@ class_weighting_dict = {
     'weighted': M.softmax_logits_weighted_bce,
     'focal': M.softmax_logits_balanced_focal_bce
 }
+
+
+class Patients(Inpatients):
+    pass
+
+
+class Predictions(InpatientsPredictions):
+    pass
 
 
 class MetricsHistory:
@@ -82,6 +90,7 @@ class Trainer(eqx.Module):
     reg_hyperparams: Dict[str, float]
     epochs: int
     batch_size: int
+    counts_ignore_first_admission: bool
     lr: Union[float, Tuple[float, float]]
     decay_rate: Optional[Union[float, Tuple[float, float]]]
     class_weighting: str
@@ -92,6 +101,7 @@ class Trainer(eqx.Module):
                  epochs,
                  batch_size,
                  lr,
+                 counts_ignore_first_admission=False,
                  decay_rate=None,
                  class_weighting='focal',
                  **kwargs):
@@ -99,6 +109,7 @@ class Trainer(eqx.Module):
         self.reg_hyperparams = reg_hyperparams
         self.epochs = epochs
         self.batch_size = batch_size
+        self.counts_ignore_first_admission = counts_ignore_first_admission
         self.lr = lr
         self.decay_rate = decay_rate
         self.class_weighting = class_weighting
@@ -114,23 +125,14 @@ class Trainer(eqx.Module):
     def dx_loss(self):
         return class_weighting_dict[self.class_weighting]
 
-    def unreg_loss(self,
-                   model: AbstractModel,
-                   subject_interface: Subject_JAX,
-                   batch: List[int],
-                   args: Dict[str, Any] = dict()):
-        res = model(subject_interface, batch, args)
+    def unreg_loss(self, model: AbstractModel, patients: Patients):
+        predictions = model.batch_predict(patients, leave_pbar=False)
+        l = predictions.prediction_loss(self.dx_loss())
+        return l, ({'dx_loss': l}, predictions)
 
-        l = res['predictions'].prediction_loss(self.dx_loss())
-        return l, ({'dx_loss': l}, res['predictions'])
-
-    def reg_loss(self,
-                 model: AbstractModel,
-                 subject_interface: Subject_JAX,
-                 batch: List[int],
-                 args: Dict[str, Any] = dict()):
-        res = model(subject_interface, batch, args)
-        l = res['predictions'].prediction_loss(self.dx_loss())
+    def reg_loss(self, model: AbstractModel, patients: Patients):
+        predictions = model.batch_predict(patients, leave_pbar=False)
+        l = predictions.prediction_loss(self.dx_loss())
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
@@ -143,27 +145,17 @@ class Trainer(eqx.Module):
             'loss': loss,
             'l1_loss': l1_loss,
             'l2_loss': l2_loss,
-        }, res['predictions'])
+        }, predictions)
 
-    def loss(self,
-             model: AbstractModel,
-             subject_interface: Subject_JAX,
-             batch: List[int],
-             args: Dict[str, Any] = dict()):
+    def loss(self, model: AbstractModel, patients: Patients):
         if self.reg_hyperparams is None:
-            return self.unreg_loss(model, subject_interface, batch, args)
+            return self.unreg_loss(model, patients)
         else:
-            return self.reg_loss(model, subject_interface, batch, args)
+            return self.reg_loss(model, patients)
 
-    def eval(self,
-             model: AbstractModel,
-             subject_interface: Subject_JAX,
-             batch: List[int],
-             args=dict()) -> Dict[str, float]:
-        args['eval_only'] = True
-        _, (loss, preds) = self.unreg_loss(model, subject_interface, batch,
-                                           args)
-
+    def eval(self, model: AbstractModel,
+             patients: Patients) -> Dict[str, float]:
+        _, (loss, preds) = self.unreg_loss(model, patients)
         return loss, preds
 
     def init_opt(self, model, iters):
@@ -198,10 +190,10 @@ class Trainer(eqx.Module):
         return model
 
     def step_optimizer(self, step: int, opt_state: Any, model: AbstractModel,
-                       subject_interface: Subject_JAX, batch: Tuple[int]):
+                       patients: Patients):
         (opt_update, get_params), opt_state = opt_state
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch)
+        grads, aux = grad_f(model, patients)
         opt_state = opt_update(step, grads, opt_state)
         new_model = self.update_model(model, get_params(opt_state))
         new_model = self._post_update_params(new_model)
@@ -212,8 +204,7 @@ class Trainer(eqx.Module):
     def sample_opt(cls, trial: optuna.Trial):
         return {
             'lr': trial.suggest_categorical('lr', [2e-3, 5e-3]),
-            'opt':
-            'adam'  #trial.suggest_categorical('opt', ['adam', 'sgd', 'fromage'])
+            'opt': 'adam'
         }
 
     def continue_training(self, model, reporters: List[AbstractReporter],
@@ -231,7 +222,7 @@ class Trainer(eqx.Module):
 
     def __call__(self,
                  model: AbstractModel,
-                 subject_interface: Subject_JAX,
+                 patients: Patients,
                  splits: Tuple[List[int], ...],
                  history: MetricsHistory,
                  n_evals=100,
@@ -240,12 +231,15 @@ class Trainer(eqx.Module):
                  trial_terminate_time=datetime.max,
                  reporters: List[AbstractReporter] = []):
         train_ids, valid_ids, test_ids = splits
-        batch_size = min(self.batch_size, len(train_ids))
-        iters = round(self.epochs * len(train_ids) / batch_size)
+        n_train_admissions = patients.n_admissions(
+            train_ids,
+            ignore_first_admission=self.counts_ignore_first_admission)
+
+        batch_size = min(self.batch_size, n_train_admissions)
+        iters = round(self.epochs * n_train_admissions / batch_size)
         opt_state = self.init_opt(model, iters=iters)
         key = jrandom.PRNGKey(prng_seed)
 
-        train_index = jnp.arange(len(train_ids))
         for r in reporters:
             r.report_config()
             r.report_params_size(params_size(model))
@@ -258,62 +252,69 @@ class Trainer(eqx.Module):
             cont_idx, (cont_m, cont_opt) = self.continue_training(model,
                                                                   reporters,
                                                                   iters=iters)
-
-        for i in tqdm(range(iters)):
+        val_batch = patients.device_batch(valid_ids)
+        step = 0
+        for epoch_i in tqdm_constructor(range(self.epochs),
+                                        leave=True,
+                                        unit='Epoch'):
             (key, ) = jrandom.split(key, 1)
+            train_ids = jrandom.permutation(key, jnp.array(train_ids))
+            batch_gen = patients.batch_gen(
+                train_ids,
+                batch_n_admissions=batch_size,
+                ignore_first_admission=self.counts_ignore_first_admission)
+            n_batches = n_train_admissions // batch_size
+            for iter_i, batch in tqdm_constructor(enumerate(batch_gen),
+                                                  leave=False,
+                                                  total=n_batches,
+                                                  unit='Batch'):
+                if datetime.now() > trial_terminate_time:
+                    [r.report_timeout() for r in reporters]
+                    break
+                step += 1
+                if continue_training:
+                    j = eval_steps[cont_idx]
+                    if step <= j:
+                        continue
+                    elif step - 1 == j:
+                        model = cont_m
+                        opt_state = cont_opt
 
-            if datetime.now() > trial_terminate_time:
-                [r.report_timeout() for r in reporters]
-                break
+                try:
+                    opt_state, model, _ = self.step_optimizer(
+                        step, opt_state, model, batch)
 
-            if continue_training:
-                j = eval_steps[cont_idx]
-                if i <= j:
+                except RuntimeError as e:
+                    [
+                        r.report_nan_detected('Possible ODE failure')
+                        for r in reporters
+                    ]
+                    break
+
+                if tree_hasnan(model):
+                    [r.report_nan_detected() for r in reporters]
+                    break
+
+                if step not in eval_steps:
                     continue
-                elif i - 1 == j:
-                    model = cont_m
-                    opt_state = cont_opt
 
-            shuffled_idx = jrandom.permutation(key, train_index)
-            train_batch = [train_ids[i] for i in shuffled_idx[:batch_size]]
+                [r.report_progress(eval_steps.index(step)) for r in reporters]
 
-            try:
-                opt_state, model, _ = self.step_optimizer(
-                    i, opt_state, model, subject_interface, train_batch)
+                trn_loss, trn_preds = self.eval(model, batch)
+                history.append_train_iteration(trn_preds, trn_loss)
+                val_loss, val_preds = self.eval(model, val_batch)
+                history.append_validation_iteration(val_preds, val_loss)
 
-            except RuntimeError as e:
-                [
-                    r.report_nan_detected('Possible ODE failure')
-                    for r in reporters
-                ]
-                break
+                if step == iters - 1:
+                    test_batch = patients.device_batch(test_ids)
+                    tst_loss, tst_preds = self.eval(model, test_batch)
 
-            if tree_hasnan(model):
-                [r.report_nan_detected() for r in reporters]
-                break
+                    history.append_test_iteration(tst_preds, tst_loss)
 
-            if i not in eval_steps:
-                continue
-
-            [r.report_progress(eval_steps.index(i)) for r in reporters]
-
-            trn_loss, trn_preds = self.eval(model, subject_interface,
-                                            train_batch)
-            history.append_train_iteration(trn_preds, trn_loss)
-            val_loss, val_preds = self.eval(model, subject_interface,
-                                            valid_ids)
-            history.append_validation_iteration(val_preds, val_loss)
-
-            if i == iters - 1:
-                tst_loss, tst_preds = self.eval(model, subject_interface,
-                                                test_ids)
-
-                history.append_test_iteration(tst_preds, tst_loss)
-
-            for r in reporters:
-                r.report_evaluation(history)
-                r.report_params(eval_steps.index(i), model,
-                                self.serializable_optstate(opt_state))
+                for r in reporters:
+                    r.report_evaluation(history)
+                    r.report_params(eval_steps.index(step), model,
+                                    self.serializable_optstate(opt_state))
 
         return {'history': history, 'model': model}
 
@@ -353,13 +354,13 @@ class Trainer2LR(Trainer):
         return (opt1, opt2), (opt1_s, opt2_s)
 
     def step_optimizer(self, step: int, opt_state: Any, model: AbstractModel,
-                       subject_interface: Subject_JAX, batch: Tuple[int]):
+                       patients: Patients):
         (opt1, opt2), (opt1_s, opt2_s) = opt_state
         opt1_u, opt1_p = opt1
         opt2_u, opt2_p = opt2
 
         grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, subject_interface, batch)
+        grads, aux = grad_f(model, patients)
         g1, g2 = model.emb_dyn_partition(grads)
 
         opt1_s = opt1_u(step, g1, opt1_s)
@@ -388,12 +389,8 @@ def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
 class LassoNetTrainer(Trainer):
 
-    def loss(self,
-             model: AbstractModel,
-             subject_interface: Subject_JAX,
-             batch: List[int],
-             args: Dict[str, Any] = dict()):
-        return self.unreg_loss(model, subject_interface, batch, args)
+    def loss(self, model: AbstractModel, patients: Patients):
+        return self.unreg_loss(model, patients)
 
     def _post_update_params(self, model):
         if self.reg_hyperparams:
@@ -405,54 +402,8 @@ class LassoNetTrainer(Trainer):
 class ODETrainer(Trainer):
     tay_reg: int = 3
 
-    @classmethod
-    def odeint_time(cls, predictions: M.BatchPredictedRisks):
-        int_time = 0
-        for subj_id, preds in predictions.items():
-            adms = [preds[idx].admission for idx in sorted(preds)]
-            # Integration time from the first discharge (adm[0].(length of
-            # stay)) to last discarge (adm[-1].time + adm[-1].(length of stay)
-            int_time += adms[-1].admission_time + adms[-1].los - adms[0].los
-        return int_time
-
     def dx_loss(self):
         return M.balanced_focal_bce
-
-    def reg_loss(self,
-                 model: AbstractModel,
-                 subject_interface: Subject_JAX,
-                 batch: List[int],
-                 args: Dict[str, float] = dict()):
-        args['tay_reg'] = self.tay_reg
-        res = model(subject_interface, batch, args)
-        preds = res['predictions']
-        l = preds.prediction_loss(self.dx_loss())
-
-        integration_weeks = self.odeint_time(preds) / 7
-        l1_loss = model.l1()
-        l2_loss = model.l2()
-        dyn_loss = res['dyn_loss'] / integration_weeks
-        l1_alpha = self.reg_hyperparams['L_l1']
-        l2_alpha = self.reg_hyperparams['L_l2']
-        dyn_alpha = self.reg_hyperparams['L_dyn']
-
-        loss = l + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + (dyn_alpha *
-                                                                  dyn_loss)
-
-        return loss, ({
-            'dx_loss': l,
-            'loss': loss,
-            'l1_loss': l1_loss,
-            'l2_loss': l2_loss,
-        }, preds)
-
-    @classmethod
-    def sample_reg_hyperparams(cls, trial: optuna.Trial):
-        return {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-            'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-        }
 
 
 class InTrainer(Trainer):
@@ -463,19 +414,11 @@ class InTrainer(Trainer):
     def obs_loss(self):
         return M.masked_l2
 
-    def reg_loss(self,
-                 model: InICENode,
-                 inpatients: Inpatients,
-                 batch: List[int],
-                 args: Dict[str, Any] = dict()):
-        return self.unreg_loss(model, inpatients, batch, args)
+    def reg_loss(self, model: InICENODE, patients: Patients):
+        return self.unreg_loss(model, patients)
 
-    def unreg_loss(self,
-                   model: InICENode,
-                   inpatients: Inpatients,
-                   batch: List[int],
-                   args: Dict[str, float] = dict()):
-        preds = model.batch_predict(inpatients, batch)
+    def unreg_loss(self, model: AbstractModel, patients: Inpatients):
+        preds = model.batch_predict(patients)
         dx_loss, obs_loss = preds.prediction_loss(self.dx_loss(),
                                                   self.obs_loss())
         loss = dx_loss + obs_loss
@@ -484,14 +427,6 @@ class InTrainer(Trainer):
             'obs_loss': obs_loss,
             'loss': loss
         }, preds)
-
-    @classmethod
-    def sample_reg_hyperparams(cls, trial: optuna.Trial):
-        return {
-            'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-            'L_l2': 0,  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-            'L_dyn': 1e3  # trial.suggest_float('L_dyn', 1e-6, 1, log=True)
-        }
 
 
 class ODETrainer2LR(ODETrainer, Trainer2LR):
