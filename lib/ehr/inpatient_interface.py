@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional, Dict
+import random
 import logging
 import numpy as np
 import jax.numpy as jnp
@@ -60,8 +61,9 @@ class InpatientsPredictions(dict):
         obs_pred = jnp.vstack(obs_pred)
         obs_mask = jnp.vstack(obs_mask)
 
-        return outcome_loss(outcome_true, outcome_pred), obs_loss(
-            obs_true, obs_pred, obs_mask)
+        return outcome_loss(outcome_true,
+                            outcome_pred), obs_loss(obs_true, obs_pred,
+                                                    obs_mask)
 
     def prediction_loss(self, outcome_loss, obs_loss):
         loss = [
@@ -75,18 +77,36 @@ class Inpatients(eqx.Module):
     dataset: MIMIC4ICUDataset
     subjects: Dict[int, Inpatient]
 
-    def __init__(self,
-                 dataset: MIMIC4ICUDataset,
-                 subject_ids: List[int] = None,
-                 num_workers=1):
+    def __init__(self, dataset: MIMIC4ICUDataset):
         super().__init__()
         self.dataset = dataset
-        logging.debug('Loading subjects..')
+        self.subjects = {}
+
+    def random_splits(self,
+                      splits: List[float],
+                      subject_ids: Optional[List[int]] = None,
+                      random_seed: int = 42,
+                      balanced: str = 'subjects'):
+        return self.dataset.random_splits(splits, subject_ids, random_seed,
+                                          balanced)
+
+    def load_subjects(self, subject_ids, num_workers=1):
         if subject_ids is None:
-            subject_ids = dataset.subject_ids
-        subjects_list = dataset.to_subjects(subject_ids, num_workers)
-        logging.debug('[DONE] Loading subjects')
-        self.subjects = {s.subject_id: s for s in subjects_list}
+            subject_ids = self.dataset.subject_ids
+        subjects = self.dataset.to_subjects(subject_ids, num_workers)
+        subjects = {s.subject_id: s for s in subjects}
+
+        return eqx.tree_at(lambda m: m.subjects, self, subjects)
+
+    def to_jax_arrays(self, subject_ids: Optional[List[int]] = None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
+        subjects = {i: self.subjects[i] for i in subject_ids}
+        arrs, others = eqx.partition(subjects, eqx.is_array)
+        arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
+        subjects = eqx.combine(arrs, others)
+        return eqx.tree_at(lambda o: o.subjects, self, subjects)
 
     def n_admissions(self, subject_ids=None):
         if subject_ids is None:
@@ -187,16 +207,6 @@ class Inpatients(eqx.Module):
             lambda a, m: a.size * a.itemsize
             if m is not None else 0, self.subjects[subject_id], is_arr)
         return sum(jtu.tree_leaves(arr_size))
-
-    def to_jax_arrays(self, subject_ids: Optional[List[int]] = None):
-        if subject_ids is None:
-            subject_ids = self.subjects.keys()
-
-        subjects = {i: self.subjects[i] for i in subject_ids}
-        arrs, others = eqx.partition(subjects, eqx.is_array)
-        arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
-        subjects = eqx.combine(arrs, others)
-        return eqx.tree_at(lambda o: o.subjects, self, subjects)
 
     def outcome_frequency_vec(self, subjects: List[int]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)

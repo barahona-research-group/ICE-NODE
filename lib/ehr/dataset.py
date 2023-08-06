@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from collections import defaultdict
 import copy
 from concurrent.futures import ThreadPoolExecutor
@@ -723,7 +723,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         }
 
     def fit_preprocessing(self,
-                          subject_ids: List[int] = None,
+                          subject_ids: Optional[List[int]] = None,
                           outlier_q1=0.25,
                           outlier_q2=0.75,
                           outlier_iqr_scale=1.5,
@@ -764,6 +764,40 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             if 'scaler' in _preprocessor:
                 scaler = _preprocessor['scaler']
                 self.df[df_name] = scaler(self.df[df_name])
+
+    def random_splits(self,
+                      splits: List[float],
+                      subject_ids: Optional[List[int]] = None,
+                      random_seed: int = 42,
+                      balanced: str = 'subjects'):
+        if subject_ids is None:
+            subject_ids = self.subject_ids
+        subject_ids = sorted(subject_ids)
+
+        random.Random(random_seed).shuffle(subject_ids)
+        subject_ids = np.array(subject_ids)
+
+        c_subject_id = self.colname['adm']['subject_id']
+        c_adm_interval = self.colname['adm']['adm_interval']
+        adm_df = self.df['adm']
+
+        if balanced == 'subjects':
+            probs = (np.ones(len(subject_ids)) / len(subject_ids)).cumsum()
+
+        elif balanced == 'admissions':
+            n_adms = adm_df.groupby(c_subject_id).size()
+            p_adms = n_adms.loc[subject_ids] / n_adms.sum()
+            probs = p_adms.values.cumsum()
+
+        elif balanced == 'adm_interval':
+            subject_intervals_sum = adm_df.groupby(c_subject_id).agg(
+                total_interval=(c_adm_interval, 'sum'))
+            p_subject_intervals = subject_intervals_sum.loc[
+                subject_ids] / subject_intervals_sum.sum()
+            probs = p_subject_intervals.values.cumsum()
+
+        splits = np.searchsorted(probs, splits)
+        return [a.tolist() for a in np.split(subject_ids, splits)]
 
     @staticmethod
     def load_dataframes(meta):
@@ -918,37 +952,6 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
     def subject_ids(self):
         return sorted(
             self.df['adm'][self.colname['adm']['subject_id']].unique())
-
-    def random_splits(self,
-                      splits: List[float],
-                      random_seed: int = 42,
-                      balanced: str = 'subjects'):
-        rng = random.Random(random_seed)
-        subject_ids = self.subject_ids
-        rng.shuffle(subject_ids)
-        subject_ids = np.array(subject_ids)
-
-        c_subject_id = self.colname['adm']['subject_id']
-        c_adm_interval = self.colname['adm']['adm_interval']
-        adm_df = self.df['adm']
-
-        if balanced == 'subjects':
-            probs = (np.ones(len(subject_ids)) / len(subject_ids)).cumsum()
-
-        elif balanced == 'admissions':
-            n_adms = adm_df.groupby(c_subject_id).size()
-            p_adms = n_adms.loc[subject_ids] / n_adms.sum()
-            probs = p_adms.values.cumsum()
-
-        elif balanced == 'adm_interval':
-            subject_intervals_sum = adm_df.groupby(c_subject_id).agg(
-                total_interval=(c_adm_interval, 'sum'))
-            p_subject_intervals = subject_intervals_sum.loc[
-                subject_ids] / subject_intervals_sum.sum()
-            probs = p_subject_intervals.values.cumsum()
-
-        splits = np.searchsorted(probs, splits)
-        return [a.tolist() for a in np.split(subject_ids, splits)]
 
     def subject_info_extractor(self, subject_ids):
 
