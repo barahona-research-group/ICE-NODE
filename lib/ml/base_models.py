@@ -148,6 +148,7 @@ class NeuralODE_JAX(eqx.Module):
     ode_dyn: Callable
     timescale: float = eqx.static_field()
 
+    @eqx.filter_jit
     def __call__(self, t, x, args=dict()):
         x0 = self.get_x0(x, args)
 
@@ -155,7 +156,7 @@ class NeuralODE_JAX(eqx.Module):
         if sampling_rate:
             t = timesamples(float(t), sampling_rate) / self.timescale
         else:
-            t = jnp.linspace(0.0, t / self.timescale, 2)
+            t = jnp.array([0.0, t / self.timescale])
 
         term = self.ode_term(args)
         return odeint(term, x0, t, dict(control=args.get('control')))
@@ -253,6 +254,7 @@ class ObsStateUpdate(eqx.Module):
 
     def __init__(self, state_size: int, obs_size: int,
                  key: "jax.random.PRNGKey"):
+        super().__init__()
         key1, key2 = jrandom.split(key, 2)
 
         self.f_project_error = eqx.nn.MLP(obs_size,
@@ -283,6 +285,7 @@ class StateUpdate(eqx.Module):
 
     def __init__(self, state_size: int, embeddings_size: int,
                  key: "jax.random.PRNGKey"):
+        super().__init__()
         key1, key2 = jrandom.split(key, 2)
         self.f_project_error = eqx.nn.Sequential([
             eqx.nn.Linear(embeddings_size * 2,

@@ -1,8 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional, Dict, Callable
 from functools import lru_cache
-import random
-import logging
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -11,78 +9,79 @@ import equinox as eqx
 
 from ..utils import tqdm_constructor
 from .dataset import MIMIC4ICUDataset
-from .inpatient_concepts import (InpatientAdmission, Inpatient,
-                                 InpatientObservables, InpatientInterventions,
-                                 CodesVector)
+from .inpatient_concepts import (Admission, Patient, InpatientObservables,
+                                 InpatientInterventions, CodesVector)
+
+
+def outcome_first_occurrence(sorted_admissions: List[Admission]):
+    first_occurrence = np.empty_like(sorted_admissions[0].outcome.vec,
+                                     dtype=int)
+    first_occurrence[:] = -1
+    for adm in sorted_admissions:
+        update_mask = (first_occurrence < 0) & adm.outcome.vec
+        first_occurrence[update_mask] = adm.admission_id
+    return first_occurrence
 
 
 class AdmissionPrediction(eqx.Module):
-    outcome: CodesVector
-    observables: List[InpatientObservables]
+    admission: Admission
+    outcome: Optional[CodesVector] = None
+    observables: Optional[List[InpatientObservables]] = None
+    other: Optional[Dict[str, jnp.ndarray]] = None
 
 
-class AdmissionResults(eqx.Module):
-    admission: InpatientAdmission
-    prediction: AdmissionPrediction
-    other: Dict[str, jnp.ndarray] = None
+class Predictions(dict):
 
-
-class InpatientsPredictions(dict):
-
-    def add(self,
-            subject_id: int,
-            admission: InpatientAdmission,
-            prediction: AdmissionPrediction,
-            other: Optional[Dict[str, jnp.ndarray]] = None):
+    def add(self, subject_id: int, prediction: AdmissionPrediction):
 
         if subject_id not in self:
             self[subject_id] = {}
 
-        self[subject_id][admission.admission_id] = AdmissionResults(
-            admission=admission, prediction=prediction, other=other)
+        self[subject_id][prediction.admission.admission_id] = prediction
 
-    def get_subjects(self):
+    @property
+    def subject_ids(self):
         return sorted(self.keys())
 
-    def get_predictions(self, subject_id):
-        predictions = self[subject_id]
-        return list(map(predictions.get, sorted(predictions)))
+    def get_predictions(self, subject_ids: Optional[List[int]] = None):
+        if subject_ids is None:
+            subject_ids = self.keys()
+        return sum((list(self[sid].values()) for sid in subject_ids), [])
 
-    def subject_prediction_loss(self, subject_id, outcome_loss, obs_loss):
-        (outcome_true, outcome_pred, obs_true, obs_pred,
-         obs_mask) = [], [], [], [], []
-        for r in self[subject_id].values():
-            outcome_true.append(r.admission.outcome.vec)
-            outcome_pred.append(r.prediction.outcome_vec)
-            obs_true.append(r.admission.observables.value)
-            obs_pred.append(r.prediction.observables.value)
-            obs_mask.append(r.admission.observables.mask)
+    def prediction_loss(self, dx_loss=None, obs_loss=None):
+        preds = self.get_predictions()
+        adms = [r.admission for r in preds]
+        loss = {}
+        if dx_loss is not None:
+            dx_true = jnp.vstack([a.outcome.vec for a in adms])
+            dx_pred = jnp.vstack([p.outcome.vec for p in preds])
+            dx_mask = jnp.ones_like(dx_true, dtype=bool)
+            loss['dx_loss'] = dx_loss(dx_true, dx_pred, dx_mask)
+        if obs_loss is not None:
+            obs_true = sum((a.observables for a in adms), [])
+            obs_true = InpatientObservables.concat(obs_true)
+            obs_pred = sum((p.observables for p in preds), [])
+            obs_pred = InpatientObservables.concat(obs_pred)
 
-        outcome_true = jnp.vstack(outcome_true)
-        outcome_pred = jnp.vstack(outcome_pred)
-        obs_true = jnp.vstack(obs_true)
-        obs_pred = jnp.vstack(obs_pred)
-        obs_mask = jnp.vstack(obs_mask)
+            loss['obs_loss'] = obs_loss(obs_true.value, obs_pred.value,
+                                        obs_true.mask)
 
-        return outcome_loss(outcome_true,
-                            outcome_pred), obs_loss(obs_true, obs_pred,
-                                                    obs_mask)
+        return loss
 
-    def prediction_loss(self, outcome_loss, obs_loss):
-        loss = [
-            self.subject_prediction_loss(subject_id, outcome_loss, obs_loss)
-            for subject_id in self.keys()
-        ]
-        return jnp.nanmean(jnp.array(loss))
+    def outcome_first_occurrence_masks(self, subject_id):
+        preds = self[subject_id]
+        adms = [preds[aid].admission for aid in sorted(preds.keys())]
+        first_occ_adm_id = outcome_first_occurrence(adms)
+        return [first_occ_adm_id == a.admission_id for a in adms]
 
 
-class Inpatients(eqx.Module):
+class Patients(eqx.Module):
     dataset: MIMIC4ICUDataset
-    subjects: Optional[Dict[int, Inpatient]]
+    subjects: Optional[Dict[int, Patient]]
 
     def __init__(self,
                  dataset: MIMIC4ICUDataset,
-                 subjects: Optional[Dict[int, Inpatient]] = None):
+                 subjects: Optional[Dict[int, Patient]] = None):
         super().__init__()
         self.dataset = dataset
         self.subjects = subjects
@@ -92,8 +91,8 @@ class Inpatients(eqx.Module):
                       subject_ids: Optional[List[int]] = None,
                       random_seed: int = 42,
                       balanced: str = 'subjects'):
-        return self.dataset.random_splits(splits, subject_ids, random_seed,
-                                          balanced)
+        return self.dataset.random_splits(splits, self.subjects.keys(),
+                                          random_seed, balanced)
 
     def __len__(self):
         return len(self.subjects)
@@ -105,7 +104,7 @@ class Inpatients(eqx.Module):
             subject_ids = self.dataset.subject_ids
         subjects = self.dataset.to_subjects(subject_ids, num_workers)
         subjects = {s.subject_id: s for s in subjects}
-        return Inpatients(dataset=self.dataset, subjects=subjects)
+        return Patients(dataset=self.dataset, subjects=subjects)
 
     def _subject_to_device(self, subject_id: int):
         s = self.subjects[subject_id]
@@ -119,10 +118,12 @@ class Inpatients(eqx.Module):
 
         subjects = {
             i: jax.block_until_ready(self._subject_to_device(i))
-            for i in tqdm_constructor(
-                subject_ids, desc="Loading to device", unit='subject')
+            for i in tqdm_constructor(subject_ids,
+                                      desc="Loading to device",
+                                      unit='subject',
+                                      leave=False)
         }
-        return Inpatients(dataset=self.dataset, subjects=subjects)
+        return Patients(dataset=self.dataset, subjects=subjects)
 
     def batch_gen(self,
                   subject_ids,
@@ -242,7 +243,7 @@ class Inpatients(eqx.Module):
         unscaled_rate = [rate * mx for rate in scaled_rate]
         return eqx.tree_at(lambda o: o.segmented_input, input_, unscaled_rate)
 
-    def _unscaled_admission(self, inpatient_admission: InpatientAdmission):
+    def _unscaled_admission(self, inpatient_admission: Admission):
         return eqx.tree_at(
             lambda o: o.observables, inpatient_admission,
             self._unscaled_observation(inpatient_admission.observables))
@@ -272,6 +273,19 @@ class Inpatients(eqx.Module):
         partitions = np.linspace(0, 1, n_partitions + 1)[1:-1]
         splitters = np.searchsorted(cumsum, partitions)
         return np.hsplit(sorted_codes, splitters)
+
+    def outcome_first_occurrence_masks(self, subject_id):
+        adms = self.subjects[subject_id].admissions
+        first_occ_adm_id = outcome_first_occurrence(adms)
+        return [first_occ_adm_id == a.admission_id for a in adms]
+
+    def outcome_all_masks(self, subject_id):
+        adms = self.subjects[subject_id].admissions
+        if isinstance(adms[0].outcome.vec, jnp.ndarray):
+            _np = jnp
+        else:
+            _np = np
+        return [_np.ones_like(a.outcome.vec, dtype=bool) for a in adms]
 
 
 if __name__ == '__main__':

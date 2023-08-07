@@ -13,7 +13,7 @@ import equinox as eqx
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import Subject_JAX, OutcomeExtractor
+from ..ehr import Patients, OutcomeExtractor
 from ..embeddings import embeddings_from_conf
 from ..utils import translate_path
 
@@ -27,7 +27,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     control_size: int = 0
 
     @abstractmethod
-    def __call__(self, subject_interface: Subject_JAX,
+    def __call__(self, patients: Patients,
                  subjects_batch: List[int], args):
         pass
 
@@ -35,9 +35,9 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def decoder_input_size(expt_config):
         return expt_config["model"]["state_size"]
 
-    def subject_embeddings(self, subject_interface: Subject_JAX,
+    def subject_embeddings(self, patients: Patients,
                            batch: List[int]):
-        out = self(subject_interface, batch, dict(return_embeddings=True))
+        out = self(patients, batch, dict(return_embeddings=True))
         return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
 
     @staticmethod
@@ -60,9 +60,9 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         return eqx.combine(emb_tree, dyn_tree)
 
     @staticmethod
-    def dx_outcome_partitions(subject_interface: Subject_JAX,
+    def dx_outcome_partitions(patients: Patients,
                               train_ids: List[int]):
-        return subject_interface.dx_outcome_by_percentiles(20, train_ids)
+        return patients.dx_outcome_by_percentiles(20, train_ids)
 
     @classmethod
     def sample_reg_hyperparams(cls, trial: optuna.Trial):
@@ -88,15 +88,15 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         return l2 + self.dx_emb.l2() + self.dx_dec.l2()
 
     @classmethod
-    def from_config(cls, conf: Dict[str, Any], subject_interface: Subject_JAX,
+    def from_config(cls, conf: Dict[str, Any], patients: Patients,
                     train_split: List[int], key: "jax.random.PRNGKey"):
         decoder_input_size = cls.decoder_input_size(conf)
-        emb_models = embeddings_from_conf(conf["emb"], subject_interface,
+        emb_models = embeddings_from_conf(conf["emb"], patients,
                                           train_split, decoder_input_size)
-        control_size = subject_interface.control_dim
+        control_size = patients.control_dim
         return cls(**emb_models,
                    **conf["model"],
-                   outcome=subject_interface.outcome_extractor,
+                   outcome=patients.outcome_extractor,
                    control_size=control_size,
                    key=key)
 

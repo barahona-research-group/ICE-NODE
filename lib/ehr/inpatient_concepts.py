@@ -1,19 +1,14 @@
 from __future__ import annotations
 from datetime import date
-from collections import namedtuple, OrderedDict, defaultdict
-from dataclasses import dataclass
-from functools import partial
-from typing import (List, Tuple, Set, Callable, Optional, Union, Dict,
-                    ClassVar, Union)
+from typing import (List, Tuple,  Optional, Union, Dict, ClassVar,
+                    Union)
 import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 
 import equinox as eqx
-from .concept import AbstractAdmission
-from .coding_scheme import (AbstractScheme, NullScheme,
-                            AbstractGroupedProcedures)
+from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
 
 
 class InpatientObservables(eqx.Module):
@@ -41,6 +36,21 @@ class InpatientObservables(eqx.Module):
             InpatientObservables(t, v, m)
             for t, v, m in zip(time, value, mask)
         ]
+
+    @staticmethod
+    def concat(observables: List[InpatientObservables]):
+        if len(observables) == 0:
+            return InpatientObservables.empty(0)
+        if isinstance(observables[0].time, jnp.ndarray):
+            _np = jnp
+        else:
+            _np = np
+
+        time = _np.hstack([o.time for o in observables])
+        value = _np.vstack([o.value for o in observables])
+        mask = _np.vstack([o.mask for o in observables])
+
+        return InpatientObservables(time, value, mask)
 
     def __len__(self):
         return len(self.time)
@@ -327,8 +337,8 @@ class CodesVector(eqx.Module):
         return set(self.scheme.index2code[i] for i in index)
 
 
-class InpatientAdmission(AbstractAdmission, eqx.Module):
-    admission_id: str
+class Admission(eqx.Module):
+    admission_id: int  # Unique ID for each admission
     admission_dates: Tuple[date, date]
     dx_codes: CodesVector
     dx_codes_history: CodesVector
@@ -351,7 +361,7 @@ def demographic_vector(age, vec):
     return jnp.hstack((age, vec), dtype=jnp.float16)
 
 
-class InpatientStaticInfo(eqx.Module):
+class StaticInfo(eqx.Module):
     gender: jnp.ndarray
     date_of_birth: date
     ethnicity: jnp.ndarray
@@ -375,10 +385,10 @@ class InpatientStaticInfo(eqx.Module):
         return demographic_vector(self.age(current_date), self.constant_vec)
 
 
-class Inpatient(eqx.Module):
-    subject_id: str
-    static_info: InpatientStaticInfo
-    admissions: List[InpatientAdmission]
+class Patient(eqx.Module):
+    subject_id: int
+    static_info: StaticInfo
+    admissions: List[Admission]
 
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)

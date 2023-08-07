@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from sklearn import metrics
 
-from ..ehr import Subject_JAX, BatchPredictedRisks
+from ..ehr import Patients, Predictions
 from .delong import FastDeLongTest
 from . import loss as L
 
@@ -72,7 +72,7 @@ def compute_auc(v_truth, v_preds):
 
 @dataclass
 class Metric(metaclass=ABCMeta):
-    subject_interface: Subject_JAX
+    patients: Patients
 
     @staticmethod
     def fields():
@@ -97,17 +97,17 @@ class Metric(metaclass=ABCMeta):
         return tuple(map(self.column, self.fields()))
 
     @abstractmethod
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         pass
 
     def row(self, result: Dict[str, Any]) -> Tuple[float]:
         return tuple(map(result.get, self.fields()))
 
-    def to_dict(self, predictions: BatchPredictedRisks):
+    def to_dict(self, predictions: Predictions):
         result = self(predictions)
         return dict(zip(self.columns(), self.row(result)))
 
-    def to_df(self, index: int, predictions: BatchPredictedRisks):
+    def to_df(self, index: int, predictions: Predictions):
         return pd.DataFrame(self.to_dict(predictions), index=[index])
 
     def value_extractor(self, keys: Dict[str, str]):
@@ -143,13 +143,13 @@ class VisitsAUC(Metric):
     def field_dir(cls, field):
         return dict(zip(cls.fields(), cls.dirs()))[field]
 
-    def __call__(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+    def __call__(self, predictions: Predictions) -> Tuple[float]:
         gtruth = []
         preds = []
-        for subject_risks in predictions.values():
-            for risk in subject_risks.values():
-                gtruth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+        for patient_predictions in predictions.values():
+            for p in patient_predictions.values():
+                gtruth.append(p.admission.outcome.vec)
+                preds.append(p.outcome.vec)
 
         gtruth_vec = onp.hstack(gtruth)
         preds_vec = onp.hstack(preds)
@@ -186,9 +186,10 @@ class LossMetric(Metric):
     def field_dir(self, field):
         return 0
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         return {
-            loss_key: float(predictions.prediction_loss(loss_f))
+            loss_key:
+            float(predictions.prediction_loss(dx_loss=loss_f)['dx_loss'])
             for loss_key, loss_f in self.loss_functions.items()
         }
 
@@ -204,8 +205,9 @@ class CodeLevelMetric(Metric):
     aggregate_level: bool = field(default=True)
 
     def __post_init__(self):
-        self.code2index = self.subject_interface.outcome_extractor.index
-        self.index2code = {i: c for c, i in self.code2index.items()}
+        index = self.patients.dataset.scheme.outcome.index
+        self.code2index = index
+        self.index2code = {i: c for c, i in index.items()}
 
     @staticmethod
     def agg_fields():
@@ -268,8 +270,8 @@ class CodeLevelMetric(Metric):
         code_index = keys.get('code_index')
         code = keys.get('code')
         assert (code_index is None) != (
-            code is
-            None), "providing code and code_index are mutually exlusive"
+            code
+            is None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
         column = self.column(code_index, keys['field'])
         return self.from_df_functor(column, self.field_dir(keys['field']))
@@ -291,15 +293,15 @@ class CodeAUC(CodeLevelMetric):
     def dirs():
         return (1, 1)
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         ground_truth = []
         preds = []
 
         for subj_id, admission_risks in predictions.items():
             for admission_idx in sorted(admission_risks):
-                risk = admission_risks[admission_idx]
-                ground_truth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+                pred = admission_risks[admission_idx]
+                ground_truth.append(pred.admission.outcome.vec)
+                preds.append(pred.outcome.vec)
 
         ground_truth_mat = onp.vstack(ground_truth)
         predictions_mat = onp.vstack(preds)
@@ -317,22 +319,23 @@ class CodeAUC(CodeLevelMetric):
 @dataclass
 class UntilFirstCodeAUC(CodeAUC):
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         ground_truth = []
         preds = []
         masks = []
 
-        for subj_id, admission_risks in predictions.items():
-            # first_occ is a vector of admission indices where the code at the corresponding
+        for subj_id, adms_predictions in predictions.items():
+            # first_occ is a vector of admission indices
+            # where the code at the corresponding
             # coordinate has first appeard for the patient. the index value of
             # (-1) means that the code will not appear at all for this patient.
-            first_occ = self.subject_interface.code_first_occurrence(subj_id)
+            first_occ = self.patients.outcome_first_occurrence(subj_id)
 
-            for admission_id in sorted(admission_risks):
+            for admission_id in sorted(adms_predictions):
                 mask = (admission_id <= first_occ)
-                risk = admission_risks[admission_id]
-                ground_truth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+                pred = adms_predictions[admission_id]
+                ground_truth.append(pred.admission.outcome.vec)
+                preds.append(pred.outcome.vec)
                 masks.append(mask)
 
         ground_truth_mat = onp.vstack(ground_truth)
@@ -416,11 +419,11 @@ class AdmissionAUC(Metric):
         return tuple(cols)
 
     @classmethod
-    def ordered_subjects(cls, predictions):
+    def ordered_subjects(cls, predictions: Predictions):
         return sorted(predictions)
 
     @classmethod
-    def order(cls, predictions):
+    def order(cls, predictions: Predictions):
         for subject_id in cls.ordered_subjects(predictions):
             subject_predictions = predictions[subject_id]
             for admission_id in sorted(subject_predictions):
@@ -440,15 +443,15 @@ class AdmissionAUC(Metric):
 
         return sum(tuple(cols), tuple())
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         auc = {}
         for subject_id in sorted(predictions):
             subject_predictions = predictions[subject_id]
             subject_auc = {}
             for admission_id in sorted(subject_predictions):
-                prediction = subject_predictions[admission_id]
-                auc_score = compute_auc(prediction.get_outcome(),
-                                        prediction.prediction)
+                pred = subject_predictions[admission_id]
+                auc_score = compute_auc(pred.admission.outcome.vec,
+                                        pred.outcome.vec)
                 subject_auc[admission_id] = auc_score
             auc[subject_id] = subject_auc
         return {'auc': auc}
@@ -483,7 +486,7 @@ class AdmissionAUC(Metric):
             row.append(self.agg_row(result))
         return sum(tuple(row), tuple())
 
-    def to_dict(self, predictions: BatchPredictedRisks):
+    def to_dict(self, predictions: Predictions):
         order_gen = lambda: self.order(predictions)
         subject_order_gen = lambda: self.ordered_subjects(predictions)
         result = self(predictions)
@@ -537,7 +540,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def columns(self):
         return tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         top_k_list = sorted(self.top_k_list)
 
         ground_truth = []
@@ -545,8 +548,8 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
         for subject_risks in predictions.values():
             for pred in subject_risks.values():
-                preds.append(pred.prediction)
-                ground_truth.append(pred.get_outcome())
+                preds.append(pred.outcome.vec)
+                ground_truth.append(pred.admission.outcome.vec)
 
         preds = onp.vstack(preds)
         ground_truth = onp.vstack(ground_truth).astype(bool)
@@ -613,7 +616,7 @@ class MetricsCollection:
 
     def to_df(self,
               iteration: int,
-              predictions: BatchPredictedRisks,
+              predictions: Predictions,
               other_estimated_metrics: Dict[str, float] = None):
 
         dfs = [m.to_df(iteration, predictions) for m in self.metrics]
@@ -626,6 +629,7 @@ class MetricsCollection:
 
 @dataclass
 class DeLongTest(CodeLevelMetric):
+    masking: str = 'all'
 
     # def __post_init__(self, *args, **kwargs):
     #     super().__init__(*args, **kwargs)
@@ -677,8 +681,8 @@ class DeLongTest(CodeLevelMetric):
             as {'pairs': (model1, model2), ....}.
         """
         assert (code_index is None) != (
-            code is
-            None), "providing code and code_index are mutually exlusive"
+            code
+            is None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
 
         if field in self.fields()['model']:
@@ -730,7 +734,7 @@ class DeLongTest(CodeLevelMetric):
                     tuple()))
         return rows
 
-    def to_df(self, predictions: Dict[str, BatchPredictedRisks]):
+    def to_df(self, predictions: Dict[str, Predictions]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -739,7 +743,7 @@ class DeLongTest(CodeLevelMetric):
             df.loc[idx] = row
         return df
 
-    def to_dict(self, predictions: Dict[str, BatchPredictedRisks]):
+    def to_dict(self, predictions: Dict[str, Predictions]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -779,15 +783,24 @@ class DeLongTest(CodeLevelMetric):
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
     @classmethod
-    def _extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
-        subject_sets = [preds.get_subjects() for preds in predictions.values()]
+    def _extract_subjects(cls, predictions: Dict[str, Predictions]):
+        subject_sets = [preds.subject_ids for preds in predictions.values()]
         for s1, s2 in zip(subject_sets[:-1], subject_sets[1:]):
             assert set(s1) == set(s2), "Subjects mismatch across model outputs"
         return list(sorted(subject_sets[0]))
 
-    @classmethod
-    def _extract_grountruth_vs_predictions(cls, predictions):
-        subjects = cls._extract_subjects(predictions)
+    def _extract_grountruth_vs_predictions(self, predictions):
+
+        def masks(subj_id):
+            adms = self.patients.subjects[subj_id].admissions
+            if self.masking == 'all':
+                return self.patients.outcome_all_masks(subj_id)
+            elif self.masking == 'first':
+                return self.patients.outcome_first_occurrence_masks(subj_id)
+            else:
+                raise ValueError(f"Unknown masking type {self.masking}")
+
+        subjects = self._extract_subjects(predictions)
         true_mat = {}
         pred_mat = {}
         mask_mat = {}
@@ -796,12 +809,15 @@ class DeLongTest(CodeLevelMetric):
             clf_pred = []
             clf_mask = []
             for subject_id in subjects:
-                subj_preds = clf_preds[subject_id]
-                for adm_index in sorted(subj_preds):
-                    pred = subj_preds[adm_index]
-                    clf_true.append(pred.get_outcome())
-                    clf_mask.append(pred.get_mask())
-                    clf_pred.append(pred.prediction)
+                subj_preds = [
+                    clf_preds[subject_id][aid]
+                    for aid in sorted(clf_preds[subject_id])
+                ]
+                subj_masks = masks(subject_id)
+                for pred, mask in zip(subj_preds, subj_masks):
+                    clf_true.append(pred.admission.outcome.vec)
+                    clf_mask.append(mask)
+                    clf_pred.append(pred.outcome.vec)
 
             true_mat[clf_label] = onp.vstack(clf_true)
             pred_mat[clf_label] = onp.vstack(clf_pred)
@@ -815,12 +831,14 @@ class DeLongTest(CodeLevelMetric):
 
         return tm0, mask, pred_mat
 
-    def __call__(self, predictions: Dict[str, BatchPredictedRisks]):
+    def __call__(self, predictions: Dict[str, Predictions]):
         """
-        Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
-        conduct a pairwise test on the difference of AUC scores between each
-        pair of classifiers using DeLong test. Codes that have either less than two positive cases or
-        have less than two negative cases are discarded (AUC computation and difference test requirements).
+        Evaluate the AUC scores for each diagnosis code for each classifier. \
+            In addition, conduct a pairwise test on the difference of AUC \
+            scores between each pair of classifiers using DeLong test. \
+            Codes that have either less than two positive cases or \
+            have less than two negative cases are discarded \
+            (AUC computation and difference test requirements).
         """
         # Classifier labels
         clf_labels = list(sorted(predictions.keys()))
@@ -843,8 +861,8 @@ class DeLongTest(CodeLevelMetric):
             invalid_test = _n_pos < 2 or n_neg < 2
 
             # Since we iterate on pairs, some AUC are computed more than once.
-            # Update this dictionary for each AUC computed, then append the results
-            # to the big list of auc.
+            # Update this dictionary for each AUC computed,
+            # then append the results to the big list of auc.
             code_auc = {}
             code_auc_var = {}
             code_p_val = {}

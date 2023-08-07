@@ -20,10 +20,9 @@ from ..utils import load_config, translate_path
 
 from . import outcome as O
 from . import coding_scheme as C
-from .concept import StaticInfo, Subject, Admission
 from .inpatient_concepts import (InpatientInput, InpatientObservables,
-                                 Inpatient, InpatientAdmission, CodesVector,
-                                 InpatientStaticInfo, AggregateRepresentation,
+                                 Patient, Admission, CodesVector,
+                                 StaticInfo, AggregateRepresentation,
                                  InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
@@ -252,7 +251,7 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
             subj['admissions'] = [
                 Admission(**adm) for adm in subj['admissions'].values()
             ]
-        return [Subject(**subj) for subj in subjects.values()]
+        return [Patient(**subj) for subj in subjects.values()]
 
     def codes_extractor(self, code_type):
         if any(code_type not in d
@@ -390,7 +389,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
             subj['admissions'] = [
                 Admission(**adm) for adm in subj['admissions'].values()
             ]
-        return [Subject(**subj) for subj in subjects.values()]
+        return [Patient(**subj) for subj in subjects.values()]
 
 
 class CPRDEHRDataset(AbstractEHRDataset):
@@ -458,7 +457,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
                               pr_codes=set(),
                               dx_scheme=self.code_scheme["dx"],
                               pr_scheme=C.NullScheme()))
-            subjects[subj_id] = Subject(subject_id=subj_id,
+            subjects[subj_id] = Patient(subject_id=subj_id,
                                         admissions=admissions,
                                         static_info=static_info)
 
@@ -925,7 +924,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 adm_interval=adm_interval[i])
             interventions = interventions.segment_proc(proc_repr)
             obs = observables[i].segment(interventions.t_sep)
-            return InpatientAdmission(admission_id=i,
+            return Admission(admission_id=i,
                                       admission_dates=adm_dates[i],
                                       dx_codes=dx_codes[i],
                                       dx_codes_history=dx_codes_history[i],
@@ -939,7 +938,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids)
 
-            static_info = InpatientStaticInfo(
+            static_info = StaticInfo(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
                 ethnicity=subject_eth[subject_id],
@@ -947,7 +946,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))
-            return Inpatient(subject_id=subject_id,
+            return Patient(subject_id=subject_id,
                              admissions=admissions,
                              static_info=static_info)
 
@@ -1123,7 +1122,7 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
         def val_mask(x):
             idx = x[c_code_index]
-            val = ret_put(np.empty(obs_dim, dtype=np.float16), idx, x[c_value])
+            val = ret_put(np.zeros(obs_dim, dtype=np.float16), idx, x[c_value])
             mask = ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
             adm_id = x.index[0]
             time = x[c_time].iloc[0].item()

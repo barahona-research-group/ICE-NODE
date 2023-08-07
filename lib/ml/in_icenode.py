@@ -1,6 +1,5 @@
 """."""
 from __future__ import annotations
-from datetime import date
 from typing import (Any, Dict, List, Callable)
 import zipfile
 import jax
@@ -11,13 +10,12 @@ import jax.tree_util as jtu
 import equinox as eqx
 
 from ..utils import model_params_scaler, tqdm_constructor
-from ..ehr import (Inpatients, Inpatient, InpatientAdmission,
-                   InpatientObservables, InpatientStaticInfo,
-                   AdmissionPrediction, InpatientsPredictions,
+from ..ehr import (Patients, Patient, Admission, InpatientObservables,
+                   StaticInfo, AdmissionPrediction, Predictions,
                    MIMIC4ICUDatasetScheme, AggregateRepresentation,
-                   InpatientInput)
+                   InpatientInput, CodesVector)
 
-from .base_models import (NeuralODE, ObsStateUpdate)
+from .base_models import (NeuralODE, ObsStateUpdate, NeuralODE_JAX)
 from ..utils import translate_path
 
 
@@ -109,8 +107,8 @@ class InpatientEmbedding(eqx.Module):
         """Embeds the discharge codes history into a fixed vector."""
         return self.f_dx_emb(x)
 
-    def embed_admission(self, static_info: InpatientStaticInfo,
-                        admission: InpatientAdmission) -> EmbeddedAdmission:
+    def embed_admission(self, static_info: StaticInfo,
+                        admission: Admission) -> EmbeddedAdmission:
         """ Embeds an admission into fixed vectors as described above."""
         dx_emb = self.embed_dx(admission.dx_codes_history.vec)
 
@@ -124,7 +122,7 @@ class InpatientEmbedding(eqx.Module):
         ])
         return EmbeddedAdmission(state_dx_e0=dx_emb, int_e=int_e)
 
-    def __call__(self, inpatient: Inpatient) -> List[EmbeddedAdmission]:
+    def __call__(self, inpatient: Patient) -> List[EmbeddedAdmission]:
         """
         Embeds all the admissions of an inpatient into fixed vectors as \
         described above.
@@ -144,7 +142,7 @@ class InICENODE(eqx.Module):
         - f_dyn: Dynamics function.
         - f_update: Update function.
     """
-    f_emb: Callable[[InpatientAdmission], EmbeddedAdmission]
+    f_emb: Callable[[Admission], EmbeddedAdmission]
     f_obs_dec: Callable
     f_dx_dec: Callable
     f_dyn: Callable
@@ -167,7 +165,7 @@ class InICENODE(eqx.Module):
                                     depth=1,
                                     key=obs_dec_key)
         self.f_dx_dec = eqx.nn.MLP(dims.state_dx_e,
-                                   len(scheme.dx_target),
+                                   len(scheme.outcome),
                                    dims.state_dx_e * 5,
                                    depth=1,
                                    key=dx_dec_key)
@@ -181,7 +179,7 @@ class InICENODE(eqx.Module):
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
         f_dyn = model_params_scaler(f_dyn, 1e-5, eqx.is_inexact_array)
-        self.f_dyn = NeuralODE(f_dyn, timescale=1.0)
+        self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
                                        key=update_key)
@@ -221,7 +219,7 @@ class InICENODE(eqx.Module):
 
         return state, InpatientObservables(obs.time, pred_obs_val, obs.mask)
 
-    def __call__(self, admission: InpatientAdmission,
+    def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
         state = self.join_state(None, None, embedded_admission.state_dx_e0)
         int_e = embedded_admission.int_e
@@ -233,12 +231,15 @@ class InICENODE(eqx.Module):
             t = t0[i], t1[i]
             state, pred_obs = self.step_segment(state, int_e[i], obs[i], *t)
             pred_obs_l.append(pred_obs)
-        pred_dx = self.f_dx_dec(self.split_state(state)[2])
-        return AdmissionPrediction(pred_dx, pred_obs_l)
+        pred_dx = CodesVector(self.f_dx_dec(self.split_state(state)[2]),
+                              admission.outcome.scheme)
+        return AdmissionPrediction(admission=admission,
+                                   outcome=pred_dx,
+                                   observables=pred_obs_l)
 
     def batch_predict(self,
-                      inpatients: Inpatients,
-                      leave_pbar: bool = False) -> InpatientsPredictions:
+                      inpatients: Patients,
+                      leave_pbar: bool = False) -> Predictions:
         total_int_days = inpatients.interval_days()
 
         inpatients_emb = {
@@ -255,14 +256,13 @@ class InICENODE(eqx.Module):
                               bar_format=bar_format,
                               unit='odeint-days',
                               leave=leave_pbar) as pbar:
-            results = InpatientsPredictions()
+            results = Predictions()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
                 for adm, adm_e in zip(inpatient.admissions,
                                       embedded_admissions):
                     results.add(subject_id=subject_id,
-                                admission=adm,
                                 prediction=self(adm, adm_e))
                     pbar.update(adm.interval_days)
                     pbar.set_description(f"Subject {i+1}/{len(inpatients)}")

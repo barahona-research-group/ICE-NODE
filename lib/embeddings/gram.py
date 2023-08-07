@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import optuna
 
 from .glove import train_glove
-from ..ehr import Subject_JAX
+from ..ehr import Patients
 
 
 def unnormalized_softmax(x, axis=-1):
@@ -228,8 +228,8 @@ class MatrixEmbeddings(AbstractEmbeddingsLayer):
         super().__init__(embeddings_size=embeddings_size,
                          input_size=input_size)
         # self.linear = eqx.nn.MLP(input_size, embeddings_size,
-        #                          width_size=(input_size + embeddings_size) // 2, 
-        #                          depth=2, activation=jnp.tanh, key=key) 
+        #                          width_size=(input_size + embeddings_size) // 2,
+        #                          depth=2, activation=jnp.tanh, key=key)
         self.linear = eqx.nn.Linear(input_size,
                                     embeddings_size,
                                     use_bias=True,
@@ -287,7 +287,7 @@ class LogitsDecoder(eqx.Module):
 
 def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
                                                                       float]],
-                            subject_interface: Subject_JAX,
+                            subject_interface: Patients,
                             train_ids: List[int]):
 
     classname = emb_conf['classname']
@@ -327,7 +327,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
 
 
 def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
-                         subject_interface: Subject_JAX, train_ids: List[int],
+                         subject_interface: Patients, train_ids: List[int],
                          decoder_input_size: int):
     models = {}
     if conf.get('dx'):

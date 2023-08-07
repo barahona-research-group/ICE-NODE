@@ -1,10 +1,7 @@
 from typing import List, Any, Dict, Type, Tuple, Union, Optional
 from datetime import datetime
-from abc import ABC, abstractmethod, ABCMeta
-import pickle
 
 import pandas as pd
-from tqdm import tqdm
 import numpy as np
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -13,9 +10,7 @@ import jax.tree_util as jtu
 import equinox as eqx
 import optuna
 
-from ..ehr import (Subject_JAX, BatchPredictedRisks, Inpatients,
-                   InpatientsPredictions)
-from .in_icenode import InICENODE
+from ..ehr import Predictions, Patients
 from .. import metric as M
 from ..utils import params_size, tree_hasnan, tqdm_constructor
 from .abstract_model import AbstractModel
@@ -28,14 +23,6 @@ class_weighting_dict = {
     'weighted': M.softmax_logits_weighted_bce,
     'focal': M.softmax_logits_balanced_focal_bce
 }
-
-
-class Patients(Inpatients):
-    pass
-
-
-class Predictions(InpatientsPredictions):
-    pass
 
 
 class MetricsHistory:
@@ -58,7 +45,7 @@ class MetricsHistory:
 
     def append_train_iteration(
             self,
-            predictions: BatchPredictedRisks,
+            predictions: Predictions,
             other_estimated_metrics: Optional[Dict[str, float]] = None):
         niters = 1 if self._train_df is None else len(self._train_df) + 1
         row_df = self.metrics.to_df(niters, predictions,
@@ -67,7 +54,7 @@ class MetricsHistory:
 
     def append_validation_iteration(
             self,
-            predictions: BatchPredictedRisks,
+            predictions: Predictions,
             other_estimated_metrics: Optional[Dict[str, float]] = None):
         niters = 1 if self._val_df is None else len(self._val_df) + 1
         row_df = self.metrics.to_df(niters, predictions,
@@ -76,7 +63,7 @@ class MetricsHistory:
 
     def append_test_iteration(
             self,
-            predictions: BatchPredictedRisks,
+            predictions: Predictions,
             other_estimated_metrics: Optional[Dict[str, float]] = None):
         niters = 1 if self._test_df is None else len(self._test_df) + 1
         row_df = self.metrics.to_df(niters, predictions,
@@ -127,12 +114,12 @@ class Trainer(eqx.Module):
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_loss(self.dx_loss())
-        return l, ({'dx_loss': l}, predictions)
+        l = predictions.prediction_loss(dx_loss=self.dx_loss())
+        return l['dx_loss'], (l, predictions)
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_loss(self.dx_loss())
+        l = predictions.prediction_loss(dx_loss=self.dx_loss())['dx_loss']
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
@@ -254,20 +241,19 @@ class Trainer(eqx.Module):
                                                                   iters=iters)
         val_batch = patients.device_batch(valid_ids)
         step = 0
-        for epoch_i in tqdm_constructor(range(self.epochs),
-                                        leave=True,
-                                        unit='Epoch'):
+        for _ in tqdm_constructor(range(self.epochs), leave=True,
+                                  unit='Epoch'):
             (key, ) = jrandom.split(key, 1)
             train_ids = jrandom.permutation(key, jnp.array(train_ids))
             batch_gen = patients.batch_gen(
-                train_ids,
+                train_ids.tolist(),
                 batch_n_admissions=batch_size,
                 ignore_first_admission=self.counts_ignore_first_admission)
             n_batches = n_train_admissions // batch_size
-            for iter_i, batch in tqdm_constructor(enumerate(batch_gen),
-                                                  leave=False,
-                                                  total=n_batches,
-                                                  unit='Batch'):
+            for batch in tqdm_constructor(batch_gen,
+                                          leave=False,
+                                          total=n_batches,
+                                          unit='Batch'):
                 if datetime.now() > trial_terminate_time:
                     [r.report_timeout() for r in reporters]
                     break
@@ -286,14 +272,14 @@ class Trainer(eqx.Module):
 
                 except RuntimeError as e:
                     [
-                        r.report_nan_detected('Possible ODE failure')
+                        r.report_nan_detected(f'Possible ODE failure: {e}')
                         for r in reporters
                     ]
-                    break
+                    return {'history': history, 'model': model}
 
                 if tree_hasnan(model):
                     [r.report_nan_detected() for r in reporters]
-                    break
+                    return {'history': history, 'model': model}
 
                 if step not in eval_steps:
                     continue
@@ -414,17 +400,17 @@ class InTrainer(Trainer):
     def obs_loss(self):
         return M.masked_l2
 
-    def reg_loss(self, model: InICENODE, patients: Patients):
+    def reg_loss(self, model: AbstractModel, patients: Patients):
         return self.unreg_loss(model, patients)
 
-    def unreg_loss(self, model: AbstractModel, patients: Inpatients):
-        preds = model.batch_predict(patients)
-        dx_loss, obs_loss = preds.prediction_loss(self.dx_loss(),
-                                                  self.obs_loss())
-        loss = dx_loss + obs_loss
+    def unreg_loss(self, model: AbstractModel, patients: Patients):
+        preds = model.batch_predict(patients, leave_pbar=False)
+        l = preds.prediction_loss(dx_loss=self.dx_loss(),
+                                  obs_loss=self.obs_loss())
+        loss = l['dx_loss'] + l['obs_loss']
         return loss, ({
-            'dx_loss': dx_loss,
-            'obs_loss': obs_loss,
+            'dx_loss': l['dx_loss'],
+            'obs_loss': l['obs_loss'],
             'loss': loss
         }, preds)
 
@@ -433,5 +419,5 @@ class ODETrainer2LR(ODETrainer, Trainer2LR):
     pass
 
 
-class InODETrainer2LR(InTrainer, Trainer2LR):
+class InTrainer2LR(InTrainer, Trainer2LR):
     pass
