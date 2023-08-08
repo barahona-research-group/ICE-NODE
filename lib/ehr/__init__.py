@@ -5,4 +5,4 @@ from .outcome import (OutcomeExtractor, outcome_conf_files)
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, AggregateRepresentation,
                        StaticInfo, InpatientInput, CodesVector)
-from .inpatient_interface import (AdmissionPrediction, Predictions, Patients)
+from .interface import (AdmissionPrediction, Predictions, Patients)

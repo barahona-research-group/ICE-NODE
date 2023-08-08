@@ -8,8 +8,8 @@ import equinox as eqx
 
 from ..utils import tqdm_constructor
 from .dataset import MIMIC4ICUDataset
-from .inpatient_concepts import (Admission, Patient, InpatientObservables,
-                                 InpatientInterventions, CodesVector)
+from .concepts import (Admission, Patient, InpatientObservables,
+                       InpatientInterventions, CodesVector)
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
