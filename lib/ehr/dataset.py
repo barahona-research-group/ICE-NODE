@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, ClassVar
 from collections import defaultdict
 import copy
 from concurrent.futures import ThreadPoolExecutor
@@ -20,9 +20,9 @@ from ..utils import load_config, translate_path
 
 from . import outcome as O
 from . import coding_scheme as C
-from .inpatient_concepts import (InpatientInput, InpatientObservables,
-                                 Patient, Admission, CodesVector,
-                                 StaticInfo, AggregateRepresentation,
+from .inpatient_concepts import (InpatientInput, InpatientObservables, Patient,
+                                 Admission, CodesVector, StaticInfo,
+                                 AggregateRepresentation,
                                  InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
@@ -159,11 +159,9 @@ class MIMIC4EHRDataset(AbstractEHRDataset):
 
         # Cast columns of dates to datetime64
         adm_df[adm_colname['admittime']] = pd.to_datetime(
-            adm_df[adm_colname['admittime']],
-            infer_datetime_format=True).dt.normalize()
+            adm_df[adm_colname['admittime']]).dt.normalize()
         adm_df[adm_colname['dischtime']] = pd.to_datetime(
-            adm_df[adm_colname['dischtime']],
-            infer_datetime_format=True).dt.normalize()
+            adm_df[adm_colname['dischtime']]).dt.normalize()
 
         res = {'adm': adm_df, 'static': static_df}
 
@@ -356,8 +354,7 @@ class MIMIC3EHRDataset(MIMIC4EHRDataset):
 
         gender_col = s_df[scol["gender"]].map(gender_dict)
         subject_gender = dict(zip(s_df[scol["subject_id"]], gender_col))
-        dob = pd.to_datetime(s_df[scol["date_of_birth"]],
-                             infer_datetime_format=True).dt.normalize()
+        dob = pd.to_datetime(s_df[scol["date_of_birth"]]).dt.normalize()
         subject_dob = dict(zip(s_df[scol["subject_id"]], dob))
         subjects = {}
         # Admissions
@@ -426,8 +423,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
 
             # To infer date-of-birth
             age0 = int(float(listify(subj_df.iloc[0][col["age"]])[0]))
-            year_month0 = pd.to_datetime(
-                year_month[0], infer_datetime_format=True).normalize()
+            year_month0 = pd.to_datetime(year_month[0]).normalize()
             year_of_birth = year_month0 + pd.DateOffset(years=-age0)
             gender_key = int(subj_df.iloc[0][col["gender"]])
             gender = gender_dict.get(gender_key, gender_missing)
@@ -443,7 +439,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
             # codes aggregated by year-month.
             dx_codes_ym_agg = defaultdict(set)
             for code, ym in zip(codes, year_month):
-                ym = pd.to_datetime(ym, infer_datetime_format=True).normalize()
+                ym = pd.to_datetime(ym).normalize()
                 dx_codes_ym_agg[ym].add(code)
 
             admissions = []
@@ -472,17 +468,14 @@ class CPRDEHRDataset(AbstractEHRDataset):
 
 
 @dataclass
-class MIMIC4ICUDatasetScheme:
+class MIMIC4DatasetScheme:
     dx_source: Dict[str, C.ICDCommons]
     dx_target: C.ICDCommons
     outcome: O.OutcomeExtractor
     int_proc_source: C.MIMIC4Procedures
     int_proc_target: C.MIMIC4ProcedureGroups
-    int_input_source: C.MIMIC4Input
-    int_input_target: C.MIMIC4InputGroups
     eth_source: C.MIMIC4Eth
     eth_target: C.MIMIC4Eth
-    obs: C.MIMIC4Observables
 
     def __init__(self, code_scheme: Dict[str, Any]):
         self.dx_source = {
@@ -492,13 +485,8 @@ class MIMIC4ICUDatasetScheme:
         self.dx_target = eval(f"C.{code_scheme['dx'][1]}")()
         outcome_scheme_str = code_scheme["outcome"]
         self.outcome = eval(f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
-        self.int_proc_source = eval(f"C.{code_scheme['int_proc'][0]}")()
-        self.int_proc_target = eval(f"C.{code_scheme['int_proc'][1]}")()
-        self.int_input_source = eval(f"C.{code_scheme['int_input'][0]}")()
-        self.int_input_target = eval(f"C.{code_scheme['int_input'][1]}")()
         self.eth_source = eval(f"C.{code_scheme['ethnicity'][0]}")()
         self.eth_target = eval(f"C.{code_scheme['ethnicity'][1]}")()
-        self.obs = eval(f"C.{code_scheme['obs'][0]}")()
 
     def dx_mapper(self, version):
         return self.dx_source[version].mapper_to(self.dx_target)
@@ -508,12 +496,30 @@ class MIMIC4ICUDatasetScheme:
 
 
 @dataclass
+class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
+    int_proc_source: C.MIMIC4Procedures
+    int_proc_target: C.MIMIC4ProcedureGroups
+    int_input_source: C.MIMIC4Input
+    int_input_target: C.MIMIC4InputGroups
+    obs: C.MIMIC4Observables
+
+    def __init__(self, code_scheme: Dict[str, Any]):
+        super().__init__(code_scheme)
+        self.int_proc_source = eval(f"C.{code_scheme['int_proc'][0]}")()
+        self.int_proc_target = eval(f"C.{code_scheme['int_proc'][1]}")()
+        self.int_input_source = eval(f"C.{code_scheme['int_input'][0]}")()
+        self.int_input_target = eval(f"C.{code_scheme['int_input'][1]}")()
+        self.obs = eval(f"C.{code_scheme['obs'][0]}")()
+
+
+@dataclass
 class MIMIC4ICUDataset(AbstractEHRDataset):
     colname: Dict[str, Dict[str, str]]
     name: str
     df: Dict[str, dd.DataFrame]
     scheme: MIMIC4ICUDatasetScheme
     preprocessing_history: List[Dict[str, Any]]
+    seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
         self.name = name
@@ -555,17 +561,19 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                                                      self.scheme.obs,
                                                      self.colname["obs"])
 
-        seconds_scaler = 1 / 3600.0  # convert seconds to hours
-        self._adm_add_adm_interval(seconds_scaler)
-        self._adm_remove_subjects_with_negative_adm_interval()
+        # self.df["adm"] = self._adm_remove_subjects_with_overlapping_admissions(
+        #     self.df["adm"], self.colname["adm"])
+        self._int_input_remove_subjects_with_nans()
         self._set_relative_times(self.df, self.colname, "int_proc",
-                                 ["start_time", "end_time"], seconds_scaler)
+                                 ["start_time", "end_time"],
+                                 self.seconds_scaler)
         self._set_relative_times(self.df, self.colname, "int_input",
-                                 ["start_time", "end_time"], seconds_scaler)
+                                 ["start_time", "end_time"],
+                                 self.seconds_scaler)
         self._set_relative_times(self.df,
                                  self.colname,
                                  "obs", ["timestamp"],
-                                 seconds_scaler=seconds_scaler)
+                                 seconds_scaler=self.seconds_scaler)
         self.df = {k: try_compute(v) for k, v in self.df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
@@ -604,9 +612,9 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
 
             unrecognised = codeset - scheme_codes
             if len(unrecognised) > 0:
-                logging.info(
-                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} ({len(unrecognised)/len(codeset):.2%})'
-                )
+                logging.debug(
+                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} \
+                    ({len(unrecognised)/len(codeset):.2%})')
                 logging.debug(f"""
                     Unrecognised {type(scheme)} codes ({len(unrecognised)})
                     to be removed (first 30): {sorted(unrecognised)[:30]}""")
@@ -624,28 +632,21 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             code_source_index=df[c_code].map(source_scheme.index).astype(int))
         return df
 
-    def _adm_add_adm_interval(self, seconds_scaler=1 / 3600.0):
-        c_admittime = self.colname["adm"]["admittime"]
-        c_dischtime = self.colname["adm"]["dischtime"]
-
-        df = self.df["adm"]
-        delta = df[c_dischtime] - df[c_admittime]
-        df = df.assign(adm_interval=(delta.dt.total_seconds() *
-                                     seconds_scaler).astype(np.float32))
-        self.colname["adm"]["adm_interval"] = "adm_interval"
-        self.df["adm"] = df
-
-    def _adm_remove_subjects_with_negative_adm_interval(self):
-        c_adm_interval = self.colname["adm"]["adm_interval"]
+    def _int_input_remove_subjects_with_nans(self):
         c_subject = self.colname["adm"]["subject_id"]
+        c_adm_id = self.colname["int_input"]["admission_id"]
+        c_rate = self.colname["int_input"]["rate"]
+        adm_df = self.df["adm"]
+        inp_df = self.df["int_input"]
 
-        df = self.df["adm"]
-        subjects_neg_intervals = df[df[c_adm_interval] < 0][c_subject].unique()
+        nan_input_rates = inp_df[c_rate].isnull()
+        nan_adm_ids = inp_df[nan_input_rates][c_adm_id].unique()
+        nan_subj_ids = adm_df[adm_df.index.isin(
+            nan_adm_ids)][c_subject].unique()
         logging.debug(
-            f"Removing subjects with at least one negative adm_interval: {len(subjects_neg_intervals)}"
+            f"Removing subjects with at least one nan input rate: {len(nan_subj_ids)}"
         )
-        df = df[~df[c_subject].isin(subjects_neg_intervals)]
-        self.df["adm"] = df
+        self.df["adm"] = adm_df[~adm_df[c_subject].isin(nan_subj_ids)]
 
     @staticmethod
     def _set_relative_times(df_dict,
@@ -757,9 +758,8 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
                 n1 = len(self.df[df_name])
                 self.df[df_name] = remover(self.df[df_name])
                 n2 = len(self.df[df_name])
-                logging.debug(
-                    f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) outliers from {df_name}'
-                )
+                logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '\
+                    f'outliers from {df_name}')
             if 'scaler' in _preprocessor:
                 scaler = _preprocessor['scaler']
                 self.df[df_name] = scaler(self.df[df_name])
@@ -803,7 +803,151 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         return [a.tolist() for a in np.split(subject_ids, splits)]
 
     @staticmethod
-    def load_dataframes(meta):
+    def _adm_merge_overlapping_admissions(adm_df,
+                                          colname,
+                                          interval_inclusive=True):
+        logging.debug("adm: Merging overlapping admissions")
+        c_subject_id = colname["subject_id"]
+        c_admittime = colname["admittime"]
+        c_dischtime = colname["dischtime"]
+        df = adm_df.copy()
+
+        # Step 1: Collect overlapping admissions
+        def _collect_overlaps(s_df):
+            s_df = s_df.sort_values(c_admittime)
+            disch_cummax = s_df.iloc[:-1][c_dischtime].cummax()
+            disch_cummax_idx = disch_cummax.map(lambda x:
+                                                (x == disch_cummax).idxmax())
+
+            if interval_inclusive:
+                has_parent = s_df[c_admittime].iloc[
+                    1:].values <= disch_cummax.values
+            else:
+                has_parent = s_df[c_admittime].iloc[
+                    1:].values < disch_cummax.values
+
+            s_df = s_df.iloc[1:]
+            s_df['sup_adm'] = np.where(has_parent, disch_cummax_idx, pd.NA)
+            s_df = s_df[s_df.sup_adm.notnull()]
+            return s_df['sup_adm'].to_dict()
+
+        subj_df = {sid: sdf for sid, sdf in df.groupby(c_subject_id)}
+        subj_ch2pt = {
+            sid: _collect_overlaps(sdf)
+            for sid, sdf in subj_df.items() if len(sdf) > 1
+        }
+
+        # Step 2: merge subject-admission-maps into one map.
+        ch2pt = {}
+        for sid, s_ch2pt in subj_ch2pt.items():
+            ch2pt.update(s_ch2pt)
+        ch_adms = list(ch2pt.keys())
+
+        # Step 3: Find super admission, in case of multiple levels of overlap.
+        def super_adm(ch):
+            while ch in ch2pt:
+                ch = ch2pt[ch]
+            return ch
+
+        ch2sup = dict(zip(ch_adms, map(super_adm, ch_adms)))
+
+        # Step 4: reversed map from super admission to child admissions.
+        sup2ch = defaultdict(list)
+        for ch, sup in ch2sup.items():
+            sup2ch[sup].append(ch)
+
+        # List of super admissiosn.
+        sup_adms = list(sup2ch.keys())
+        # List of admissions to be removed after merging.
+        rem_adms = sum(map(list, sup2ch.values()), [])
+
+        # Step 5: Merge overlapping admissions by extending discharge time.
+        df['adm_id'] = df.index
+        df.loc[sup_adms, c_dischtime] = df.loc[sup_adms].apply(lambda x: max(
+            x[c_dischtime], df.loc[sup2ch[x.adm_id], c_dischtime].max()),
+                                                               axis=1)
+
+        # Step 6: Remove merged admissions.
+        df = df.drop(index=rem_adms)
+        df = df.drop(columns=['adm_id'])
+
+        logging.debug(f"adm: Merged {len(rem_adms)} overlapping admissions")
+        return df, ch2sup
+
+    @staticmethod
+    def _match_filter_admission_ids(adm_df, dfs, colname):
+        dfs = {
+            name: _df[_df[colname[name]["admission_id"]].isin(adm_df.index)]
+            for name, _df in dfs.items()
+        }
+        return {name: _df.reset_index() for name, _df in dfs.items()}
+
+    @staticmethod
+    def _adm_cast_times(adm_df, colname):
+        df = adm_df.copy()
+        # Cast timestamps for admissions
+        for time_col in (colname["admittime"], colname["dischtime"]):
+            df[colname[time_col]] = pd.to_datetime(df[colname[time_col]])
+        return df
+
+    @staticmethod
+    def _map_admission_ids(df, colname, merger_map):
+        for name, _df in df.items():
+            c_adm_id = colname[name]["admission_id"]
+            _df[c_adm_id] = _df[c_adm_id].map(lambda x: merger_map.get(x, x))
+            df[name] = _df
+        return df
+
+    @staticmethod
+    def _adm_add_adm_interval(adm_df, colname, seconds_scaler=1 / 3600.0):
+        c_admittime = colname["admittime"]
+        c_dischtime = colname["dischtime"]
+
+        delta = adm_df[c_dischtime] - adm_df[c_admittime]
+        adm_df = adm_df.assign(
+            adm_interval=(delta.dt.total_seconds() *
+                          seconds_scaler).astype(np.float32))
+        colname["adm_interval"] = "adm_interval"
+        return adm_df
+
+    @staticmethod
+    def _adm_remove_subjects_with_negative_adm_interval(adm_df, colname):
+        c_adm_interval = colname["adm_interval"]
+        c_subject = colname["subject_id"]
+
+        subjects_neg_intervals = adm_df[adm_df[c_adm_interval] <
+                                        0][c_subject].unique()
+        logging.debug(
+            f"Removing subjects with at least one negative adm_interval: "\
+            f"{len(subjects_neg_intervals)}")
+        df = adm_df[~adm_df[c_subject].isin(subjects_neg_intervals)]
+        return df
+
+    @staticmethod
+    def _adm_remove_subjects_with_overlapping_admissions(adm_df, colname):
+        c_admittime = colname["admittime"]
+        c_dischtime = colname["dischtime"]
+        c_subject = colname["subject_id"]
+        df = adm_df.copy()
+
+        # df = df.sort_values(c_admittime)
+
+        def minimum_disch_admit_gap(patient_adms_df):
+            patient_adms_df = patient_adms_df.sort_values(c_admittime)
+            if len(patient_adms_df) < 2:
+                return pd.Timedelta(1, unit='h')
+            return (patient_adms_df[c_admittime].iloc[1:].values -
+                    patient_adms_df[c_dischtime].iloc[:-1].values).min()
+
+        min_gaps = df.groupby(c_subject).apply(minimum_disch_admit_gap)
+        subjects_overlapping = min_gaps[min_gaps < pd.Timedelta(0)].index
+        logging.debug(f"Removing subjects with at least "\
+            f"one overlapping admission: {len(subjects_overlapping)}")
+        df = df[~df[c_subject].isin(subjects_overlapping)]
+        return df, min_gaps
+
+    @classmethod
+    def load_dataframes(cls, meta):
         files = meta['files']
         base_dir = meta['base_dir']
         colname = meta['colname']
@@ -833,42 +977,41 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
         }
         logging.debug('[DONE] Loading dataframe files')
 
+        logging.debug('Preprocess admissions')
+        df["adm"] = df["adm"].set_index(colname["adm"]["index"]).compute()
+        df["adm"] = cls._adm_cast_times(df["adm"], colname["adm"])
+
+        df["adm"] = cls._adm_add_adm_interval(df["adm"], colname["adm"],
+                                              1 / 3600.0)
+        df["adm"] = cls._adm_remove_subjects_with_negative_adm_interval(
+            df["adm"], colname["adm"])
+        df["adm"], merger_map = cls._adm_merge_overlapping_admissions(
+            df["adm"], colname["adm"])
+        logging.debug('[DONE] Preprocess admissions')
+
         # admission_id matching
         logging.debug("Matching admission_id")
-        df["adm"] = df["adm"].set_index(colname["adm"]["index"]).compute()
-
         df_with_adm_id = {
             name: df[name]
             for name in df if "admission_id" in colname[name]
         }
-        df_with_adm_id = {
-            name: _df[_df[colname[name]["admission_id"]].isin(df["adm"].index)]
-            for name, _df in df_with_adm_id.items()
-        }
-        df_with_adm_id = {
-            name: _df.reset_index()
-            for name, _df in df_with_adm_id.items()
-        }
+        df_with_adm_id = cls._map_admission_ids(df_with_adm_id, colname,
+                                                merger_map)
+        df_with_adm_id = cls._match_filter_admission_ids(
+            df["adm"], df_with_adm_id, colname)
         df.update(df_with_adm_id)
         logging.debug("[DONE] Matching admission_id")
 
         logging.debug("Time casting..")
-        # Cast timestamps for admissions
-        for time_col in ("admittime", "dischtime"):
-            df["adm"][colname["adm"][time_col]] = dd.to_datetime(
-                df["adm"][colname["adm"][time_col]],
-                infer_datetime_format=True)
-
         # Cast timestamps for intervensions
         for time_col in ("start_time", "end_time"):
             for file in ("int_proc", "int_input"):
                 df[file][colname[file][time_col]] = dd.to_datetime(
-                    df[file][colname[file][time_col]],
-                    infer_datetime_format=True)
+                    df[file][colname[file][time_col]])
 
         # Cast timestamps for observables
         df["obs"][colname["obs"]["timestamp"]] = dd.to_datetime(
-            df["obs"][colname["obs"]["timestamp"]], infer_datetime_format=True)
+            df["obs"][colname["obs"]["timestamp"]])
         logging.debug("[DONE] Time casting..")
         return df
 
@@ -925,12 +1068,12 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             interventions = interventions.segment_proc(proc_repr)
             obs = observables[i].segment(interventions.t_sep)
             return Admission(admission_id=i,
-                                      admission_dates=adm_dates[i],
-                                      dx_codes=dx_codes[i],
-                                      dx_codes_history=dx_codes_history[i],
-                                      outcome=outcome[i],
-                                      observables=obs,
-                                      interventions=interventions)
+                             admission_dates=adm_dates[i],
+                             dx_codes=dx_codes[i],
+                             dx_codes_history=dx_codes_history[i],
+                             outcome=outcome[i],
+                             observables=obs,
+                             interventions=interventions)
 
         def _gen_subject(subject_id):
 
@@ -938,17 +1081,16 @@ class MIMIC4ICUDataset(AbstractEHRDataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids)
 
-            static_info = StaticInfo(
-                date_of_birth=subject_dob[subject_id],
-                gender=subject_gender[subject_id],
-                ethnicity=subject_eth[subject_id],
-                ethnicity_scheme=self.scheme.eth_target)
+            static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
+                                     gender=subject_gender[subject_id],
+                                     ethnicity=subject_eth[subject_id],
+                                     ethnicity_scheme=self.scheme.eth_target)
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))
             return Patient(subject_id=subject_id,
-                             admissions=admissions,
-                             static_info=static_info)
+                           admissions=admissions,
+                           static_info=static_info)
 
         return list(map(_gen_subject, subject_ids))
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Callable
-from functools import lru_cache
+from typing import List, Optional, Dict
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -88,7 +87,6 @@ class Patients(eqx.Module):
 
     def random_splits(self,
                       splits: List[float],
-                      subject_ids: Optional[List[int]] = None,
                       random_seed: int = 42,
                       balanced: str = 'subjects'):
         return self.dataset.random_splits(splits, self.subjects.keys(),

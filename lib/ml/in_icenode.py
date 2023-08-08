@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import (Any, Dict, List, Callable)
 import zipfile
+import logging
 import jax
 import jax.numpy as jnp
 import jax.nn as jnn
@@ -178,7 +179,7 @@ class InICENODE(eqx.Module):
                            depth=3,
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
-        f_dyn = model_params_scaler(f_dyn, 1e-5, eqx.is_inexact_array)
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
@@ -200,17 +201,26 @@ class InICENODE(eqx.Module):
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, t0: float, t1: float):
+
+        def try_integrate(delta, state, int_e):
+            if float(jax.block_until_ready(jnp.abs(delta))) > 1 / 3600.0:
+                return self.f_dyn(delta, state, args=dict(control=int_e))[-1]
+            else:
+                logging.debug(f"Time diff is less than 1 second: {t_obs - t}")
+                return state
+
         preds = []
         t = t0
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
-            state = self.f_dyn(t_obs - t, state, args=dict(control=int_e))[-1]
+            # if time-diff is more than 1 seconds, we integrate.
+            state = try_integrate(t_obs - t, state, int_e)
             _, obs_e, _ = self.split_state(state)
             pred_obs = self.f_obs_dec(obs_e)
             state = self.f_update(state, pred_obs, val, mask)
             t = t_obs
             preds.append(pred_obs)
 
-        state = self.f_dyn(t1 - t, state, args=dict(control=int_e))[-1]
+        state = try_integrate(t1 - t, state, int_e)
 
         if len(preds) > 0:
             pred_obs_val = jnp.vstack(preds)

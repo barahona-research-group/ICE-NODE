@@ -1,7 +1,8 @@
+"""Data Model for Subjects in MIMIC-III and MIMIC-IV"""
+
 from __future__ import annotations
 from datetime import date
-from typing import (List, Tuple,  Optional, Union, Dict, ClassVar,
-                    Union)
+from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union)
 import numpy as np
 import jax
 import jax.numpy as jnp

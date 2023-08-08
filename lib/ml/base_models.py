@@ -10,7 +10,8 @@ import jax.nn as jnn
 import jax.tree_util as jtu
 import equinox as eqx
 
-from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint)
+from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
+                     RecursiveCheckpointAdjoint)
 
 
 class GRUDynamics(eqx.Module):
@@ -60,37 +61,39 @@ class GRUDynamics(eqx.Module):
         return (1 - z) * (g - x)
 
 
+"""
+https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
+By Jacob Kelly
+Recursively compute higher order derivatives of dynamics of ODE.
+MIT License
+
+Copyright (c) 2020 Jacob Kelly and Jesse Bettencourt
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
 class TaylorAugmented(eqx.Module):
     f: Callable
     order: int = 0
 
     def sol_recursive(self, t, x, args=None):
-        """
-        https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
-        By Jacob Kelly
-        Recursively compute higher order derivatives of dynamics of ODE.
-        # MIT License
-
-        # Copyright (c) 2020 Jacob Kelly and Jesse Bettencourt
-
-        # Permission is hereby granted, free of charge, to any person obtaining a copy
-        # of this software and associated documentation files (the "Software"), to deal
-        # in the Software without restriction, including without limitation the rights
-        # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-        # copies of the Software, and to permit persons to whom the Software is
-        # furnished to do so, subject to the following conditions:
-
-        # The above copyright notice and this permission notice shall be included in all
-        # copies or substantial portions of the Software.
-
-        # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-        # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-        # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-        # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-        # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-        # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-        # SOFTWARE.
-        """
         if self.order < 2:
             return self.f(t, x, args), jnp.zeros_like(x)
 
@@ -157,7 +160,6 @@ class NeuralODE_JAX(eqx.Module):
             t = timesamples(float(t), sampling_rate) / self.timescale
         else:
             t = jnp.array([0.0, t / self.timescale])
-
         term = self.ode_term(args)
         return odeint(term, x0, t, dict(control=args.get('control')))
 
@@ -194,16 +196,18 @@ class NeuralODE(eqx.Module):
             t = jnp.array([0.0, t / self.timescale])
         # jax.debug.print('t.shape: {} {}', t.shape, jnp.isscalar(t))
         # jax.debug.breakpoint()
-        return diffeqsolve(self.ode_term(args),
-                           Dopri5(),
-                           t[0],
-                           t[-1],
-                           dt0=dt0,
-                           y0=x0,
-                           args=args,
-                           adjoint=BacksolveAdjoint(solver=Dopri5()),
-                           saveat=SaveAt(ts=t),
-                           max_steps=2**20).ys
+        return diffeqsolve(
+            self.ode_term(args),
+            Dopri5(),
+            t[0],
+            t[-1],
+            dt0=dt0,
+            y0=x0,
+            args=args,
+            adjoint=BacksolveAdjoint(solver=Dopri5()),
+            # adjoint=RecursiveCheckpointAdjoint(),
+            saveat=SaveAt(ts=t),
+            max_steps=2**20).ys
 
     def get_x0(self, x0, args):
         if args.get('tay_reg', 0) > 0:
@@ -221,10 +225,14 @@ class NeuralODE(eqx.Module):
         return ODETerm(term)
 
     def initial_step_size(self, t0, y0, order, rtol, atol, args):
-        # Algorithm from:
-        # E. Hairer, S. P. Norsett G. Wanner,
-        # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
-        # Code from: https://github.com/google/jax/blob/main/jax/experimental/ode.py
+        """
+        Algorithm from:
+        E. Hairer, S. P. Norsett G. Wanner,
+        Solving Ordinary Differential Equations I: \
+            Nonstiff Problems, Sec. II.4.
+        Code from: \
+            https://github.com/google/jax/blob/main/jax/experimental/ode.py
+        """
         ctrl = args.get('control', jnp.array([]))
         ctrl_y = lambda y: jnp.concatenate((ctrl, y))
         f0 = self.ode_dyn(ctrl_y(y0))
