@@ -344,8 +344,9 @@ class Admission(eqx.Module):
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    observables: List[InpatientObservables]
-    interventions: InpatientInterventions
+    observables: Optional[Union[InpatientObservables,
+                                List[InpatientObservables]]]
+    interventions: Optional[InpatientInterventions]
 
     @property
     def interval_hours(self):
