@@ -1,37 +1,37 @@
 {
     "base_dir": "$DATA_DIR/mimic4-cohort",
-    "code_colname": {
-        "dx": "icd_code",
-        "pr": "icd_code"
-    },
-    "code_version_colname": {"dx": "icd_version", "pr": "icd_version"},
     "code_scheme": {
-        "dx": {"9": "DxICD9", "10": "DxICD10"},
-        "pr": {"9": "PrICD9", "10": "PrICD10"}
+        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
+        "outcome": "dx_icd9_filter_v3_groups",
+        "ethnicity": ["MIMIC4Eth32", "MIMIC4Eth5"]
     },
-    "normalised_scheme": {
-        "dx": "DxICD9",
-        "pr": "PrICD9"
-    },
-    "adm_colname": {
-        "admittime": "admittime",
-        "dischtime": "dischtime",
-        "subject_id": "subject_id",
-        "admission_id": "hadm_id"
-    },
-    "static_colname": {
-	"subject_id": "subject_id",
-	"gender": "gender",
-	"anchor_age": "anchor_age",
-	"anchor_year": "anchor_year"
+    "colname": {
+        "dx": {
+            "subject_id": "subject_id",
+            "admission_id": "hadm_id",
+            "code": "icd_code",
+            "version": "icd_version"
+        },
+        "adm": {
+            "admittime": "admittime",
+            "dischtime": "dischtime",
+            "subject_id": "subject_id",
+            "index": "hadm_id"
+        },
+        "static": {
+            "subject_id": "subject_id",
+            "gender": "gender",
+            "ethnicity": "race",
+            "anchor_age": "anchor_age",
+            "anchor_year": "anchor_year"
+        }
     },
     "files": {
-        "adm": "adm_df.csv.gz",
-        "dx": "dx_df.csv.gz",
-        "pr": "pr_df.csv.gz",
-	"static": "static_df.csv.gz"
+        "adm": "adm_df.csv",
+        "dx": "dx_df.csv",
+        "static": "static_df.csv"
     },
     "name": "MIMIC-IV",
-    "python_class": "MIMIC4Dataset",
+    "python_class": "MIMICDataset",
     "version": "v2.0"
 }
