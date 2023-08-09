@@ -97,12 +97,22 @@ class Patients(eqx.Module):
 
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,
-                      num_workers: int = 1):
+                      num_workers: int = 1,
+                      **demographic_flags):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
         subjects = self.dataset.to_subjects(subject_ids, num_workers)
+
         subjects = {s.subject_id: s for s in subjects}
+        subjects = {
+            sid: s.set_demographic_vector_attributes(**demographic_flags)
+            for sid, s in subjects.items()
+        }
         return Patients(dataset=self.dataset, subjects=subjects)
+
+    @property
+    def demographic_vector_size(self):
+        return next(iter(self.subjects.values())).demographic_vector_size
 
     def _subject_to_device(self, subject_id: int):
         s = self.subjects[subject_id]

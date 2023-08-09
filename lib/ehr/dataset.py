@@ -18,8 +18,10 @@ import numpy as np
 
 from ..utils import load_config, translate_path
 
-from . import outcome as O
-from . import coding_scheme as C
+from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
+                            AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
+                            MIMICInputGroups, MIMICProcedures,
+                            MIMICProcedureGroups, MIMICObservables, NullScheme)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, CodesVector, StaticInfo,
                        AggregateRepresentation, InpatientInterventions)
@@ -88,7 +90,7 @@ class MaxScaler:
         return df
 
 
-class AbstractEHRDataset(metaclass=ABCMeta):
+class AbstractDataset(metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
@@ -105,13 +107,13 @@ class AbstractEHRDataset(metaclass=ABCMeta):
         pass
 
 
-class CPRDEHRDataset(AbstractEHRDataset):
+class CPRDDataset(AbstractDataset):
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
         self.name = name
         self.code_scheme = {
-            code_type: eval(f"C.{scheme}")()
+            code_type: scheme_from_classname(scheme)
             for code_type, scheme in code_scheme.items()
         }
         self.colname = colname
@@ -168,7 +170,7 @@ class CPRDEHRDataset(AbstractEHRDataset):
                               dx_codes=dx_codes,
                               pr_codes=set(),
                               dx_scheme=self.code_scheme["dx"],
-                              pr_scheme=C.NullScheme()))
+                              pr_scheme=NullScheme()))
             subjects[subj_id] = Patient(subject_id=subj_id,
                                         admissions=admissions,
                                         static_info=static_info)
@@ -185,22 +187,21 @@ class CPRDEHRDataset(AbstractEHRDataset):
 
 @dataclass
 class MIMICDatasetScheme:
-    dx_source: Dict[str, C.ICDCommons]
-    dx_target: C.ICDCommons
-    outcome: O.OutcomeExtractor
-    eth_source: C.MIMIC4Eth
-    eth_target: C.MIMIC4Eth
+    dx_source: Dict[str, ICDCommons]
+    dx_target: ICDCommons
+    outcome: OutcomeExtractor
+    eth_source: MIMICEth
+    eth_target: MIMICEth
 
     def __init__(self, code_scheme: Dict[str, Any]):
         self.dx_source = {
-            version: eval(f"C.{scheme}")()
+            version: scheme_from_classname(scheme)
             for version, scheme in code_scheme["dx"][0].items()
         }
-        self.dx_target = eval(f"C.{code_scheme['dx'][1]}")()
-        outcome_scheme_str = code_scheme["outcome"]
-        self.outcome = eval(f"O.OutcomeExtractor(\'{outcome_scheme_str}\')")
-        self.eth_source = eval(f"C.{code_scheme['ethnicity'][0]}")()
-        self.eth_target = eval(f"C.{code_scheme['ethnicity'][1]}")()
+        self.dx_target = scheme_from_classname(code_scheme['dx'][1])
+        self.outcome = OutcomeExtractor(code_scheme["outcome"])
+        self.eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
+        self.eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
 
     def dx_mapper(self, version):
         return self.dx_source[version].mapper_to(self.dx_target)
@@ -211,23 +212,27 @@ class MIMICDatasetScheme:
 
 @dataclass
 class MIMIC4ICUDatasetScheme(MIMICDatasetScheme):
-    int_proc_source: C.MIMIC4Procedures
-    int_proc_target: C.MIMIC4ProcedureGroups
-    int_input_source: C.MIMIC4Input
-    int_input_target: C.MIMIC4InputGroups
-    obs: C.MIMIC4Observables
+    int_proc_source: MIMICProcedures
+    int_proc_target: MIMICProcedureGroups
+    int_input_source: MIMICInput
+    int_input_target: MIMICInputGroups
+    obs: MIMICObservables
 
     def __init__(self, code_scheme: Dict[str, Any]):
         super().__init__(code_scheme)
-        self.int_proc_source = eval(f"C.{code_scheme['int_proc'][0]}")()
-        self.int_proc_target = eval(f"C.{code_scheme['int_proc'][1]}")()
-        self.int_input_source = eval(f"C.{code_scheme['int_input'][0]}")()
-        self.int_input_target = eval(f"C.{code_scheme['int_input'][1]}")()
-        self.obs = eval(f"C.{code_scheme['obs'][0]}")()
+        self.int_proc_source = scheme_from_classname(
+            code_scheme['int_proc'][0])
+        self.int_proc_target = scheme_from_classname(
+            code_scheme['int_proc'][1])
+        self.int_input_source = scheme_from_classname(
+            code_scheme['int_input'][0])
+        self.int_input_target = scheme_from_classname(
+            code_scheme['int_input'][1])
+        self.obs = scheme_from_classname(code_scheme['obs'][0])
 
 
 @dataclass
-class MIMICDataset(AbstractEHRDataset):
+class MIMICDataset(AbstractDataset):
     colname: Dict[str, Dict[str, str]]
     name: str
     df: Dict[str, dd.DataFrame]
@@ -349,8 +354,7 @@ class MIMICDataset(AbstractEHRDataset):
 
             static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
                                      gender=subject_gender[subject_id],
-                                     ethnicity=subject_eth[subject_id],
-                                     ethnicity_scheme=self.scheme.eth_target)
+                                     ethnicity=subject_eth[subject_id])
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))
@@ -367,7 +371,7 @@ class MIMICDataset(AbstractEHRDataset):
         df = df.assign(**{c_code: df[c_code].str.strip()})
         self.df['dx'] = df
         for version, scheme in self.scheme.dx_source.items():
-            if isinstance(scheme, C.ICDCommons):
+            if isinstance(scheme, ICDCommons):
                 ver_mask = df[c_version] == version
                 code_col = df[c_code]
                 df = df.assign(**{
@@ -475,15 +479,9 @@ class MIMICDataset(AbstractEHRDataset):
             return s_df['sup_adm'].to_dict()
 
         subj_df = {sid: sdf for sid, sdf in df.groupby(c_subject_id)}
-        subj_ch2pt = {
-            sid: _collect_overlaps(sdf)
-            for sid, sdf in subj_df.items() if len(sdf) > 1
-        }
-
-        # Step 2: merge subject-admission-maps into one map.
         ch2pt = {}
-        for sid, s_ch2pt in subj_ch2pt.items():
-            ch2pt.update(s_ch2pt)
+        for sid, s_df in subj_df.items():
+            ch2pt.update(_collect_overlaps(s_df))
         ch_adms = list(ch2pt.keys())
 
         # Step 3: Find super admission, in case of multiple levels of overlap.
@@ -617,7 +615,8 @@ class MIMICDataset(AbstractEHRDataset):
         eth_mapper = self.scheme.eth_mapper()
         for subject_id, subject_df in static_df.groupby(c_s_subject_id):
             eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
-            subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
+            subject_eth[subject_id] = CodesVector(
+                eth_mapper.codeset2vec(eth_code), self.scheme.eth_target)
 
         return subject_dob, subject_gender, subject_eth
 
@@ -970,8 +969,7 @@ class MIMIC4ICUDataset(MIMICDataset):
 
             static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
                                      gender=subject_gender[subject_id],
-                                     ethnicity=subject_eth[subject_id],
-                                     ethnicity_scheme=self.scheme.eth_target)
+                                     ethnicity=subject_eth[subject_id])
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))

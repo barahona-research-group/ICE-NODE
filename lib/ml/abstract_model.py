@@ -27,16 +27,14 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     control_size: int = 0
 
     @abstractmethod
-    def __call__(self, patients: Patients,
-                 subjects_batch: List[int], args):
+    def __call__(self, patients: Patients, subjects_batch: List[int], args):
         pass
 
     @staticmethod
     def decoder_input_size(expt_config):
         return expt_config["model"]["state_size"]
 
-    def subject_embeddings(self, patients: Patients,
-                           batch: List[int]):
+    def subject_embeddings(self, patients: Patients, batch: List[int]):
         out = self(patients, batch, dict(return_embeddings=True))
         return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
 
@@ -60,8 +58,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         return eqx.combine(emb_tree, dyn_tree)
 
     @staticmethod
-    def dx_outcome_partitions(patients: Patients,
-                              train_ids: List[int]):
+    def dx_outcome_partitions(patients: Patients, train_ids: List[int]):
         return patients.dx_outcome_by_percentiles(20, train_ids)
 
     @classmethod
@@ -91,8 +88,8 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def from_config(cls, conf: Dict[str, Any], patients: Patients,
                     train_split: List[int], key: "jax.random.PRNGKey"):
         decoder_input_size = cls.decoder_input_size(conf)
-        emb_models = embeddings_from_conf(conf["emb"], patients,
-                                          train_split, decoder_input_size)
+        emb_models = embeddings_from_conf(conf["emb"], patients, train_split,
+                                          decoder_input_size)
         control_size = patients.control_dim
         return cls(**emb_models,
                    **conf["model"],

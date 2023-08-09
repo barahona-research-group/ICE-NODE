@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from datetime import date
-from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union)
+from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union, Any)
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -364,33 +364,65 @@ def demographic_vector(age, vec):
 
 
 class StaticInfo(eqx.Module):
-    gender: jnp.ndarray
-    date_of_birth: date
-    ethnicity: jnp.ndarray
-    ethnicity_scheme: AbstractScheme
-    constant_vec: jnp.ndarray
+    gender: Optional[jnp.ndarray] = None
+    date_of_birth: Optional[date] = None
+    ethnicity: Optional[CodesVector] = None
+    constant_vec: Optional[jnp.ndarray] = None
     gender_dict: ClassVar[Dict[str, bool]] = {'M': bool(1), 'F': bool(0)}
 
-    def __init__(self, gender: str, date_of_birth: date, ethnicity: str,
-                 ethnicity_scheme: AbstractScheme):
+    def __init__(self, gender: Optional[str], date_of_birth: date,
+                 ethnicity: CodesVector):
         super().__init__()
-        self.gender = np.array(self.gender_dict[gender])
+        self.gender = np.array(self.gender_dict.get(gender, []), dtype=bool)
         self.date_of_birth = date_of_birth
         self.ethnicity = ethnicity
-        self.ethnicity_scheme = ethnicity_scheme
-        self.constant_vec = np.hstack((self.ethnicity, self.gender))
+        self.constant_vec = np.array([])
+        self.demographic_vec_include_age = True
+
+    def set_demographic_vector_attributes(self,
+                                          gender=True,
+                                          age=True,
+                                          ethnicity=True):
+        updated = self
+        attrs_vec = []
+        if gender:
+            attrs_vec.append(self.gender)
+        if ethnicity:
+            attrs_vec.append(self.ethnicity.vec)
+        if len(attrs_vec) > 0:
+            updated = eqx.tree_at(lambda x: x.constant_vec, self,
+                                  np.hstack(attrs_vec))
+        if self.demographic_vec_include_age != age:
+            updated = eqx.tree_at(lambda x: x.demographic_vec_include_age,
+                                  updated, age)
+        return updated
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
 
     def demographic_vector(self, current_date: date):
-        return demographic_vector(self.age(current_date), self.constant_vec)
+        if self.demographic_vec_include_age:
+            return demographic_vector(self.age(current_date),
+                                      self.constant_vec)
+        return self.constant_vec
+
+    @property
+    def demographic_vector_size(self):
+        return len(self.constant_vec) + self.demographic_vec_include_age
 
 
 class Patient(eqx.Module):
     subject_id: int
     static_info: StaticInfo
     admissions: List[Admission]
+
+    def set_demographic_vector_attributes(self, **flags):
+        stat_info = self.static_info.set_demographic_vector_attributes(**flags)
+        return eqx.tree_at(lambda x: x.static_info, self, stat_info)
+
+    @property
+    def demographic_vector_size(self):
+        return self.static_info.demographic_vector_size
 
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)

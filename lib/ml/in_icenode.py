@@ -50,7 +50,8 @@ class InpatientEmbedding(eqx.Module):
     f_int_emb: Callable
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
-                 dims: InICENODEDimensions, key: "jax.random.PRNGKey"):
+                 dims: InICENODEDimensions, demographic_vector_size: int,
+                 key: "jax.random.PRNGKey"):
         super().__init__()
         (dx_emb_key, inp_agg_key, inp_emb_key, proc_emb_key, dem_emb_key,
          int_emb_key) = jrandom.split(key, 6)
@@ -74,8 +75,7 @@ class InpatientEmbedding(eqx.Module):
                                      depth=1,
                                      key=proc_emb_key)
 
-        # demo-dims: age(1) + gender(1) + target_ethnicity.
-        self.f_dem_emb = eqx.nn.MLP(1 + 1 + len(scheme.eth_target),
+        self.f_dem_emb = eqx.nn.MLP(demographic_vector_size,
                                     dims.demo_e,
                                     dims.demo_e * 5,
                                     depth=1,
@@ -150,16 +150,22 @@ class InICENODE(eqx.Module):
     f_update: Callable
 
     scheme: MIMIC4ICUDatasetScheme = eqx.static_field()
+    demographic_vector_size: int = eqx.static_field()
     dims: InICENODEDimensions = eqx.static_field()
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
-                 dims: InICENODEDimensions, key: "jax.random.PRNGKey"):
+                 demographic_vector_size: int, dims: InICENODEDimensions,
+                 key: "jax.random.PRNGKey"):
         super().__init__()
         self.dims = dims
         self.scheme = scheme
+        self.demographic_vector_size = demographic_vector_size
         (emb_key, obs_dec_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 5)
-        self.f_emb = InpatientEmbedding(scheme, dims, key=emb_key)
+        self.f_emb = InpatientEmbedding(scheme,
+                                        dims,
+                                        demographic_vector_size,
+                                        key=emb_key)
         self.f_obs_dec = eqx.nn.MLP(dims.state_obs_e,
                                     len(scheme.obs),
                                     dims.state_obs_e * 5,
@@ -295,9 +301,12 @@ class InICENODE(eqx.Module):
 
     @classmethod
     def from_config(cls, conf: Dict[str, Any], scheme: MIMIC4ICUDatasetScheme,
-                    key: "jax.random.PRNGKey"):
+                    demographic_vector_size: int, key: "jax.random.PRNGKey"):
         dims = InICENODEDimensions(**conf)
-        return cls(dims=dims, scheme=scheme, key=key)
+        return cls(dims=dims,
+                   scheme=scheme,
+                   demographic_vector_size=demographic_vector_size,
+                   key=key)
 
     def load_params(self, params_file):
         """

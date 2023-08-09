@@ -13,26 +13,11 @@ import logging
 
 import numpy as np
 import pandas as pd
-from ..utils import write_config
+from ..utils import write_config, load_config
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
-"""
-Testing ideas:
-
-    - ICD9: #nodes > #ICD codes
-    - test *dfs vs *bfs algorithms.
-
-
-"""
-"""
-Ideas in mapping
-
-- For a certain scenario, a choice list of multiple code is represented by their common ancestor.
-- Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
-"""
-
 singleton_lock = Lock()
 maps_lock = Lock()
 
@@ -1384,7 +1369,7 @@ class EthCPRD5(Singleton, EthCPRD):
     ETH_DESC_CNAME = 'eth5_desc'
 
 
-class MIMIC4Eth(AbstractScheme):
+class MIMICEth(AbstractScheme):
     _SCHEME_FILE = 'mimic4_race_grouper.csv.gz'
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'
@@ -1407,17 +1392,17 @@ class MIMIC4Eth(AbstractScheme):
                          name=self.NAME)
 
 
-class MIMIC4Eth32(Singleton, MIMIC4Eth):
+class MIMICEth32(Singleton, MIMICEth):
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'
 
 
-class MIMIC4Eth5(Singleton, MIMIC4Eth):
+class MIMICEth5(Singleton, MIMICEth):
     NAME = 'mimic4_eth5'
     ETH_CNAME = 'eth5'
 
 
-def register_mimic4_eth_mapping(s_scheme: MIMIC4Eth32, t_scheme: MIMIC4Eth5):
+def register_mimic4_eth_mapping(s_scheme: MIMICEth32, t_scheme: MIMICEth5):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
@@ -1425,7 +1410,7 @@ def register_mimic4_eth_mapping(s_scheme: MIMIC4Eth32, t_scheme: MIMIC4Eth5):
         m[eth32] = set(eth_df[t_scheme.ETH_CNAME])
 
 
-class MIMIC4Procedures(Singleton, AbstractScheme):
+class MIMICProcedures(Singleton, AbstractScheme):
 
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
@@ -1462,7 +1447,7 @@ class AbstractGroupedProcedures(AbstractScheme):
         return self._aggregation_groups
 
 
-class MIMIC4ProcedureGroups(Singleton, AbstractGroupedProcedures):
+class MIMICProcedureGroups(Singleton, AbstractGroupedProcedures):
 
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
@@ -1487,7 +1472,7 @@ class MIMIC4ProcedureGroups(Singleton, AbstractGroupedProcedures):
                          name='int_mimic4_grouped_proc')
 
 
-class MIMIC4InputGroups(Singleton, AbstractGroupedProcedures):
+class MIMICInputGroups(Singleton, AbstractGroupedProcedures):
     """
     InterventionGroup class encapsulates the similar interventions.
     """
@@ -1525,7 +1510,7 @@ class MIMIC4InputGroups(Singleton, AbstractGroupedProcedures):
         return self._dose_impact
 
 
-class MIMIC4Input(Singleton, AbstractScheme):
+class MIMICInput(Singleton, AbstractScheme):
     """
     InterventionGroup class encapsulates the similar interventions.
     """
@@ -1544,7 +1529,7 @@ class MIMIC4Input(Singleton, AbstractScheme):
                          name='int_mimic4_input')
 
 
-class MIMIC4Observables(Singleton, AbstractScheme):
+class MIMICObservables(Singleton, AbstractScheme):
 
     def __init__(self):
         filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
@@ -1562,8 +1547,8 @@ class MIMIC4Observables(Singleton, AbstractScheme):
         return self._groups
 
 
-def register_mimic4proc_mapping(s_scheme: MIMIC4Procedures,
-                                t_scheme: MIMIC4ProcedureGroups):
+def register_mimic4proc_mapping(s_scheme: MIMICProcedures,
+                                t_scheme: MIMICProcedureGroups):
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
 
@@ -1572,8 +1557,8 @@ def register_mimic4proc_mapping(s_scheme: MIMIC4Procedures,
         m.update({c: group for c in group_df.code})
 
 
-def register_mimic4input_mapping(s_scheme: MIMIC4Input,
-                                 t_schame: MIMIC4InputGroups):
+def register_mimic4input_mapping(s_scheme: MIMICInput,
+                                 t_schame: MIMICInputGroups):
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
 
@@ -1684,13 +1669,92 @@ load_maps.update({
     lambda: register_cprd_eth_mapping(EthCPRD16(), EthCPRD5())
 })
 
-# MIMIC4 Inpatient conversions
+# MIMIC Inpatient conversions
 load_maps.update({
-    (MIMIC4Procedures, MIMIC4ProcedureGroups):
-    lambda: register_mimic4proc_mapping(MIMIC4Procedures(),
-                                        MIMIC4ProcedureGroups()),
-    (MIMIC4Input, MIMIC4InputGroups):
-    lambda: register_mimic4input_mapping(MIMIC4Input(), MIMIC4InputGroups()),
-    (MIMIC4Eth32, MIMIC4Eth5):
-    lambda: register_mimic4_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5())
+    (MIMICProcedures, MIMICProcedureGroups):
+    lambda: register_mimic4proc_mapping(MIMICProcedures(),
+                                        MIMICProcedureGroups()),
+    (MIMICInput, MIMICInputGroups):
+    lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
+    (MIMICEth32, MIMICEth5):
+    lambda: register_mimic4_eth_mapping(MIMICEth32(), MIMICEth5())
 })
+
+_OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
+
+outcome_conf_files = {
+    'dx_cprd_ltc212': 'dx_cprd_ltc212_v1.json',
+    'dx_cprd_ltc9809': 'dx_cprd_ltc9809_v1.json',
+    'dx_flatccs_mlhc_groups': 'dx_flatccs_mlhc_groups.json',
+    'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
+    'dx_icd9_filter_v1': 'dx_icd9_v1.json',
+    'dx_icd9_filter_v2_groups': 'dx_icd9_v2_groups.json',
+    'dx_icd9_filter_v3_groups': 'dx_icd9_v3_groups.json'
+}
+
+
+class OutcomeExtractor(AbstractScheme):
+
+    def __init__(self, outcome_space='dx_flatccs_filter_v1'):
+        conf = self.conf_from_json(outcome_conf_files[outcome_space])
+
+        self._t_scheme = scheme_from_classname(conf['code_scheme'])
+        codes = [
+            c for c in sorted(self.t_scheme.index)
+            if c not in conf['exclude_codes']
+        ]
+
+        index = dict(zip(codes, range(len(codes))))
+        desc = {c: self.t_scheme.desc[c] for c in codes}
+        super().__init__(codes=codes,
+                         index=index,
+                         desc=desc,
+                         name=outcome_space)
+
+    @property
+    def t_scheme(self):
+        return self._t_scheme
+
+    @property
+    def outcome_dim(self):
+        return len(self.index)
+
+    def map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
+        m = s_scheme.mapper_to(self._t_scheme)
+        codeset = m.map_codeset(codeset)
+
+        if m.t_dag_space:
+            codeset &= set(m.t_scheme.dag2code)
+            codeset = set(m.t_scheme.dag2code[c] for c in codeset)
+
+        return codeset & set(self.codes)
+
+    def codeset2vec(self, codeset: Set[str], s_scheme: AbstractScheme):
+        vec = np.zeros(len(self.index), dtype=bool)
+        for c in self.map_codeset(codeset, s_scheme):
+            vec[self.index[c]] = True
+        return np.array(vec)
+
+    @staticmethod
+    def conf_from_json(json_file: str):
+        json_file = os.path.join(_OUTCOME_DIR, json_file)
+        conf = load_config(json_file)
+
+        if 'exclude_branches' in conf:
+            # TODO
+            return None
+        elif 'select_branches' in conf:
+            # TODO
+            return None
+        elif 'selected_codes' in conf:
+            t_scheme = scheme_from_classname(conf['code_scheme'])
+            conf['exclude_codes'] = [
+                c for c in t_scheme.codes if c not in conf['selected_codes']
+            ]
+            return conf
+        elif 'exclude_codes' in conf:
+            return conf
+
+
+def scheme_from_classname(classname):
+    return eval(classname)()
