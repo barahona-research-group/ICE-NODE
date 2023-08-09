@@ -250,10 +250,11 @@ class Trainer(eqx.Module):
                 batch_n_admissions=batch_size,
                 ignore_first_admission=self.counts_ignore_first_admission)
             n_batches = n_train_admissions // batch_size
-            for batch in tqdm_constructor(batch_gen,
-                                          leave=False,
-                                          total=n_batches,
-                                          unit='Batch'):
+            batch_gen = tqdm_constructor(batch_gen,
+                                         leave=False,
+                                         total=n_batches,
+                                         unit='Batch')
+            for batch in batch_gen:
                 if datetime.now() > trial_terminate_time:
                     [r.report_timeout() for r in reporters]
                     break
@@ -301,6 +302,7 @@ class Trainer(eqx.Module):
                     r.report_evaluation(history)
                     r.report_params(eval_steps.index(step), model,
                                     self.serializable_optstate(opt_state))
+            batch_gen.close()
 
         return {'history': history, 'model': model}
 

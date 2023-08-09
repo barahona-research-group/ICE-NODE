@@ -1,15 +1,17 @@
 from __future__ import annotations
 from typing import List, Optional, Dict
+import logging
 import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
-from ..utils import tqdm_constructor
+from ..utils import tqdm_constructor, tree_hasnan
 from .dataset import MIMIC4ICUDataset
 from .concepts import (Admission, Patient, InpatientObservables,
-                       InpatientInterventions, CodesVector)
+                       InpatientInterventions, DemographicVectorConfig)
+from .coding_scheme import CodesVector
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
@@ -27,6 +29,9 @@ class AdmissionPrediction(eqx.Module):
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
+
+    def has_nans(self):
+        return tree_hasnan(self)
 
 
 class Predictions(dict):
@@ -46,6 +51,39 @@ class Predictions(dict):
         if subject_ids is None:
             subject_ids = self.keys()
         return sum((list(self[sid].values()) for sid in subject_ids), [])
+
+    def average_interval_hours(self):
+        preds = self.get_predictions()
+        adms = [r.admission for r in preds]
+        return np.mean([a.interval_hours for a in adms])
+
+    def filter_nans(self):
+        if len(self) == 0:
+            return self
+
+        cleaned = Predictions()
+        nan_detected = False
+        for sid, spreds in self.items():
+            for aid, apred in spreds.items():
+                if not apred.has_nans():
+                    cleaned.add(sid, apred)
+                else:
+                    nan_detected = True
+                    logging.warning('Skipping prediction with NaNs: '
+                                    f'subject_id={sid}, admission_id={aid} '
+                                    'interval_hours= '
+                                    f'{apred.admission.interval_hours}. '
+                                    'Note: long intervals is a likely '
+                                    'reason to destabilise the model')
+        if nan_detected:
+            logging.warning(f'Average interval_hours: '
+                            f'{cleaned.average_interval_hours()}')
+
+        if len(cleaned) == 0:
+            logging.warning('No predictions left after NaN filtering')
+            raise ValueError('No predictions left after NaN filtering')
+
+        return cleaned
 
     def prediction_loss(self, dx_loss=None, obs_loss=None):
         preds = self.get_predictions()
@@ -76,13 +114,16 @@ class Predictions(dict):
 
 class Patients(eqx.Module):
     dataset: MIMIC4ICUDataset
+    demographic_vector_config: DemographicVectorConfig
     subjects: Optional[Dict[int, Patient]]
 
     def __init__(self,
                  dataset: MIMIC4ICUDataset,
+                 demographic_vector_config: DemographicVectorConfig,
                  subjects: Optional[Dict[int, Patient]] = None):
         super().__init__()
         self.dataset = dataset
+        self.demographic_vector_config = demographic_vector_config
         self.subjects = subjects
 
     def random_splits(self,
@@ -97,22 +138,19 @@ class Patients(eqx.Module):
 
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,
-                      num_workers: int = 1,
-                      **demographic_flags):
+                      num_workers: int = 1):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
-        subjects = self.dataset.to_subjects(subject_ids, num_workers)
+        subjects = self.dataset.to_subjects(
+            subject_ids,
+            num_workers=num_workers,
+            demographic_vector_config=self.demographic_vector_config)
 
         subjects = {s.subject_id: s for s in subjects}
-        subjects = {
-            sid: s.set_demographic_vector_attributes(**demographic_flags)
-            for sid, s in subjects.items()
-        }
-        return Patients(dataset=self.dataset, subjects=subjects)
-
-    @property
-    def demographic_vector_size(self):
-        return next(iter(self.subjects.values())).demographic_vector_size
+        return Patients(
+            dataset=self.dataset,
+            demographic_vector_config=self.demographic_vector_config,
+            subjects=subjects)
 
     def _subject_to_device(self, subject_id: int):
         s = self.subjects[subject_id]
@@ -131,7 +169,10 @@ class Patients(eqx.Module):
                                       unit='subject',
                                       leave=False)
         }
-        return Patients(dataset=self.dataset, subjects=subjects)
+        return Patients(
+            dataset=self.dataset,
+            demographic_vector_config=self.demographic_vector_config,
+            subjects=subjects)
 
     def batch_gen(self,
                   subject_ids,
@@ -281,6 +322,9 @@ class Patients(eqx.Module):
         partitions = np.linspace(0, 1, n_partitions + 1)[1:-1]
         splitters = np.searchsorted(cumsum, partitions)
         return np.hsplit(sorted_codes, splitters)
+
+    def outcome_first_occurrence(self, subject_id):
+        return outcome_first_occurrence(self.subjects[subject_id].admissions)
 
     def outcome_first_occurrence_masks(self, subject_id):
         adms = self.subjects[subject_id].admissions

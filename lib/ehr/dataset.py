@@ -21,9 +21,10 @@ from ..utils import load_config, translate_path
 from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
                             AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
                             MIMICInputGroups, MIMICProcedures,
-                            MIMICProcedureGroups, MIMICObservables, NullScheme)
+                            MIMICProcedureGroups, MIMICObservables, NullScheme,
+                            Gender)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
-                       Admission, CodesVector, StaticInfo,
+                       Admission, StaticInfo, DemographicVectorConfig,
                        AggregateRepresentation, InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
@@ -192,6 +193,7 @@ class MIMICDatasetScheme:
     outcome: OutcomeExtractor
     eth_source: MIMICEth
     eth_target: MIMICEth
+    gender: Gender
 
     def __init__(self, code_scheme: Dict[str, Any]):
         self.dx_source = {
@@ -202,12 +204,24 @@ class MIMICDatasetScheme:
         self.outcome = OutcomeExtractor(code_scheme["outcome"])
         self.eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
         self.eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
+        self.gender = Gender()
 
     def dx_mapper(self, version):
         return self.dx_source[version].mapper_to(self.dx_target)
 
     def eth_mapper(self):
         return self.eth_source.mapper_to(self.eth_target)
+
+    def demographic_vector_size(
+            self, demographic_vector_config: DemographicVectorConfig):
+        size = 0
+        if demographic_vector_config.gender:
+            size += len(self.gender)
+        if demographic_vector_config.age:
+            size += 1
+        if demographic_vector_config.ethnicity:
+            size += len(self.eth_target)
+        return size
 
 
 @dataclass
@@ -313,7 +327,7 @@ class MIMICDataset(AbstractDataset):
 
         return df
 
-    def to_subjects(self, subject_ids, num_workers):
+    def to_subjects(self, subject_ids, num_workers, demographic_vector_config):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids)
@@ -352,9 +366,11 @@ class MIMICDataset(AbstractDataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids)
 
-            static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
-                                     gender=subject_gender[subject_id],
-                                     ethnicity=subject_eth[subject_id])
+            static_info = StaticInfo(
+                date_of_birth=subject_dob[subject_id],
+                gender=subject_gender[subject_id],
+                ethnicity=subject_eth[subject_id],
+                demographic_vector_config=demographic_vector_config)
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))
@@ -559,7 +575,7 @@ class MIMICDataset(AbstractDataset):
         subjects_neg_intervals = adm_df[adm_df[c_adm_interval] <
                                         0][c_subject].unique()
         logging.debug(
-            f"Removing subjects with at least one negative adm_interval: "\
+            f"Removing subjects with at least one negative adm_interval: "
             f"{len(subjects_neg_intervals)}")
         df = adm_df[~adm_df[c_subject].isin(subjects_neg_intervals)]
         return df
@@ -582,8 +598,9 @@ class MIMICDataset(AbstractDataset):
 
         min_gaps = df.groupby(c_subject).apply(minimum_disch_admit_gap)
         subjects_overlapping = min_gaps[min_gaps < pd.Timedelta(0)].index
-        logging.debug(f"Removing subjects with at least "\
-            f"one overlapping admission: {len(subjects_overlapping)}")
+        logging.debug("Removing subjects with at least "
+                      "one overlapping admission: "
+                      f"{len(subjects_overlapping)}")
         df = df[~df[c_subject].isin(subjects_overlapping)]
         return df, min_gaps
 
@@ -602,8 +619,8 @@ class MIMICDataset(AbstractDataset):
         c_eth = self.colname["static"]["ethnicity"]
 
         static_df = static_df[static_df[c_s_subject_id].isin(subject_ids)]
-        gender_column = static_df[c_gender]
-        subject_gender = dict(zip(static_df[c_s_subject_id], gender_column))
+        gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
+        subject_gender = dict(zip(static_df[c_s_subject_id], gender))
 
         anchor_date = pd.to_datetime(static_df[c_anchor_year],
                                      format='%Y').dt.normalize()
@@ -615,8 +632,7 @@ class MIMICDataset(AbstractDataset):
         eth_mapper = self.scheme.eth_mapper()
         for subject_id, subject_df in static_df.groupby(c_s_subject_id):
             eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
-            subject_eth[subject_id] = CodesVector(
-                eth_mapper.codeset2vec(eth_code), self.scheme.eth_target)
+            subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
 
         return subject_dob, subject_gender, subject_eth
 
@@ -640,32 +656,32 @@ class MIMICDataset(AbstractDataset):
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_codes = CodesVector.empty(self.scheme.dx_target)
+        empty_vector = self.scheme.dx_target.empty_vector()
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
             if _codes_df is None:
-                return (adm_id, empty_codes)
+                return (adm_id, empty_vector)
 
-            vec = np.zeros(len(self.scheme.dx_target), dtype=bool)
+            vec = empty_vector
             for version, version_df in _codes_df.groupby(c_version):
                 mapper = self.scheme.dx_mapper(str(version))
                 codeset = mapper.map_codeset(version_df[c_code])
-                vec = np.maximum(vec, mapper.codeset2vec(codeset))
-            return (adm_id, CodesVector(vec, self.scheme.dx_target))
+                vec = vec.union(mapper.codeset2vec(codeset))
+            return (adm_id, vec)
 
         return map(_extract_codes, admission_ids_list)
 
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
             _adm_ids = sorted(subject_admission_ids)
-            vec = np.zeros(len(self.scheme.dx_target), dtype=bool)
-            yield _adm_ids[0], CodesVector(vec, self.scheme.dx_target)
+            vec = self.scheme.dx_target.empty_vector()
+            yield (_adm_ids[0], vec)
 
             for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
                 if prev_adm_id in dx_codes:
-                    vec = np.maximum(vec, dx_codes[prev_adm_id].vec)
-                yield adm_id, CodesVector(vec, self.scheme.dx_target)
+                    vec = vec.union(dx_codes[prev_adm_id])
+                yield (adm_id, vec)
 
     def outcome_extractor(self, dx_codes):
 
@@ -675,7 +691,7 @@ class MIMICDataset(AbstractDataset):
                 _dx_codes.to_codeset(), self.scheme.dx_target)
             outcome_vec = self.scheme.outcome.codeset2vec(
                 outcome_codes, self.scheme.dx_target)
-            return (adm_id, CodesVector(outcome_vec, self.scheme.outcome))
+            return (adm_id, outcome_vec)
 
         return map(_extract_outcome, dx_codes.keys())
 
@@ -760,9 +776,8 @@ class MIMIC4ICUDataset(MIMICDataset):
         nan_adm_ids = inp_df[nan_input_rates][c_adm_id].unique()
         nan_subj_ids = adm_df[adm_df.index.isin(
             nan_adm_ids)][c_subject].unique()
-        logging.debug(
-            f"Removing subjects with at least one nan input rate: {len(nan_subj_ids)}"
-        )
+        logging.debug("Removing subjects with at least "
+                      f"one nan input rate: {len(nan_subj_ids)}")
         self.df["adm"] = adm_df[~adm_df[c_subject].isin(nan_subj_ids)]
 
     @staticmethod
@@ -883,8 +898,8 @@ class MIMIC4ICUDataset(MIMICDataset):
                 n1 = len(self.df[df_name])
                 self.df[df_name] = remover(self.df[df_name])
                 n2 = len(self.df[df_name])
-                logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '\
-                    f'outliers from {df_name}')
+                logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '
+                              f'outliers from {df_name}')
             if 'scaler' in _preprocessor:
                 scaler = _preprocessor['scaler']
                 self.df[df_name] = scaler(self.df[df_name])
@@ -908,7 +923,7 @@ class MIMIC4ICUDataset(MIMICDataset):
         logging.debug("[DONE] Time casting..")
         return df
 
-    def to_subjects(self, subject_ids, num_workers):
+    def to_subjects(self, subject_ids, num_workers, demographic_vector_config):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids)
@@ -967,9 +982,11 @@ class MIMIC4ICUDataset(MIMICDataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids)
 
-            static_info = StaticInfo(date_of_birth=subject_dob[subject_id],
-                                     gender=subject_gender[subject_id],
-                                     ethnicity=subject_eth[subject_id])
+            static_info = StaticInfo(
+                date_of_birth=subject_dob[subject_id],
+                gender=subject_gender[subject_id],
+                ethnicity=subject_eth[subject_id],
+                demographic_vector_config=demographic_vector_config)
 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 admissions = list(executor.map(gen_admission, _admission_ids))

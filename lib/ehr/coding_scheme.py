@@ -1,6 +1,7 @@
 """Extract diagnostic/procedure information of CCS files into new
 data structures to support conversion between CCS and ICD9."""
 
+from __future__ import annotations
 from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
@@ -13,6 +14,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import equinox as eqx
 from ..utils import write_config, load_config
 
 _DIR = os.path.dirname(__file__)
@@ -243,7 +245,7 @@ class _CodeMapper(defaultdict):
             logging.error(
                 f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
-        return vec
+        return CodesVector(vec, self._t_scheme)
 
     def codeset2dagset(self, codeset: Set[str]):
         if self._t_dag_space == False:
@@ -356,10 +358,11 @@ class AbstractScheme:
 
     def search_regex(self, query, regex_flags=re.I):
         """
-        a regex-supported search of codes by a `query` string. the search is
-        applied on the code description.
-        for example, you can use it to return all codes related to cancer
-        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
+        a regex-supported search of codes by a `query` string. the search is \
+            applied on the code description.\
+            for example, you can use it to return all codes related to cancer \
+            by setting the `query = 'cancer'` \
+            and `regex_flags = re.i` (for case-insensitive search).
         """
         return set(
             filter(lambda c: re.match(query, self._desc[c], flags=regex_flags),
@@ -367,6 +370,73 @@ class AbstractScheme:
 
     def mapper_to(self, target_scheme):
         return _CodeMapper.get_mapper(self, target_scheme)
+
+    def codeset2vec(self, codeset: Set[str]):
+        vec = np.zeros(len(self), dtype=bool)
+        try:
+            for c in codeset:
+                vec[self.index[c]] = True
+        except KeyError as missing:
+            logging.error(f'Code {missing} is missing.'
+                          f'Accepted keys: {self.index.keys()}')
+
+        return CodesVector(vec, self)
+
+    def empty_vector(self):
+        return CodesVector.empty(self)
+
+
+class CodesVector(eqx.Module):
+    """
+    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
+    """
+    vec: np.ndarray
+    scheme: AbstractScheme  # Coding scheme for diagnostic codes
+
+    @classmethod
+    def empty_like(cls, other: CodesVector):
+        return cls(np.zeros_like(other.vec), other.scheme)
+
+    @classmethod
+    def empty(cls, scheme: AbstractScheme):
+        return cls(np.zeros(len(scheme), dtype=bool), scheme)
+
+    def to_codeset(self):
+        index = self.vec.nonzero()[0]
+        return set(self.scheme.index2code[i] for i in index)
+
+    def union(self, other):
+        return CodesVector(self.vec | other.vec, self.scheme)
+
+    def __len__(self):
+        return len(self.vec)
+
+
+class BinaryCodesVector(CodesVector):
+
+    @classmethod
+    def empty(cls, scheme: BinaryScheme):
+        return cls(np.zeros(1, dtype=bool), scheme)
+
+    def to_codeset(self):
+        return set(self.scheme.index2code[self.vec[0]])
+
+    def __len__(self):
+        return 1
+
+
+class BinaryScheme(AbstractScheme):
+
+    def __init__(self, codes, index, desc, name):
+        assert all(len(c) == 2 for c in (codes, index, desc)), \
+            f"{self}: Codes should be of length 2."
+        super().__init__(codes, index, desc, name)
+
+    def codeset2vec(self, code: str):
+        return BinaryCodesVector(np.array(self.index[code], dtype=bool), self)
+
+    def __len__(self):
+        return 1
 
 
 class NullScheme(Singleton, AbstractScheme):
@@ -1547,6 +1617,16 @@ class MIMICObservables(Singleton, AbstractScheme):
         return self._groups
 
 
+class Gender(Singleton, BinaryScheme):
+
+    def __init__(self):
+        codes = ['M', 'F']
+        index = {'M': 0, 'F': 1}
+        desc = {'M': 'male', 'F': 'female'}
+        name = 'gender'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+
 def register_mimic4proc_mapping(s_scheme: MIMICProcedures,
                                 t_scheme: MIMICProcedureGroups):
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
@@ -1733,7 +1813,7 @@ class OutcomeExtractor(AbstractScheme):
         vec = np.zeros(len(self.index), dtype=bool)
         for c in self.map_codeset(codeset, s_scheme):
             vec[self.index[c]] = True
-        return np.array(vec)
+        return CodesVector(np.array(vec), self)
 
     @staticmethod
     def conf_from_json(json_file: str):

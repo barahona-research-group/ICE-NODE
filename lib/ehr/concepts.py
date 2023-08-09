@@ -9,7 +9,8 @@ import jax.numpy as jnp
 import jax.random as jrandom
 
 import equinox as eqx
-from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures)
+from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
+                            CodesVector)
 
 
 class InpatientObservables(eqx.Module):
@@ -318,26 +319,6 @@ class InpatientInterventions(eqx.Module):
         return update
 
 
-class CodesVector(eqx.Module):
-    """
-    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
-    """
-    vec: jnp.ndarray
-    scheme: AbstractScheme  # Coding scheme for diagnostic codes
-
-    @classmethod
-    def empty_like(cls, other: CodesVector):
-        return cls(np.zeros_like(other.vec), other.scheme)
-
-    @classmethod
-    def empty(cls, scheme: AbstractScheme):
-        return cls(np.zeros(len(scheme), dtype=bool), scheme)
-
-    def to_codeset(self):
-        index = self.vec.nonzero()[0]
-        return set(self.scheme.index2code[i] for i in index)
-
-
 class Admission(eqx.Module):
     admission_id: int  # Unique ID for each admission
     admission_dates: Tuple[date, date]
@@ -358,71 +339,49 @@ class Admission(eqx.Module):
         return self.interval_hours / 24
 
 
-@jax.jit
-def demographic_vector(age, vec):
-    return jnp.hstack((age, vec), dtype=jnp.float16)
+class DemographicVectorConfig(eqx.Module):
+    gender: bool
+    age: bool
+    ethnicity: bool
 
 
 class StaticInfo(eqx.Module):
-    gender: Optional[jnp.ndarray] = None
-    date_of_birth: Optional[date] = None
+    demographic_vector_config: DemographicVectorConfig
+    gender: Optional[CodesVector] = None
     ethnicity: Optional[CodesVector] = None
-    constant_vec: Optional[jnp.ndarray] = None
-    gender_dict: ClassVar[Dict[str, bool]] = {'M': bool(1), 'F': bool(0)}
+    date_of_birth: Optional[date] = None
+    constant_vec: Optional[jnp.ndarray] = eqx.static_field(init=False)
 
-    def __init__(self, gender: Optional[str], date_of_birth: date,
-                 ethnicity: CodesVector):
-        super().__init__()
-        self.gender = np.array(self.gender_dict.get(gender, []), dtype=bool)
-        self.date_of_birth = date_of_birth
-        self.ethnicity = ethnicity
-        self.constant_vec = np.array([])
-        self.demographic_vec_include_age = True
-
-    def set_demographic_vector_attributes(self,
-                                          gender=True,
-                                          age=True,
-                                          ethnicity=True):
-        updated = self
+    def __post_init__(self):
         attrs_vec = []
-        if gender:
-            attrs_vec.append(self.gender)
-        if ethnicity:
+        if self.demographic_vector_config.gender:
+            assert self.gender is not None and len(
+                self.gender) > 0, "Gender is not extracted from the dataset"
+            attrs_vec.append(self.gender.vec)
+        if self.demographic_vector_config.ethnicity:
+            assert self.ethnicity is not None, \
+                "Ethnicity is not extracted from the dataset"
             attrs_vec.append(self.ethnicity.vec)
-        if len(attrs_vec) > 0:
-            updated = eqx.tree_at(lambda x: x.constant_vec, self,
-                                  np.hstack(attrs_vec))
-        if self.demographic_vec_include_age != age:
-            updated = eqx.tree_at(lambda x: x.demographic_vec_include_age,
-                                  updated, age)
-        return updated
+        self.constant_vec = np.hstack(attrs_vec)
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
 
     def demographic_vector(self, current_date: date):
-        if self.demographic_vec_include_age:
-            return demographic_vector(self.age(current_date),
-                                      self.constant_vec)
+        if self.demographic_vector_config.age:
+            return self._concat(self.age(current_date), self.constant_vec)
         return self.constant_vec
 
-    @property
-    def demographic_vector_size(self):
-        return len(self.constant_vec) + self.demographic_vec_include_age
+    @staticmethod
+    @jax.jit
+    def _concat(age, vec):
+        return jnp.hstack((age, vec), dtype=jnp.float16)
 
 
 class Patient(eqx.Module):
     subject_id: int
     static_info: StaticInfo
     admissions: List[Admission]
-
-    def set_demographic_vector_attributes(self, **flags):
-        stat_info = self.static_info.set_demographic_vector_attributes(**flags)
-        return eqx.tree_at(lambda x: x.static_info, self, stat_info)
-
-    @property
-    def demographic_vector_size(self):
-        return self.static_info.demographic_vector_size
 
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)

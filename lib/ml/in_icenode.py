@@ -10,11 +10,11 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 import equinox as eqx
 
-from ..utils import model_params_scaler, tqdm_constructor
+from ..utils import model_params_scaler, tqdm_constructor, write_config
 from ..ehr import (Patients, Patient, Admission, InpatientObservables,
                    StaticInfo, AdmissionPrediction, Predictions,
                    MIMIC4ICUDatasetScheme, AggregateRepresentation,
-                   InpatientInput, CodesVector)
+                   InpatientInput, CodesVector, DemographicVectorConfig)
 
 from .base_models import (NeuralODE, ObsStateUpdate, NeuralODE_JAX)
 from ..utils import translate_path
@@ -34,6 +34,9 @@ class InICENODEDimensions(eqx.Module):
     demo_e: int = 5
     int_e: int = 15
 
+    def to_dict(self) -> Dict[str, int]:
+        return self.__dict__
+
 
 class InpatientEmbedding(eqx.Module):
     """
@@ -50,8 +53,8 @@ class InpatientEmbedding(eqx.Module):
     f_int_emb: Callable
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
-                 dims: InICENODEDimensions, demographic_vector_size: int,
-                 key: "jax.random.PRNGKey"):
+                 demographic_vector_config: DemographicVectorConfig,
+                 dims: InICENODEDimensions, key: "jax.random.PRNGKey"):
         super().__init__()
         (dx_emb_key, inp_agg_key, inp_emb_key, proc_emb_key, dem_emb_key,
          int_emb_key) = jrandom.split(key, 6)
@@ -74,8 +77,9 @@ class InpatientEmbedding(eqx.Module):
                                      dims.proc_e * 5,
                                      depth=1,
                                      key=proc_emb_key)
-
-        self.f_dem_emb = eqx.nn.MLP(demographic_vector_size,
+        demo_input_size = scheme.demographic_vector_size(
+            demographic_vector_config)
+        self.f_dem_emb = eqx.nn.MLP(demo_input_size,
                                     dims.demo_e,
                                     dims.demo_e * 5,
                                     depth=1,
@@ -150,22 +154,23 @@ class InICENODE(eqx.Module):
     f_update: Callable
 
     scheme: MIMIC4ICUDatasetScheme = eqx.static_field()
-    demographic_vector_size: int = eqx.static_field()
     dims: InICENODEDimensions = eqx.static_field()
+    demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 
     def __init__(self, scheme: MIMIC4ICUDatasetScheme,
-                 demographic_vector_size: int, dims: InICENODEDimensions,
-                 key: "jax.random.PRNGKey"):
+                 demographic_vector_config: DemographicVectorConfig,
+                 dims: InICENODEDimensions, key: "jax.random.PRNGKey"):
         super().__init__()
         self.dims = dims
+        self.demographic_vector_config = demographic_vector_config
         self.scheme = scheme
-        self.demographic_vector_size = demographic_vector_size
         (emb_key, obs_dec_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 5)
-        self.f_emb = InpatientEmbedding(scheme,
-                                        dims,
-                                        demographic_vector_size,
-                                        key=emb_key)
+        self.f_emb = InpatientEmbedding(
+            scheme=scheme,
+            demographic_vector_config=demographic_vector_config,
+            dims=dims,
+            key=emb_key)
         self.f_obs_dec = eqx.nn.MLP(dims.state_obs_e,
                                     len(scheme.obs),
                                     dims.state_obs_e * 5,
@@ -185,7 +190,7 @@ class InICENODE(eqx.Module):
                            depth=3,
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
-        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        f_dyn = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
         self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
@@ -282,7 +287,7 @@ class InICENODE(eqx.Module):
                                 prediction=self(adm, adm_e))
                     pbar.update(adm.interval_days)
                     pbar.set_description(f"Subject {i+1}/{len(inpatients)}")
-            return results
+            return results.filter_nans()
 
     @staticmethod
     def emb_dyn_partition(pytree: InICENODE):
@@ -301,11 +306,12 @@ class InICENODE(eqx.Module):
 
     @classmethod
     def from_config(cls, conf: Dict[str, Any], scheme: MIMIC4ICUDatasetScheme,
-                    demographic_vector_size: int, key: "jax.random.PRNGKey"):
+                    demographic_vector_config: DemographicVectorConfig,
+                    key: "jax.random.PRNGKey"):
         dims = InICENODEDimensions(**conf)
         return cls(dims=dims,
                    scheme=scheme,
-                   demographic_vector_size=demographic_vector_size,
+                   demographic_vector_config=demographic_vector_config,
                    key=key)
 
     def load_params(self, params_file):

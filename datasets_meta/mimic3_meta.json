@@ -3,7 +3,7 @@
     "code_scheme": {
         "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
         "outcome": "dx_icd9_filter_v3_groups",
-        "ethnicity": ["MIMIC4Eth32", "MIMIC4Eth5"]
+        "ethnicity": ["MIMICEth32", "MIMICEth5"]
     },
     "colname": {
         "dx": {
