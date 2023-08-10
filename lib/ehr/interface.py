@@ -231,6 +231,13 @@ class Patients(eqx.Module):
             len(o.time) for s in subject_ids
             for a in self.subjects[s].admissions for o in a.observables)
 
+    def d2d_interval_days(self, subject_ids=None):
+        if subject_ids is None:
+            subject_ids = self.subjects.keys()
+
+        return sum(a.d2d_interval_days for s in subject_ids
+                   for a in self.subjects[s].admissions)
+
     def interval_days(self, subject_ids=None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()

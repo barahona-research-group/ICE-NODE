@@ -1,145 +1,108 @@
 """."""
 from __future__ import annotations
-from functools import partial
-from collections import namedtuple
-from typing import Any, Dict, List
-import re
+from typing import List, Callable
 
 from absl import logging
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import jax.tree_util as jtu
 import equinox as eqx
-import optuna
 
 from ..utils import model_params_scaler
-from ..ehr import Subject_JAX, Admission_JAX, BatchPredictedRisks
+from ..ehr import (Patient, AdmissionPrediction, DemographicVectorConfig,
+                   MIMICDatasetScheme, CodesVector)
+from ..embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
+                          EmbeddedAdmission)
 
-from .base_models import (GRUDynamics, NeuralODE, StateUpdate, NeuralODE_JAX)
-from .abstract_model import AbstractModel
-
-
-def ode_dyn(label, state_size, embeddings_size, control_size, key):
-    if 'mlp' in label:
-        nlayers = int(re.findall(r'\d+\b', label)[0])
-        label = 'mlp'
-    else:
-        nlayers = 0
-
-    dyn_state_size = state_size + embeddings_size
-    input_size = state_size + embeddings_size + control_size
-
-    nn_kwargs = {
-        'mlp':
-        dict(activation=jax.nn.tanh,
-             final_activation=jax.nn.tanh,
-             depth=nlayers - 1,
-             width_size=input_size,
-             in_size=input_size,
-             out_size=dyn_state_size),
-        'gru':
-        dict(input_size=input_size, state_size=dyn_state_size)
-    }
-
-    if label == 'mlp':
-        return eqx.nn.MLP(**nn_kwargs['mlp'], key=key)
-    if label == 'gru':
-        return GRUDynamics(**nn_kwargs['gru'], key=key)
-
-    raise RuntimeError(f'Unexpected dynamics label: {label}')
+from .base_models import (StateUpdate, NeuralODE_JAX)
+from .abstract_model import OutpatientModel, ModelDimensions
 
 
-class SubjectState(eqx.Module):
-    state: jnp.ndarray
-    time: jnp.ndarray  # shape ()
+class ICENODEDimensions(ModelDimensions):
+    mem: int = 15
+    dx: int = 30
+
+    def __init__(self, emb: PatientEmbeddingDimensions, mem: int):
+        super().__init__(emb=emb)
+        self.emb = emb
+        self.mem = mem
+        self.dx = emb.dx
 
 
-class ICENODE(AbstractModel):
-    ode_dyn: eqx.Module
-    f_update: eqx.Module
+#     @classmethod
+#     def sample_model_config(cls, trial: optuna.Trial):
+#         return {'state_size': trial.suggest_int('s', 10, 100, 10)}
 
-    ode_init_var: float = eqx.static_field()
-    timescale: float = eqx.static_field()
 
-    @staticmethod
-    def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
+class ICENODE(OutpatientModel):
+    f_dyn: Callable
+    f_update: Callable
 
-    @property
-    def dyn_state_size(self):
-        return self.state_size + self.dx_emb.embeddings_size
+    def __init__(self, dims: ICENODEDimensions, scheme: MIMICDatasetScheme,
+                 demographic_vector_config: DemographicVectorConfig,
+                 key: "jax.random.PRNGKey"):
+        (emb_key, dx_dec_key, dyn_key, up_key) = jrandom.split(key, 4)
+        f_emb = PatientEmbedding(
+            scheme=scheme,
+            demographic_vector_config=demographic_vector_config,
+            dims=dims.emb,
+            key=emb_key)
+        f_dx_dec = eqx.nn.MLP(dims.dx,
+                              len(scheme.outcome),
+                              dims.dx * 5,
+                              depth=1,
+                              key=dx_dec_key)
 
-    def __init__(self, ode_dyn_label: str, ode_init_var: float,
-                 timescale: float, key: "jax.random.PRNGKey", *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.timescale = timescale
-        self.ode_init_var = ode_init_var
-        key1, key2 = jrandom.split(key, 2)
-        ode_dyn_f = ode_dyn(ode_dyn_label,
-                            state_size=self.state_size,
-                            embeddings_size=self.dx_emb.embeddings_size,
-                            control_size=self.control_size,
-                            key=key1)
-        ode_dyn_f = model_params_scaler(ode_dyn_f, ode_init_var,
-                                        eqx.is_inexact_array)
+        dyn_state_size = dims.dx + dims.mem
+        dyn_input_size = dyn_state_size + dims.emb.demo
+        f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
+                           out_size=dyn_state_size,
+                           activation=jnn.tanh,
+                           depth=2,
+                           width_size=dyn_state_size * 5,
+                           key=dyn_key)
+        ode_dyn_f = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
 
-        self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=timescale)
+        self.ode_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
 
-        self.f_update = StateUpdate(
-            state_size=self.state_size,
-            embeddings_size=self.dx_emb.embeddings_size,
-            key=key2)
+        self.f_update = StateUpdate(state_size=dims.mem,
+                                    embeddings_size=dims.emb.dx,
+                                    key=up_key)
 
-    def weights(self):
-        has_weight = lambda leaf: hasattr(leaf, 'weight')
-        # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
-        return tuple(x.weight
-                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
-                     if has_weight(x))
+        super().__init__(dims=dims,
+                         scheme=scheme,
+                         demographic_vector_config=demographic_vector_config,
+                         f_emb=f_emb,
+                         f_dx_dec=f_dx_dec)
 
     def join_state_emb(self, state, emb):
         if state is None:
-            state = jnp.zeros((self.state_size, ))
+            state = jnp.zeros((self.dims.mem, ))
         return jnp.hstack((state, emb))
 
-    def split_state_emb(self, state: SubjectState):
-        return jnp.split(state.state, (self.state_size, ), axis=-1)
+    def split_state_emb(self, state: jnp.ndarray):
+        return jnp.hsplit(state, (self.dims.mem, ))
+
+    def _integrate(self, state: jnp.ndarray, int_time: jnp.ndarray,
+                   ctrl: jnp.ndarray):
+        try:
+            return self.ode_dyn(int_time, state, args=dict(control=ctrl))[-1]
+        except Exception:
+            dt = float(jax.block_until_ready(int_time))
+            if dt < 1 / 3600.0 and dt > 0.0:
+                logging.debug(f"Time diff is less than 1 second: {int_time}")
+            else:
+                logging.error(f"Time diff is {int_time}!")
+            return state
 
     @eqx.filter_jit
-    def _integrate_state(self, subject_state: SubjectState,
-                         int_time: jnp.ndarray, ctrl: jnp.ndarray,
-                         args: Dict[str, Any]):
-        args = dict(control=ctrl, **args)
-        out = self.ode_dyn(int_time, subject_state.state, args)
-        if args.get('tay_reg', 0) > 0:
-            state, r, traj = out[0][-1], out[1][-1].squeeze(), out[0]
-        else:
-            state, r, traj = out[-1], 0.0, out
-
-        return SubjectState(state, subject_state.time + int_time), r, traj
-
-    @eqx.filter_jit
-    def _jitted_update(self, *args):
+    def _update(self, *args):
         return self.f_update(*args)
 
-    def _update_state(self, subject_state: SubjectState,
-                      adm_info: Admission_JAX,
-                      dx_emb: jnp.ndarray) -> jnp.ndarray:
-        state, dx_emb_hat = self.split_state_emb(subject_state)
-        state = self._jitted_update(state, dx_emb_hat, dx_emb)
-        return SubjectState(self.join_state_emb(state, dx_emb),
-                            jnp.array(adm_info.admission_time + adm_info.los))
-
     @eqx.filter_jit
-    def _decode(self, subject_state: SubjectState):
-        _, dx_emb_hat = self.split_state_emb(subject_state)
-        return self.dx_dec(dx_emb_hat)
-
-    @eqx.filter_jit
-    def _decode_trajectory(self, traj: SubjectState):
-        _, dx_emb_hat = self.split_state_emb(traj)
-        return jax.vmap(self.dx_dec)(dx_emb_hat)
+    def _decode(self, dx_e: jnp.ndarray):
+        return self.f_dx_dec(dx_e)
 
     @staticmethod
     def _time_diff(t1, t2):
@@ -150,106 +113,45 @@ class ICENODE(AbstractModel):
         """
         return t1 - t2
 
-    def init_predictions(self):
-        return BatchPredictedRisks()
+    def __call__(self, patient: Patient,
+                 embedded_admissions: List[EmbeddedAdmission]):
+        adms = patient.admissions
+        state = self.join_state_emb(None, embedded_admissions[0].emb)
+        t0_date = adms[0].admission_time[0]
+        preds = []
+        for i in range(1, len(adms)):
+            adm = adms[i]
+            demo = embedded_admissions[i].demo
 
-    def dx_embed(self, dx_G: jnp.ndarray, adms: List[Admission_JAX]):
-        return [self.dx_emb.encode(dx_G, adm.dx_vec) for adm in adms]
+            # Integrate
+            t0 = adm[i - 1].days_since(t0_date)[1]
+            t1 = adm.days_since(t0_date)[1]
+            dt = self._time_diff(t1, t0)
+            delta_disch2disch = jnp.array(dt)
+            state = self._integrate(state, delta_disch2disch, demo)
+            mem, dx_e_hat = self.split_state_emb(state)
 
-    def __call__(self,
-                 subject_interface: Subject_JAX,
-                 subjects_batch: List[int],
-                 args=dict()):
-        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
-        dx_G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
-        risk_prediction = self.init_predictions()
-        dyn_loss = []
-        max_adms = max(
-            len(subject_interface[subj_i]) for subj_i in subjects_batch)
-        logging.info(f'max_adms: {max_adms}')
-        for subj_i in subjects_batch:
-            adms = subject_interface[subj_i]
-            emb_seq = self.dx_embed(dx_G, adms)
-            ctrl_seq = [
-                subject_interface.subject_control(subj_i, adm.admission_date)
-                for adm in adms
-            ]
-            subject_state = SubjectState(
-                self.join_state_emb(None, emb_seq[0]),
-                jnp.array(adms[0].admission_time + adms[0].los))
+            # Predict
+            dx_hat = CodesVector(self._decode(dx_e_hat), adm.outcome.scheme)
 
-            for adm, emb, ctrl in zip(adms[1:], emb_seq[1:], ctrl_seq[:-1]):
+            # Update
+            dx_e = embedded_admissions[i].dx
+            mem = self._update(mem, dx_e_hat, dx_e)
+            state = self.join_state_emb(mem, dx_e)
 
-                # Discharge-to-discharge time.
-                d2d_time = jnp.array(
-                    self._time_diff(adm.admission_time + adm.los,
-                                    subject_state.time))
-
-                # Integrate until next discharge
-                subject_state, r, traj = self._integrate_state(
-                    subject_state, d2d_time, ctrl, args)
-                dyn_loss.append(r)
-
-                dec_dx = self._decode(subject_state)
-
-                risk_prediction.add(subject_id=subj_i,
-                                    admission=adm,
-                                    prediction=dec_dx,
-                                    trajectory=traj)
-
-                if args.get('return_embeddings', False):
-                    risk_prediction.set_subject_embeddings(
-                        subject_id=subj_i, embeddings=subject_state.state)
-
-                # Update state at discharge
-                subject_state = self._update_state(subject_state, adm, emb)
-
-        return {'predictions': risk_prediction, 'dyn_loss': sum(dyn_loss)}
-
-    @classmethod
-    def sample_model_config(cls, trial: optuna.Trial):
-        return {
-            'ode_dyn':
-            trial.suggest_categorical('ode_dyn',
-                                      ['mlp1', 'mlp2', 'mlp3', 'gru']),
-            'ode_init_var':
-            trial.suggest_float('ode_i', 1e-8, 1e1, log=True),
-            'state_size':
-            trial.suggest_int('s', 10, 100, 10),
-            'timescale':
-            7
-        }
+            preds.append(AdmissionPrediction(admission=adm, outcome=dx_hat))
+        return preds
 
 
 class ICENODE_UNIFORM(ICENODE):
+
     @staticmethod
     def _time_diff(t1, t2):
         return 7.0
 
 
 class ICENODE_ZERO(ICENODE_UNIFORM):
+
     @eqx.filter_jit
-    def _integrate_state(self, subject_state, int_time, ctrl, args):
-        return SubjectState(subject_state.state,
-                            subject_state.time + int_time), 0.0, None
-
-
-class AICE(ICENODE):
-    in_mix: jnp.ndarray
-    out_mix: jnp.ndarray
-
-    @staticmethod
-    def decoder_input_size(expt_config):
-        return expt_config["emb"]["dx"]["embeddings_size"]
-
-    @property
-    def dyn_state_size(self):
-        return self.state_size + self.dx_emb.embeddings_size
-
-    def __init__(self, key: "jax.random.PRNGKey", *args, **kwargs):
-        key1, key2, key3 = jax.random.split(key, 3)
-        super().__init__(*args, **kwargs, key=key1)
-
-        self.out_mix = jnp.zeros((self.dx_dec.output_size, ),
-                                 dtype=jnp.float32)
-        self.in_mix = jnp.zeros((self.dx_emb.input_size, ), dtype=jnp.float32)
+    def _integrate(self, state, int_time, ctrl):
+        return state

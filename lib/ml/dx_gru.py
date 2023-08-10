@@ -1,68 +1,83 @@
 """."""
 
-from functools import partial
-from typing import Any, List, Callable
+from typing import List, Callable
 
-import equinox as eqx
+import jax
+import jax.random as jrandom
 import jax.numpy as jnp
+import equinox as eqx
 
-from .abstract_model import AbstractModel
+from ..ehr import (Patient, AdmissionPrediction, MIMICDatasetScheme,
+                   DemographicVectorConfig, CodesVector)
+from ..embeddings import (PatientEmbeddingDimensions, PatientEmbedding,
+                          EmbeddedAdmission)
+from .abstract_model import OutpatientModel, ModelDimensions
 
-from ..ehr import Subject_JAX, BatchPredictedRisks
+
+class GRUDimensions(ModelDimensions):
+    mem: int = 45
+
+    def __init__(self, emb: PatientEmbeddingDimensions, mem: int):
+        super().__init__(emb=emb)
+        self.emb = emb
+        self.mem = mem
 
 
-class GRU(AbstractModel):
+class GRU(OutpatientModel):
     f_update: Callable
 
-    def __init__(self, key: "jax.random.PRNGKey", **kwargs):
-        super().__init__(**kwargs)
-        self.f_update = eqx.nn.GRUCell(self.dx_emb.embeddings_size +
-                                       self.control_size,
-                                       self.state_size,
+    def __init__(self, dims: GRUDimensions, scheme: MIMICDatasetScheme,
+                 demographic_vector_config: DemographicVectorConfig,
+                 key: "jax.random.PRNGKey"):
+        (emb_key, dx_dec_key, up_key) = jrandom.split(key, 3)
+        f_emb = PatientEmbedding(
+            scheme=scheme,
+            demographic_vector_config=demographic_vector_config,
+            dims=dims.emb,
+            key=emb_key)
+        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+                              len(scheme.outcome),
+                              dims.emb.dx * 5,
+                              depth=1,
+                              key=dx_dec_key)
+
+        self.f_update = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
+                                       dims.mem,
                                        use_bias=True,
-                                       key=key)
+                                       key=up_key)
+
+        super().__init__(dims=dims,
+                         scheme=scheme,
+                         demographic_vector_config=demographic_vector_config,
+                         f_emb=f_emb,
+                         f_dx_dec=f_dx_dec)
 
     def weights(self):
         return [self.f_update.weight_hh, self.f_update.weight_ih]
 
-    def __call__(self,
-                 subject_interface: Subject_JAX,
-                 subjects_batch: List[int],
-                 args=dict()):
-        dx_for_emb = subject_interface.dx_batch_history_vec(subjects_batch)
-        G = self.dx_emb.compute_embeddings_mat(dx_for_emb)
-        emb = partial(self.dx_emb.encode, G)
+    @eqx.filter_jit
+    def _update(self, mem: jnp.ndarray, dx_e_prev: jnp.ndarray,
+                demo: jnp.ndarray):
+        x = jnp.hstack((dx_e_prev, demo))
+        return self.f_update(x, mem)
 
-        loss = {}
-        risk_prediction = BatchPredictedRisks()
-        state0 = jnp.zeros(self.state_size)
-        for subject_id in subjects_batch:
-            ctrl_f = partial(subject_interface.subject_control, subject_id)
+    @eqx.filter_jit
+    def _decode(self, dx_e_hat: jnp.ndarray):
+        return self.f_dx_dec(dx_e_hat)
 
-            adms = subject_interface[subject_id]
+    def __call__(self, patient: Patient,
+                 embedded_admissions: List[EmbeddedAdmission]):
+        adms = patient.admissions
+        state = jnp.zeros((self.dims.mem, ))
+        preds = []
+        for i in range(1, len(adms)):
+            adm = adms[i]
+            demo = embedded_admissions[i].demo
+            dx_e_prev = embedded_admissions[i - 1].dx
+            # Step
+            state = self._update(state, dx_e_prev, demo)
+            # Predict
+            dx_hat = CodesVector(self._decode(state), adm.outcome.scheme)
 
-            # Exclude first input, not to be predicted.
-            dx_vec = [adm.dx_vec for adm in adms]
-            emb_seqs = list(map(emb, dx_vec))
-
-            # Merge controls with embeddings
-            # c1, c2, ..., cT. <- controls
-            c_seq = jnp.vstack([ctrl_f(adm.admission_date) for adm in adms])
-
-            # Merge controls with embeddings
-            emb_seqs = jnp.hstack([c_seq, emb_seqs])
-
-            loss[subject_id] = []
-            state = state0
-            for i, (dx_emb_prev,
-                    adm_current) in enumerate(zip(emb_seqs[:-1], adms[1:])):
-                state = self.f_update(dx_emb_prev, state)
-                logits = self.dx_dec(state)
-                risk_prediction.add(subject_id=subject_id,
-                                    admission=adm_current,
-                                    prediction=logits)
-                if args.get('return_embeddings', False):
-                    risk_prediction.set_subject_embeddings(
-                        subject_id=subject_id, embeddings=state)
-
-        return {'predictions': risk_prediction}
+            preds.append(AdmissionPrediction(admission=adm, outcome=dx_hat))
+        return preds

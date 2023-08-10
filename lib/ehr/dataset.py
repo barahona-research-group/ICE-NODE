@@ -104,7 +104,7 @@ class AbstractDataset(metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def load_dataframes(cls, meta):
+    def load_dataframes(cls, meta, **kwargs):
         pass
 
 
@@ -270,7 +270,16 @@ class MIMICDataset(AbstractDataset):
         logging.debug("[DONE] Dataframes validation and time conversion")
 
     @classmethod
-    def load_dataframes(cls, meta):
+    def sample_n_subjects(cls, df, c_subject_id, n, seed=None):
+        if seed is not None:
+            rng = random.Random(seed)
+
+        subjects = df[c_subject_id].unique().compute()
+        subjects = rng.sample(subjects.tolist(), n)
+        return df[df[c_subject_id].isin(subjects)]
+
+    @classmethod
+    def load_dataframes(cls, meta, sample=None, **kwargs):
         files = meta['files']
         base_dir = meta['base_dir']
         colname = meta['colname']
@@ -298,6 +307,11 @@ class MIMICDataset(AbstractDataset):
                         dtype=dtype)
             for k in files.keys()
         }
+        if sample is not None:
+            df["adm"] = cls.sample_n_subjects(df["adm"],
+                                              colname["adm"]["subject_id"],
+                                              sample, 0)
+
         logging.debug('[DONE] Loading dataframe files')
 
         logging.debug('Preprocess admissions')
@@ -416,11 +430,12 @@ class MIMICDataset(AbstractDataset):
             unrecognised = codeset - scheme_codes
             if len(unrecognised) > 0:
                 logging.debug(
-                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} \
-                    ({len(unrecognised)/len(codeset):.2%})')
-                logging.debug(f"""
-                    Unrecognised {type(scheme)} codes ({len(unrecognised)})
-                    to be removed (first 30): {sorted(unrecognised)[:30]}""")
+                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} '
+                    f'({len(unrecognised)/len(codeset):.2%})')
+                logging.debug(f'Unrecognised {type(scheme)} codes '
+                              f'({len(unrecognised)}) '
+                              f'to be removed (first 30): '
+                              f'{sorted(unrecognised)[:30]}')
 
             filtered_df.append(
                 version_df[version_df[code_col].isin(scheme_codes)])
@@ -699,7 +714,7 @@ class MIMICDataset(AbstractDataset):
     def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
-        meta['df'] = cls.load_dataframes(meta)
+        meta['df'] = cls.load_dataframes(meta, **init_kwargs)
         return cls(**meta, **init_kwargs)
 
 
@@ -905,9 +920,9 @@ class MIMIC4ICUDataset(MIMICDataset):
                 self.df[df_name] = scaler(self.df[df_name])
 
     @classmethod
-    def load_dataframes(cls, meta):
+    def load_dataframes(cls, meta, sample=None, **kwargs):
 
-        df = MIMICDataset.load_dataframes(meta)
+        df = MIMICDataset.load_dataframes(meta, sample=sample, **kwargs)
         colname = meta['colname']
 
         logging.debug("Time casting..")
@@ -967,6 +982,8 @@ class MIMIC4ICUDataset(MIMICDataset):
                 input_=inputs[i],
                 adm_interval=adm_interval[i])
             interventions = interventions.segment_proc(proc_repr)
+            interventions = interventions.segment_input()
+
             obs = observables[i].segment(interventions.t_sep)
             return Admission(admission_id=i,
                              admission_dates=adm_dates[i],
@@ -1112,6 +1129,21 @@ class MIMIC4ICUDataset(MIMICDataset):
         logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
             yield (adm_id, InpatientObservables.empty(obs_dim))
+
+
+def load_dataset_scheme(label):
+    if label == 'M3':
+        conf = load_config(f'{_META_DIR}/mimic3_meta.json')
+        return MIMICDatasetScheme(conf['code_scheme'])
+    if label == 'M4':
+        conf = load_config(f'{_META_DIR}/mimic4_meta.json')
+        return MIMICDatasetScheme(conf['code_scheme'])
+    if label == 'CPRD':
+        conf = load_config(f'{_META_DIR}/cprd_meta.json')
+        return MIMICDatasetScheme(conf['code_scheme'])
+    if label == 'M4ICU':
+        conf = load_config(f'{_META_DIR}/mimic4icu_meta.json')
+        return MIMIC4ICUDatasetScheme(conf['code_scheme'])
 
 
 def load_dataset(label, **init_kwargs):

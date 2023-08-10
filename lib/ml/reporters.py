@@ -4,7 +4,7 @@ import os
 import re
 import pickle
 
-from absl import logging
+import logging
 import optuna
 
 from .. import utils as U

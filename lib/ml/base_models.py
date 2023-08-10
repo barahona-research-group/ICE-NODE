@@ -188,14 +188,10 @@ class NeuralODE(eqx.Module):
 
         dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, args)
         sampling_rate = args.get('sampling_rate', None)
-        # jax.debug.print('t.shape: {} {}', t.shape, jnp.isscalar(t))
-        # if jnp.isscalar(t):
         if sampling_rate:
             t = timesamples(float(t), sampling_rate) / self.timescale
         else:
             t = jnp.array([0.0, t / self.timescale])
-        # jax.debug.print('t.shape: {} {}', t.shape, jnp.isscalar(t))
-        # jax.debug.breakpoint()
         return diffeqsolve(
             self.ode_term(args),
             Dopri5(),
@@ -204,10 +200,11 @@ class NeuralODE(eqx.Module):
             dt0=dt0,
             y0=x0,
             args=args,
-            adjoint=BacksolveAdjoint(solver=Dopri5()),
-            # adjoint=RecursiveCheckpointAdjoint(),
+            # adjoint=BacksolveAdjoint(solver=Dopri5()),
+            adjoint=RecursiveCheckpointAdjoint(),
             saveat=SaveAt(ts=t),
-            max_steps=2**20).ys
+            throw=False,
+            max_steps=2**20)
 
     def get_x0(self, x0, args):
         if args.get('tay_reg', 0) > 0:

@@ -171,6 +171,7 @@ class AggregateRepresentation(eqx.Module):
         splits = np.cumsum([0] + splits)[1:-1]
         self.splits = tuple(splits.tolist())
 
+    @eqx.filter_jit
     def __call__(self, inpatient_input: Union[jnp.ndarray, np.ndarray]):
         if isinstance(inpatient_input, np.ndarray):
             splitted = np.hsplit(inpatient_input, self.splits)
@@ -280,20 +281,32 @@ class InpatientInterventions(eqx.Module):
         return self.time[-1] - self.time[0]
 
     @eqx.filter_jit
-    def _jax_segment_proc(self, proc_repr: AggregateRepresentation):
+    def _jax_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
+        if proc_repr is None:
+            return eqx.filter_vmap(self.proc)(self.t0)
+
         return eqx.filter_vmap(lambda t: proc_repr(self.proc(t)))(self.t0)
 
-    def _np_segment_proc(self, proc_repr: AggregateRepresentation):
+    def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
+        if proc_repr is None:
+            return np.vstack([self.proc(t) for t in self.t0])
+
         return np.vstack([proc_repr(self.proc(t)) for t in self.t0])
 
     @eqx.filter_jit
-    def _jax_segment_input(self, input_repr: AggregateRepresentation):
+    def _jax_segment_input(self,
+                           input_repr: Optional[AggregateRepresentation]):
+        if input_repr is None:
+            return eqx.filter_vmap(self.input_)(self.t0)
         return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
 
-    def _np_segment_input(self, input_repr: AggregateRepresentation):
+    def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]):
+        if input_repr is None:
+            return np.vstack([self.input_(t) for t in self.t0])
         return np.vstack([input_repr(self.input_(t)) for t in self.t0])
 
-    def segment_proc(self, proc_repr: AggregateRepresentation):
+    def segment_proc(self,
+                     proc_repr: Optional[AggregateRepresentation] = None):
         if isinstance(self.proc.index, np.ndarray):
             proc_segments = self._np_segment_proc(proc_repr)
         else:
@@ -306,7 +319,8 @@ class InpatientInterventions(eqx.Module):
         update = eqx.tree_at(lambda x: x.proc, update, None)
         return update
 
-    def segment_input(self, input_repr: AggregateRepresentation):
+    def segment_input(self,
+                      input_repr: Optional[AggregateRepresentation] = None):
         if isinstance(self.input_, np.ndarray):
             inp_segments = self._np_segment_input(input_repr)
         else:
@@ -337,6 +351,11 @@ class Admission(eqx.Module):
     @property
     def interval_days(self):
         return self.interval_hours / 24
+
+    def days_since(self, date: date):
+        d1 = (self.admission_dates[0] - date).total_seconds() / 3600 / 24
+        d2 = (self.admission_dates[1] - date).total_seconds() / 3600 / 24
+        return d1, d2
 
 
 class DemographicVectorConfig(eqx.Module):
@@ -382,6 +401,12 @@ class Patient(eqx.Module):
     subject_id: int
     static_info: StaticInfo
     admissions: List[Admission]
+
+    @property
+    def d2d_interval_days(self):
+        d1 = self.admissions[0].admission_dates[1]
+        d2 = self.admissions[-1].admission_dates[1]
+        return (d2 - d1).total_seconds() / 3600 / 24
 
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)
