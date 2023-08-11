@@ -31,7 +31,7 @@ class AdmissionPrediction(eqx.Module):
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
-        return tree_hasnan(self)
+        return tree_hasnan((self.outcome, self.observables, self.other))
 
 
 class Predictions(dict):
@@ -90,18 +90,24 @@ class Predictions(dict):
         adms = [r.admission for r in preds]
         loss = {}
         if dx_loss is not None:
-            dx_true = jnp.vstack([a.outcome.vec for a in adms])
-            dx_pred = jnp.vstack([p.outcome.vec for p in preds])
-            dx_mask = jnp.ones_like(dx_true, dtype=bool)
-            loss['dx_loss'] = dx_loss(dx_true, dx_pred, dx_mask)
-        if obs_loss is not None:
-            obs_true = sum((a.observables for a in adms), [])
-            obs_true = InpatientObservables.concat(obs_true)
-            obs_pred = sum((p.observables for p in preds), [])
-            obs_pred = InpatientObservables.concat(obs_pred)
+            l_outcome = [a.outcome.vec for a in adms]
+            l_pred = [p.outcome.vec for p in preds]
+            l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
 
-            loss['obs_loss'] = obs_loss(obs_true.value, obs_pred.value,
-                                        obs_true.mask)
+            l = list(map(dx_loss, l_outcome, l_pred, l_mask))
+
+            loss['dx_loss'] = sum(l) / len(l)
+
+        if obs_loss is not None:
+            obs_true = [o.value for a in adms for o in a.observables]
+            obs_mask = [o.mask for a in adms for o in a.observables]
+            obs_pred = [o.value for p in preds for o in p.observables]
+            obs_n = [len(o.time) for a in adms for o in a.observables]
+            N = sum(obs_n)
+            obs_w = [n / N for n in obs_n]
+
+            l = list(map(obs_loss, obs_true, obs_pred, obs_mask))
+            loss['obs_loss'] = sum(_l * w for _l, w in zip(l, obs_w))
 
         return loss
 

@@ -190,30 +190,13 @@ class InpatientInput(eqx.Module):
     endtime: jnp.ndarray
     size: int
 
-    @staticmethod
-    def pad_array(array: np.ndarray, maximum_padding: int = 100):
-        """
-        Pad array to be a multiple of maximum_padding. This is efficient to
-        avoid jit-compiling a different function for each array shape.
-        """
-
-        n = len(array)
-        n_pad = maximum_padding - (n % maximum_padding)
-        if n_pad == maximum_padding:
-            return array
-
-        return np.pad(array,
-                      pad_width=(0, n_pad),
-                      mode='constant',
-                      constant_values=0)
-
     def __init__(self, index: np.ndarray, rate: np.ndarray,
                  starttime: np.ndarray, endtime: np.ndarray, size: int):
         super().__init__()
-        self.index = self.pad_array(index)
-        self.rate = self.pad_array(rate)
-        self.starttime = self.pad_array(starttime)
-        self.endtime = self.pad_array(endtime)
+        self.index = index
+        self.rate = rate
+        self.starttime = starttime
+        self.endtime = endtime
         self.size = size
 
     def __call__(self, t):
@@ -257,28 +240,73 @@ class InpatientInterventions(eqx.Module):
             for t in (proc.starttime, proc.endtime, input_.starttime,
                       input_.endtime)
         ]
-        self.time = np.unique(
+        time = np.unique(
             np.hstack(time + [0.0, adm_interval], dtype=np.float32))
+        time = self.pad_array(time, value=np.nan)
+        self.time = time
+
+    @staticmethod
+    def pad_array(array: np.ndarray,
+                  maximum_padding: int = 100,
+                  value: float = 0.0):
+        """
+        Pad array to be a multiple of maximum_padding. This is efficient to
+        avoid jit-compiling a different function for each array shape.
+        """
+
+        n = len(array)
+        n_pad = maximum_padding - (n % maximum_padding)
+        if n_pad == maximum_padding:
+            return array
+
+        if isinstance(array, np.ndarray):
+            _np = np
+        else:
+            _np = jnp
+
+        return _np.pad(array,
+                       pad_width=(0, n_pad),
+                       mode='constant',
+                       constant_values=value)
+
+    @property
+    def _np(self):
+        if isinstance(self.time, np.ndarray):
+            return np
+        else:
+            return jnp
+
+    @property
+    def t0_padded(self):
+        return self.time[:-1]
 
     @property
     def t0(self):
         """Start times for segmenting the interventions"""
-        return self.time[:-1]
+        t = self.time
+        return t[~self._np.isnan(t)][:-1]
 
     @property
-    def t1(self):
+    def t1_padded(self):
         """End times for segmenting the interventions"""
         return self.time[1:]
 
     @property
+    def t1(self):
+        """End times for segmenting the interventions"""
+        t = self.time
+        return t[~self._np.isnan(t)][1:]
+
+    @property
     def t_sep(self):
         """Separation times for segmenting the interventions"""
-        return self.time[1:-1]
+        t = self.time
+        return t[~self._np.isnan(t)][1:-1]
 
     @property
     def interval(self):
         """Length of the admission interval"""
-        return self.time[-1] - self.time[0]
+        return jnp.nanmax(self.time) - jnp.nanmin(self.time)
 
     @eqx.filter_jit
     def _jax_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
@@ -288,10 +316,15 @@ class InpatientInterventions(eqx.Module):
         return eqx.filter_vmap(lambda t: proc_repr(self.proc(t)))(self.t0)
 
     def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
-        if proc_repr is None:
-            return np.vstack([self.proc(t) for t in self.t0])
+        t = self.t0_padded[~np.isnan(self.t0_padded)]
+        t_nan = self.t0_padded[np.isnan(self.t0_padded)]
 
-        return np.vstack([proc_repr(self.proc(t)) for t in self.t0])
+        if proc_repr is None:
+            out = np.vstack([self.proc(ti) for ti in t])
+        else:
+            out = np.vstack([proc_repr(self.proc(ti)) for ti in t])
+        pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
+        return np.vstack([out, pad])
 
     @eqx.filter_jit
     def _jax_segment_input(self,
@@ -301,9 +334,16 @@ class InpatientInterventions(eqx.Module):
         return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
 
     def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]):
+        t = self.t0_padded[~np.isnan(self.t0_padded)]
+        t_nan = self.t0_padded[np.isnan(self.t0_padded)]
+
         if input_repr is None:
-            return np.vstack([self.input_(t) for t in self.t0])
-        return np.vstack([input_repr(self.input_(t)) for t in self.t0])
+            out = np.vstack([self.input_(ti) for ti in t])
+        else:
+            out = np.vstack([input_repr(self.input_(ti)) for ti in t])
+
+        pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
+        return np.vstack([out, pad])
 
     def segment_proc(self,
                      proc_repr: Optional[AggregateRepresentation] = None):
@@ -321,7 +361,7 @@ class InpatientInterventions(eqx.Module):
 
     def segment_input(self,
                       input_repr: Optional[AggregateRepresentation] = None):
-        if isinstance(self.input_, np.ndarray):
+        if isinstance(self.input_.index, np.ndarray):
             inp_segments = self._np_segment_input(input_repr)
         else:
             inp_segments = self._jax_segment_input(input_repr)
@@ -392,7 +432,6 @@ class StaticInfo(eqx.Module):
         return self.constant_vec
 
     @staticmethod
-    @jax.jit
     def _concat(age, vec):
         return jnp.hstack((age, vec), dtype=jnp.float16)
 

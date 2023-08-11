@@ -2,7 +2,7 @@
 
 from typing import Dict, Optional, List, Tuple, Any, Callable
 from dataclasses import dataclass, field
-from abc import ABC, abstractmethod, ABCMeta
+from abc import abstractmethod, ABCMeta
 
 from tqdm import tqdm
 from absl import logging
@@ -167,30 +167,38 @@ class VisitsAUC(Metric):
 
 @dataclass
 class LossMetric(Metric):
-    loss_functions: Dict[str, Callable] = field(init=False)
+    dx_loss_functions: Dict[str, Callable] = field(init=False)
+    obs_loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
-        self.loss_functions = {
+        self.dx_loss_functions = {
             'softmax': L.softmax_logits_bce,
             'weighted_softmax': L.softmax_logits_weighted_bce,
             'focal_softmax': L.softmax_logits_balanced_focal_bce,
             'focal_bce': L.balanced_focal_bce
         }
+        self.obs_loss_functions = {'masked_l2': L.masked_l2}
 
     def fields(self):
-        return sorted(self.loss_functions.keys())
+        return sorted(self.dx_loss_functions.keys()) + sorted(
+            self.obs_loss_functions.keys())
 
     def dirs(self):
-        return (0, ) * len(self.loss_functions)
+        return (0, ) * (len(self.dx_loss_functions) +
+                        len(self.obs_loss_functions))
 
     def field_dir(self, field):
         return 0
 
     def __call__(self, predictions: Predictions):
         return {
+            loss_key: float(
+                predictions.prediction_loss(dx_loss=loss_f)['dx_loss'])
+            for loss_key, loss_f in self.dx_loss_functions.items()
+        } | {
             loss_key:
-            float(predictions.prediction_loss(dx_loss=loss_f)['dx_loss'])
-            for loss_key, loss_f in self.loss_functions.items()
+            float(predictions.prediction_loss(obs_loss=loss_f)['obs_loss'])
+            for loss_key, loss_f in self.obs_loss_functions.items()
         }
 
 
@@ -611,7 +619,7 @@ class OtherMetrics(Metric):
 
 @dataclass
 class MetricsCollection:
-    metrics: List[Metric]
+    metrics: List[Metric] = field(default_factory=list)
     other_metrics: OtherMetrics = OtherMetrics()
 
     def to_df(self,

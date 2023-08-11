@@ -1,7 +1,6 @@
 """."""
 from __future__ import annotations
 from typing import Callable
-import logging
 import jax
 import jax.numpy as jnp
 import jax.nn as jnn
@@ -12,10 +11,10 @@ from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
                    MIMIC4ICUDatasetScheme, DemographicVectorConfig,
                    CodesVector)
-from ..embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
-                          EmbeddedAdmission)
+from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
+                         EmbeddedAdmission)
 
-from .abstract_model import InpatientModel, ModelDimensions
+from .model import InpatientModel, ModelDimensions
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 
 
@@ -152,7 +151,7 @@ class InICENODE(InpatientModel):
         pred_obs_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        for i in range(len(int_e)):
+        for i in range(len(t0)):
             t = t0[i], t1[i]
             state, pred_obs = self.step_segment(state, int_e[i], obs[i], *t)
             pred_obs_l.append(pred_obs)

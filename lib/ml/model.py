@@ -1,24 +1,22 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, Any, TYPE_CHECKING, Callable, Union, Tuple, Any, Dict, Optional
-from abc import ABC, abstractmethod, ABCMeta
-import zipfile
+from typing import List, TYPE_CHECKING, Callable, Union
+from abc import abstractmethod, ABCMeta
 
-import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
+from ..utils import tqdm_constructor
+from ..ehr import (Patients, Patient, DemographicVectorConfig,
+                   MIMICDatasetScheme, Predictions, Admission)
+from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
+                         EmbeddedAdmission)
+
 if TYPE_CHECKING:
     import optuna
 
-from ..ehr import (Patients, Patient, OutcomeExtractor,
-                   DemographicVectorConfig, MIMICDatasetScheme, Predictions,
-                   Admission)
-from ..embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
-                          EmbeddedAdmission)
-from ..utils import translate_path, tqdm_constructor
 
 
 class ModelDimensions(eqx.Module):
@@ -26,7 +24,7 @@ class ModelDimensions(eqx.Module):
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
-    f_emb: Callable[[int], jnp.ndarray]
+    f_emb: PatientEmbedding
     f_dx_dec: Callable
 
     scheme: MIMICDatasetScheme = eqx.static_field()

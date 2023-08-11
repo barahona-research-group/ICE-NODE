@@ -152,9 +152,9 @@ class InpatientEmbedding(PatientEmbedding):
         return self.f_dx_emb(x)
 
     @eqx.filter_jit
-    def _embed_admission(
-            self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
-            interventions: InpatientInterventions) -> EmbeddedAdmission:
+    def _embed_admission(self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
+                         segmented_inp: jnp.ndarray,
+                         segmented_proc: jnp.ndarray) -> EmbeddedAdmission:
         """ Embeds an admission into fixed vectors as described above."""
 
         def _embed_segment(inp, proc):
@@ -162,12 +162,11 @@ class InpatientEmbedding(PatientEmbedding):
 
         dx_emb = self.embed_dx(dx_history_vec)
         demo_e = self._embed_demo(demo)
-        int_ = interventions
-        inp_proc_demo = jax.vmap(_embed_segment)(int_.segmented_input,
-                                                 int_.segmented_proc)
+        inp_proc_demo = jax.vmap(_embed_segment)(segmented_inp, segmented_proc)
         return EmbeddedAdmission(dx0=dx_emb, inp_proc_demo=inp_proc_demo)
 
     def embed_admission(self, static_info: StaticInfo, admission: Admission):
         demo = static_info.demographic_vector(admission.admission_dates[0])
         return self._embed_admission(demo, admission.dx_codes_history.vec,
-                                     admission.interventions)
+                                     admission.interventions.segmented_input,
+                                     admission.interventions.segmented_proc)
