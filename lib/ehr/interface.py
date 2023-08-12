@@ -85,31 +85,27 @@ class Predictions(dict):
 
         return cleaned
 
-    def prediction_loss(self, dx_loss=None, obs_loss=None):
+    def prediction_dx_loss(self, dx_loss):
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
-        loss = {}
-        if dx_loss is not None:
-            l_outcome = [a.outcome.vec for a in adms]
-            l_pred = [p.outcome.vec for p in preds]
-            l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
+        l_outcome = [a.outcome.vec for a in adms]
+        l_pred = [p.outcome.vec for p in preds]
+        l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
+        outcome = jnp.vstack(l_outcome)
+        pred = jnp.vstack(l_pred)
+        mask = jnp.vstack(l_mask)
+        return dx_loss(outcome, pred, mask)
 
-            l = list(map(dx_loss, l_outcome, l_pred, l_mask))
-
-            loss['dx_loss'] = sum(l) / len(l)
-
-        if obs_loss is not None:
-            obs_true = [o.value for a in adms for o in a.observables]
-            obs_mask = [o.mask for a in adms for o in a.observables]
-            obs_pred = [o.value for p in preds for o in p.observables]
-            obs_n = [len(o.time) for a in adms for o in a.observables]
-            N = sum(obs_n)
-            obs_w = [n / N for n in obs_n]
-
-            l = list(map(obs_loss, obs_true, obs_pred, obs_mask))
-            loss['obs_loss'] = sum(_l * w for _l, w in zip(l, obs_w))
-
-        return loss
+    def prediction_obs_loss(self, obs_loss):
+        preds = self.get_predictions()
+        adms = [r.admission for r in preds]
+        obs_true = [o.value for a in adms for o in a.observables]
+        obs_mask = [o.mask for a in adms for o in a.observables]
+        obs_pred = [o.value for p in preds for o in p.observables]
+        obs_true = jnp.vstack(obs_true)
+        obs_mask = jnp.vstack(obs_mask)
+        obs_pred = jnp.vstack(obs_pred)
+        return obs_loss(obs_true, obs_pred, obs_mask)
 
     def outcome_first_occurrence_masks(self, subject_id):
         preds = self[subject_id]
@@ -288,21 +284,15 @@ class Patients(eqx.Module):
         obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
         unscaled_obs = []
         for obs in obs_l:
-            value = obs.value
-            obs_idx = np.arange(value.shape[1])
-            mu = obs_scaler.mean.loc[obs_idx].values
-            sigma = obs_scaler.std.loc[obs_idx].values
-            unscaled_obs.append(
-                eqx.tree_at(lambda o: o.value, obs, value * sigma + mu))
+            value = obs_scaler.unscale(obs.value)
+            unscaled_obs.append(eqx.tree_at(lambda o: o.value, obs, value))
         return unscaled_obs
 
     def _unscaled_input(self, input_: InpatientInterventions):
         # (T, D)
         scaled_rate = input_.segmented_input
-        input_idx = np.arange(scaled_rate[0].shape[0])
         input_scaler = self.dataset.preprocessing_history[0]['input']['scaler']
-        mx = input_scaler.max_val.loc[input_idx].values
-        unscaled_rate = [rate * mx for rate in scaled_rate]
+        unscaled_rate = [input_scaler.unscale(r) for r in scaled_rate]
         return eqx.tree_at(lambda o: o.segmented_input, input_, unscaled_rate)
 
     def _unscaled_admission(self, inpatient_admission: Admission):

@@ -20,24 +20,12 @@ from blinker import signal
 import optuna
 
 from ..ehr import Predictions, Patients
-from ..metric import (MetricsCollection, Metric, softmax_logits_bce,
-                      softmax_logits_balanced_focal_bce, balanced_focal_bce,
-                      masked_l2)
+from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 from .model import AbstractModel
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
-
-_dx_loss = {
-    'softmax_bce': softmax_logits_bce,
-    'balanced_focal_softmax_bce': softmax_logits_balanced_focal_bce,
-    'balanced_focal_bce': balanced_focal_bce
-}
-
-_obs_loss = {
-    'masked_l2': masked_l2,
-}
 
 
 class ResourceTimeout(Exception):
@@ -71,17 +59,17 @@ class TrainingHistory:
     def test_df(self):
         return self._test_df
 
-    def append_train_iteration(self, res: Predictions):
+    def append_train_preds(self, res: Predictions):
         niters = 1 if self._train_df is None else len(self._train_df) + 1
         row_df = self.metrics.to_df(niters, res)
         self._train_df = pd.concat([self._train_df, row_df])
 
-    def append_val_iteration(self, res: Predictions):
+    def append_val_preds(self, res: Predictions):
         niters = 1 if self._val_df is None else len(self._val_df) + 1
         row_df = self.metrics.to_df(niters, res)
         self._val_df = pd.concat([self._val_df, row_df])
 
-    def append_test_iteration(self, res: Predictions):
+    def append_test_preds(self, res: Predictions):
         niters = 1 if self._test_df is None else len(self._test_df) + 1
         row_df = self.metrics.to_df(niters, res)
         self._test_df = pd.concat([self._test_df, row_df])
@@ -410,15 +398,15 @@ class Trainer(eqx.Module):
                  batch_size,
                  counts_ignore_first_admission=False,
                  dx_loss='balanced_focal_bce',
-                 obs_loss='masked_l2',
+                 obs_loss='mse',
                  **kwargs):
         self.optimizer_config = optimizer_config
         self.reg_hyperparams = reg_hyperparams
         self.epochs = epochs
         self.batch_size = batch_size
         self.counts_ignore_first_admission = counts_ignore_first_admission
-        self.dx_loss = _dx_loss[dx_loss]
-        self.obs_loss = _obs_loss[obs_loss]
+        self.dx_loss = binary_loss[dx_loss]
+        self.obs_loss = numeric_loss[obs_loss]
         self.kwargs = kwargs
 
     @property
@@ -434,12 +422,12 @@ class Trainer(eqx.Module):
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_loss(dx_loss=self.dx_loss)
-        return l['dx_loss'], (l, predictions)
+        l = predictions.prediction_dx_loss(dx_loss=self.dx_loss)
+        return l, (l, predictions)
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_loss(dx_loss=self.dx_loss)['dx_loss']
+        l = predictions.prediction_dx_loss(dx_loss=self.dx_loss)
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
@@ -459,10 +447,6 @@ class Trainer(eqx.Module):
             return self.unreg_loss(model, patients)
         else:
             return self.reg_loss(model, patients)
-
-    def eval(self, model: AbstractModel,
-             patients: Patients) -> Dict[str, float]:
-        return model.batch_predict(patients, leave_pbar=False)
 
     def _post_update_params(self, model: AbstractModel):
         return model
@@ -575,12 +559,15 @@ class Trainer(eqx.Module):
                 if step not in eval_steps:
                     continue
 
-                history.append_train_iteration(self.eval(model, batch))
-                history.append_val_iteration(self.eval(model, val_batch))
+                history.append_train_preds(
+                    model.batch_predict(batch, leave_pbar=False))
+                history.append_val_preds(
+                    model.batch_predict(val_batch, leave_pbar=False))
 
                 if step == iters - 1:
                     test_batch = patients.device_batch(test_ids)
-                    history.append_test_iteration(self.eval(model, test_batch))
+                    history.append_test_preds(
+                        model.batch_predict(test_batch, leave_pbar=False))
 
                 signals.end_evaluation.send(self,
                                             step=step,
@@ -620,10 +607,11 @@ class InTrainer(Trainer):
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         preds = model.batch_predict(patients, leave_pbar=False)
-        l = preds.prediction_loss(dx_loss=self.dx_loss, obs_loss=self.obs_loss)
-        loss = l['dx_loss'] + l['obs_loss']
+        dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
+        obs_loss = preds.prediction_obs_loss(obs_loss=self.obs_loss)
+        loss = dx_loss + obs_loss
         return loss, ({
-            'dx_loss': l['dx_loss'],
-            'obs_loss': l['obs_loss'],
+            'dx_loss': dx_loss,
+            'obs_loss': obs_loss,
             'loss': loss
         }, preds)

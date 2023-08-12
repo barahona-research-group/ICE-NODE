@@ -2,14 +2,14 @@
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional, ClassVar
+from typing import Dict, List, Any, Optional, ClassVar, Callable, Type
 from collections import defaultdict
 import copy
 from concurrent.futures import ThreadPoolExecutor
 
 import random
 from abc import ABC, abstractmethod, ABCMeta
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 import pandas as pd
@@ -73,6 +73,10 @@ class ZScoreScaler:
             df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
         return df
 
+    def unscale(self, array):
+        index = np.arange(array.shape[-1])
+        return array * self.std.loc[index] + self.mean.loc[index]
+
 
 @dataclass
 class MaxScaler:
@@ -83,12 +87,52 @@ class MaxScaler:
 
     def __call__(self, df):
         max_val = df[self.c_code_index].map(self.max_val)
+        df.loc[:, self.c_value] = (df[self.c_value] / max_val)
         if self.use_float16:
-            df.loc[:, self.c_value] = (df[self.c_value] / max_val).astype(
-                np.float16)
-        else:
-            df.loc[:, self.c_value] = df[self.c_value] / max_val
+            df.loc[:, self.c_value] = df.loc[:,
+                                             self.c_value].astype(np.float16)
         return df
+
+    def unscale(self, array):
+        index = np.arange(array.shape[-1])
+        return array * self.max_val.loc[index]
+
+
+@dataclass
+class AdaptiveScaler:
+    c_value: str
+    c_code_index: str
+    max_val: pd.Series
+    min_val: pd.Series
+    mean: pd.Series
+    std: pd.Series
+    use_float16: bool = True
+
+    def __call__(self, df):
+        min_val = df[self.c_code_index].map(self.min_val)
+        max_val = df[self.c_code_index].map(self.max_val)
+        mean = df[self.c_code_index].map(self.mean)
+        std = df[self.c_code_index].map(self.std)
+
+        minmax_scaled = (df[self.c_value] - min_val) / max_val
+        z_scaled = ((df[self.c_value] - mean) / std)
+
+        df.loc[:, self.c_value] = np.where(min_val >= 0.0, minmax_scaled,
+                                           z_scaled)
+        if self.use_float16:
+            df.loc[:, self.c_value] = df.loc[:,
+                                             self.c_value].astype(np.float16)
+        return df
+
+    def unscale(self, array):
+        index = np.arange(array.shape[-1])
+        mu = self.mean.loc[index]
+        sigma = self.std.loc[index]
+        min_val = self.min_val.loc[index]
+        max_val = self.max_val.loc[index]
+        z_unscaled = array * sigma + mu
+        minmax_unscaled = array * max_val + min_val
+        return np.where(min_val >= 0.0, minmax_unscaled, z_unscaled)
 
 
 class AbstractDataset(metaclass=ABCMeta):
@@ -187,8 +231,7 @@ class CPRDDataset(AbstractDataset):
 
 
 @dataclass
-class MIMICDatasetScheme:
-    dx_source: Dict[str, ICDCommons]
+class MIMICDatasetScheme(metaclass=ABCMeta):
     dx_target: ICDCommons
     outcome: OutcomeExtractor
     eth_source: MIMICEth
@@ -196,18 +239,15 @@ class MIMICDatasetScheme:
     gender: Gender
 
     def __init__(self, code_scheme: Dict[str, Any]):
-        self.dx_source = {
-            version: scheme_from_classname(scheme)
-            for version, scheme in code_scheme["dx"][0].items()
-        }
         self.dx_target = scheme_from_classname(code_scheme['dx'][1])
         self.outcome = OutcomeExtractor(code_scheme["outcome"])
         self.eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
         self.eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
         self.gender = Gender()
 
-    def dx_mapper(self, version):
-        return self.dx_source[version].mapper_to(self.dx_target)
+    @abstractmethod
+    def dx_mapper(self, *args):
+        pass
 
     def eth_mapper(self):
         return self.eth_source.mapper_to(self.eth_target)
@@ -225,7 +265,34 @@ class MIMICDatasetScheme:
 
 
 @dataclass
-class MIMIC4ICUDatasetScheme(MIMICDatasetScheme):
+class MIMIC3DatasetScheme(MIMICDatasetScheme):
+    dx_source: ICDCommons
+
+    def __init__(self, code_scheme: Dict[str, Any]):
+        super().__init__(code_scheme)
+        self.dx_source = scheme_from_classname(code_scheme['dx'][0])
+
+    def dx_mapper(self):
+        return self.dx_source.mapper_to(self.dx_target)
+
+
+@dataclass
+class MIMIC4DatasetScheme(MIMICDatasetScheme):
+    dx_source: Dict[str, ICDCommons]
+
+    def __init__(self, code_scheme: Dict[str, Any]):
+        super().__init__(code_scheme)
+        self.dx_source = {
+            version: scheme_from_classname(scheme)
+            for version, scheme in code_scheme["dx"][0].items()
+        }
+
+    def dx_mapper(self, version: str):
+        return self.dx_source[version].mapper_to(self.dx_target)
+
+
+@dataclass
+class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
     int_proc_source: MIMICProcedures
     int_proc_target: MIMICProcedureGroups
     int_input_source: MIMICInput
@@ -246,15 +313,16 @@ class MIMIC4ICUDatasetScheme(MIMICDatasetScheme):
 
 
 @dataclass
-class MIMICDataset(AbstractDataset):
+class MIMIC3Dataset(AbstractDataset):
     colname: Dict[str, Dict[str, str]]
     name: str
     df: Dict[str, dd.DataFrame]
-    scheme: MIMICDatasetScheme
+    scheme: MIMIC3DatasetScheme
+    scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
         self.name = name
-        self.scheme = MIMICDatasetScheme(code_scheme)
+        self.scheme = self.scheme_class(code_scheme)
         # deepcopy to avoid modifying the original colname which is used by
         # reference in the lazy evaluation of dask operations.
         self.colname = copy.deepcopy(colname)
@@ -287,7 +355,6 @@ class MIMICDataset(AbstractDataset):
         dtype = {
             **{
                 colname["dx"]["code"]: str,
-                colname["dx"]["version"]: str
             },
             **{
                 colname[f]["admission_id"]: int
@@ -298,6 +365,8 @@ class MIMICDataset(AbstractDataset):
                 for f in files.keys() if "subject_id" in colname[f]
             }
         }
+        if "version" in colname["dx"]:
+            dtype.update({colname["dx"]["version"]: str})
 
         logging.debug('Loading dataframe files')
         df = {
@@ -396,51 +465,28 @@ class MIMICDataset(AbstractDataset):
 
     def _dx_fix_icd_dots(self):
         c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
+        add_dots = self.scheme.dx_source.add_dots
         df = self.df["dx"]
-        df = df.assign(**{c_code: df[c_code].str.strip()})
+        df = df.assign(**{c_code: df[c_code].str.strip().map(add_dots)})
         self.df['dx'] = df
-        for version, scheme in self.scheme.dx_source.items():
-            if isinstance(scheme, ICDCommons):
-                ver_mask = df[c_version] == version
-                code_col = df[c_code]
-                df = df.assign(**{
-                    c_code:
-                    code_col.mask(ver_mask, code_col.map(scheme.add_dots))
-                })
-        self.df["dx"] = df
 
     def _dx_filter_unsupported_icd(self):
         c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
-        self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
-                                                c_version,
-                                                self.scheme.dx_source)
+        df = self.df["dx"]
+        codeset = set(df[c_code])
+        scheme = self.scheme.dx_source
+        scheme_codes = set(scheme.codes)
 
-    @staticmethod
-    def _validate_dx_codes(df, code_col, version_col, version_map):
-        filtered_df = []
-        groups = df.groupby(version_col)
-        for version in groups[version_col].unique():
-            version_df = groups.get_group(version[0])
-            codeset = set(version_df[code_col])
-            scheme = version_map[str(version[0])]
-            scheme_codes = set(scheme.codes)
-
-            unrecognised = codeset - scheme_codes
-            if len(unrecognised) > 0:
-                logging.debug(
-                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} '
-                    f'({len(unrecognised)/len(codeset):.2%})')
-                logging.debug(f'Unrecognised {type(scheme)} codes '
-                              f'({len(unrecognised)}) '
-                              f'to be removed (first 30): '
-                              f'{sorted(unrecognised)[:30]}')
-
-            filtered_df.append(
-                version_df[version_df[code_col].isin(scheme_codes)])
-
-        return dd.concat(filtered_df).reset_index(drop=True)
+        unrecognised = codeset - scheme_codes
+        if len(unrecognised) > 0:
+            logging.debug(f'Unrecognised ICD codes: {len(unrecognised)} '
+                          f'({len(unrecognised)/len(codeset):.2%})')
+            logging.debug(f'Unrecognised {type(scheme)} codes '
+                          f'({len(unrecognised)}) '
+                          f'to be removed (first 30): '
+                          f'{sorted(unrecognised)[:30]}')
+        df = df[df[c_code].isin(scheme_codes)]
+        self.df['dx'] = df
 
     def random_splits(self,
                       splits: List[float],
@@ -625,29 +671,25 @@ class MIMICDataset(AbstractDataset):
             self.df['adm'][self.colname['adm']['subject_id']].unique())
 
     def subject_info_extractor(self, subject_ids):
-
-        static_df = self.df['static']
-        c_s_subject_id = self.colname["static"]["subject_id"]
+        c_subject_id = self.colname["static"]["subject_id"]
         c_gender = self.colname["static"]["gender"]
-        c_anchor_year = self.colname["static"]["anchor_year"]
-        c_anchor_age = self.colname["static"]["anchor_age"]
         c_eth = self.colname["static"]["ethnicity"]
+        c_dob = self.colname["static"]["date_of_birth"]
 
-        static_df = static_df[static_df[c_s_subject_id].isin(subject_ids)]
-        gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
-        subject_gender = dict(zip(static_df[c_s_subject_id], gender))
-
-        anchor_date = pd.to_datetime(static_df[c_anchor_year],
-                                     format='%Y').dt.normalize()
-        anchor_age = static_df[c_anchor_age].map(
-            lambda y: pd.DateOffset(years=-y))
-        dob = anchor_date + anchor_age
-        subject_dob = dict(zip(static_df[c_s_subject_id], dob))
-        subject_eth = dict()
+        df = self.df['static']
+        df = df[df[c_subject_id].isin(subject_ids)]
+        gender = df[c_gender].map(self.scheme.gender.codeset2vec)
+        subject_gender = dict(zip(df[c_subject_id], gender))
+        subject_dob = dict(zip(df[c_subject_id], df[c_dob]))
+        # TODO: check https://mimic.mit.edu/docs/iii/about/time/
         eth_mapper = self.scheme.eth_mapper()
-        for subject_id, subject_df in static_df.groupby(c_s_subject_id):
-            eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
-            subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
+
+        def eth2vec(eth):
+            code = eth_mapper.map_codeset(eth)
+            return eth_mapper.codeset2vec(code)
+
+        subject_eth = df[c_eth].map(eth2vec)
+        subject_eth = dict(zip(df[c_subject_id], subject_eth))
 
         return subject_dob, subject_gender, subject_eth
 
@@ -663,7 +705,6 @@ class MIMICDataset(AbstractDataset):
     def dx_codes_extractor(self, admission_ids_list):
         c_adm_id = self.colname["dx"]["admission_id"]
         c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
 
         df = self.df["dx"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
@@ -672,20 +713,16 @@ class MIMICDataset(AbstractDataset):
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
         empty_vector = self.scheme.dx_target.empty_vector()
+        mapper = self.scheme.dx_mapper()
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
             if _codes_df is None:
                 return (adm_id, empty_vector)
+            codeset = mapper.map_codeset(_codes_df[c_code])
+            return (adm_id, mapper.codeset2vec(codeset))
 
-            vec = empty_vector
-            for version, version_df in _codes_df.groupby(c_version):
-                mapper = self.scheme.dx_mapper(str(version))
-                codeset = mapper.map_codeset(version_df[c_code])
-                vec = vec.union(mapper.codeset2vec(codeset))
-            return (adm_id, vec)
-
-        return map(_extract_codes, admission_ids_list)
+        return dict(map(_extract_codes, admission_ids_list))
 
     def dx_codes_history_extractor(self, dx_codes, admission_ids):
         for subject_id, subject_admission_ids in admission_ids.items():
@@ -719,9 +756,118 @@ class MIMICDataset(AbstractDataset):
 
 
 @dataclass
-class MIMIC4ICUDataset(MIMICDataset):
+class MIMIC4Dataset(MIMIC3Dataset):
+    scheme: MIMIC4DatasetScheme
+    scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
+
+    def _dx_fix_icd_dots(self):
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
+        df = self.df["dx"]
+        df = df.assign(**{c_code: df[c_code].str.strip()})
+        self.df['dx'] = df
+        for version, scheme in self.scheme.dx_source.items():
+            if isinstance(scheme, ICDCommons):
+                ver_mask = df[c_version] == version
+                code_col = df[c_code]
+                df = df.assign(**{
+                    c_code:
+                    code_col.mask(ver_mask, code_col.map(scheme.add_dots))
+                })
+        self.df["dx"] = df
+
+    def _dx_filter_unsupported_icd(self):
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
+        self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
+                                                c_version,
+                                                self.scheme.dx_source)
+
+    @staticmethod
+    def _validate_dx_codes(df, code_col, version_col, version_map):
+        filtered_df = []
+        groups = df.groupby(version_col)
+        for version in groups[version_col].unique():
+            version_df = groups.get_group(version[0])
+            codeset = set(version_df[code_col])
+            scheme = version_map[str(version[0])]
+            scheme_codes = set(scheme.codes)
+
+            unrecognised = codeset - scheme_codes
+            if len(unrecognised) > 0:
+                logging.debug(
+                    f'Unrecognised ICD v{version} codes: {len(unrecognised)} '
+                    f'({len(unrecognised)/len(codeset):.2%})')
+                logging.debug(f'Unrecognised {type(scheme)} codes '
+                              f'({len(unrecognised)}) '
+                              f'to be removed (first 30): '
+                              f'{sorted(unrecognised)[:30]}')
+
+            filtered_df.append(
+                version_df[version_df[code_col].isin(scheme_codes)])
+
+        return dd.concat(filtered_df).reset_index(drop=True)
+
+    def subject_info_extractor(self, subject_ids):
+
+        static_df = self.df['static']
+        c_s_subject_id = self.colname["static"]["subject_id"]
+        c_gender = self.colname["static"]["gender"]
+        c_anchor_year = self.colname["static"]["anchor_year"]
+        c_anchor_age = self.colname["static"]["anchor_age"]
+        c_eth = self.colname["static"]["ethnicity"]
+
+        static_df = static_df[static_df[c_s_subject_id].isin(subject_ids)]
+        gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
+        subject_gender = dict(zip(static_df[c_s_subject_id], gender))
+
+        anchor_date = pd.to_datetime(static_df[c_anchor_year],
+                                     format='%Y').dt.normalize()
+        anchor_age = static_df[c_anchor_age].map(
+            lambda y: pd.DateOffset(years=-y))
+        dob = anchor_date + anchor_age
+        subject_dob = dict(zip(static_df[c_s_subject_id], dob))
+        subject_eth = dict()
+        eth_mapper = self.scheme.eth_mapper()
+        for subject_id, subject_df in static_df.groupby(c_s_subject_id):
+            eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
+            subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
+
+        return subject_dob, subject_gender, subject_eth
+
+    def dx_codes_extractor(self, admission_ids_list):
+        c_adm_id = self.colname["dx"]["admission_id"]
+        c_code = self.colname["dx"]["code"]
+        c_version = self.colname["dx"]["version"]
+
+        df = self.df["dx"]
+        df = df[df[c_adm_id].isin(admission_ids_list)]
+        codes_df = {
+            adm_id: codes_df
+            for adm_id, codes_df in df.groupby(c_adm_id)
+        }
+        empty_vector = self.scheme.dx_target.empty_vector()
+
+        def _extract_codes(adm_id):
+            _codes_df = codes_df.get(adm_id)
+            if _codes_df is None:
+                return (adm_id, empty_vector)
+
+            vec = empty_vector
+            for version, version_df in _codes_df.groupby(c_version):
+                mapper = self.scheme.dx_mapper(str(version))
+                codeset = mapper.map_codeset(version_df[c_code])
+                vec = vec.union(mapper.codeset2vec(codeset))
+            return (adm_id, vec)
+
+        return map(_extract_codes, admission_ids_list)
+
+
+@dataclass
+class MIMIC4ICUDataset(MIMIC4Dataset):
     scheme: MIMIC4ICUDatasetScheme
-    preprocessing_history: List[Dict[str, Any]]
+    scalers_history: Dict[str, Callable]
+    outlier_remover_history: Dict[str, Callable]
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
@@ -732,7 +878,8 @@ class MIMIC4ICUDataset(MIMICDataset):
         self.colname = copy.deepcopy(colname)
         self.df = df
 
-        self.preprocessing_history = []
+        self.outlier_remover_history = dict()
+        self.scalers_history = dict()
 
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
@@ -830,8 +977,8 @@ class MIMIC4ICUDataset(MIMICDataset):
 
         df_dict[df_name] = target_df
 
-    def _fit_obs_preprocessing(self, admission_ids, outlier_q1, outlier_q2,
-                               outlier_iqr_scale, outlier_z1, outlier_z2):
+    def _fit_obs_outlier_remover(self, admission_ids, outlier_q1, outlier_q2,
+                                 outlier_iqr_scale, outlier_z1, outlier_z2):
         c_code_index = self.colname["obs"]["code_source_index"]
         c_value = self.colname["obs"]["value"]
         c_adm_id = self.colname["obs"]["admission_id"]
@@ -845,45 +992,59 @@ class MIMIC4ICUDataset(MIMICDataset):
         q['out_q1'] = q['q1'] - outlier_iqr_scale * q['iqr']
         q['out_q2'] = q['q2'] + outlier_iqr_scale * q['iqr']
 
-        z = df.groupby(c_code_index).apply(
+        stat = df.groupby(c_code_index).apply(
             lambda x: pd.Series({
                 'mu': x[c_value].mean(),
                 'sigma': x[c_value].std()
             }))
-        z['out_z1'] = z['mu'] - outlier_z1 * z['sigma']
-        z['out_z2'] = z['mu'] + outlier_z2 * z['sigma']
+        stat['out_z1'] = stat['mu'] - outlier_z1 * stat['sigma']
+        stat['out_z2'] = stat['mu'] + outlier_z2 * stat['sigma']
 
-        zscaler = ZScoreScaler(c_value=c_value,
-                               c_code_index=c_code_index,
-                               mean=z['mu'],
-                               std=z['sigma'])
-        remover = OutlierRemover(c_value=c_value,
-                                 c_code_index=c_code_index,
-                                 min_val=np.minimum(q['out_q1'], z['out_z1']),
-                                 max_val=np.maximum(q['out_q2'], z['out_z2']))
-        return {'scaler': zscaler, 'outlier_remover': remover}
+        min_val = np.minimum(q['out_q1'], stat['out_z1'])
+        max_val = np.maximum(q['out_q2'], stat['out_z2'])
 
-    def _fit_int_input_processing(self, admission_ids):
+        return OutlierRemover(c_value=c_value,
+                              c_code_index=c_code_index,
+                              min_val=min_val,
+                              max_val=max_val)
+
+    def _fit_obs_scaler(self, admission_ids):
+        c_code_index = self.colname["obs"]["code_source_index"]
+        c_value = self.colname["obs"]["value"]
+        c_adm_id = self.colname["obs"]["admission_id"]
+        df = self.df['obs'][[c_code_index, c_value, c_adm_id]]
+        df = df[df[c_adm_id].isin(admission_ids)]
+        stat = df.groupby(c_code_index).apply(
+            lambda x: pd.Series({
+                'mu': x[c_value].mean(),
+                'sigma': x[c_value].std(),
+                'min': x[c_value].min(),
+                'max': x[c_value].max()
+            }))
+        return AdaptiveScaler(c_value=c_value,
+                              c_code_index=c_code_index,
+                              mean=stat['mu'],
+                              std=stat['sigma'],
+                              min_val=stat['min'],
+                              max_val=stat['max'])
+
+    def _fit_int_input_scaler(self, admission_ids):
         c_adm_id = self.colname["int_input"]["admission_id"]
         c_code_index = self.colname["int_input"]["code_source_index"]
         c_rate = self.colname["int_input"]["rate"]
         df = self.df["int_input"][[c_adm_id, c_code_index, c_rate]]
         df = df[df[c_adm_id].isin(admission_ids)]
-        return {
-            'scaler':
-            MaxScaler(c_value=c_rate,
-                      c_code_index=c_code_index,
-                      max_val=df.groupby(c_code_index).apply(
-                          lambda x: x[c_rate].max()))
-        }
+        return MaxScaler(c_value=c_rate,
+                         c_code_index=c_code_index,
+                         max_val=df.groupby(c_code_index).max()[c_rate])
 
-    def fit_preprocessing(self,
-                          subject_ids: Optional[List[int]] = None,
-                          outlier_q1=0.25,
-                          outlier_q2=0.75,
-                          outlier_iqr_scale=1.5,
-                          outlier_z1=-2.5,
-                          outlier_z2=2.5):
+    def fit_outlier_remover(self,
+                            subject_ids: Optional[List[int]] = None,
+                            outlier_q1=0.25,
+                            outlier_q2=0.75,
+                            outlier_iqr_scale=1.5,
+                            outlier_z1=-2.5,
+                            outlier_z2=2.5):
 
         c_subject = self.colname["adm"]["subject_id"]
         adm_df = self.df["adm"]
@@ -891,38 +1052,54 @@ class MIMIC4ICUDataset(MIMICDataset):
             train_adms = adm_df.index
         else:
             train_adms = adm_df[adm_df[c_subject].isin(subject_ids)].index
-        preprocessor = {}
-        preprocessor['obs'] = self._fit_obs_preprocessing(
-            admission_ids=train_adms,
-            outlier_q1=outlier_q1,
-            outlier_q2=outlier_q2,
-            outlier_iqr_scale=outlier_iqr_scale,
-            outlier_z1=outlier_z1,
-            outlier_z2=outlier_z2)
-        preprocessor['int_input'] = self._fit_int_input_processing(train_adms)
-        return preprocessor
 
-    def apply_preprocessing(self, preprocessor):
-        assert len(self.preprocessing_history) == 0, \
-            "Preprocessing can only be applied once."
+        return {
+            'obs':
+            self._fit_obs_outlier_remover(admission_ids=train_adms,
+                                          outlier_q1=outlier_q1,
+                                          outlier_q2=outlier_q2,
+                                          outlier_iqr_scale=outlier_iqr_scale,
+                                          outlier_z1=outlier_z1,
+                                          outlier_z2=outlier_z2)
+        }
 
-        self.preprocessing_history.append(preprocessor)
-        for df_name, _preprocessor in preprocessor.items():
-            if 'outlier_remover' in _preprocessor:
-                remover = _preprocessor['outlier_remover']
-                n1 = len(self.df[df_name])
-                self.df[df_name] = remover(self.df[df_name])
-                n2 = len(self.df[df_name])
-                logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '
-                              f'outliers from {df_name}')
-            if 'scaler' in _preprocessor:
-                scaler = _preprocessor['scaler']
-                self.df[df_name] = scaler(self.df[df_name])
+    def fit_scalers(self, subject_ids: Optional[List[int]] = None):
+        c_subject = self.colname["adm"]["subject_id"]
+        adm_df = self.df["adm"]
+        if subject_ids is None:
+            train_adms = adm_df.index
+        else:
+            train_adms = adm_df[adm_df[c_subject].isin(subject_ids)].index
+
+        return {
+            'obs': self._fit_obs_scaler(admission_ids=train_adms),
+            'int_input': self._fit_int_input_scaler(admission_ids=train_adms)
+        }
+
+    def remove_outliers(self, outlier_remover):
+        assert len(self.outlier_remover_history) == 0, \
+            "Outlier remover can only be applied once."
+
+        self.outlier_remover_history.update(outlier_remover)
+        for df_name, remover in outlier_remover.items():
+            n1 = len(self.df[df_name])
+            self.df[df_name] = remover(self.df[df_name])
+            n2 = len(self.df[df_name])
+            logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '
+                          f'outliers from {df_name}')
+
+    def apply_scalers(self, scalers):
+        assert len(self.scalers_history) == 0, \
+            "Scalers can only be applied once."
+
+        self.scalers_history.update(scalers)
+        for df_name, scaler in scalers.items():
+            self.df[df_name] = scaler(self.df[df_name])
 
     @classmethod
     def load_dataframes(cls, meta, sample=None, **kwargs):
 
-        df = MIMICDataset.load_dataframes(meta, sample=sample, **kwargs)
+        df = MIMIC4Dataset.load_dataframes(meta, sample=sample, **kwargs)
         colname = meta['colname']
 
         logging.debug("Time casting..")
@@ -1134,13 +1311,13 @@ class MIMIC4ICUDataset(MIMICDataset):
 def load_dataset_scheme(label):
     if label == 'M3':
         conf = load_config(f'{_META_DIR}/mimic3_meta.json')
-        return MIMICDatasetScheme(conf['code_scheme'])
+        return MIMIC3DatasetScheme(conf['code_scheme'])
     if label == 'M4':
         conf = load_config(f'{_META_DIR}/mimic4_meta.json')
-        return MIMICDatasetScheme(conf['code_scheme'])
+        return MIMIC4DatasetScheme(conf['code_scheme'])
     if label == 'CPRD':
         conf = load_config(f'{_META_DIR}/cprd_meta.json')
-        return MIMICDatasetScheme(conf['code_scheme'])
+        return MIMIC3DatasetScheme(conf['code_scheme'])
     if label == 'M4ICU':
         conf = load_config(f'{_META_DIR}/mimic4icu_meta.json')
         return MIMIC4ICUDatasetScheme(conf['code_scheme'])
@@ -1149,11 +1326,11 @@ def load_dataset_scheme(label):
 def load_dataset(label, **init_kwargs):
 
     if label == 'M3':
-        return MIMICDataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json',
-                                           **init_kwargs)
+        return MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json',
+                                            **init_kwargs)
     if label == 'M4':
-        return MIMICDataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
-                                           **init_kwargs)
+        return MIMIC4Dataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
+                                            **init_kwargs)
     if label == 'CPRD':
         return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json',
                                              **init_kwargs)

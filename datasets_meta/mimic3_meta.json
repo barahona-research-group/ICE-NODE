@@ -1,29 +1,26 @@
 {
     "base_dir": "$DATA_DIR/mimic3-cohort",
     "code_scheme": {
-        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
-        "outcome": "dx_icd9_filter_v3_groups",
-        "ethnicity": ["MIMICEth32", "MIMICEth5"]
+        "dx": ["DxICD9", "CCS"],
+        "outcome": "dx_flatccs_filter_v1",
+        "ethnicity": ["MIMICEth37", "MIMICEth7"]
     },
     "colname": {
         "dx": {
-            "subject_id": "subject_id",
-            "admission_id": "hadm_id",
-            "code": "icd_code",
-            "version": "icd_version"
+            "admission_id": "HADM_ID",
+            "code": "ICD9_CODE"
         },
         "adm": {
-            "admittime": "admittime",
-            "dischtime": "dischtime",
-            "subject_id": "subject_id",
-            "index": "hadm_id"
+            "admittime": "ADMITTIME",
+            "dischtime": "DISCHTIME",
+            "subject_id": "SUBJECT_ID",
+            "index": "HADM_ID"
         },
         "static": {
-            "subject_id": "subject_id",
-            "gender": "gender",
-            "ethnicity": "race",
-            "anchor_age": "anchor_age",
-            "anchor_year": "anchor_year"
+            "subject_id": "SUBJECT_ID",
+            "gender": "GENDER",
+            "ethnicity": "ETHNICITY",
+            "date_of_birth": "DOB"
         }
     },
     "files": {

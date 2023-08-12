@@ -1472,12 +1472,24 @@ class MIMICEth5(Singleton, MIMICEth):
     ETH_CNAME = 'eth5'
 
 
-def register_mimic4_eth_mapping(s_scheme: MIMICEth32, t_scheme: MIMICEth5):
+class MIMIC3Eth37(Singleton, MIMICEth):
+    _SCHEME_FILE = 'mimic3_race_grouper.csv.gz'
+    NAME = 'mimic3_eth37'
+    ETH_CNAME = 'ETH37'
+
+
+class MIMIC3Eth7(Singleton, MIMICEth):
+    _SCHEME_FILE = 'mimic3_race_grouper.csv.gz'
+    NAME = 'mimic3_eth7'
+    ETH_CNAME = 'ETH7'
+
+
+def register_mimic_eth_mapping(s_scheme: MIMICEth, t_scheme: MIMICEth):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
-    for eth32, eth_df in df.groupby(s_scheme.ETH_CNAME):
-        m[eth32] = set(eth_df[t_scheme.ETH_CNAME])
+    for eth, eth_df in df.groupby(s_scheme.ETH_CNAME):
+        m[eth] = set(eth_df[t_scheme.ETH_CNAME])
 
 
 class MIMICProcedures(Singleton, AbstractScheme):
@@ -1757,7 +1769,9 @@ load_maps.update({
     (MIMICInput, MIMICInputGroups):
     lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
     (MIMICEth32, MIMICEth5):
-    lambda: register_mimic4_eth_mapping(MIMICEth32(), MIMICEth5())
+    lambda: register_mimic_eth_mapping(MIMICEth32(), MIMICEth5()),
+    (MIMIC3Eth37, MIMIC3Eth7):
+    lambda: register_mimic_eth_mapping(MIMIC3Eth37(), MIMIC3Eth7())
 })
 
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
