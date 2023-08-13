@@ -308,12 +308,12 @@ class InpatientInterventions(eqx.Module):
         """Length of the admission interval"""
         return jnp.nanmax(self.time) - jnp.nanmin(self.time)
 
-    @eqx.filter_jit
-    def _jax_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
-        if proc_repr is None:
-            return eqx.filter_vmap(self.proc)(self.t0)
+#     @eqx.filter_jit
+#     def _jax_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
+#         if proc_repr is None:
+#             return eqx.filter_vmap(self.proc)(self.t0)
 
-        return eqx.filter_vmap(lambda t: proc_repr(self.proc(t)))(self.t0)
+#         return eqx.filter_vmap(lambda t: proc_repr(self.proc(t)))(self.t0)
 
     def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
         t = self.t0_padded[~np.isnan(self.t0_padded)]
@@ -326,12 +326,12 @@ class InpatientInterventions(eqx.Module):
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
 
-    @eqx.filter_jit
-    def _jax_segment_input(self,
-                           input_repr: Optional[AggregateRepresentation]):
-        if input_repr is None:
-            return eqx.filter_vmap(self.input_)(self.t0)
-        return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
+    # @eqx.filter_jit
+    # def _jax_segment_input(self,
+    #                        input_repr: Optional[AggregateRepresentation]):
+    #     if input_repr is None:
+    #         return eqx.filter_vmap(self.input_)(self.t0)
+    #     return eqx.filter_vmap(lambda t: input_repr(self.input_(t)))(self.t0)
 
     def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]):
         t = self.t0_padded[~np.isnan(self.t0_padded)]
@@ -347,11 +347,7 @@ class InpatientInterventions(eqx.Module):
 
     def segment_proc(self,
                      proc_repr: Optional[AggregateRepresentation] = None):
-        if isinstance(self.proc.index, np.ndarray):
-            proc_segments = self._np_segment_proc(proc_repr)
-        else:
-            proc_segments = self._jax_segment_proc(proc_repr)
-
+        proc_segments = self._np_segment_proc(proc_repr)
         update = eqx.tree_at(lambda x: x.segmented_proc,
                              self,
                              proc_segments,
@@ -361,10 +357,7 @@ class InpatientInterventions(eqx.Module):
 
     def segment_input(self,
                       input_repr: Optional[AggregateRepresentation] = None):
-        if isinstance(self.input_.index, np.ndarray):
-            inp_segments = self._np_segment_input(input_repr)
-        else:
-            inp_segments = self._jax_segment_input(input_repr)
+        inp_segments = self._np_segment_input(input_repr)
         update = eqx.tree_at(lambda x: x.segmented_input,
                              self,
                              inp_segments,

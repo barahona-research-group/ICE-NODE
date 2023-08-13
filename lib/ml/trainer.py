@@ -491,9 +491,9 @@ class Trainer(eqx.Module):
                                signals=signals)
 
     def _train(self, model: AbstractModel, patients: Patients,
-               splits: Tuple[List[int], ...], n_evals, continue_training: bool,
-               prng_seed, trial_terminate_time, history: TrainingHistory,
-               signals: TrainerSignals):
+               splits: Tuple[List[int], ...], n_evals,
+               continue_training: bool, prng_seed, trial_terminate_time,
+               history: TrainingHistory, signals: TrainerSignals):
 
         train_ids, valid_ids, test_ids = splits
         n_train_admissions = patients.n_admissions(

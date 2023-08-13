@@ -1,24 +1,24 @@
-import jax
 import jax.numpy as jnp
 import jax.nn as jnn
 from jax.tree_util import tree_flatten
+import equinox as eqx
 
 
-@jax.jit
+@eqx.filter_jit
 def l2_squared(pytree):
     """L2-norm of the parameters in `pytree`."""
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.vdot(x, x) for x in leaves)
 
 
-@jax.jit
+@eqx.filter_jit
 def l1_absolute(pytree):
     """L1-norm of the parameters in `pytree`."""
     leaves, _ = tree_flatten(pytree)
     return sum(jnp.sum(jnp.fabs(x)) for x in leaves)
 
 
-@jax.jit
+@eqx.filter_jit
 def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray, axis=None):
     """Binary cross-entropy loss, averaged,
     vectorized (multi-label classification).
@@ -32,7 +32,7 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray, axis=None):
     return jnp.nanmean(terms, where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
 def softmax_bce(y: jnp.ndarray,
                 logits: jnp.ndarray,
                 mask: jnp.ndarray,
@@ -50,7 +50,7 @@ def softmax_bce(y: jnp.ndarray,
     return -jnp.nanmean(terms, where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
 def balanced_focal_bce(y: jnp.ndarray,
                        logits: jnp.ndarray,
                        mask: jnp.ndarray,
@@ -93,7 +93,7 @@ def balanced_focal_bce(y: jnp.ndarray,
     return jnp.nanmean(terms, where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
 def softmax_balanced_focal_bce(y: jnp.ndarray,
                                logits: jnp.ndarray,
                                mask: jnp.ndarray,
@@ -118,7 +118,29 @@ def softmax_balanced_focal_bce(y: jnp.ndarray,
     return -jnp.nanmean(terms, where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
+def allpairs_sigmoid_rank(y: jnp.ndarray,
+                          logits: jnp.ndarray,
+                          mask: jnp.ndarray,
+                          axis=None):
+    """All-pairs loss for ranking, using sigmoid activation.
+    The function takes two inputs:
+        - The ground-truth `y` is a vector, where each
+        element is an integer in :math:`\{0, 1\}`.
+        - The predictions `logits`, before applying the Sigmoid function, where
+        each element is a float in :math:`(-\infty, \infty)`.
+    """
+    pairs_logits_diff = jnp.expand_dims(logits, axis=1) - jnp.expand_dims(
+        logits, axis=0)
+    pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
+        y, axis=0) * 1.0
+    pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
+    return jnp.nanmean(jnn.sigmoid(-pairs_labels_diff * pairs_logits_diff),
+                       where=pairs_mask,
+                       axis=axis)
+
+
+@eqx.filter_jit
 def masked_mse(y: jnp.ndarray,
                y_hat: jnp.ndarray,
                mask: jnp.ndarray,
@@ -127,7 +149,7 @@ def masked_mse(y: jnp.ndarray,
     return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
 def masked_mae(y: jnp.ndarray,
                y_hat: jnp.ndarray,
                mask: jnp.ndarray,
@@ -136,7 +158,7 @@ def masked_mae(y: jnp.ndarray,
     return jnp.nanmean(jnp.abs(y - y_hat), where=mask, axis=axis)
 
 
-@jax.jit
+@eqx.filter_jit
 def masked_rms(y: jnp.ndarray,
                y_hat: jnp.ndarray,
                mask: jnp.ndarray,
@@ -145,14 +167,14 @@ def masked_rms(y: jnp.ndarray,
     return jnp.sqrt(masked_mse(y, y_hat, mask, axis=axis))
 
 
-# @jax.jit
+# @eqx.filter_jit
 # def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
 #                   logvar: jnp.ndarray) -> jnp.ndarray:
 #     """Return the exponent of the normal-distribution liklihood function."""
 #     sigma = jnp.exp(0.5 * logvar)
 #     return (mean_true - mean_predicted) / sigma
 
-# @jax.jit
+# @eqx.filter_jit
 # def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
 #                    logvar: jnp.ndarray) -> float:
 #     """Return the negative log-liklihood, masked and vectorized."""
@@ -167,7 +189,7 @@ def masked_rms(y: jnp.ndarray,
 #             (jnp.power(sigma_1, 2) + jnp.power(
 #                 (mu_1 - mu_2), 2)) / (2 * sigma_2**2) - 0.5)
 
-# @jax.jit
+# @eqx.filter_jit
 # def compute_KL_loss(mean_true: jnp.ndarray,
 #                     mask: jnp.ndarray,
 #                     mean_predicted: jnp.ndarray,
@@ -184,7 +206,8 @@ def masked_rms(y: jnp.ndarray,
 binary_loss = {
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
-    'balanced_focal_bce': balanced_focal_bce
+    'balanced_focal_bce': balanced_focal_bce,
+    'allpairs_sigmoid_rank': allpairs_sigmoid_rank
 }
 
 numeric_loss = {'mse': masked_mse, 'mae': masked_mae, 'rms': masked_rms}

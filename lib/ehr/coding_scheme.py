@@ -1403,7 +1403,11 @@ class DxLTC9809FlatMedcodes(Singleton, AbstractScheme):
         return self._diseases
 
 
-class EthCPRD(AbstractScheme):
+class Ethnicity(AbstractScheme):
+    pass
+
+
+class EthCPRD(Ethnicity):
     _SCHEME_FILE = 'cprd_eth.csv'
     NAME = None
     ETH_CODE_CNAME = None
@@ -1439,7 +1443,7 @@ class EthCPRD5(Singleton, EthCPRD):
     ETH_DESC_CNAME = 'eth5_desc'
 
 
-class MIMICEth(AbstractScheme):
+class MIMICEth(Ethnicity):
     _SCHEME_FILE = 'mimic4_race_grouper.csv.gz'
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'

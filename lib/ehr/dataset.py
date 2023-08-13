@@ -2,19 +2,21 @@
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional, ClassVar, Callable, Type
+from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
 from collections import defaultdict
 import copy
 from concurrent.futures import ThreadPoolExecutor
-
+import pickle
+from datetime import datetime, timedelta
 import random
-from abc import ABC, abstractmethod, ABCMeta
-from dataclasses import dataclass, field
+from abc import abstractmethod
 import logging
+from dateutil.relativedelta import relativedelta
 
 import pandas as pd
 import dask.dataframe as dd
 import numpy as np
+import equinox as eqx
 
 from ..utils import load_config, translate_path
 
@@ -22,7 +24,7 @@ from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
                             AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
                             MIMICInputGroups, MIMICProcedures,
                             MIMICProcedureGroups, MIMICObservables, NullScheme,
-                            Gender)
+                            Gender, Ethnicity)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, StaticInfo, DemographicVectorConfig,
                        AggregateRepresentation, InpatientInterventions)
@@ -41,8 +43,19 @@ def try_compute(df):
         return df
 
 
-@dataclass
-class OutlierRemover:
+def random_date(start, end, rng: random.Random):
+    """
+    https://stackoverflow.com/a/553448
+    This function will return a random datetime between two datetime
+    objects.
+    """
+    delta = end - start
+    int_delta = (delta.days * 24 * 60 * 60) + delta.seconds
+    random_second = rng.randrange(int_delta)
+    return start + timedelta(seconds=random_second)
+
+
+class OutlierRemover(eqx.Module):
     c_value: str
     c_code_index: str
     min_val: pd.Series
@@ -55,8 +68,7 @@ class OutlierRemover:
         return df
 
 
-@dataclass
-class ZScoreScaler:
+class ZScoreScaler(eqx.Module):
     c_value: str
     c_code_index: str
     mean: pd.Series
@@ -66,11 +78,9 @@ class ZScoreScaler:
     def __call__(self, df):
         mean = df[self.c_code_index].map(self.mean)
         std = df[self.c_code_index].map(self.std)
+        df.loc[:, self.c_value] = ((df[self.c_value] - mean) / std)
         if self.use_float16:
-            df.loc[:, self.c_value] = ((df[self.c_value] - mean) / std).astype(
-                np.float16)
-        else:
-            df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
+            df = df.astype({self.c_value: np.float16})
         return df
 
     def unscale(self, array):
@@ -78,8 +88,7 @@ class ZScoreScaler:
         return array * self.std.loc[index] + self.mean.loc[index]
 
 
-@dataclass
-class MaxScaler:
+class MaxScaler(eqx.Module):
     c_value: str
     c_code_index: str
     max_val: pd.Series
@@ -89,8 +98,7 @@ class MaxScaler:
         max_val = df[self.c_code_index].map(self.max_val)
         df.loc[:, self.c_value] = (df[self.c_value] / max_val)
         if self.use_float16:
-            df.loc[:, self.c_value] = df.loc[:,
-                                             self.c_value].astype(np.float16)
+            df = df.astype({self.c_value: np.float16})
         return df
 
     def unscale(self, array):
@@ -98,8 +106,7 @@ class MaxScaler:
         return array * self.max_val.loc[index]
 
 
-@dataclass
-class AdaptiveScaler:
+class AdaptiveScaler(eqx.Module):
     c_value: str
     c_code_index: str
     max_val: pd.Series
@@ -120,8 +127,7 @@ class AdaptiveScaler:
         df.loc[:, self.c_value] = np.where(min_val >= 0.0, minmax_scaled,
                                            z_scaled)
         if self.use_float16:
-            df.loc[:, self.c_value] = df.loc[:,
-                                             self.c_value].astype(np.float16)
+            df = df.astype({self.c_value: np.float16})
         return df
 
     def unscale(self, array):
@@ -135,7 +141,32 @@ class AdaptiveScaler:
         return np.where(min_val >= 0.0, minmax_unscaled, z_unscaled)
 
 
-class AbstractDataset(metaclass=ABCMeta):
+class DatasetScheme(eqx.Module):
+    dx_target: AbstractScheme
+    outcome: OutcomeExtractor
+    eth_source: Ethnicity
+    eth_target: Ethnicity
+    gender: Gender
+
+    @abstractmethod
+    def dx_mapper(self, *args):
+        pass
+
+    @abstractmethod
+    def eth_mapper(self):
+        pass
+
+    @abstractmethod
+    def demographic_vector_size(
+            self, demographic_vector_config: DemographicVectorConfig):
+        pass
+
+
+class Dataset(eqx.Module):
+    df: Dict[str, pd.DataFrame]
+    scheme: DatasetScheme
+    colname: Dict[str, Dict[str, str]]
+    name: str
 
     @classmethod
     @abstractmethod
@@ -151,8 +182,96 @@ class AbstractDataset(metaclass=ABCMeta):
     def load_dataframes(cls, meta, **kwargs):
         pass
 
+    def _save_dfs(self, path: Union[str, Path], overwrite: bool):
+        for name, df in self.df.items():
+            filepath = Path(path).with_suffix(f'.{name}.csv.gz')
+            if filepath.exists():
+                if overwrite:
+                    filepath.unlink()
+                else:
+                    raise RuntimeError(f'File {path} already exists.')
+            dtypes = df.dtypes.to_dict()
+            df = df.astype(
+                {c: np.float32
+                 for c in df.columns if dtypes[c] == np.float16})
 
-class CPRDDataset(AbstractDataset):
+            df.to_csv(filepath,
+                      index='index' in self.colname[name],
+                      compression='gzip')
+
+    def _save_dtypes(self, path: Union[str, Path], overwrite: bool):
+        dtypes = {}
+        for name, df in self.df.items():
+            dtypes[name] = df.dtypes.to_dict()
+        path = Path(path).with_suffix('.dtypes.pickle')
+        if path.exists():
+            if overwrite:
+                path.unlink()
+            else:
+                raise RuntimeError(f'File {path} already exists.')
+        with open(path, 'wb') as file:
+            pickle.dump(dtypes, file)
+
+    def save(self, path: Union[str, Path], overwrite: bool = False):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._save_dfs(path, overwrite)
+        self._save_dtypes(path, overwrite)
+
+        rest = eqx.tree_at(lambda x: x.df, self, {})
+        path = path.with_suffix('.dataset.pickle')
+        if path.exists():
+            if overwrite:
+                path.unlink()
+            else:
+                raise RuntimeError(f'File {path} already exists.')
+        with open(path, 'wb') as file:
+            pickle.dump(rest, file)
+
+    @staticmethod
+    def _load_dfs(path: Union[str, Path]):
+        with open(Path(path).with_suffix('.dtypes.pickle'), 'rb') as file:
+            dtypes = pickle.load(file)
+
+        df = {}
+        for name, dtype in dtypes.items():
+            df_path = Path(path).with_suffix(f'.{name}.csv.gz')
+
+            f16_cols = [col for col in dtype if dtype[col] == np.float16]
+            parse_dates = [
+                col for col in dtype if dtype[col] == 'datetime64[ns]'
+            ]
+
+            _dtypes = {}
+            for col in dtype:
+                if col in f16_cols:
+                    _dtypes[col] = np.float32
+                elif col in parse_dates:
+                    _dtypes[col] = str
+                else:
+                    _dtypes[col] = dtype[col]
+
+            df[name] = pd.read_csv(df_path,
+                                   dtype=_dtypes,
+                                   parse_dates=parse_dates)
+            df[name] = df[name].astype({col: np.float16 for col in f16_cols})
+        return df
+
+    @classmethod
+    def load(cls, path: Union[str, Path]):
+        path = Path(path)
+        with open(path.with_suffix('.dataset.pickle'), 'rb') as file:
+            rest = pickle.load(file)
+
+        df = cls._load_dfs(path)
+        for name, cols in rest.colname.items():
+            if 'index' in cols:
+                df[name] = df[name].set_index(cols['index'])
+        return eqx.tree_at(lambda x: x.df, rest, df)
+
+
+class CPRDDataset(Dataset):
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
@@ -230,8 +349,7 @@ class CPRDDataset(AbstractDataset):
         return cls(**meta, **init_kwargs)
 
 
-@dataclass
-class MIMICDatasetScheme(metaclass=ABCMeta):
+class MIMICDatasetScheme(DatasetScheme):
     dx_target: ICDCommons
     outcome: OutcomeExtractor
     eth_source: MIMICEth
@@ -239,11 +357,16 @@ class MIMICDatasetScheme(metaclass=ABCMeta):
     gender: Gender
 
     def __init__(self, code_scheme: Dict[str, Any]):
-        self.dx_target = scheme_from_classname(code_scheme['dx'][1])
-        self.outcome = OutcomeExtractor(code_scheme["outcome"])
-        self.eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
-        self.eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
-        self.gender = Gender()
+        dx_target = scheme_from_classname(code_scheme['dx'][1])
+        outcome = OutcomeExtractor(code_scheme["outcome"])
+        eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
+        eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
+        gender = Gender()
+        super().__init__(dx_target=dx_target,
+                         outcome=outcome,
+                         eth_source=eth_source,
+                         eth_target=eth_target,
+                         gender=gender)
 
     @abstractmethod
     def dx_mapper(self, *args):
@@ -264,24 +387,22 @@ class MIMICDatasetScheme(metaclass=ABCMeta):
         return size
 
 
-@dataclass
 class MIMIC3DatasetScheme(MIMICDatasetScheme):
     dx_source: ICDCommons
 
     def __init__(self, code_scheme: Dict[str, Any]):
-        super().__init__(code_scheme)
+        super().__init__(code_scheme=code_scheme)
         self.dx_source = scheme_from_classname(code_scheme['dx'][0])
 
     def dx_mapper(self):
         return self.dx_source.mapper_to(self.dx_target)
 
 
-@dataclass
 class MIMIC4DatasetScheme(MIMICDatasetScheme):
     dx_source: Dict[str, ICDCommons]
 
     def __init__(self, code_scheme: Dict[str, Any]):
-        super().__init__(code_scheme)
+        super().__init__(code_scheme=code_scheme)
         self.dx_source = {
             version: scheme_from_classname(scheme)
             for version, scheme in code_scheme["dx"][0].items()
@@ -291,7 +412,6 @@ class MIMIC4DatasetScheme(MIMICDatasetScheme):
         return self.dx_source[version].mapper_to(self.dx_target)
 
 
-@dataclass
 class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
     int_proc_source: MIMICProcedures
     int_proc_target: MIMICProcedureGroups
@@ -312,28 +432,22 @@ class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
         self.obs = scheme_from_classname(code_scheme['obs'][0])
 
 
-@dataclass
-class MIMIC3Dataset(AbstractDataset):
-    colname: Dict[str, Dict[str, str]]
-    name: str
+class MIMIC3Dataset(Dataset):
     df: Dict[str, dd.DataFrame]
     scheme: MIMIC3DatasetScheme
     scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
-        self.name = name
-        self.scheme = self.scheme_class(code_scheme)
+
+        scheme = self.scheme_class(code_scheme)
         # deepcopy to avoid modifying the original colname which is used by
         # reference in the lazy evaluation of dask operations.
-        self.colname = copy.deepcopy(colname)
-        self.df = df
+        colname = copy.deepcopy(colname)
 
-        self.preprocessing_history = []
-
+        super().__init__(df=df, colname=colname, scheme=scheme, name=name)
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
-
         self.df = {k: try_compute(v) for k, v in self.df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
@@ -755,7 +869,6 @@ class MIMIC3Dataset(AbstractDataset):
         return cls(**meta, **init_kwargs)
 
 
-@dataclass
 class MIMIC4Dataset(MIMIC3Dataset):
     scheme: MIMIC4DatasetScheme
     scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
@@ -863,24 +976,27 @@ class MIMIC4Dataset(MIMIC3Dataset):
         return map(_extract_codes, admission_ids_list)
 
 
-@dataclass
 class MIMIC4ICUDataset(MIMIC4Dataset):
     scheme: MIMIC4ICUDatasetScheme
     scalers_history: Dict[str, Callable]
     outlier_remover_history: Dict[str, Callable]
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
+    scheme_class: ClassVar[
+        Type[MIMIC4ICUDatasetScheme]] = MIMIC4ICUDatasetScheme
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
-        self.name = name
-        self.scheme = MIMIC4ICUDatasetScheme(code_scheme)
-        # deepcopy to avoid modifying the original colname which is used by
-        # reference in the lazy evaluation of dask operations.
-        self.colname = copy.deepcopy(colname)
-        self.df = df
-
         self.outlier_remover_history = dict()
         self.scalers_history = dict()
+        scheme = self.scheme_class(code_scheme)
+        # deepcopy to avoid modifying the original colname which is used by
+        # reference in the lazy evaluation of dask operations.
+        colname = copy.deepcopy(colname)
 
+        Dataset.__init__(self,
+                         df=df,
+                         colname=colname,
+                         scheme=scheme,
+                         name=name)
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
@@ -1079,22 +1195,31 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
     def remove_outliers(self, outlier_remover):
         assert len(self.outlier_remover_history) == 0, \
             "Outlier remover can only be applied once."
-
-        self.outlier_remover_history.update(outlier_remover)
+        df = self.df.copy()
+        history = outlier_remover
         for df_name, remover in outlier_remover.items():
-            n1 = len(self.df[df_name])
-            self.df[df_name] = remover(self.df[df_name])
-            n2 = len(self.df[df_name])
+            n1 = len(df[df_name])
+            df[df_name] = remover(df[df_name])
+            n2 = len(df[df_name])
             logging.debug(f'Removed {n1 - n2} ({(n1 - n2) / n2 :0.3f}) '
                           f'outliers from {df_name}')
+
+        updated = eqx.tree_at(lambda x: x.df, self, df)
+        updated = eqx.tree_at(lambda x: x.outlier_remover_history, updated,
+                              history)
+        return updated
 
     def apply_scalers(self, scalers):
         assert len(self.scalers_history) == 0, \
             "Scalers can only be applied once."
-
-        self.scalers_history.update(scalers)
+        df = self.df.copy()
+        history = scalers
         for df_name, scaler in scalers.items():
-            self.df[df_name] = scaler(self.df[df_name])
+            df[df_name] = scaler(df[df_name])
+
+        updated = eqx.tree_at(lambda x: x.df, self, df)
+        updated = eqx.tree_at(lambda x: x.scalers_history, updated, history)
+        return updated
 
     @classmethod
     def load_dataframes(cls, meta, sample=None, **kwargs):
@@ -1306,6 +1431,97 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
             yield (adm_id, InpatientObservables.empty(obs_dim))
+
+
+class SyntheticDataset(MIMIC3Dataset):
+
+    @classmethod
+    def make_synthetic_admissions(cls, colname, n_subjects):
+        rng = random.Random(0)
+
+        d1 = datetime.strptime('1/1/1950 1:30 PM', '%m/%d/%Y %I:%M %p')
+        d2 = datetime.strptime('1/1/2050 4:50 AM', '%m/%d/%Y %I:%M %p')
+        adms = []
+        for subject_id in range(n_subjects):
+            adm_d1 = random_date(d1, d2, rng)
+
+            n_admissions = rng.randint(1, 10)
+            adm_dates = sorted([
+                random_date(adm_d1, d2, rng) for _ in range(2 * n_admissions)
+            ])
+            admittime = adm_dates[:n_admissions:2]
+            dischtime = adm_dates[1:n_admissions:2]
+            adms.append((subject_id, admittime, dischtime))
+        df = pd.DataFrame(adms,
+                          columns=[
+                              colname[c]
+                              for c in ('subject_id', 'admittime', 'dischtime')
+                          ])
+
+        df.index.names = [colname['index']]
+        return df
+
+    @classmethod
+    def make_synthetic_dx(cls, dx_colname, dx_source_scheme, n_dx_codes,
+                          adm_df, adm_colname):
+        rng = random.Random(0)
+        n_dx_codes = rng.choices(range(n_dx_codes), k=len(adm_df))
+        codes = []
+        for i, adm_id in enumerate(adm_df.index):
+            n_codes = n_dx_codes[i]
+            codes.extend(
+                (adm_id, c)
+                for c in rng.choices(dx_source_scheme.codes, k=n_codes))
+
+        df = pd.DataFrame(codes,
+                          columns=[dx_colname[c] for c in ('index', 'code')])
+        return df
+
+    @classmethod
+    def make_synthetic_demographic(cls,
+                                   demo_colname,
+                                   adm_df,
+                                   adm_colname,
+                                   ethnicity_scheme=None,
+                                   gender_scheme=None):
+        rng = random.Random(0)
+        subject_ids = adm_df[adm_colname['subject_id']].unique()
+        demo = []
+        for subject_id, df in adm_df.groupby(adm_colname['subject_id']):
+            first_adm = df[adm_colname['admittime']].min()
+            if gender_scheme is None:
+                gender = None
+            else:
+                gender = rng.choices(gender_scheme.codes, k=1)[0]
+
+            if ethnicity_scheme is None:
+                ethnicity = None
+            else:
+                ethnicity = rng.choices(ethnicity_scheme.codes, k=1)[0]
+
+            date_of_birth = random_date(first_adm - relativedelta(years=100),
+                                        first_adm - relativedelta(years=18),
+                                        rng)
+
+            row = (subject_id, date_of_birth) + (c for c in (gender, ethnicity)
+                                                 if c is not None)
+
+        columns = [demo_colname[c] for c in ('subject_id', 'date_of_birth')]
+        if gender_scheme is not None:
+            columns.append(demo_colname['gender'])
+        if ethnicity_scheme is not None:
+            columns.append(demo_colname['ethncity'])
+
+        df = pd.DataFrame(demo, columns=columns)
+        return df
+
+    @classmethod
+    def synthetic_from_meta_json(cls, meta_fpath, n_subjects=100):
+        meta = load_config(meta_fpath)
+        # meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        adm_df = cls.make_synthetic_admissions(meta['colname'],
+                                               n_subjects=n_subjects)
+        return cls(**meta)
 
 
 def load_dataset_scheme(label):

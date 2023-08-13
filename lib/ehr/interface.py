@@ -10,7 +10,7 @@ import jax.tree_util as jtu
 import equinox as eqx
 
 from ..utils import tqdm_constructor, tree_hasnan, translate_path
-from .dataset import MIMIC4ICUDataset
+from .dataset import Dataset
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig)
 from .coding_scheme import CodesVector
@@ -93,10 +93,8 @@ class Predictions(dict):
         l_outcome = [a.outcome.vec for a in adms]
         l_pred = [p.outcome.vec for p in preds]
         l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
-        outcome = jnp.vstack(l_outcome)
-        pred = jnp.vstack(l_pred)
-        mask = jnp.vstack(l_mask)
-        return dx_loss(outcome, pred, mask)
+        return sum(map(dx_loss, l_outcome, l_pred, l_mask)) / len(preds)
+
 
     def prediction_obs_loss(self, obs_loss):
         preds = self.get_predictions()
@@ -117,12 +115,12 @@ class Predictions(dict):
 
 
 class Patients(eqx.Module):
-    dataset: MIMIC4ICUDataset
+    dataset: Dataset
     demographic_vector_config: DemographicVectorConfig
     subjects: Optional[Dict[int, Patient]]
 
     def __init__(self,
-                 dataset: MIMIC4ICUDataset,
+                 dataset: Dataset,
                  demographic_vector_config: DemographicVectorConfig,
                  subjects: Optional[Dict[int, Patient]] = None):
         super().__init__()
@@ -141,30 +139,32 @@ class Patients(eqx.Module):
         return len(self.subjects)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
-        suffix = '.pickle'
         path = Path(path)
-        if path.suffix != suffix:
-            path = path.with_suffix(suffix)
+
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.dataset.save(path.with_suffix('.dataset'), overwrite)
+
+        rest = eqx.tree_at(lambda x: x.dataset, self, None)
+        path = path.with_suffix('.interface.pickle')
         if path.exists():
             if overwrite:
                 path.unlink()
             else:
                 raise RuntimeError(f'File {path} already exists.')
         with open(path, 'wb') as file:
-            pickle.dump(self, file)
+            pickle.dump(rest, file)
 
     @staticmethod
     def load(path: Union[str, Path]) -> jtu.pytree:
-        suffix = '.pickle'
         path = Path(path)
-        if not path.is_file():
-            raise ValueError(f'Not a file: {path}')
-        if path.suffix != suffix:
-            raise ValueError(f'Not a {suffix} file: {path}')
-        with open(path, 'rb') as file:
-            data = pickle.load(file)
-        return data
+        with open(path.with_suffix('.interface.pickle'), 'rb') as file:
+            rest = pickle.load(file)
+        dataset = Dataset.load(path.with_suffix('.dataset'))
+        return eqx.tree_at(lambda x: x.dataset,
+                           rest,
+                           dataset,
+                           is_leaf=lambda x: x is None)
 
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,

@@ -83,9 +83,8 @@ class Metric(metaclass=ABCMeta):
     def dirs():
         return tuple()
 
-    @classmethod
-    def field_dir(cls, field):
-        return dict(zip(cls.fields(), cls.dirs()))[field]
+    def field_dir(self, field):
+        return dict(zip(self.fields(), self.dirs()))[field]
 
     @classmethod
     def classname(cls):
@@ -164,32 +163,28 @@ class VisitsAUC(Metric):
 
 @dataclass
 class LossMetric(Metric):
-    dx_loss_functions: Dict[str, Callable] = field(init=False)
-    obs_loss_functions: Dict[str, Callable] = field(init=False)
+    dx_loss: Dict[str, Callable]
+    obs_loss: Dict[str, Callable]
 
-    def __post_init__(self, dx_loss=[], obs_loss=[]):
-        self.dx_loss_functions = {name: binary_loss[name] for name in dx_loss}
-        self.obs_loss_functions = {
-            name: numeric_loss[name]
-            for name in obs_loss
-        }
+    def __init__(self, patients, dx_loss=[], obs_loss=[]):
+        super().__init__(patients)
+        self.dx_loss = {name: binary_loss[name] for name in dx_loss}
+        self.obs_loss = {name: numeric_loss[name] for name in obs_loss}
 
     def fields(self):
-        return sorted(self.dx_loss_functions.keys()) + sorted(
-            self.obs_loss_functions.keys())
+        return sorted(self.dx_loss.keys()) + sorted(self.obs_loss.keys())
 
     def dirs(self):
-        return (0, ) * (len(self.dx_loss_functions) +
-                        len(self.obs_loss_functions))
+        return (0, ) * (len(self.dx_loss) + len(self.obs_loss))
 
     def __call__(self, predictions: Predictions):
         return {
-            loss_key: float(
-                float(predictions.prediction_dx_loss(dx_loss=loss_f)))
-            for loss_key, loss_f in self.dx_loss_functions.items()
+            loss_key:
+                predictions.prediction_dx_loss(dx_loss=loss_f)
+            for loss_key, loss_f in self.dx_loss.items()
         } | {
-            loss_key: float(predictions.prediction_obs_loss(obs_loss=loss_f))
-            for loss_key, loss_f in self.obs_loss_functions.items()
+            loss_key: predictions.prediction_obs_loss(obs_loss=loss_f)
+            for loss_key, loss_f in self.obs_loss.items()
         }
 
 
@@ -325,12 +320,13 @@ class CodeAUC(CodeLevelMetric):
 
 @dataclass
 class CodeLevelLossMetric(CodeLevelMetric):
+    dx_loss: Tuple[str] = field(default_factory=list)
     loss_functions: Dict[str, Callable] = field(init=False)
 
-    def __post_init__(self, dx_loss=[]):
+    def __post_init__(self):
         self.loss_functions = {
             name: colwise_binary_loss[name]
-            for name in dx_loss
+            for name in self.dx_loss
         }
 
     def fields(self):
@@ -353,12 +349,13 @@ class CodeLevelLossMetric(CodeLevelMetric):
 
 @dataclass
 class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
+    obs_loss: Tuple[str] = field(default_factory=list)
     loss_functions: Dict[str, Callable] = field(init=False)
 
-    def __post_init__(self, obs_loss=[]):
+    def __post_init__(self):
         self.loss_functions = {
             name: colwise_numeric_loss[name]
-            for name in obs_loss
+            for name in self.obs_loss
         }
 
     def fields(self):
@@ -414,40 +411,6 @@ class UntilFirstCodeAUC(CodeAUC):
             vals['auc'][code_index] = compute_auc(code_ground_truth,
                                                   code_predictions)
         return vals
-
-
-@dataclass
-class ObsCodeLossMetric(CodeLevelMetric):
-    loss_functions: Dict[str, Callable] = field(init=False)
-
-    def __post_init__(self, dx_loss=[], obs_loss=[]):
-        self.dx_loss_functions = {name: binary_loss[name] for name in dx_loss}
-        self.obs_loss_functions = {
-            name: numeric_loss[name]
-            for name in obs_loss
-        }
-
-    def fields(self):
-        return sorted(self.dx_loss_functions.keys()) + sorted(
-            self.obs_loss_functions.keys())
-
-    def dirs(self):
-        return (0, ) * (len(self.dx_loss_functions) +
-                        len(self.obs_loss_functions))
-
-    def field_dir(self, field):
-        return 0
-
-    def __call__(self, predictions: Predictions):
-        return {
-            loss_key: float(
-                predictions.prediction_loss(dx_loss=loss_f)['dx_loss'])
-            for loss_key, loss_f in self.dx_loss_functions.items()
-        } | {
-            loss_key:
-            float(predictions.prediction_loss(obs_loss=loss_f)['obs_loss'])
-            for loss_key, loss_f in self.obs_loss_functions.items()
-        }
 
 
 @dataclass
