@@ -3,12 +3,12 @@
 from __future__ import annotations
 from typing import List, TYPE_CHECKING, Callable, Union
 from abc import abstractmethod, ABCMeta
-
+import zipfile
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
-from ..utils import tqdm_constructor
+from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig,
                    MIMICDatasetScheme, Predictions, Admission)
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
@@ -16,7 +16,6 @@ from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
 
 if TYPE_CHECKING:
     import optuna
-
 
 
 class ModelDimensions(eqx.Module):
@@ -69,6 +68,30 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def l2(self):
         return sum(
             jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
+
+    def load_params(self, params_file):
+        """
+        Load the parameters in `params_file`\
+            filepath and return as PyTree Object.
+        """
+        with open(translate_path(params_file), 'rb') as file_rsc:
+            return eqx.tree_deserialise_leaves(file_rsc, self)
+
+    def write_params(self, params_file):
+        """
+        Store the parameters (PyTree object) into a new file
+        given by `params_file`.
+        """
+        with open(translate_path(params_file), 'wb') as file_rsc:
+            eqx.tree_serialise_leaves(file_rsc, self)
+
+    def load_params_from_archive(self, zipfile_fname: str, params_fname: str):
+
+        with zipfile.ZipFile(translate_path(zipfile_fname),
+                             compression=zipfile.ZIP_STORED,
+                             mode="r") as archive:
+            with archive.open(params_fname, "r") as zip_member:
+                return eqx.tree_deserialise_leaves(zip_member, self)
 
 
 class InpatientModel(AbstractModel):
@@ -149,26 +172,3 @@ class OutpatientModel(AbstractModel):
 #                    outcome=patients.outcome_extractor,
 #                    control_size=control_size,
 #                    key=key)
-
-# def load_params(self, params_file):
-#     """
-#     Load the parameters in `params_file` filepath and return as PyTree Object.
-#     """
-#     with open(translate_path(params_file), 'rb') as file_rsc:
-#         return eqx.tree_deserialise_leaves(file_rsc, self)
-
-# def write_params(self, params_file):
-#     """
-#     Store the parameters (PyTree object) into a new file
-#     given by `params_file`.
-#     """
-#     with open(translate_path(params_file), 'wb') as file_rsc:
-#         eqx.tree_serialise_leaves(file_rsc, self)
-
-# def load_params_from_archive(self, zipfile_fname: str, params_fname: str):
-
-#     with zipfile.ZipFile(translate_path(zipfile_fname),
-#                          compression=zipfile.ZIP_STORED,
-#                          mode="r") as archive:
-#         with archive.open(params_fname, "r") as zip_member:
-#             return eqx.tree_deserialise_leaves(zip_member, self)

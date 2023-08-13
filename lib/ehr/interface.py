@@ -1,13 +1,15 @@
 from __future__ import annotations
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 import logging
+import pickle
+from pathlib import Path
 import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
-from ..utils import tqdm_constructor, tree_hasnan
+from ..utils import tqdm_constructor, tree_hasnan, translate_path
 from .dataset import MIMIC4ICUDataset
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig)
@@ -137,6 +139,32 @@ class Patients(eqx.Module):
 
     def __len__(self):
         return len(self.subjects)
+
+    def save(self, path: Union[str, Path], overwrite: bool = False):
+        suffix = '.pickle'
+        path = Path(path)
+        if path.suffix != suffix:
+            path = path.with_suffix(suffix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            if overwrite:
+                path.unlink()
+            else:
+                raise RuntimeError(f'File {path} already exists.')
+        with open(path, 'wb') as file:
+            pickle.dump(self, file)
+
+    @staticmethod
+    def load(path: Union[str, Path]) -> jtu.pytree:
+        suffix = '.pickle'
+        path = Path(path)
+        if not path.is_file():
+            raise ValueError(f'Not a file: {path}')
+        if path.suffix != suffix:
+            raise ValueError(f'Not a {suffix} file: {path}')
+        with open(path, 'rb') as file:
+            data = pickle.load(file)
+        return data
 
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,
