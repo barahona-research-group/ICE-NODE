@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import (Any, Dict, List, Callable, Optional)
+from abc import abstractmethod
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -9,27 +10,28 @@ from ..ehr import (Patient, Admission, StaticInfo, MIMIC4ICUDatasetScheme,
                    MIMICDatasetScheme, AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
 
-
 class EmbeddedAdmission(eqx.Module):
+    pass
+
+class EmbeddedInAdmission(EmbeddedAdmission):
     dx0: jnp.ndarray
-    inp_proc_demo: Optional[jnp.ndarray] = None
-    demo: Optional[jnp.ndarray] = None
+    inp_proc_demo: Optional[jnp.ndarray]
+
+class EmbeddedOutAdmission(EmbeddedAdmission):
+    dx: jnp.ndarray
+    demo: Optional[jnp.ndarray]
 
 
 class PatientEmbeddingDimensions(eqx.Module):
     dx: int = 30
     demo: int = 5
 
-
 class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
     pass
 
-
 class InpatientEmbeddingDimensions(PatientEmbeddingDimensions):
-    dx: int = 30
     inp: int = 10
     proc: int = 10
-    demo: int = 5
     inp_proc_demo: int = 15
 
 
@@ -64,14 +66,14 @@ class PatientEmbedding(eqx.Module):
                                     depth=1,
                                     key=dem_emb_key)
 
-    @eqx.filter_jit
+    @abstractmethod
     def embed_admission(self, static_info: StaticInfo,
                         admission: Admission) -> EmbeddedAdmission:
-        """ Embeds an admission into fixed vectors as described above."""
-        dx_emb = self.f_dx_emb(admission.dx_codes.vec)
-        demo = static_info.demographic_vector(admission.admission_dates[0])
-        demo_e = self.f_dem_emb(demo)
-        return EmbeddedAdmission(dx0=dx_emb, inp_proc_demo=None, demo=demo_e)
+        """
+        Embeds an admission into fixed vectors as described above.
+        """
+        pass
+
 
     def __call__(self, inpatient: Patient) -> List[EmbeddedAdmission]:
         """
@@ -85,7 +87,15 @@ class PatientEmbedding(eqx.Module):
 
 
 class OutpatientEmbedding(PatientEmbedding):
-    pass
+
+    @eqx.filter_jit
+    def embed_admission(self, static_info: StaticInfo,
+                        admission: Admission) -> EmbeddedOutAdmission:
+        """ Embeds an admission into fixed vectors as described above."""
+        dx_emb = self.f_dx_emb(admission.dx_codes.vec)
+        demo = static_info.demographic_vector(admission.admission_dates[0])
+        demo_e = self.f_dem_emb(demo)
+        return EmbeddedOutAdmission(dx=dx_emb, demo=demo_e)
 
 
 class InpatientEmbedding(PatientEmbedding):
@@ -154,7 +164,7 @@ class InpatientEmbedding(PatientEmbedding):
     @eqx.filter_jit
     def _embed_admission(self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
                          segmented_inp: jnp.ndarray,
-                         segmented_proc: jnp.ndarray) -> EmbeddedAdmission:
+                         segmented_proc: jnp.ndarray) -> EmbeddedInAdmission:
         """ Embeds an admission into fixed vectors as described above."""
 
         def _embed_segment(inp, proc):
@@ -163,7 +173,7 @@ class InpatientEmbedding(PatientEmbedding):
         dx_emb = self.embed_dx(dx_history_vec)
         demo_e = self._embed_demo(demo)
         inp_proc_demo = jax.vmap(_embed_segment)(segmented_inp, segmented_proc)
-        return EmbeddedAdmission(dx0=dx_emb, inp_proc_demo=inp_proc_demo)
+        return EmbeddedInAdmission(dx0=dx_emb, inp_proc_demo=inp_proc_demo)
 
     def embed_admission(self, static_info: StaticInfo, admission: Admission):
         demo = static_info.demographic_vector(admission.admission_dates[0])

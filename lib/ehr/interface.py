@@ -81,7 +81,7 @@ class Predictions(dict):
             logging.warning(f'Average interval_hours: '
                             f'{cleaned.average_interval_hours()}')
 
-        if len(cleaned) == 0:
+        if len(cleaned) == 0 and len(self) > 0:
             logging.warning('No predictions left after NaN filtering')
             raise ValueError('No predictions left after NaN filtering')
 
@@ -265,8 +265,7 @@ class Patients(eqx.Module):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
-        return sum(a.d2d_interval_days for s in subject_ids
-                   for a in self.subjects[s].admissions)
+        return sum(self.subjects[s].d2d_interval_days for s in subject_ids)
 
     def interval_days(self, subject_ids=None):
         if subject_ids is None:

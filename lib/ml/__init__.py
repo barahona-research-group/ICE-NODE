@@ -6,4 +6,5 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
                          EmbeddedAdmission, OutpatientEmbedding,
                          OutpatientEmbeddingDimensions,
                          PatientEmbeddingDimensions, PatientEmbedding)
-from .trainer import Trainer, OptimizerConfig, TrainerReporting, InTrainer
+from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
+                      WarmupConfig)

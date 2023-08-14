@@ -1,9 +1,9 @@
 {
     "base_dir": "$DATA_DIR/mimic3-cohort",
     "code_scheme": {
-        "dx": ["DxICD9", "CCS"],
+        "dx": ["DxICD9", "DxCCS"],
         "outcome": "dx_flatccs_filter_v1",
-        "ethnicity": ["MIMICEth37", "MIMICEth7"]
+        "ethnicity": ["MIMIC3Eth37", "MIMIC3Eth7"]
     },
     "colname": {
         "dx": {
@@ -17,16 +17,16 @@
             "index": "HADM_ID"
         },
         "static": {
-            "subject_id": "SUBJECT_ID",
+            "index": "SUBJECT_ID",
             "gender": "GENDER",
             "ethnicity": "ETHNICITY",
             "date_of_birth": "DOB"
         }
     },
     "files": {
-        "adm": "adm_df.csv",
-        "dx": "dx_df.csv",
-        "static": "static_df.csv"
+        "adm": "adm_df.csv.gz",
+        "dx": "dx_df.csv.gz",
+        "static": "static_df.csv.gz"
     },
     "name": "MIMIC-III",
     "python_class": "MIMICDataset",

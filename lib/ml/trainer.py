@@ -254,6 +254,7 @@ class OptimizerConfig(eqx.Module):
     opt: str
     lr: Union[float, Tuple[float, float]]
     decay_rate: Optional[Union[float, Tuple[float, float]]] = None
+    reverse_schedule: bool = False
 
 
 class Optimizer(eqx.Module):
@@ -314,12 +315,17 @@ class Optimizer(eqx.Module):
             pickle.dump(optstate, optstate_file)
 
     @staticmethod
-    def lr_schedule(config, iters=None):
+    def lr_schedule(config, iters=None, reverse=False):
         if config.decay_rate is None or iters is None:
             return config.lr
-        return jopt.exponential_decay(config.lr,
-                                      decay_steps=iters // 2,
-                                      decay_rate=config.decay_rate)
+
+        schedule = jopt.exponential_decay(config.lr,
+                                          decay_steps=iters // 2,
+                                          decay_rate=config.decay_rate)
+        if reverse:
+            return lambda i: schedule(iters - i)
+
+        return schedule
 
     @classmethod
     def sample_opt(cls, trial: optuna.Trial):
@@ -381,6 +387,25 @@ class TrainerReporting(eqx.Module):
         ]
 
 
+class WarmupConfig(eqx.Module):
+    epochs: int
+    batch_size: int
+    optimizer_config: OptimizerConfig
+
+    def __init__(self,
+                 epochs: int,
+                 batch_size: int,
+                 opt: str,
+                 lr: float,
+                 decay_rate: Optional[float] = None):
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.optimizer_config = OptimizerConfig(opt=opt,
+                                                lr=lr,
+                                                decay_rate=decay_rate,
+                                                reverse_schedule=True)
+
+
 class Trainer(eqx.Module):
     optimizer_config: OptimizerConfig
     reg_hyperparams: Dict[str, float]
@@ -407,6 +432,8 @@ class Trainer(eqx.Module):
         self.counts_ignore_first_admission = counts_ignore_first_admission
         self.dx_loss = binary_loss[dx_loss]
         self.obs_loss = numeric_loss[obs_loss]
+        kwargs = kwargs or {}
+        kwargs.update({'dx_loss': dx_loss, 'obs_loss': obs_loss})
         self.kwargs = kwargs
 
     @property
@@ -422,8 +449,7 @@ class Trainer(eqx.Module):
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_dx_loss(dx_loss=self.dx_loss)
-        return l, (l, predictions)
+        return predictions.prediction_dx_loss(dx_loss=self.dx_loss)
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
@@ -435,12 +461,7 @@ class Trainer(eqx.Module):
 
         loss = l + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
 
-        return loss, ({
-            'dx_loss': l,
-            'loss': loss,
-            'l1_loss': l1_loss,
-            'l2_loss': l2_loss,
-        }, predictions)
+        return loss
 
     def loss(self, model: AbstractModel, patients: Patients):
         if self.reg_hyperparams is None:
@@ -453,12 +474,12 @@ class Trainer(eqx.Module):
 
     def step_optimizer(self, step: int, optimizer: Optimizer,
                        model: AbstractModel, patients: Patients):
-        grad_f = eqx.filter_grad(self.loss, has_aux=True)
-        grads, aux = grad_f(model, patients)
+        grad_f = eqx.filter_value_and_grad(self.loss)
+        value, grads = grad_f(model, patients)
         optimizer = optimizer.step(step, grads)
         new_model = optimizer(model)
         new_model = self._post_update_params(new_model)
-        return optimizer, new_model, aux
+        return optimizer, new_model, value
 
     def __call__(self,
                  model: AbstractModel,
@@ -466,6 +487,7 @@ class Trainer(eqx.Module):
                  splits: Tuple[List[int], ...],
                  n_evals=100,
                  reporting: TrainerReporting = TrainerReporting(),
+                 warmup_config: Optional[WarmupConfig] = None,
                  continue_training: bool = False,
                  prng_seed: int = 0,
                  trial_terminate_time=datetime.max):
@@ -474,9 +496,22 @@ class Trainer(eqx.Module):
                 'TrainerReporting must support continue_training. '
                 'Make sure to include a ParamsDiskWriter '
                 'in the reporters list.')
+            assert warmup_config is None, (
+                'warmup_config cannot be provided when '
+                'continue_training is True')
 
-        signals = TrainerSignals()
+        if warmup_config is not None:
+            model = self._warmup(model=model,
+                                 patients=patients,
+                                 splits=splits,
+                                 prng_seed=prng_seed,
+                                 trial_terminate_time=trial_terminate_time,
+                                 history=reporting.new_training_history(),
+                                 signals=TrainerSignals(),
+                                 warmup_config=warmup_config)
+
         with contextlib.ExitStack() as stack:
+            signals = TrainerSignals()
             for c in reporting.connections(signals):
                 stack.enter_context(c)
 
@@ -490,12 +525,39 @@ class Trainer(eqx.Module):
                                history=reporting.new_training_history(),
                                signals=signals)
 
+    def _warmup(self, model: AbstractModel, patients: Patients,
+                splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
+                history: TrainingHistory, signals: TrainerSignals,
+                warmup_config: WarmupConfig):
+        trainer = Trainer(
+            optimizer_config=warmup_config.optimizer_config,
+            reg_hyperparams=self.reg_hyperparams,
+            epochs=warmup_config.epochs,
+            batch_size=warmup_config.batch_size,
+            counts_ignore_first_admission=self.counts_ignore_first_admission,
+            **self.kwargs)
+        return trainer._train(model=model,
+                              patients=patients,
+                              splits=(splits[0], [], []),
+                              n_evals=0,
+                              continue_training=False,
+                              prng_seed=prng_seed,
+                              trial_terminate_time=trial_terminate_time,
+                              history=history,
+                              signals=signals)
+
     def _train(self, model: AbstractModel, patients: Patients,
-               splits: Tuple[List[int], ...], n_evals,
-               continue_training: bool, prng_seed, trial_terminate_time,
-               history: TrainingHistory, signals: TrainerSignals):
+               splits: Tuple[List[int], ...], n_evals, continue_training: bool,
+               prng_seed, trial_terminate_time, history: TrainingHistory,
+               signals: TrainerSignals):
 
         train_ids, valid_ids, test_ids = splits
+        if self.epochs > 0 and self.epochs < 1:
+            epochs = 1
+            train_ids = train_ids[:int(self.epochs * len(train_ids))]
+        else:
+            epochs = self.epochs
+
         n_train_admissions = patients.n_admissions(
             train_ids,
             ignore_first_admission=self.counts_ignore_first_admission)
@@ -522,8 +584,7 @@ class Trainer(eqx.Module):
 
         val_batch = patients.device_batch(valid_ids)
         step = 0
-        for _ in tqdm_constructor(range(self.epochs), leave=True,
-                                  unit='Epoch'):
+        for _ in tqdm_constructor(range(epochs), leave=True, unit='Epoch'):
             (key, ) = jrandom.split(key, 1)
             train_ids = jrandom.permutation(key, jnp.array(train_ids))
             batch_gen = patients.batch_gen(
@@ -544,16 +605,18 @@ class Trainer(eqx.Module):
                 if step <= first_step:
                     continue
                 try:
-                    optimizer, model, _ = self.step_optimizer(
+                    optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
+                    batch_gen.set_description(f'Loss: {loss_val:.5f}')
 
                 except RuntimeError as e:
                     signals.nan_detected.send(self,
-                                              f'Possible ODE failure: {e}')
+                                              msg=f'Possible ODE failure: {e}')
                     return model
 
                 if tree_hasnan(model):
-                    signals.nan_detected.send(self, 'NaN detected in model')
+                    signals.nan_detected.send(self,
+                                              msg='NaN detected in model')
                     return model
 
                 if step not in eval_steps:
@@ -561,10 +624,11 @@ class Trainer(eqx.Module):
 
                 history.append_train_preds(
                     model.batch_predict(batch, leave_pbar=False))
-                history.append_val_preds(
-                    model.batch_predict(val_batch, leave_pbar=False))
+                if len(valid_ids) > 0:
+                    history.append_val_preds(
+                        model.batch_predict(val_batch, leave_pbar=False))
 
-                if step == iters - 1:
+                if step == iters - 1 and len(test_ids) > 0:
                     test_batch = patients.device_batch(test_ids)
                     history.append_test_preds(
                         model.batch_predict(test_batch, leave_pbar=False))
@@ -610,8 +674,4 @@ class InTrainer(Trainer):
         dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
         obs_loss = preds.prediction_obs_loss(obs_loss=self.obs_loss)
         loss = dx_loss + obs_loss
-        return loss, ({
-            'dx_loss': dx_loss,
-            'obs_loss': obs_loss,
-            'loss': loss
-        }, preds)
+        return loss

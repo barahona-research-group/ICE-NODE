@@ -19,7 +19,7 @@
             "index": "hadm_id"
         },
         "static": {
-            "subject_id": "subject_id",
+            "index": "subject_id",
             "gender": "gender",
             "ethnicity": "race",
             "anchor_age": "anchor_age",
@@ -27,9 +27,9 @@
         }
     },
     "files": {
-        "adm": "adm_df.csv",
-        "dx": "dx_df.csv",
-        "static": "static_df.csv"
+        "adm": "adm_df.csv.gz",
+        "dx": "dx_df.csv.gz",
+        "static": "static_df.csv.gz"
     },
     "name": "MIMIC-IV",
     "python_class": "MIMICDataset",

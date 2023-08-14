@@ -21,7 +21,7 @@ _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
 singleton_lock = Lock()
-maps_lock = Lock()
+maps_lock = defaultdict(Lock)
 
 
 class Singleton(object):
@@ -140,18 +140,24 @@ class _CodeMapper(defaultdict):
         bwd_diff = T - M_range
         fwd_p = len(fwd_diff) / len(M_range)
         bwd_p = len(bwd_diff) / len(T)
+        msg = f"""M: {self} \n
+Mapping converts to codes that are not supported by the target scheme.
+|M-range - T|={len(fwd_diff)}; \
+|M-range - T|/|M-range|={fwd_p:0.2f}); \
+first5(M-range - T)={sorted(fwd_diff)[:5]}\n
+Target codes that not covered by the mapping. \
+|T - M-range|={len(bwd_diff)}; \
+|T - M-range|/|T|={bwd_p:0.2f}; \
+first5(T - M-range)={sorted(bwd_diff)[:5]}\n
+|M-range|={len(M_range)}; \
+first5(M-range) {sorted(M_range)[:5]}.\n
+|T|={len(T)}; first5(T)={sorted(T)[:5]}
+        """
         return dict(fwd_diff=fwd_diff,
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""M: {self} \n
-                            M_range - T ({len(fwd_diff)}, p={fwd_p}):
-                            {sorted(fwd_diff)[:5]}...\n
-                            T - M_range ({len(bwd_diff)}, p={bwd_p}):
-                            {sorted(bwd_diff)[:5]}...\n
-                            M_range ({len(M_range)}):
-                            {sorted(M_range)[:5]}...\n
-                            T ({len(T)}): {sorted(T)[:5]}...""")
+                    msg=msg)
 
     def report_source_discrepancy(self):
         """
@@ -165,18 +171,24 @@ class _CodeMapper(defaultdict):
         bwd_diff = M_domain - S
         fwd_p = len(fwd_diff) / len(S)
         bwd_p = len(bwd_diff) / len(M_domain)
+        msg = f"""M: {self} \n
+Mapping converts codes that are not supported by the source scheme.\
+|M-domain - S|={len(bwd_diff)}; \
+|M-domain - S|/|M-domain|={bwd_p:0.2f}); \
+first5(M-domain - S)={sorted(bwd_diff)[:5]}\n
+Source codes that not covered by the mapping. \
+|S - M-domain|={len(fwd_diff)}; \
+|S - M-domain|/|S|={fwd_p:0.2f}; \
+first5(S - M-domain)={sorted(fwd_diff)[:5]}\n
+|M-domain|={len(M_domain)}; \
+first5(M-domain) {sorted(M_domain)[:5]}.\n
+|S|={len(S)}; first5(S)={sorted(S)[:5]}
+        """
         return dict(fwd_diff=fwd_diff,
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""M: {self} \n
-                            S - M_domain ({len(fwd_diff)}, p={fwd_p}):
-                            {sorted(fwd_diff)[:5]}...\n
-                            M_domain - S ({len(bwd_diff)}, p={bwd_p}):
-                            {sorted(bwd_diff)[:5]}...\n
-                            M_domain ({len(M_domain)}):
-                            {sorted(M_domain)[:5]}...\n
-                            S ({len(S)}): {sorted(S)[:5]}...""")
+                    msg=msg)
 
     @property
     def t_index(self):
@@ -204,11 +216,10 @@ class _CodeMapper(defaultdict):
 
     @classmethod
     def get_mapper(cls, s_scheme, t_scheme):
-        with maps_lock:
-            if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
-                return _NullCodeMapper()
-            key = (type(s_scheme), type(t_scheme))
-
+        if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
+            return _NullCodeMapper()
+        key = (type(s_scheme), type(t_scheme))
+        with maps_lock[key]:
             if key in _CodeMapper.maps:
                 return _CodeMapper.maps[key]
 
@@ -469,7 +480,8 @@ class HierarchicalScheme(AbstractScheme):
 
         self._dag2code = {d: c for c, d in self._code2dag.items()}
 
-        assert pt2ch or ch2pt, "Should provide ch2pt or pt2ch connection dictionary"
+        assert pt2ch or ch2pt, (
+            "Should provide ch2pt or pt2ch connection dictionary")
         if ch2pt and pt2ch:
             self._ch2pt = ch2pt
             self._pt2ch = pt2ch
@@ -607,11 +619,12 @@ class HierarchicalScheme(AbstractScheme):
 
     def search_regex(self, query, regex_flags=re.I):
         """
-        A regex-based search of codes by a `query` string. the search is
-        applied on the code descriptions.
-        for example, you can use it to return all codes related to cancer
-        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
-        For all found codes, their successor codes are also returned in the resutls.
+        A regex-based search of codes by a `query` string. the search is \
+            applied on the code descriptions. for example, you can use it \
+            to return all codes related to cancer by setting the \
+            `query = 'cancer'` and `regex_flags = re.i` \
+            (for case-insensitive search). For all found codes, \
+            their successor codes are also returned in the resutls.
         """
 
         codes = filter(
@@ -779,9 +792,11 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
 class DxICD10(Singleton, ICDCommons):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
-        - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
+        - 'chapter:19': 'Injury, poisoning and certain \
+            other consequences of external causes (S00-T88)',
         - 'chapter:20': 'External causes of morbidity (V00-Y99)',
-        - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
+        - 'chapter:21': 'Factors influencing health status and \
+            contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
 
@@ -1679,11 +1694,15 @@ def register_medcode_mapping(s_scheme: DxLTC9809FlatMedcodes,
 
 
 def register_chained_map(s_scheme, t_scheme, inter_scheme):
-    inter_mapping = _CodeMapper.get_mapper(s_scheme, inter_scheme)
-    assert inter_mapping.t_dag_space == False
-    s_codes = set(s_scheme.codes) & set(inter_mapping)
+    m1 = _CodeMapper.get_mapper(s_scheme, inter_scheme)
+    m2 = _CodeMapper.get_mapper(inter_scheme, t_scheme)
+    assert m1.t_dag_space == False
+    assert m2.t_dag_space == False
+
+    m3 = lambda x: set.union(*[m2[c] for c in m1[x]])
+    s_codes = set(s_scheme.codes) & set(m1.keys())
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
-    m.update({c: inter_mapping[c] for c in s_codes})
+    m.update({c: m3(c) for c in s_codes})
 
 
 def reg_dx_icd9_chained_map(s_scheme, t_scheme):
@@ -1751,6 +1770,18 @@ load_maps.update({
     lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrICD10()),
     (PrICD10, PrFlatCCS):
     lambda: reg_pr_icd9_chained_map(PrICD10(), PrFlatCCS())
+})
+
+# CCS <-> CCS
+load_maps.update({
+    (DxCCS, DxFlatCCS):
+    lambda: reg_dx_icd9_chained_map(DxCCS(), DxFlatCCS()),
+    (DxFlatCCS, DxCCS):
+    lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxCCS()),
+    (PrCCS, PrFlatCCS):
+    lambda: reg_pr_icd9_chained_map(PrCCS(), PrFlatCCS()),
+    (PrFlatCCS, PrCCS):
+    lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrCCS())
 })
 
 # CPRD conversions

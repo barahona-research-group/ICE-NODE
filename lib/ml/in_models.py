@@ -12,7 +12,7 @@ from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
                    MIMIC4ICUDatasetScheme, DemographicVectorConfig,
                    CodesVector)
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
-                         EmbeddedAdmission)
+                         EmbeddedInAdmission)
 
 from .model import InpatientModel, ModelDimensions
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
@@ -40,7 +40,7 @@ class InICENODE(InpatientModel):
         - f_dyn: Dynamics function.
         - f_update: Update function.
     """
-    f_emb: Callable[[Admission], EmbeddedAdmission]
+    f_emb: Callable[[Admission], EmbeddedInAdmission]
     f_obs_dec: Callable
     f_dx_dec: Callable
     f_dyn: Callable
@@ -81,7 +81,7 @@ class InICENODE(InpatientModel):
                            depth=2,
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
-        f_dyn = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
                                        len(scheme.obs),
@@ -144,7 +144,7 @@ class InICENODE(InpatientModel):
         return state, InpatientObservables(obs.time, pred_obs_val, obs.mask)
 
     def __call__(self, admission: Admission,
-                 embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
+                 embedded_admission: EmbeddedInAdmission) -> AdmissionPrediction:
         state = self.join_state(None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo
         obs = admission.observables

@@ -324,6 +324,7 @@ class CodeLevelLossMetric(CodeLevelMetric):
     loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
+        CodeLevelMetric.__post_init__(self)
         self.loss_functions = {
             name: colwise_binary_loss[name]
             for name in self.dx_loss
@@ -353,6 +354,7 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
     loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
+        ObsCodeLevelMetric.__post_init__(self)
         self.loss_functions = {
             name: colwise_numeric_loss[name]
             for name in self.obs_loss

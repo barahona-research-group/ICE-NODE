@@ -435,7 +435,7 @@ class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
 class MIMIC3Dataset(Dataset):
     df: Dict[str, dd.DataFrame]
     scheme: MIMIC3DatasetScheme
-    scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
+    scheme_class: ClassVar[Type[MIMIC3DatasetScheme]] = MIMIC3DatasetScheme
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
 
@@ -477,6 +477,10 @@ class MIMIC3Dataset(Dataset):
             **{
                 colname[f]["subject_id"]: int
                 for f in files.keys() if "subject_id" in colname[f]
+            },
+            **{
+                colname[f]["index"]: int
+                for f in files.keys() if "index" in colname[f]
             }
         }
         if "version" in colname["dx"]:
@@ -494,11 +498,13 @@ class MIMIC3Dataset(Dataset):
             df["adm"] = cls.sample_n_subjects(df["adm"],
                                               colname["adm"]["subject_id"],
                                               sample, 0)
-
         logging.debug('[DONE] Loading dataframe files')
+        df["static"] = df["static"].set_index(
+            colname["static"]["index"]).compute()
 
         logging.debug('Preprocess admissions')
         df["adm"] = df["adm"].set_index(colname["adm"]["index"]).compute()
+
         df["adm"] = cls._adm_cast_times(df["adm"], colname["adm"])
 
         df["adm"] = cls._adm_add_adm_interval(df["adm"], colname["adm"],
@@ -507,6 +513,13 @@ class MIMIC3Dataset(Dataset):
             df["adm"], colname["adm"])
         df["adm"], merger_map = cls._adm_merge_overlapping_admissions(
             df["adm"], colname["adm"])
+
+        c_subject_id = colname["adm"]["subject_id"]
+        subject_ids = list(
+            set(df["adm"][c_subject_id].unique()) & set(df["static"].index))
+        df["static"] = df["static"].loc[subject_ids]
+        df["adm"] = df["adm"][df["adm"][c_subject_id].isin(subject_ids)]
+
         logging.debug('[DONE] Preprocess admissions')
 
         # admission_id matching
@@ -561,8 +574,8 @@ class MIMIC3Dataset(Dataset):
 
             _admission_ids = admission_ids[subject_id]
             # for subject_id, subject_admission_ids in admission_ids.items():
-            _admission_ids = sorted(_admission_ids)
-
+            _admission_ids = sorted(_admission_ids,
+                                    key=lambda aid: adm_dates[aid][0])
             static_info = StaticInfo(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
@@ -719,7 +732,7 @@ class MIMIC3Dataset(Dataset):
         df = adm_df.copy()
         # Cast timestamps for admissions
         for time_col in (colname["admittime"], colname["dischtime"]):
-            df[colname[time_col]] = pd.to_datetime(df[colname[time_col]])
+            df[time_col] = pd.to_datetime(df[time_col])
         return df
 
     @staticmethod
@@ -781,20 +794,47 @@ class MIMIC3Dataset(Dataset):
 
     @property
     def subject_ids(self):
-        return sorted(
-            self.df['adm'][self.colname['adm']['subject_id']].unique())
+        return sorted(self.df["static"].index.unique())
 
     def subject_info_extractor(self, subject_ids):
-        c_subject_id = self.colname["static"]["subject_id"]
+        """
+        Important comment from MIMIC-III documentation at \
+            https://mimic.mit.edu/docs/iii/tables/patients/
+        > DOB is the date of birth of the given patient. Patients who are \
+            older than 89 years old at any time in the database have had their\
+            date of birth shifted to obscure their age and comply with HIPAA.\
+            The shift process was as follows: the patient’s age at their \
+            first admission was determined. The date of birth was then set to\
+            exactly 300 years before their first admission.
+        """
         c_gender = self.colname["static"]["gender"]
         c_eth = self.colname["static"]["ethnicity"]
         c_dob = self.colname["static"]["date_of_birth"]
 
-        df = self.df['static']
-        df = df[df[c_subject_id].isin(subject_ids)]
+        c_admittime = self.colname["adm"]["admittime"]
+        c_dischtime = self.colname["adm"]["dischtime"]
+        c_subject_id = self.colname["adm"]["subject_id"]
+
+        adm_df = self.df['adm'][self.df['adm'][c_subject_id].isin(subject_ids)]
+
+        df = self.df['static'].copy()
+        df = df.loc[subject_ids]
         gender = df[c_gender].map(self.scheme.gender.codeset2vec)
-        subject_gender = dict(zip(df[c_subject_id], gender))
-        subject_dob = dict(zip(df[c_subject_id], df[c_dob]))
+        subject_gender = gender.to_dict()
+
+        df[c_dob] = pd.to_datetime(df[c_dob])
+        last_disch_date = adm_df.groupby(c_subject_id)[c_dischtime].max()
+        first_adm_date = adm_df.groupby(c_subject_id)[c_admittime].min()
+
+        last_disch_date = last_disch_date.loc[df.index]
+        first_adm_date = first_adm_date.loc[df.index]
+        uncertainty = (last_disch_date.dt.year - first_adm_date.dt.year) // 2
+        shift = (uncertainty + 89).astype('timedelta64[Y]')
+        df.loc[:, c_dob] = df[c_dob].mask(
+            (last_disch_date.dt.year - df[c_dob].dt.year) > 150,
+            first_adm_date - shift)
+
+        subject_dob = df[c_dob].dt.normalize().to_dict()
         # TODO: check https://mimic.mit.edu/docs/iii/about/time/
         eth_mapper = self.scheme.eth_mapper()
 
@@ -802,8 +842,7 @@ class MIMIC3Dataset(Dataset):
             code = eth_mapper.map_codeset(eth)
             return eth_mapper.codeset2vec(code)
 
-        subject_eth = df[c_eth].map(eth2vec)
-        subject_eth = dict(zip(df[c_subject_id], subject_eth))
+        subject_eth = df[c_eth].map(eth2vec).to_dict()
 
         return subject_dob, subject_gender, subject_eth
 
@@ -1299,7 +1338,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
             _admission_ids = admission_ids[subject_id]
             # for subject_id, subject_admission_ids in admission_ids.items():
-            _admission_ids = sorted(_admission_ids)
+            _admission_ids = sorted(_admission_ids,
+                                    key=lambda aid: adm_dates[aid][0])
 
             static_info = StaticInfo(
                 date_of_birth=subject_dob[subject_id],

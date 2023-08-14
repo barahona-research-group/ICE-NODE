@@ -132,12 +132,36 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
     """
     pairs_logits_diff = jnp.expand_dims(logits, axis=1) - jnp.expand_dims(
         logits, axis=0)
+
     pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
         y, axis=0) * 1.0
     pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
     return jnp.nanmean(jnn.sigmoid(-pairs_labels_diff * pairs_logits_diff),
-                       where=pairs_mask,
+                       where=jnp.triu(pairs_mask),
                        axis=axis)
+
+
+@eqx.filter_jit
+def allpairs_softplus_rank(y: jnp.ndarray,
+                           logits: jnp.ndarray,
+                           mask: jnp.ndarray,
+                           axis=None):
+    """All-pairs loss for ranking, using sigmoid activation.
+    The function takes two inputs:
+        - The ground-truth `y` is a vector, where each
+        element is an integer in :math:`\{0, 1\}`.
+        - The predictions `logits`, before applying the Sigmoid function, where
+        each element is a float in :math:`(-\infty, \infty)`.
+    """
+    pairs_logits_diff = jnp.expand_dims(logits, axis=1) - jnp.expand_dims(
+        logits, axis=0)
+
+    pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
+        y, axis=0) * 1.0
+    pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
+    return -jnp.nanmean(jnn.softplus(-pairs_labels_diff * pairs_logits_diff),
+                        where=jnp.triu(pairs_mask),
+                        axis=axis)
 
 
 @eqx.filter_jit
@@ -207,7 +231,8 @@ binary_loss = {
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
     'balanced_focal_bce': balanced_focal_bce,
-    'allpairs_sigmoid_rank': allpairs_sigmoid_rank
+    'allpairs_sigmoid_rank': allpairs_sigmoid_rank,
+    'allpairs_softplus_rank': allpairs_softplus_rank
 }
 
 numeric_loss = {'mse': masked_mse, 'mae': masked_mae, 'rms': masked_rms}
