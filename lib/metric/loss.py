@@ -136,7 +136,7 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
     pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
         y, axis=0) * 1.0
     pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
-    return jnp.nanmean(jnn.sigmoid(-10 * pairs_labels_diff * pairs_p_diff),
+    return jnp.nanmean(jnn.sigmoid(-40 * pairs_labels_diff * pairs_p_diff),
                        where=jnp.triu(pairs_mask),
                        axis=axis)
 
@@ -159,7 +159,7 @@ def allpairs_softplus_rank(y: jnp.ndarray,
     pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
         y, axis=0) * 1.0
     pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
-    return -jnp.nanmean(jnn.softplus(-10 * pairs_labels_diff * pairs_p_diff),
+    return -jnp.nanmean(jnn.softplus(-40 * pairs_labels_diff * pairs_p_diff),
                         where=jnp.triu(pairs_mask),
                         axis=axis)
 
