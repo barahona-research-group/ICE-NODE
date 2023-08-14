@@ -88,14 +88,22 @@ class PatientEmbedding(eqx.Module):
 
 class OutpatientEmbedding(PatientEmbedding):
 
+
     @eqx.filter_jit
+    def _embed_admission(self, demo: jnp.ndarray,
+                         dx_vec: jnp.ndarray) -> EmbeddedOutAdmission:
+        dx_emb = self.f_dx_emb(dx_vec)
+        demo_e = self.f_dem_emb(demo)
+        return EmbeddedOutAdmission(dx=dx_emb, demo=demo_e)
+
+
     def embed_admission(self, static_info: StaticInfo,
                         admission: Admission) -> EmbeddedOutAdmission:
         """ Embeds an admission into fixed vectors as described above."""
-        dx_emb = self.f_dx_emb(admission.dx_codes.vec)
         demo = static_info.demographic_vector(admission.admission_dates[0])
-        demo_e = self.f_dem_emb(demo)
-        return EmbeddedOutAdmission(dx=dx_emb, demo=demo_e)
+        return self._embed_admission(demo, admission.dx_codes.vec)
+
+
 
 
 class InpatientEmbedding(PatientEmbedding):

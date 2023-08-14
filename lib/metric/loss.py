@@ -130,13 +130,13 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
         - The predictions `logits`, before applying the Sigmoid function, where
         each element is a float in :math:`(-\infty, \infty)`.
     """
-    pairs_logits_diff = jnp.expand_dims(logits, axis=1) - jnp.expand_dims(
-        logits, axis=0)
+    p = jnn.sigmoid(logits)
+    pairs_p_diff = jnp.expand_dims(p, axis=1) - jnp.expand_dims(p, axis=0)
 
     pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
         y, axis=0) * 1.0
     pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
-    return jnp.nanmean(jnn.sigmoid(-pairs_labels_diff * pairs_logits_diff),
+    return jnp.nanmean(jnn.sigmoid(-pairs_labels_diff * pairs_p_diff),
                        where=jnp.triu(pairs_mask),
                        axis=axis)
 
@@ -153,13 +153,13 @@ def allpairs_softplus_rank(y: jnp.ndarray,
         - The predictions `logits`, before applying the Sigmoid function, where
         each element is a float in :math:`(-\infty, \infty)`.
     """
-    pairs_logits_diff = jnp.expand_dims(logits, axis=1) - jnp.expand_dims(
-        logits, axis=0)
+    p = jnn.sigmoid(logits)
+    pairs_p_diff = jnp.expand_dims(p, axis=1) - jnp.expand_dims(p, axis=0)
 
     pairs_labels_diff = jnp.expand_dims(y, axis=1) * 1.0 - jnp.expand_dims(
         y, axis=0) * 1.0
     pairs_mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
-    return -jnp.nanmean(jnn.softplus(-pairs_labels_diff * pairs_logits_diff),
+    return -jnp.nanmean(jnn.softplus(-pairs_labels_diff * pairs_p_diff),
                         where=jnp.triu(pairs_mask),
                         axis=axis)
 

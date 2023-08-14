@@ -963,26 +963,26 @@ class MIMIC4Dataset(MIMIC3Dataset):
     def subject_info_extractor(self, subject_ids):
 
         static_df = self.df['static']
-        c_s_subject_id = self.colname["static"]["subject_id"]
         c_gender = self.colname["static"]["gender"]
         c_anchor_year = self.colname["static"]["anchor_year"]
         c_anchor_age = self.colname["static"]["anchor_age"]
         c_eth = self.colname["static"]["ethnicity"]
 
-        static_df = static_df[static_df[c_s_subject_id].isin(subject_ids)]
+        static_df = static_df.loc[subject_ids]
         gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
-        subject_gender = dict(zip(static_df[c_s_subject_id], gender))
+        subject_gender = gender.to_dict()
 
         anchor_date = pd.to_datetime(static_df[c_anchor_year],
                                      format='%Y').dt.normalize()
         anchor_age = static_df[c_anchor_age].map(
             lambda y: pd.DateOffset(years=-y))
         dob = anchor_date + anchor_age
-        subject_dob = dict(zip(static_df[c_s_subject_id], dob))
+        subject_dob = dict(zip(static_df.index.values, dob))
         subject_eth = dict()
         eth_mapper = self.scheme.eth_mapper()
-        for subject_id, subject_df in static_df.groupby(c_s_subject_id):
-            eth_code = eth_mapper.map_codeset(subject_df[c_eth].tolist())
+        for subject_id in static_df.index.values:
+            eth_code = eth_mapper.map_codeset(
+                [static_df.loc[subject_id, c_eth]])
             subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
 
         return subject_dob, subject_gender, subject_eth
