@@ -179,8 +179,7 @@ class LossMetric(Metric):
 
     def __call__(self, predictions: Predictions):
         return {
-            loss_key:
-                predictions.prediction_dx_loss(dx_loss=loss_f)
+            loss_key: predictions.prediction_dx_loss(dx_loss=loss_f)
             for loss_key, loss_f in self.dx_loss.items()
         } | {
             loss_key: predictions.prediction_obs_loss(obs_loss=loss_f)
@@ -578,9 +577,20 @@ class AdmissionAUC(Metric):
 
 @dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
-
     code_groups: List[List[int]]
     top_k_list: List[int]
+
+    def __init__(self,
+                 patients: Patients,
+                 train_split: List[int] = [],
+                 n_partitions=5,
+                 top_k_list=[1, 3, 5, 10, 15, 20]):
+        if len(train_split) == 0:
+            train_split = patients.dataset.subject_ids
+
+        self.code_groups = patients.outcome_frequency_partitions(
+            n_partitions, train_split)
+        self.top_k_list = top_k_list
 
     @staticmethod
     def fields():

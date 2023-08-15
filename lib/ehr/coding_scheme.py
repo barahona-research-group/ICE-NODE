@@ -1848,7 +1848,7 @@ class OutcomeExtractor(AbstractScheme):
     def outcome_dim(self):
         return len(self.index)
 
-    def map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
+    def _map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
         m = s_scheme.mapper_to(self._t_scheme)
         codeset = m.map_codeset(codeset)
 
@@ -1858,9 +1858,9 @@ class OutcomeExtractor(AbstractScheme):
 
         return codeset & set(self.codes)
 
-    def codeset2vec(self, codeset: Set[str], s_scheme: AbstractScheme):
+    def mapcodevector(self, codes: CodesVector):
         vec = np.zeros(len(self.index), dtype=bool)
-        for c in self.map_codeset(codeset, s_scheme):
+        for c in self._map_codeset(codes.to_codeset(), codes.scheme):
             vec[self.index[c]] = True
         return CodesVector(np.array(vec), self)
 

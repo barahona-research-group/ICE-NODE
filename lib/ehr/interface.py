@@ -93,7 +93,9 @@ class Predictions(dict):
         l_outcome = [a.outcome.vec for a in adms]
         l_pred = [p.outcome.vec for p in preds]
         l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
-        return sum(map(dx_loss, l_outcome, l_pred, l_mask)) / len(preds)
+        loss_v = jnp.array(list(map(dx_loss, l_outcome, l_pred, l_mask)))
+        loss_v = jnp.nanmean(loss_v)
+        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
 
     def prediction_obs_loss(self, obs_loss):

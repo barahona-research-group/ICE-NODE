@@ -40,6 +40,11 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def batch_predict(self, patients: Patients, leave_pbar: bool = False):
         pass
 
+    @property
+    @abstractmethod
+    def counts_ignore_first_admission(self):
+        pass
+
     # def subject_embeddings(self, patients: Patients, batch: List[int]):
     #     out = self(patients, batch, dict(return_embeddings=True))
     #     return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
@@ -96,6 +101,10 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
 
 class InpatientModel(AbstractModel):
 
+    @property
+    def counts_ignore_first_admission(self):
+        return False
+
     def batch_predict(self,
                       inpatients: Patients,
                       leave_pbar: bool = False) -> Predictions:
@@ -117,7 +126,8 @@ class InpatientModel(AbstractModel):
                               leave=leave_pbar) as pbar:
             results = Predictions()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
-                pbar.set_description(f"Subject {i+1}/{len(inpatients)}")
+                pbar.set_description(
+                    f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
                 for adm, adm_e in zip(inpatient.admissions,
@@ -129,6 +139,10 @@ class InpatientModel(AbstractModel):
 
 
 class OutpatientModel(AbstractModel):
+
+    @property
+    def counts_ignore_first_admission(self):
+        return True
 
     def batch_predict(self,
                       inpatients: Patients,
@@ -151,7 +165,8 @@ class OutpatientModel(AbstractModel):
                               leave=leave_pbar) as pbar:
             results = Predictions()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
-                pbar.set_description(f"Subject {i+1}/{len(inpatients)}")
+                pbar.set_description(
+                    f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
                 for pred in self(inpatient, embedded_admissions):

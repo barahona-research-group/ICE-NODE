@@ -27,9 +27,9 @@
         }
     },
     "files": {
-        "adm": "adm_df.csv.gz",
-        "dx": "dx_df.csv.gz",
-        "static": "static_df.csv.gz"
+        "adm": "adm_df.csv",
+        "dx": "dx_df.csv",
+        "static": "static_df.csv"
     },
     "name": "MIMIC-IV",
     "python_class": "MIMICDataset",

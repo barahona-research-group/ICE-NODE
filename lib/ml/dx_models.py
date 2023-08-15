@@ -63,7 +63,7 @@ class ICENODE(OutpatientModel):
                            depth=2,
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
-        ode_dyn_f = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
+        ode_dyn_f = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
 
         self.f_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
 
@@ -87,7 +87,7 @@ class ICENODE(OutpatientModel):
 
     @eqx.filter_jit
     def _integrate(self, state, delta, ctrl):
-        second = jnp.array(1 / 3600.0)
+        second = jnp.array(1 / (3600.0 * 24.0))
         delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
         return self.f_dyn(delta, state, args=dict(control=ctrl))[-1]
 
@@ -156,7 +156,7 @@ class ICENODE_ZERO(ICENODE_UNIFORM):
 
 
 class GRUDimensions(ModelDimensions):
-    mem: int = 45
+    mem: int = eqx.static_field(default=45)
 
     def __init__(self, emb: OutpatientEmbeddingDimensions, mem: int):
         super().__init__(emb=emb)
@@ -226,8 +226,8 @@ class GRU(OutpatientModel):
 
 
 class RETAINDimensions(ModelDimensions):
-    mem_a: int = 45
-    mem_b: int = 45
+    mem_a: int = eqx.static_field(default=45)
+    mem_b: int = eqx.static_field(default=45)
 
     def __init__(self, emb: OutpatientEmbeddingDimensions, mem_a: int,
                  mem_b: int):

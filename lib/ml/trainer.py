@@ -59,23 +59,21 @@ class TrainingHistory:
     def test_df(self):
         return self._test_df
 
-    def append_train_preds(self, res: Predictions):
-        niters = 1 if self._train_df is None else len(self._train_df) + 1
-        row_df = self.metrics.to_df(niters, res)
+    def append_train_preds(self, step: int, res: Predictions):
+        row_df = self.metrics.to_df(step, res)
         self._train_df = pd.concat([self._train_df, row_df])
 
-    def append_val_preds(self, res: Predictions):
-        niters = 1 if self._val_df is None else len(self._val_df) + 1
-        row_df = self.metrics.to_df(niters, res)
+    def append_val_preds(self, step: int, res: Predictions):
+        row_df = self.metrics.to_df(step, res)
         self._val_df = pd.concat([self._val_df, row_df])
 
-    def append_test_preds(self, res: Predictions):
-        niters = 1 if self._test_df is None else len(self._test_df) + 1
-        row_df = self.metrics.to_df(niters, res)
+    def append_test_preds(self, step: int, res: Predictions):
+        row_df = self.metrics.to_df(step, res)
         self._test_df = pd.concat([self._test_df, row_df])
 
 
 class TrainerSignals:
+    new_training = signal('new_training')
     start_training = signal('start_training')
     end = signal('end_training')
     start_evaluation = signal('start_evaluation')
@@ -86,6 +84,11 @@ class TrainerSignals:
     continue_training = signal('continue_training')
     timeout = signal('timeout')
     nan_detected = signal('nan_detected')
+
+    def disconnect_all_receivers(self):
+        for sig in self.__dict__.values():
+            for recv in sig.receivers.values():
+                sig.disconnect(recv)
 
 
 class AbstractReporter(metaclass=ABCMeta):
@@ -103,16 +106,9 @@ class ConsoleReporter(AbstractReporter):
     def log_nan_detected(self, sender, **kwargs):
         logging.warning(kwargs['msg'] or 'NaN detected')
 
-    def log_evaluation(self, sender, **kwargs):
-        h = kwargs['history']
-        for name, df in zip(('train', 'val', 'tst'),
-                            (h.train_df, h.val_df, h.test_df)):
-            logging.info(name + str(df))
-
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         return [(trainer_signals.start_training, self.log_config),
-                (trainer_signals.nan_detected, self.log_nan_detected),
-                (trainer_signals.end_evaluation, self.log_evaluation)]
+                (trainer_signals.nan_detected, self.log_nan_detected)]
 
 
 class EvaluationDiskWriter(AbstractReporter):
@@ -127,15 +123,29 @@ class EvaluationDiskWriter(AbstractReporter):
                             (h.train_df, h.val_df, h.test_df)):
             if df is None:
                 continue
+            df = df.copy()
+
             fname = f'{name}_evals.csv.gz'
             fpath = os.path.join(self.output_dir, fname)
+            if os.path.exists(fpath):
+                old_df = pd.read_csv(fpath, index_col=0)
+                df = df.loc[~df.index.isin(old_df.index)]
+
             df.to_csv(fpath,
                       compression="gzip",
                       mode='a',
                       header=not os.path.exists(fpath))
 
+    def clear_files(self, sender):
+        for name in ('train', 'val', 'tst'):
+            fname = f'{name}_evals.csv.gz'
+            fpath = os.path.join(self.output_dir, fname)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
-        return [(trainer_signals.end_evaluation, self.report_evaluation)]
+        return [(trainer_signals.end_evaluation, self.report_evaluation),
+                (trainer_signals.new_training, self.clear_files)]
 
 
 class ParamsDiskWriter(AbstractReporter):
@@ -153,10 +163,22 @@ class ParamsDiskWriter(AbstractReporter):
         append_params_to_zip(model, name, tarname)
         optimizer.save(os.path.join(self.output_dir, 'optstate.pkl'))
 
+    def clear_files(self, sender):
+        tarname = os.path.join(self.output_dir, 'params.zip')
+        if os.path.exists(tarname):
+            os.remove(tarname)
+        optname = os.path.join(self.output_dir, 'optstate.pkl')
+        if os.path.exists(optname):
+            os.remove(optname)
+
     @staticmethod
     def last_eval_step(output_dir):
         tarname = os.path.join(output_dir, 'params.zip')
-        filenames = zip_members(tarname)
+        try:
+            filenames = zip_members(tarname)
+        except FileNotFoundError:
+            return None
+
         numbers = []
         for fname in filenames:
             numbers.extend(map(int, re.findall(r'\d+', fname)))
@@ -169,12 +191,12 @@ class ParamsDiskWriter(AbstractReporter):
     def continue_training(self, sender, **kwargs):
         messenger = kwargs['messenger']
         last_eval_step = self.last_eval_step(self.output_dir)
-        if last_eval_step is not None:
+        if last_eval_step is not None and last_eval_step > 0:
             model = messenger['model']
             optimizer = messenger['optimizer']
 
             model = self.load_trained_model(model, last_eval_step)
-            optimizer = optimizer.load_optimizer(
+            optimizer = optimizer.load(
                 os.path.join(self.output_dir, 'optstate.pkl'))
             messenger['model'] = model
             messenger['optimizer'] = optimizer
@@ -182,7 +204,8 @@ class ParamsDiskWriter(AbstractReporter):
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         return [(trainer_signals.end_evaluation, self.report_params_optimizer),
-                (trainer_signals.continue_training, self.continue_training)]
+                (trainer_signals.continue_training, self.continue_training),
+                (trainer_signals.new_training, self.clear_files)]
 
 
 class ConfigDiskWriter(AbstractReporter):
@@ -194,8 +217,14 @@ class ConfigDiskWriter(AbstractReporter):
         config = kwargs['config']
         write_config(config, os.path.join(self.output_dir, 'config.json'))
 
+    def clear_files(self, sender):
+        config_name = os.path.join(self.output_dir, 'config.json')
+        if os.path.exists(config_name):
+            os.remove(config_name)
+
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
-        return [(trainer_signals.start_training, self.report_config)]
+        return [(trainer_signals.start_training, self.report_config),
+                (trainer_signals.new_training, self.clear_files)]
 
 
 class OptunaReporter(AbstractReporter):
@@ -276,29 +305,24 @@ class Optimizer(eqx.Module):
         opt_init, self.opt_update, self.get_params = _opts[config.opt](lr)
 
         if optstate is None and model is not None:
-            self.optstate = opt_init(eqx.filter(model, eqx.is_inexact_array))
+            leaves = jtu.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
+            self.optstate = opt_init(leaves)
         elif optstate is not None:
             self.optstate = optstate
         else:
             raise ValueError('Either optstate or model must be provided')
 
     def step(self, step, grads):
+        grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
         optstate = self.opt_update(step, grads, self.optstate)
         return eqx.tree_at(lambda x: x.optstate, self, optstate)
 
     def __call__(self, model):
         new_params = self.get_params(self.optstate)
-
-        def _replace(new, old):
-            if new is None:
-                return old
-            else:
-                return new
-
-        def _is_none(x):
-            return x is None
-
-        return jtu.tree_map(_replace, new_params, model, is_leaf=_is_none)
+        param_part, other_part = eqx.partition(model, eqx.is_inexact_array)
+        _, pdef = jtu.tree_flatten(param_part)
+        params_part = jtu.tree_unflatten(pdef, new_params)
+        return eqx.combine(params_part, other_part)
 
     def load(self, filename):
         with open(filename, "rb") as optstate_file:
@@ -411,7 +435,6 @@ class Trainer(eqx.Module):
     reg_hyperparams: Dict[str, float]
     epochs: int
     batch_size: int
-    counts_ignore_first_admission: bool
     dx_loss: Callable
     obs_loss: Callable
     kwargs: Dict[str, Any]
@@ -421,7 +444,6 @@ class Trainer(eqx.Module):
                  reg_hyperparams,
                  epochs,
                  batch_size,
-                 counts_ignore_first_admission=False,
                  dx_loss='balanced_focal_bce',
                  obs_loss='mse',
                  **kwargs):
@@ -429,7 +451,6 @@ class Trainer(eqx.Module):
         self.reg_hyperparams = reg_hyperparams
         self.epochs = epochs
         self.batch_size = batch_size
-        self.counts_ignore_first_admission = counts_ignore_first_admission
         self.dx_loss = binary_loss[dx_loss]
         self.obs_loss = numeric_loss[obs_loss]
         kwargs = kwargs or {}
@@ -442,9 +463,7 @@ class Trainer(eqx.Module):
             'opt_config': self.optimizer_config.__dict__,
             'reg_hyperparams': self.reg_hyperparams,
             'epochs': self.epochs,
-            'batch_size': self.batch_size,
-            'counts_ignore_first_admission':
-            self.counts_ignore_first_admission,
+            'batch_size': self.batch_size
         }
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
@@ -501,6 +520,7 @@ class Trainer(eqx.Module):
                 'continue_training is True')
 
         if warmup_config is not None:
+            logging.info('Warming up...')
             model = self._warmup(model=model,
                                  patients=patients,
                                  splits=splits,
@@ -509,9 +529,13 @@ class Trainer(eqx.Module):
                                  history=reporting.new_training_history(),
                                  signals=TrainerSignals(),
                                  warmup_config=warmup_config)
+            logging.info('[DONE] Warming up.')
 
         with contextlib.ExitStack() as stack:
             signals = TrainerSignals()
+            # In case Context Managers failed to exit from a previous
+            # run (e.g. due to interruption via Jupyter Notebook).
+            signals.disconnect_all_receivers()
             for c in reporting.connections(signals):
                 stack.enter_context(c)
 
@@ -534,7 +558,7 @@ class Trainer(eqx.Module):
             reg_hyperparams=self.reg_hyperparams,
             epochs=warmup_config.epochs,
             batch_size=warmup_config.batch_size,
-            counts_ignore_first_admission=self.counts_ignore_first_admission,
+            counts_ignore_first_admission=model.counts_ignore_first_admission,
             **self.kwargs)
         return trainer._train(model=model,
                               patients=patients,
@@ -560,17 +584,13 @@ class Trainer(eqx.Module):
 
         n_train_admissions = patients.n_admissions(
             train_ids,
-            ignore_first_admission=self.counts_ignore_first_admission)
+            ignore_first_admission=model.counts_ignore_first_admission)
 
         batch_size = min(self.batch_size, n_train_admissions)
         iters = round(self.epochs * n_train_admissions / batch_size)
         optimizer = Optimizer(self.optimizer_config, iters=iters, model=model)
         key = jrandom.PRNGKey(prng_seed)
 
-        signals.start_training.send(self,
-                                    params_size=params_size(model),
-                                    n_iters=iters,
-                                    config=self.config)
         eval_steps = sorted(set(
             np.linspace(0, iters - 1, n_evals).astype(int)))
 
@@ -580,8 +600,16 @@ class Trainer(eqx.Module):
             signals.continue_training.send(self, messenger=messenger)
             model = messenger['model']
             optimizer = messenger['optimizer']
-            first_step = messenger.get('last_eval_step', 0)
+            first_step = messenger.get('step', 0)
+            logging.info(f'Continuing training from step {first_step}')
 
+        if first_step == 0:
+            signals.new_training.send(self)
+
+        signals.start_training.send(self,
+                                    params_size=params_size(model),
+                                    n_iters=iters,
+                                    config=self.config)
         val_batch = patients.device_batch(valid_ids)
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=True, unit='Epoch'):
@@ -590,7 +618,7 @@ class Trainer(eqx.Module):
             batch_gen = patients.batch_gen(
                 train_ids.tolist(),
                 batch_n_admissions=batch_size,
-                ignore_first_admission=self.counts_ignore_first_admission)
+                ignore_first_admission=model.counts_ignore_first_admission)
             n_batches = n_train_admissions // batch_size
             batch_gen = tqdm_constructor(batch_gen,
                                          leave=False,
@@ -607,7 +635,7 @@ class Trainer(eqx.Module):
                 try:
                     optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
-                    batch_gen.set_description(f'Loss: {loss_val:.5f}')
+                    batch_gen.set_description(f'Loss: {loss_val:.4E}')
 
                 except RuntimeError as e:
                     signals.nan_detected.send(self,
@@ -622,16 +650,20 @@ class Trainer(eqx.Module):
                 if step not in eval_steps:
                     continue
 
+                batch_gen.set_description('Evaluating (Train)...')
                 history.append_train_preds(
-                    model.batch_predict(batch, leave_pbar=False))
+                    step, model.batch_predict(batch, leave_pbar=False))
                 if len(valid_ids) > 0:
+                    batch_gen.set_description('Evaluating (Val)...')
                     history.append_val_preds(
-                        model.batch_predict(val_batch, leave_pbar=False))
+                        step, model.batch_predict(val_batch, leave_pbar=False))
 
                 if step == iters - 1 and len(test_ids) > 0:
+                    batch_gen.set_description('Evaluating (Test)...')
                     test_batch = patients.device_batch(test_ids)
                     history.append_test_preds(
-                        model.batch_predict(test_batch, leave_pbar=False))
+                        step, model.batch_predict(test_batch,
+                                                  leave_pbar=False))
 
                 signals.end_evaluation.send(self,
                                             step=step,

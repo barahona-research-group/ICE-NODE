@@ -448,6 +448,7 @@ class MIMIC3Dataset(Dataset):
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
+        self._match_admissions_with_demographics(self.df, colname)
         self.df = {k: try_compute(v) for k, v in self.df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
@@ -459,6 +460,24 @@ class MIMIC3Dataset(Dataset):
         subjects = df[c_subject_id].unique().compute()
         subjects = rng.sample(subjects.tolist(), n)
         return df[df[c_subject_id].isin(subjects)]
+
+    @classmethod
+    def _match_admissions_with_demographics(cls, df, colname):
+        adm = df["adm"]
+        static = df["static"]
+        c_subject_id = colname["adm"]["subject_id"]
+        subject_ids = list(set(adm[c_subject_id].unique()) & set(static.index))
+        logging.debug(
+            f"Removing subjects by matching demographic"
+            f"(-{len(set(static.index) - set(subject_ids))})"
+            f"and admissions"
+            f"(-{len(set(adm[c_subject_id].unique()) - set(subject_ids))})"
+            "tables")
+
+        static = static.loc[subject_ids]
+        adm = adm[adm[c_subject_id].isin(subject_ids)]
+        df["adm"] = adm
+        df["static"] = static
 
     @classmethod
     def load_dataframes(cls, meta, sample=None, **kwargs):
@@ -499,26 +518,18 @@ class MIMIC3Dataset(Dataset):
                                               colname["adm"]["subject_id"],
                                               sample, 0)
         logging.debug('[DONE] Loading dataframe files')
-        df["static"] = df["static"].set_index(
-            colname["static"]["index"]).compute()
-
         logging.debug('Preprocess admissions')
-        df["adm"] = df["adm"].set_index(colname["adm"]["index"]).compute()
+        adm = df["adm"]
+        static = df["static"]
+        static = static.set_index(colname["static"]["index"]).compute()
+        adm = adm.set_index(colname["adm"]["index"]).compute()
 
-        df["adm"] = cls._adm_cast_times(df["adm"], colname["adm"])
-
-        df["adm"] = cls._adm_add_adm_interval(df["adm"], colname["adm"],
-                                              1 / 3600.0)
-        df["adm"] = cls._adm_remove_subjects_with_negative_adm_interval(
-            df["adm"], colname["adm"])
-        df["adm"], merger_map = cls._adm_merge_overlapping_admissions(
-            df["adm"], colname["adm"])
-
-        c_subject_id = colname["adm"]["subject_id"]
-        subject_ids = list(
-            set(df["adm"][c_subject_id].unique()) & set(df["static"].index))
-        df["static"] = df["static"].loc[subject_ids]
-        df["adm"] = df["adm"][df["adm"][c_subject_id].isin(subject_ids)]
+        adm = cls._adm_cast_times(adm, colname["adm"])
+        adm = cls._adm_add_adm_interval(adm, colname["adm"], 1 / 3600.0)
+        adm = cls._adm_remove_subjects_with_negative_adm_interval(
+            adm, colname["adm"])
+        adm, merger_map = cls._adm_merge_overlapping_admissions(
+            adm, colname["adm"])
 
         logging.debug('[DONE] Preprocess admissions')
 
@@ -531,10 +542,12 @@ class MIMIC3Dataset(Dataset):
         df_with_adm_id = cls._map_admission_ids(df_with_adm_id, colname,
                                                 merger_map)
         df_with_adm_id = cls._match_filter_admission_ids(
-            df["adm"], df_with_adm_id, colname)
+            adm, df_with_adm_id, colname)
         df.update(df_with_adm_id)
         logging.debug("[DONE] Matching admission_id")
 
+        df["static"] = static
+        df["adm"] = adm
         return df
 
     def to_subjects(self, subject_ids, num_workers, demographic_vector_config):
@@ -889,16 +902,8 @@ class MIMIC3Dataset(Dataset):
                 yield (adm_id, vec)
 
     def outcome_extractor(self, dx_codes):
-
-        def _extract_outcome(adm_id):
-            _dx_codes = dx_codes[adm_id]
-            outcome_codes = self.scheme.outcome.map_codeset(
-                _dx_codes.to_codeset(), self.scheme.dx_target)
-            outcome_vec = self.scheme.outcome.codeset2vec(
-                outcome_codes, self.scheme.dx_target)
-            return (adm_id, outcome_vec)
-
-        return map(_extract_outcome, dx_codes.keys())
+        return zip(dx_codes.keys(),
+                   map(self.scheme.outcome.mapcodevector, dx_codes.values()))
 
     @classmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):
@@ -1079,6 +1084,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                                  self.colname,
                                  "obs", ["timestamp"],
                                  seconds_scaler=self.seconds_scaler)
+        self._match_admissions_with_demographics(self.df, self.colname)
         self.df = {k: try_compute(v) for k, v in self.df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
