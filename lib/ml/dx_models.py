@@ -158,10 +158,10 @@ class ICENODE_ZERO(ICENODE_UNIFORM):
 class GRUDimensions(ModelDimensions):
     mem: int = eqx.static_field(default=45)
 
-    def __init__(self, emb: OutpatientEmbeddingDimensions, mem: int):
+    def __init__(self, emb: OutpatientEmbeddingDimensions):
         super().__init__(emb=emb)
         self.emb = emb
-        self.mem = mem
+        self.mem = emb.dx
 
 
 class GRU(OutpatientModel):
@@ -214,7 +214,7 @@ class GRU(OutpatientModel):
         preds = []
         for i in range(1, len(adms)):
             adm = adms[i]
-            demo = embedded_admissions[i].demo
+            demo = embedded_admissions[i - 1].demo
             dx_e_prev = embedded_admissions[i - 1].dx
             # Step
             state = self._update(state, dx_e_prev, demo)
@@ -324,7 +324,7 @@ class RETAIN(OutpatientModel):
         # step 1 @RETAIN paper
 
         # v1, v2, ..., vT
-        v_seq = jnp.vstack([adm.dx0 for adm in embedded_admissions])
+        v_seq = jnp.vstack([adm.dx for adm in embedded_admissions])
 
         # c1, c2, ..., cT. <- controls
         c_seq = jnp.vstack([adm.demo for adm in embedded_admissions])
@@ -372,6 +372,7 @@ class RETAIN(OutpatientModel):
             logits = CodesVector(self._dx_dec(c_context),
                                  adms[i].outcome.scheme)
 
-            preds.append(AdmissionPrediction(adm=adms[i], outcome=logits))
+            preds.append(AdmissionPrediction(admission=adms[i],
+                                             outcome=logits))
 
         return preds
