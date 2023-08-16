@@ -161,7 +161,7 @@ def allpairs_exp_rank(y: jnp.ndarray,
               jnp.expand_dims(y, axis=0).astype(int))
     mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
 
-    loss_array = jnp.exp(-4 * y_diff * p_diff)
+    loss_array = jnp.exp(-8 * y_diff * p_diff)
     return jnp.nanmean(loss_array,
                        where=jnp.triu(mask & (y_diff != 0)),
                        axis=axis)
@@ -186,7 +186,7 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
               jnp.expand_dims(y, axis=0).astype(int))
     mask = jnp.expand_dims(mask, axis=1) * jnp.expand_dims(mask, axis=0)
 
-    loss_array = jnn.sigmoid(-4 * y_diff * p_diff)
+    loss_array = jnn.sigmoid(-8 * y_diff * p_diff)
     return jnp.nanmean(loss_array, where=(mask & (y_diff != 0)), axis=axis)
 
 

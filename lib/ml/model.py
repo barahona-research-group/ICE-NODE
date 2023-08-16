@@ -98,6 +98,40 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             with archive.open(params_fname, "r") as zip_member:
                 return eqx.tree_deserialise_leaves(zip_member, self)
 
+    def pathwise_params(self):
+
+        def label(x):
+            if hasattr(x, 'key'):
+                return x.key
+            if hasattr(x, 'name'):
+                return x.name
+            if hasattr(x, 'idx'):
+                return str(x.idx)
+            return 'unknown'
+
+        params_part, _ = eqx.partition(self, eqx.is_inexact_array)
+        params_w_path, _ = jtu.tree_flatten_with_path(params_part)
+        paths, params = zip(*params_w_path)
+        dotted_paths = map(lambda path: '.'.join(map(label, path)), paths)
+        return dict(zip(dotted_paths, params))
+
+    @eqx.filter_jit
+    def pathwise_params_stats(self):
+        params = self.pathwise_params()
+        return {
+            k: {
+                'mean': jnp.nanmean(v),
+                'std': jnp.nanstd(v),
+                'min': jnp.nanmin(v),
+                'max': jnp.nanmax(v),
+                'l1': jnp.abs(v).sum(),
+                'l2': jnp.square(v).sum(),
+                'nans': jnp.isnan(v).sum(),
+                'size': jnp.size(v)
+            }
+            for k, v in params.items()
+        }
+
 
 class InpatientModel(AbstractModel):
 
@@ -122,7 +156,7 @@ class InpatientModel(AbstractModel):
         bar_format = '{l_bar}{bar}' + r_bar
         with tqdm_constructor(total=total_int_days,
                               bar_format=bar_format,
-                              unit='odeint-days',
+                              unit='longitudinal-days',
                               leave=leave_pbar) as pbar:
             results = Predictions()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
@@ -161,7 +195,7 @@ class OutpatientModel(AbstractModel):
         bar_format = '{l_bar}{bar}' + r_bar
         with tqdm_constructor(total=total_int_days,
                               bar_format=bar_format,
-                              unit='odeint-days',
+                              unit='longitudinal-days',
                               leave=leave_pbar) as pbar:
             results = Predictions()
             for i, subject_id in enumerate(inpatients.subjects.keys()):

@@ -21,13 +21,6 @@ from .model import OutpatientModel, ModelDimensions
 
 class ICENODEDimensions(ModelDimensions):
     mem: int = 15
-    dx: int = 30
-
-    def __init__(self, emb: OutpatientEmbeddingDimensions, mem: int):
-        super().__init__(emb=emb)
-        self.emb = emb
-        self.mem = mem
-        self.dx = emb.dx
 
 
 #     @classmethod
@@ -49,13 +42,13 @@ class ICENODE(OutpatientModel):
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=emb_key)
-        f_dx_dec = eqx.nn.MLP(dims.dx,
+        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
                               len(scheme.outcome),
-                              dims.dx * 5,
+                              dims.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
-        dyn_state_size = dims.dx + dims.mem
+        dyn_state_size = dims.emb.dx + dims.mem
         dyn_input_size = dyn_state_size + dims.emb.demo
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
                            out_size=dyn_state_size,
@@ -156,12 +149,7 @@ class ICENODE_ZERO(ICENODE_UNIFORM):
 
 
 class GRUDimensions(ModelDimensions):
-    mem: int = eqx.static_field(default=45)
-
-    def __init__(self, emb: OutpatientEmbeddingDimensions):
-        super().__init__(emb=emb)
-        self.emb = emb
-        self.mem = emb.dx
+    pass
 
 
 class GRU(OutpatientModel):
@@ -184,7 +172,7 @@ class GRU(OutpatientModel):
                               key=dx_dec_key)
 
         self.f_update = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                       dims.mem,
+                                       dims.emb.dx,
                                        use_bias=True,
                                        key=up_key)
 
@@ -210,7 +198,7 @@ class GRU(OutpatientModel):
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission]):
         adms = patient.admissions
-        state = jnp.zeros((self.dims.mem, ))
+        state = jnp.zeros((self.dims.emb.dx, ))
         preds = []
         for i in range(1, len(adms)):
             adm = adms[i]
@@ -228,13 +216,6 @@ class GRU(OutpatientModel):
 class RETAINDimensions(ModelDimensions):
     mem_a: int = eqx.static_field(default=45)
     mem_b: int = eqx.static_field(default=45)
-
-    def __init__(self, emb: OutpatientEmbeddingDimensions, mem_a: int,
-                 mem_b: int):
-        super().__init__(emb=emb)
-        self.emb = emb
-        self.mem_a = mem_a
-        self.mem_b = mem_b
 
     # @staticmethod
     # def sample_model_config(trial: optuna.Trial):

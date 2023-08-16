@@ -11,6 +11,7 @@ import logging
 from abc import abstractmethod, ABCMeta
 import pandas as pd
 import numpy as np
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.example_libraries.optimizers as jopt
@@ -46,6 +47,7 @@ class TrainingHistory:
         self._train_df = None
         self._val_df = None
         self._test_df = None
+        self._stats_df = None
 
     @property
     def train_df(self):
@@ -59,6 +61,10 @@ class TrainingHistory:
     def test_df(self):
         return self._test_df
 
+    @property
+    def stats_df(self):
+        return self._stats_df
+
     def append_train_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
         self._train_df = pd.concat([self._train_df, row_df])
@@ -71,6 +77,20 @@ class TrainingHistory:
         row_df = self.metrics.to_df(step, res)
         self._test_df = pd.concat([self._test_df, row_df])
 
+    def append_stats(self, step: int, model: AbstractModel, loss):
+        pathwise_stats = model.pathwise_params_stats()
+        data = pathwise_stats | {'other_stats': {'step': step, 'loss': loss}}
+        # https://stackoverflow.com/a/66383008
+        reform = {
+            (outer_key, inner_key): values
+            for outer_key, inner_dict in data.items()
+            for inner_key, values in inner_dict.items()
+        }
+        row_df = pd.DataFrame.from_dict(reform, 'index').transpose()
+        row_df.columns = pd.MultiIndex.from_tuples(row_df.columns)
+        row_df = row_df.set_index(pd.Index([step]).rename('step'))
+        self._stats_df = pd.concat([self._stats_df, row_df], axis=0)
+
 
 class TrainerSignals:
     new_training = signal('new_training')
@@ -81,9 +101,11 @@ class TrainerSignals:
     val_evaluation = signal('val_evaluation')
     test_evaluation = signal('test_evaluation')
     end_evaluation = signal('end_evaluation')
+    exit_training = signal('exit_training')
     continue_training = signal('continue_training')
     timeout = signal('timeout')
     nan_detected = signal('nan_detected')
+    model_updated = signal('model_updated')
 
     def disconnect_all_receivers(self):
         for sig in self.__dict__.values():
@@ -145,6 +167,36 @@ class EvaluationDiskWriter(AbstractReporter):
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         return [(trainer_signals.end_evaluation, self.report_evaluation),
+                (trainer_signals.new_training, self.clear_files)]
+
+
+class ModelStatsDiskWriter(AbstractReporter):
+
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+
+    def record_stats(self, sender, **kwargs):
+        model = kwargs['model']
+        step = kwargs['step']
+        loss = kwargs['loss_val']
+        h = kwargs['history']
+        h.append_stats(step, model, loss)
+
+    def report_stats(self, sender, **kwargs):
+        h = kwargs['history']
+        fname = 'stats.csv.gz'
+        fpath = os.path.join(self.output_dir, fname)
+        h.stats_df.to_csv(fpath, compression="gzip")
+
+    def clear_files(self, sender):
+        fname = 'stats.csv.gz'
+        fpath = os.path.join(self.output_dir, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+
+    def signal_slot_pairs(self, trainer_signals: TrainerSignals):
+        return [(trainer_signals.model_updated, self.record_stats),
+                (trainer_signals.exit_training, self.report_stats),
                 (trainer_signals.new_training, self.clear_files)]
 
 
@@ -369,10 +421,12 @@ class TrainerReporting(eqx.Module):
                  metrics: Optional[List[Metric]] = None,
                  parameter_snapshots: bool = False,
                  config_json: bool = False,
+                 model_stats: bool = False,
                  optuna_trial: Optional[optuna.Trial] = None,
                  optuna_objective: Optional[Callable] = None):
         reporters = []
-        if config_json or metrics is not None or parameter_snapshots:
+        if (config_json or metrics is not None or parameter_snapshots
+                or model_stats):
             assert output_dir is not None, 'output_dir must be provided'
             output_dir = translate_path(output_dir)
             Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -388,6 +442,9 @@ class TrainerReporting(eqx.Module):
 
         if config_json:
             reporters.append(ConfigDiskWriter(output_dir))
+
+        if model_stats:
+            reporters.append(ModelStatsDiskWriter(output_dir))
 
         if optuna_trial is not None:
             assert optuna_objective is not None, ('optuna_objective must '
@@ -553,7 +610,7 @@ class Trainer(eqx.Module):
                 splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
                 history: TrainingHistory, signals: TrainerSignals,
                 warmup_config: WarmupConfig):
-        trainer = Trainer(
+        trainer = type(self)(
             optimizer_config=warmup_config.optimizer_config,
             reg_hyperparams=self.reg_hyperparams,
             epochs=warmup_config.epochs,
@@ -627,7 +684,8 @@ class Trainer(eqx.Module):
             for batch in batch_gen:
                 if datetime.now() > trial_terminate_time:
                     signals.timeout.send(self)
-                    break
+                    signals.exit_training.send(self)
+                    return model
 
                 step += 1
                 if step <= first_step:
@@ -636,15 +694,22 @@ class Trainer(eqx.Module):
                     optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
                     batch_gen.set_description(f'Loss: {loss_val:.4E}')
+                    signals.model_updated.send(self,
+                                               model=model,
+                                               history=history,
+                                               step=step,
+                                               loss_val=loss_val)
 
                 except RuntimeError as e:
                     signals.nan_detected.send(self,
                                               msg=f'Possible ODE failure: {e}')
+                    signals.exit_training.send(self, history=history)
                     return model
 
                 if tree_hasnan(model):
                     signals.nan_detected.send(self,
                                               msg='NaN detected in model')
+                    signals.exit_training.send(self, history=history)
                     return model
 
                 if step not in eval_steps:
@@ -672,6 +737,7 @@ class Trainer(eqx.Module):
                                             history=history)
             batch_gen.close()
 
+        signals.exit_training.send(self, history=history)
         return model
 
 

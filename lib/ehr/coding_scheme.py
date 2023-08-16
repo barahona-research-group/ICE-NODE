@@ -397,6 +397,33 @@ class AbstractScheme:
         return CodesVector.empty(self)
 
 
+class SchemeWithMissing(AbstractScheme):
+
+    def __len__(self):
+        return len(self.codes) - 1
+
+    @property
+    @abstractmethod
+    def missing_code(self):
+        pass
+
+    def codeset2vec(self, codeset: Set[str]):
+        vec = np.zeros(len(self), dtype=bool)
+        try:
+            for c in codeset:
+                idx = self.index[c]
+                if idx >= 0:
+                    vec[idx] = True
+        except KeyError as missing:
+            logging.error(f'Code {missing} is missing.'
+                          f'Accepted keys: {self.index.keys()}')
+
+        return CodesVectorWithMissing(vec, self)
+
+    def empty_vector(self):
+        return CodesVectorWithMissing.empty(self)
+
+
 class CodesVector(eqx.Module):
     """
     Admission class encapsulates the patient EHRs diagnostic/procedure codes.
@@ -423,11 +450,32 @@ class CodesVector(eqx.Module):
         return len(self.vec)
 
 
+class CodesVectorWithMissing(CodesVector):
+
+    def to_codeset(self):
+        index = self.vec.nonzero()[0]
+        if len(index) == 0:
+            return {self.scheme.missing_code}
+
+
 class BinaryCodesVector(CodesVector):
 
     @classmethod
     def empty(cls, scheme: BinaryScheme):
         return cls(np.zeros(1, dtype=bool), scheme)
+
+    def to_codeset(self):
+        return set(self.scheme.index2code[self.vec[0]])
+
+    def __len__(self):
+        return 1
+
+
+class NumericalCodesVector(CodesVector):
+
+    @classmethod
+    def empty(cls, scheme: NumericalScheme):
+        return cls(np.zeros(1, dtype=np.float16), scheme)
 
     def to_codeset(self):
         return set(self.scheme.index2code[self.vec[0]])
@@ -445,6 +493,19 @@ class BinaryScheme(AbstractScheme):
 
     def codeset2vec(self, code: str):
         return BinaryCodesVector(np.array(self.index[code], dtype=bool), self)
+
+    def __len__(self):
+        return 1
+
+
+class NumericalScheme(AbstractScheme):
+
+    def __init__(self, codes, index, desc, name):
+        super().__init__(codes, index, desc, name)
+
+    def codeset2vec(self, code: str):
+        return NumericalCodesVector(
+            np.array(self.index[code], dtype=np.float16), self)
 
     def __len__(self):
         return 1
@@ -1456,6 +1517,41 @@ class EthCPRD5(Singleton, EthCPRD):
     NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'
+
+
+class CPRDGender(Singleton, SchemeWithMissing):
+
+    def __init__(self):
+        codes = ['0', '1', '2', '9']
+        index = {'0': 0, '1': 1, '2': 2, '9': -1}  # 9 is unknown
+        desc = {
+            '0': 'female',
+            '1': 'male',
+            '2': 'intermediate',
+            '9': 'missing'
+        }
+        name = 'cprd_gender'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+    @property
+    def missing_code(self):
+        return '9'
+
+
+class CPRDIMDCategorical(Singleton, SchemeWithMissing):
+
+    def __init__(self):
+        codes = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '99']
+        index = dict(zip(codes, range(len(codes))))
+        index['99'] = -1
+        desc = index.copy()
+        desc['99'] = 'missing'
+        name = 'cprd_imd_cat'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+    @property
+    def missing_code(self):
+        return '99'
 
 
 class MIMICEth(Ethnicity):

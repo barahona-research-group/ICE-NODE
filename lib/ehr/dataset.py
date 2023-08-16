@@ -24,9 +24,10 @@ from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
                             AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
                             MIMICInputGroups, MIMICProcedures,
                             MIMICProcedureGroups, MIMICObservables, NullScheme,
-                            Gender, Ethnicity)
+                            Gender, Ethnicity, CPRDIMDCategorical, CPRDGender)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, StaticInfo, DemographicVectorConfig,
+                       CPRDDemographicVectorConfig, CPRDStaticInfo,
                        AggregateRepresentation, InpatientInterventions)
 
 _DIR = os.path.dirname(__file__)
@@ -271,6 +272,47 @@ class Dataset(eqx.Module):
         return eqx.tree_at(lambda x: x.df, rest, df)
 
 
+class CPRDDatasetScheme(DatasetScheme):
+    dx_source: AbstractScheme
+    dx_target: AbstractScheme
+    eth_source: AbstractScheme
+    eth_target: AbstractScheme
+    outcome: OutcomeExtractor
+    gender: CPRDGender
+    imd: CPRDIMDCategorical
+
+    def __init__(self, dx_source: str, dx_target: str, eth_source: str,
+                 eth_target: str, outcome: str):
+        assert (eth_target in ('EthCPRD16', 'EthCPRD5')), (
+            "eth_target must be either 'EthCPRD16' or 'EthCPRD5'")
+        assert (dx_target in ('DxLTC9809FlatMedcodes', 'DxLTC212FlatCodes')), (
+            "dx_target must be either 'DxLTC9809FlatMedcodes' "
+            "or 'DxLTC212FlatCodes'")
+        assert (outcome in ('dx_cprd_ltc212', 'dx_cprd_ltc9809')), (
+            "outcome must be either 'dx_cprd_ltc212' or 'dx_cprd_ltc9809'")
+
+        self.dx_target = scheme_from_classname(dx_target)
+        self.dx_source = scheme_from_classname(dx_source)
+        self.eth_target = scheme_from_classname(eth_target)
+        self.eth_source = scheme_from_classname(eth_source)
+        self.outcome = OutcomeExtractor(outcome)
+        self.imd = CPRDIMDCategorical()
+        self.gender = CPRDGender()
+
+    def demographic_vector_size(
+            self, demographic_vector_config: DemographicVectorConfig):
+        size = 0
+        if demographic_vector_config.gender:
+            size += len(self.gender)
+        if demographic_vector_config.age:
+            size += 1
+        if demographic_vector_config.ethnicity:
+            size += len(self.eth_target)
+        if demographic_vector_config.imd:
+            size += len(self.imd)
+        return size
+
+
 class CPRDDataset(Dataset):
 
     def __init__(self, df, colname, code_scheme, name, **kwargs):
@@ -340,6 +382,10 @@ class CPRDDataset(Dataset):
                                         static_info=static_info)
 
         return list(subjects.values())
+
+    @classmethod
+    def load_dataframes(cls, path, **kwargs):
+        pass
 
     @classmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):

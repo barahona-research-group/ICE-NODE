@@ -10,12 +10,15 @@ from ..ehr import (Patient, Admission, StaticInfo, MIMIC4ICUDatasetScheme,
                    MIMICDatasetScheme, AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
 
+
 class EmbeddedAdmission(eqx.Module):
     pass
+
 
 class EmbeddedInAdmission(EmbeddedAdmission):
     dx0: jnp.ndarray
     inp_proc_demo: Optional[jnp.ndarray]
+
 
 class EmbeddedOutAdmission(EmbeddedAdmission):
     dx: jnp.ndarray
@@ -26,8 +29,10 @@ class PatientEmbeddingDimensions(eqx.Module):
     dx: int = 30
     demo: int = 5
 
+
 class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
     pass
+
 
 class InpatientEmbeddingDimensions(PatientEmbeddingDimensions):
     inp: int = 10
@@ -56,6 +61,7 @@ class PatientEmbedding(eqx.Module):
                                    dims.dx,
                                    width_size=dims.dx * 5,
                                    depth=1,
+                                   final_activation=jnp.tanh,
                                    key=dx_emb_key)
 
         demo_input_size = scheme.demographic_vector_size(
@@ -64,6 +70,7 @@ class PatientEmbedding(eqx.Module):
                                     dims.demo,
                                     dims.demo * 5,
                                     depth=1,
+                                    final_activation=jnp.tanh,
                                     key=dem_emb_key)
 
     @abstractmethod
@@ -73,7 +80,6 @@ class PatientEmbedding(eqx.Module):
         Embeds an admission into fixed vectors as described above.
         """
         pass
-
 
     def __call__(self, inpatient: Patient) -> List[EmbeddedAdmission]:
         """
@@ -88,7 +94,6 @@ class PatientEmbedding(eqx.Module):
 
 class OutpatientEmbedding(PatientEmbedding):
 
-
     @eqx.filter_jit
     def _embed_admission(self, demo: jnp.ndarray,
                          dx_vec: jnp.ndarray) -> EmbeddedOutAdmission:
@@ -96,14 +101,11 @@ class OutpatientEmbedding(PatientEmbedding):
         demo_e = self.f_dem_emb(demo)
         return EmbeddedOutAdmission(dx=dx_emb, demo=demo_e)
 
-
     def embed_admission(self, static_info: StaticInfo,
                         admission: Admission) -> EmbeddedOutAdmission:
         """ Embeds an admission into fixed vectors as described above."""
         demo = static_info.demographic_vector(admission.admission_dates[0])
         return self._embed_admission(demo, admission.dx_codes.vec)
-
-
 
 
 class InpatientEmbedding(PatientEmbedding):
@@ -134,16 +136,19 @@ class InpatientEmbedding(PatientEmbedding):
         self.f_inp_emb = eqx.nn.MLP(len(scheme.int_input_target),
                                     dims.inp,
                                     dims.inp * 5,
+                                    final_activation=jnp.tanh,
                                     depth=1,
                                     key=inp_emb_key)
         self.f_proc_emb = eqx.nn.MLP(len(scheme.int_proc_target),
                                      dims.proc,
                                      dims.proc * 5,
+                                     final_activation=jnp.tanh,
                                      depth=1,
                                      key=proc_emb_key)
         self.f_int_emb = eqx.nn.MLP(dims.inp + dims.proc + dims.demo,
                                     dims.inp_proc_demo,
                                     dims.inp_proc_demo * 5,
+                                    final_activation=jnp.tanh,
                                     depth=1,
                                     key=int_emb_key)
 

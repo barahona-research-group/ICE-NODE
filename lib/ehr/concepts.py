@@ -308,6 +308,7 @@ class InpatientInterventions(eqx.Module):
         """Length of the admission interval"""
         return jnp.nanmax(self.time) - jnp.nanmin(self.time)
 
+
 #     @eqx.filter_jit
 #     def _jax_segment_proc(self, proc_repr: Optional[AggregateRepresentation]):
 #         if proc_repr is None:
@@ -397,6 +398,10 @@ class DemographicVectorConfig(eqx.Module):
     ethnicity: bool
 
 
+class CPRDDemographicVectorConfig(DemographicVectorConfig):
+    imd: bool
+
+
 class StaticInfo(eqx.Module):
     demographic_vector_config: DemographicVectorConfig
     gender: Optional[CodesVector] = None
@@ -427,6 +432,28 @@ class StaticInfo(eqx.Module):
     @staticmethod
     def _concat(age, vec):
         return jnp.hstack((age, vec), dtype=jnp.float16)
+
+class CPRDStaticInfo(StaticInfo):
+    imd: Optional[CodesVector] = None
+
+    def __post_init__(self):
+        attrs_vec = []
+        if self.demographic_vector_config.gender:
+            assert self.gender is not None and len(
+                self.gender) > 0, "Gender is not extracted from the dataset"
+            attrs_vec.append(self.gender.vec)
+        if self.demographic_vector_config.ethnicity:
+            assert self.ethnicity is not None, \
+                "Ethnicity is not extracted from the dataset"
+            attrs_vec.append(self.ethnicity.vec)
+
+        if self.demographic_vector_config.imd:
+            assert self.imd is not None, \
+                "IMD is not extracted from the dataset"
+            attrs_vec.append(self.imd.vec)
+
+        self.constant_vec = np.hstack(attrs_vec)
+
 
 
 class Patient(eqx.Module):
