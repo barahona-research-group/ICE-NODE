@@ -179,7 +179,8 @@ class Patients(eqx.Module):
         subjects = self.dataset.to_subjects(
             subject_ids,
             num_workers=num_workers,
-            demographic_vector_config=self.demographic_vector_config)
+            demographic_vector_config=self.demographic_vector_config,
+            target_scheme=self.scheme)
 
         subjects = {s.subject_id: s for s in subjects}
         return Patients(
