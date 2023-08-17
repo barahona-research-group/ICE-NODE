@@ -191,7 +191,8 @@ class Patients(eqx.Module):
         return Patients(
             dataset=self.dataset,
             demographic_vector_config=self.demographic_vector_config,
-            subjects=subjects)
+            subjects=subjects,
+            target_scheme=self.scheme)
 
     def _subject_to_device(self, subject_id: int):
         s = self.subjects[subject_id]
