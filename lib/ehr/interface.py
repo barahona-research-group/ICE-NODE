@@ -125,10 +125,15 @@ class Patients(eqx.Module):
                  dataset: Dataset,
                  demographic_vector_config: DemographicVectorConfig,
                  subjects: Optional[Dict[int, Patient]] = None,
+                 target_scheme: Optional[DatasetScheme] = None,
                  **target_scheme_kwargs):
         super().__init__()
         self.dataset = dataset
-        self.scheme = dataset.scheme.make_target_scheme(**target_scheme_kwargs)
+        if target_scheme is None:
+            self.scheme = dataset.scheme.make_target_scheme(
+                **target_scheme_kwargs)
+        else:
+            self.scheme = target_scheme
 
         self.demographic_vector_config = demographic_vector_config
         self.subjects = subjects
