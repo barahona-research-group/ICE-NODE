@@ -1,13 +1,12 @@
 {
     "base_dir": "$DATA_DIR/mimic4-cohort",
     "code_scheme": {
-        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
-        "outcome": "dx_icd9_filter_v3_groups",
-        "ethnicity": ["MIMICEth32", "MIMICEth5"]
+        "dx": {"9": "DxICD9", "10": "DxICD10"},
+        "ethnicity": "MIMIC4Eth32",
+        "gender": "Gender"
     },
     "colname": {
         "dx": {
-            "subject_id": "subject_id",
             "admission_id": "hadm_id",
             "code": "icd_code",
             "version": "icd_version"
@@ -30,8 +29,5 @@
         "adm": "adm_df.csv",
         "dx": "dx_df.csv",
         "static": "static_df.csv"
-    },
-    "name": "MIMIC-IV",
-    "python_class": "MIMICDataset",
-    "version": "v2.0"
+    }
 }

@@ -72,6 +72,9 @@ class _CodeMapper(defaultdict):
     def __hash__(self):
         return hash(str(self))
 
+    def __bool__(self):
+        return len(self) > 0
+
     def log_unrecognised_range(self, json_fname):
         if self._unrecognised_range:
             write_config(
@@ -703,25 +706,26 @@ class HierarchicalScheme(AbstractScheme):
 
         return all_codes
 
-    def to_digraph(self, discard_set=set(), node_attrs={}):
-        """
-        Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
-        Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
-        """
-        dag = nx.DiGraph()
 
-        def _populate_dag(ch):
-            for pt in self._ch2pt.get(ch, []):
-                dag.add_edge(ch, pt)
-                _populate_dag(pt)
+#     def to_digraph(self, discard_set=set(), node_attrs={}):
+#         """
+#         Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
+#         Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
+#         """
+#         dag = nx.DiGraph()
 
-        for c in set(self._dag_codes) - set(discard_set):
-            _populate_dag(c)
+#         def _populate_dag(ch):
+#             for pt in self._ch2pt.get(ch, []):
+#                 dag.add_edge(ch, pt)
+#                 _populate_dag(pt)
 
-        for attr_name, attr_dict in node_attrs.items():
-            for node in dag.nodes:
-                dag.nodes[node][attr_name] = attr_dict.get(node, '')
-        return dag
+#         for c in set(self._dag_codes) - set(discard_set):
+#             _populate_dag(c)
+
+#         for attr_name, attr_dict in node_attrs.items():
+#             for node in dag.nodes:
+#                 dag.nodes[node][attr_name] = attr_dict.get(node, '')
+#         return dag
 
 
 class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
@@ -935,9 +939,9 @@ class DxICD10(Singleton, ICDCommons):
 
     def __init__(self):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
-        super().__init__(**self.distill_icd10_xml(
-            'icd10cm_tabular_2023.xml.gz'),
-                         name='dx_icd10')
+        super().__init__(
+            name='dx_icd10',
+            **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
 
 
 class PrICD10(Singleton, ICDCommons):
@@ -1002,9 +1006,9 @@ class PrICD10(Singleton, ICDCommons):
         }
 
     def __init__(self):
-        super().__init__(**self.distill_icd10_xml(
-            'icd10pcs_codes_2023.txt.gz'),
-                         name='pr_icd10')
+        super().__init__(
+            name='pr_icd10',
+            **self.distill_icd10_xml('icd10pcs_codes_2023.txt.gz'))
 
 
 class DxICD9(Singleton, ICDCommons):
@@ -1483,7 +1487,7 @@ class Ethnicity(AbstractScheme):
     pass
 
 
-class EthCPRD(Ethnicity):
+class CPRDEthnicity(Ethnicity):
     _SCHEME_FILE = 'cprd_eth.csv'
     NAME = None
     ETH_CODE_CNAME = None
@@ -1507,13 +1511,13 @@ class EthCPRD(Ethnicity):
                          name=self.NAME)
 
 
-class EthCPRD16(Singleton, EthCPRD):
+class CPRDEthnicity16(Singleton, CPRDEthnicity):
     NAME = 'eth_cprd_16'
     ETH_CODE_CNAME = 'eth16'
     ETH_DESC_CNAME = 'eth16_desc'
 
 
-class EthCPRD5(Singleton, EthCPRD):
+class CPRDEthnicity5(Singleton, CPRDEthnicity):
     NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'
@@ -1577,12 +1581,12 @@ class MIMICEth(Ethnicity):
                          name=self.NAME)
 
 
-class MIMICEth32(Singleton, MIMICEth):
+class MIMIC4Eth32(Singleton, MIMICEth):
     NAME = 'mimic4_eth32'
     ETH_CNAME = 'eth32'
 
 
-class MIMICEth5(Singleton, MIMICEth):
+class MIMIC4Eth5(Singleton, MIMICEth):
     NAME = 'mimic4_eth5'
     ETH_CNAME = 'eth5'
 
@@ -1774,7 +1778,8 @@ def register_mimic4input_mapping(s_scheme: MIMICInput,
         m.update({c: group for c in group_df.label})
 
 
-def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
+def register_cprd_eth_mapping(s_scheme: CPRDEthnicity16,
+                              t_scheme: CPRDEthnicity5):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
@@ -1888,8 +1893,8 @@ load_maps.update({
     (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
     lambda: register_medcode_mapping(DxLTC9809FlatMedcodes(),
                                      DxLTC212FlatCodes()),
-    (EthCPRD16, EthCPRD5):
-    lambda: register_cprd_eth_mapping(EthCPRD16(), EthCPRD5())
+    (CPRDEthnicity16, CPRDEthnicity5):
+    lambda: register_cprd_eth_mapping(CPRDEthnicity16(), CPRDEthnicity5())
 })
 
 # MIMIC Inpatient conversions
@@ -1899,8 +1904,8 @@ load_maps.update({
                                         MIMICProcedureGroups()),
     (MIMICInput, MIMICInputGroups):
     lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
-    (MIMICEth32, MIMICEth5):
-    lambda: register_mimic_eth_mapping(MIMICEth32(), MIMICEth5()),
+    (MIMIC4Eth32, MIMIC4Eth5):
+    lambda: register_mimic_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5()),
     (MIMIC3Eth37, MIMIC3Eth7):
     lambda: register_mimic_eth_mapping(MIMIC3Eth37(), MIMIC3Eth7())
 })

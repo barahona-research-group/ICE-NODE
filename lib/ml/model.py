@@ -10,7 +10,7 @@ import equinox as eqx
 
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig,
-                   MIMICDatasetScheme, Predictions, Admission)
+                   DatasetScheme, Predictions, Admission)
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
                          EmbeddedAdmission)
 
@@ -26,7 +26,8 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     f_emb: PatientEmbedding
     f_dx_dec: Callable
 
-    scheme: MIMICDatasetScheme = eqx.static_field()
+    source_scheme: DatasetScheme = eqx.static_field()
+    target_scheme: DatasetScheme = eqx.static_field()
     dims: ModelDimensions = eqx.static_field()
     demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 

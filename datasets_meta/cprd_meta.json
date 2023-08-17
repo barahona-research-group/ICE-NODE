@@ -1,19 +1,18 @@
 {
     "filepath": "$DATA_FILE",
-    "colname": {
-        "dx": "medcode_list",
-	"subject_id": "patid",
-	"year_month": "year_month_list",
-	"age": "age_list",
-	"gender": "gender",
-	"ethnicity": "ethnicity",
-	"imd_decile": "imd_decile"
-    },
     "code_scheme": {
         "dx": "DxLTC9809FlatMedcodes",
-	"eth": "EthCPRD16"
+	    "ethnicity": "CPRDEthnicity16",
+        "gender": "CPRDGender",
+        "imd": "CPRDIMDCategorical"
     },
-    "name": "CPRD-Cohort",
-    "python_class": "CPRDEHRDataset",
-    "version": "v0.1"
+    "colname": {
+        "code": "medcode_list",
+        "subject_id": "patid",
+        "dischtime": "year_month_list",
+        "age": "age_list",
+        "gender": "gender",
+        "ethnicity": "ethnicity",
+        "imd_decile": "imd_decile"
+    }
 }

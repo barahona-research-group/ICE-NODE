@@ -1,7 +1,6 @@
 from .dataset import (load_dataset, load_dataset_scheme, Dataset,
-                      MIMICDatasetScheme, MIMIC3Dataset, MIMIC3DatasetScheme,
-                      MIMIC4Dataset, MIMIC4DatasetScheme, CPRDDataset,
-                      MIMIC4ICUDataset, MIMIC4ICUDatasetScheme)
+                      DatasetScheme, MIMIC3Dataset, MIMIC4Dataset, CPRDDataset,
+                      MIMIC4ICUDataset)
 from .coding_scheme import (AbstractScheme, OutcomeExtractor, Gender,
                             Ethnicity)
 from .concepts import (Admission, Patient, InpatientObservables,

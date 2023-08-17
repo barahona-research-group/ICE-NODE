@@ -1,9 +1,9 @@
 """."""
-
+from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import copy
 from concurrent.futures import ThreadPoolExecutor
 import pickle
@@ -42,6 +42,52 @@ def try_compute(df):
         return df.compute()
     else:
         return df
+
+
+keys = [
+    'subject_id', 'admission_id', 'admittime', 'dischtime', 'adm_interval',
+    'index', 'code', 'version', 'gender', 'ethnicity', 'imd_decile',
+    'anchor_age', 'anchor_year', 'start_time', 'end_time', 'rate',
+    'code_index', 'code_source_index', 'value', 'timestamp', 'date_of_birth'
+]
+default_raw_types = {
+    'subject_id': int,
+    'admission_id': int,
+    'index': int,
+    'code': str,
+    'version': str
+}
+
+
+class ColumnNames(namedtuple('ColumnNames', keys,
+                             defaults=[None] * len(keys))):
+
+    def _asdict(self):
+        return {
+            k: getattr(self, k)
+            for k in keys if getattr(self, k) is not None
+        }
+
+    def has(self, key):
+        return getattr(self, key) is not None
+
+    @property
+    def columns(self):
+        return [getattr(self, k) for k in keys if getattr(self, k) is not None]
+
+    @property
+    def default_raw_types(self):
+        return {
+            getattr(self, k): v
+            for k, v in default_raw_types.items() if k in self
+        }
+
+    def __contains__(self, key):
+        return self.has(key)
+
+    @classmethod
+    def make(cls, colname: Dict[str, str]) -> 'ColumnNames':
+        return cls(**colname)
 
 
 def random_date(start, end, rng: random.Random):
@@ -143,31 +189,65 @@ class AdaptiveScaler(eqx.Module):
 
 
 class DatasetScheme(eqx.Module):
-    dx_target: AbstractScheme
-    outcome: OutcomeExtractor
-    eth_source: Ethnicity
-    eth_target: Ethnicity
+    dx: AbstractScheme
+    ethnicity: Ethnicity
     gender: Gender
+    outcome: Optional[OutcomeExtractor] = None
 
-    @abstractmethod
-    def dx_mapper(self, *args):
-        pass
+    @classmethod
+    def _assert_valid_maps(cls, source, target):
+        attrs = list(k for k in source.__dict__.keys() if k != 'outcome')
+        for attr in attrs:
+            att_s_scheme = getattr(source, attr)
+            att_t_scheme = getattr(target, attr)
 
-    @abstractmethod
-    def eth_mapper(self):
-        pass
+            assert att_s_scheme.mapper_to(
+                att_t_scheme
+            ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
 
-    @abstractmethod
+    def __init__(self, source_clone=None, **kwargs):
+        super().__init__()
+
+        if 'outcome' in kwargs:
+            self.outcome = OutcomeExtractor(kwargs['outcome'])
+            del kwargs['outcome']
+
+        for k, v in kwargs.items():
+            setattr(self, k, scheme_from_classname(v))
+
+    def make_target_scheme(self, **kwargs):
+        assert 'outcome' in kwargs, "Outcome must be specified"
+        updated_kwargs = {
+            k: v.__class__.__name__
+            for k, v in self.__dict__.items()
+        }
+        updated_kwargs.update(kwargs)
+        t_scheme = DatasetScheme(**updated_kwargs)
+        self._assert_valid_maps(self, t_scheme)
+        return t_scheme
+
     def demographic_vector_size(
             self, demographic_vector_config: DemographicVectorConfig):
-        pass
+        size = 0
+        if demographic_vector_config.gender:
+            size += len(self.gender)
+        if demographic_vector_config.age:
+            size += 1
+        if demographic_vector_config.ethnicity:
+            size += len(self.ethnicity)
+        return size
+
+    def dx_mapper(self, target_scheme: DatasetScheme):
+        return self.dx.mapper_to(target_scheme.dx)
+
+    def ethnicity_mapper(self, target_scheme: DatasetScheme):
+        return self.ethnicity.mapper_to(target_scheme.ethnicity)
 
 
 class Dataset(eqx.Module):
     df: Dict[str, pd.DataFrame]
     scheme: DatasetScheme
-    colname: Dict[str, Dict[str, str]]
-    name: str
+    colname: ColumnNames
 
     @classmethod
     @abstractmethod
@@ -175,13 +255,17 @@ class Dataset(eqx.Module):
         pass
 
     @abstractmethod
-    def to_subjects(self):
+    def to_subjects(self, **kwargs):
         pass
 
     @classmethod
     @abstractmethod
     def load_dataframes(cls, meta, **kwargs):
         pass
+
+    @classmethod
+    def make_dataset_scheme(cls, **kwargs):
+        return DatasetScheme(**kwargs)
 
     def _save_dfs(self, path: Union[str, Path], overwrite: bool):
         for name, df in self.df.items():
@@ -197,7 +281,7 @@ class Dataset(eqx.Module):
                  for c in df.columns if dtypes[c] == np.float16})
 
             df.to_csv(filepath,
-                      index='index' in self.colname[name],
+                      index=self.colname[name].has('index'),
                       compression='gzip')
 
     def _save_dtypes(self, path: Union[str, Path], overwrite: bool):
@@ -267,230 +351,96 @@ class Dataset(eqx.Module):
 
         df = cls._load_dfs(path)
         for name, cols in rest.colname.items():
-            if 'index' in cols:
-                df[name] = df[name].set_index(cols['index'])
+            if cols.has('index'):
+                df[name] = df[name].set_index(cols.index)
         return eqx.tree_at(lambda x: x.df, rest, df)
 
 
 class CPRDDatasetScheme(DatasetScheme):
-    dx_source: AbstractScheme
-    dx_target: AbstractScheme
-    eth_source: AbstractScheme
-    eth_target: AbstractScheme
-    outcome: OutcomeExtractor
-    gender: CPRDGender
     imd: CPRDIMDCategorical
 
-    def __init__(self, dx_source: str, dx_target: str, eth_source: str,
-                 eth_target: str, outcome: str):
-        assert (eth_target in ('EthCPRD16', 'EthCPRD5')), (
-            "eth_target must be either 'EthCPRD16' or 'EthCPRD5'")
-        assert (dx_target in ('DxLTC9809FlatMedcodes', 'DxLTC212FlatCodes')), (
-            "dx_target must be either 'DxLTC9809FlatMedcodes' "
-            "or 'DxLTC212FlatCodes'")
-        assert (outcome in ('dx_cprd_ltc212', 'dx_cprd_ltc9809')), (
-            "outcome must be either 'dx_cprd_ltc212' or 'dx_cprd_ltc9809'")
-
-        self.dx_target = scheme_from_classname(dx_target)
-        self.dx_source = scheme_from_classname(dx_source)
-        self.eth_target = scheme_from_classname(eth_target)
-        self.eth_source = scheme_from_classname(eth_source)
-        self.outcome = OutcomeExtractor(outcome)
-        self.imd = CPRDIMDCategorical()
-        self.gender = CPRDGender()
-
     def demographic_vector_size(
-            self, demographic_vector_config: DemographicVectorConfig):
-        size = 0
-        if demographic_vector_config.gender:
-            size += len(self.gender)
-        if demographic_vector_config.age:
-            size += 1
-        if demographic_vector_config.ethnicity:
-            size += len(self.eth_target)
+            self, demographic_vector_config: CPRDDemographicVectorConfig):
+        size = DatasetScheme.demographic_vector_size(
+            self, demographic_vector_config)
         if demographic_vector_config.imd:
             size += len(self.imd)
         return size
 
 
-class CPRDDataset(Dataset):
+class MIMIC4DatasetScheme(DatasetScheme):
+    dx: Union[Dict[str, ICDCommons], ICDCommons]
 
-    def __init__(self, df, colname, code_scheme, name, **kwargs):
+    def __init__(self, source_clone=None, **kwargs):
+        if 'outcome' in kwargs:
+            self.outcome = OutcomeExtractor(kwargs['outcome'])
+            del kwargs['outcome']
 
-        self.name = name
-        self.code_scheme = {
-            code_type: scheme_from_classname(scheme)
-            for code_type, scheme in code_scheme.items()
-        }
-        self.colname = colname
-        self.df = df
+        if isinstance(kwargs['dx'], dict):
+            self.dx = {
+                version: scheme_from_classname(scheme)
+                for version, scheme in kwargs['dx'].items()
+            }
+            del kwargs['dx']
 
-    def to_subjects(self):
-        listify = lambda s: list(map(lambda e: e.strip(), s.split(',')))
-        col = self.colname
-        subjects = {}
-
-        gender_dict = {
-            0: np.array([1, 0, 0]),
-            1: np.array([0, 1, 0]),
-            2: np.array([0, 0, 1])
-        }
-        gender_missing = np.array([0, 0, 0])
-
-        # Admissions
-        for subj_id, subj_df in self.df.groupby(col["subject_id"]):
-
-            assert len(subj_df) == 1, "Each patient should have a single row"
-
-            codes = listify(subj_df.iloc[0][col["dx"]])
-            year_month = listify(subj_df.iloc[0][col["year_month"]])
-
-            # To infer date-of-birth
-            age0 = int(float(listify(subj_df.iloc[0][col["age"]])[0]))
-            year_month0 = pd.to_datetime(year_month[0]).normalize()
-            year_of_birth = year_month0 + pd.DateOffset(years=-age0)
-            gender_key = int(subj_df.iloc[0][col["gender"]])
-            gender = gender_dict.get(gender_key, gender_missing)
-
-            imd = int(subj_df.iloc[0][col["imd_decile"]])
-            ethnicity = subj_df.iloc[0][col["ethnicity"]]
-            static_info = StaticInfo(ethnicity=ethnicity,
-                                     ethnicity_scheme=self.code_scheme["eth"],
-                                     date_of_birth=year_of_birth,
-                                     gender=gender,
-                                     idx_deprivation=imd)
-
-            # codes aggregated by year-month.
-            dx_codes_ym_agg = defaultdict(set)
-            for code, ym in zip(codes, year_month):
-                ym = pd.to_datetime(ym).normalize()
-                dx_codes_ym_agg[ym].add(code)
-
-            admissions = []
-            for adm_idx, adm_date in enumerate(sorted(dx_codes_ym_agg.keys())):
-                disch_date = adm_date + pd.DateOffset(days=1)
-                dx_codes = dx_codes_ym_agg[adm_date]
-                admissions.append(
-                    Admission(admission_id=adm_idx,
-                              admission_dates=(adm_date, disch_date),
-                              dx_codes=dx_codes,
-                              pr_codes=set(),
-                              dx_scheme=self.code_scheme["dx"],
-                              pr_scheme=NullScheme()))
-            subjects[subj_id] = Patient(subject_id=subj_id,
-                                        admissions=admissions,
-                                        static_info=static_info)
-
-        return list(subjects.values())
+        for k, v in kwargs.items():
+            setattr(self, k, scheme_from_classname(v))
 
     @classmethod
-    def load_dataframes(cls, path, **kwargs):
-        pass
+    def _assert_valid_maps(cls, source, target):
+        attrs = list(k for k in source.__dict__.keys()
+                     if k not in ('outcome', 'dx'))
+        for attr in attrs:
+            att_s_scheme = getattr(source, attr)
+            att_t_scheme = getattr(target, attr)
 
-    @classmethod
-    def from_meta_json(cls, meta_fpath, **init_kwargs):
-        meta = load_config(meta_fpath)
-        filepath = translate_path(meta['filepath'])
-        meta['df'] = pd.read_csv(filepath, sep='\t', dtype=str)
-        return cls(**meta, **init_kwargs)
+            assert att_s_scheme.mapper_to(
+                att_t_scheme
+            ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
+        for version, s_scheme in source.dx.items():
+            t_scheme = target.dx
+            assert s_scheme.mapper_to(
+                t_scheme
+            ), f"Cannot map dx (version={version}) from {s_scheme} to {t_scheme}"
 
-
-class MIMICDatasetScheme(DatasetScheme):
-    dx_target: ICDCommons
-    outcome: OutcomeExtractor
-    eth_source: MIMICEth
-    eth_target: MIMICEth
-    gender: Gender
-
-    def __init__(self, code_scheme: Dict[str, Any]):
-        dx_target = scheme_from_classname(code_scheme['dx'][1])
-        outcome = OutcomeExtractor(code_scheme["outcome"])
-        eth_source = scheme_from_classname(code_scheme['ethnicity'][0])
-        eth_target = scheme_from_classname(code_scheme['ethnicity'][1])
-        gender = Gender()
-        super().__init__(dx_target=dx_target,
-                         outcome=outcome,
-                         eth_source=eth_source,
-                         eth_target=eth_target,
-                         gender=gender)
-
-    @abstractmethod
-    def dx_mapper(self, *args):
-        pass
-
-    def eth_mapper(self):
-        return self.eth_source.mapper_to(self.eth_target)
-
-    def demographic_vector_size(
-            self, demographic_vector_config: DemographicVectorConfig):
-        size = 0
-        if demographic_vector_config.gender:
-            size += len(self.gender)
-        if demographic_vector_config.age:
-            size += 1
-        if demographic_vector_config.ethnicity:
-            size += len(self.eth_target)
-        return size
-
-
-class MIMIC3DatasetScheme(MIMICDatasetScheme):
-    dx_source: ICDCommons
-
-    def __init__(self, code_scheme: Dict[str, Any]):
-        super().__init__(code_scheme=code_scheme)
-        self.dx_source = scheme_from_classname(code_scheme['dx'][0])
-
-    def dx_mapper(self):
-        return self.dx_source.mapper_to(self.dx_target)
-
-
-class MIMIC4DatasetScheme(MIMICDatasetScheme):
-    dx_source: Dict[str, ICDCommons]
-
-    def __init__(self, code_scheme: Dict[str, Any]):
-        super().__init__(code_scheme=code_scheme)
-        self.dx_source = {
-            version: scheme_from_classname(scheme)
-            for version, scheme in code_scheme["dx"][0].items()
+    def make_target_scheme(self, **kwargs):
+        assert 'outcome' in kwargs, 'Outcome must be specified.'
+        updated_kwargs = {
+            k: v.__class__.__name__
+            for k, v in self.__dict__.items()
         }
+        updated_kwargs.update(kwargs)
+        t_scheme = MIMIC4DatasetScheme(**updated_kwargs)
+        self._assert_valid_maps(self, t_scheme)
+        return t_scheme
 
-    def dx_mapper(self, version: str):
-        return self.dx_source[version].mapper_to(self.dx_target)
+    def dx_mapper(self, target_scheme: DatasetScheme):
+        return {
+            version: s_dx.mapper_to(target_scheme.dx)
+            for version, s_dx in self.dx.items()
+        }
 
 
 class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
-    int_proc_source: MIMICProcedures
-    int_proc_target: MIMICProcedureGroups
-    int_input_source: MIMICInput
-    int_input_target: MIMICInputGroups
+    int_proc: MIMICProcedures
+    int_input: MIMICInput
     obs: MIMICObservables
-
-    def __init__(self, code_scheme: Dict[str, Any]):
-        super().__init__(code_scheme)
-        self.int_proc_source = scheme_from_classname(
-            code_scheme['int_proc'][0])
-        self.int_proc_target = scheme_from_classname(
-            code_scheme['int_proc'][1])
-        self.int_input_source = scheme_from_classname(
-            code_scheme['int_input'][0])
-        self.int_input_target = scheme_from_classname(
-            code_scheme['int_input'][1])
-        self.obs = scheme_from_classname(code_scheme['obs'][0])
 
 
 class MIMIC3Dataset(Dataset):
     df: Dict[str, dd.DataFrame]
-    scheme: MIMIC3DatasetScheme
-    scheme_class: ClassVar[Type[MIMIC3DatasetScheme]] = MIMIC3DatasetScheme
+    scheme: DatasetScheme
 
-    def __init__(self, df, colname, code_scheme, name, **kwargs):
+    def __init__(self, df: Dict[str, pd.DataFrame], colname: Dict[str,
+                                                                  ColumnNames],
+                 code_scheme: Dict[str, Any], **kwargs):
 
-        scheme = self.scheme_class(code_scheme)
+        scheme = self.make_dataset_scheme(**code_scheme)
         # deepcopy to avoid modifying the original colname which is used by
         # reference in the lazy evaluation of dask operations.
         colname = copy.deepcopy(colname)
 
-        super().__init__(df=df, colname=colname, scheme=scheme, name=name)
+        super().__init__(df=df, colname=colname, scheme=scheme)
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
@@ -511,7 +461,7 @@ class MIMIC3Dataset(Dataset):
     def _match_admissions_with_demographics(cls, df, colname):
         adm = df["adm"]
         static = df["static"]
-        c_subject_id = colname["adm"]["subject_id"]
+        c_subject_id = colname["adm"].subject_id
         subject_ids = list(set(adm[c_subject_id].unique()) & set(static.index))
         logging.debug(
             f"Removing subjects by matching demographic"
@@ -530,48 +480,28 @@ class MIMIC3Dataset(Dataset):
         files = meta['files']
         base_dir = meta['base_dir']
         colname = meta['colname']
-
-        dtype = {
-            **{
-                colname["dx"]["code"]: str,
-            },
-            **{
-                colname[f]["admission_id"]: int
-                for f in files.keys() if "admission_id" in colname[f]
-            },
-            **{
-                colname[f]["subject_id"]: int
-                for f in files.keys() if "subject_id" in colname[f]
-            },
-            **{
-                colname[f]["index"]: int
-                for f in files.keys() if "index" in colname[f]
-            }
-        }
-        if "version" in colname["dx"]:
-            dtype.update({colname["dx"]["version"]: str})
-
         logging.debug('Loading dataframe files')
         df = {
             k:
             dd.read_csv(os.path.join(base_dir, files[k]),
-                        usecols=colname[k].values(),
-                        dtype=dtype)
+                        usecols=colname[k].columns,
+                        dtype=colname[k].default_raw_types)
             for k in files.keys()
         }
         if sample is not None:
             df["adm"] = cls.sample_n_subjects(df["adm"],
-                                              colname["adm"]["subject_id"],
+                                              colname["adm"].subject_id,
                                               sample, 0)
         logging.debug('[DONE] Loading dataframe files')
         logging.debug('Preprocess admissions')
         adm = df["adm"]
         static = df["static"]
-        static = static.set_index(colname["static"]["index"]).compute()
-        adm = adm.set_index(colname["adm"]["index"]).compute()
+        static = static.set_index(colname["static"].index).compute()
+        adm = adm.set_index(colname["adm"].index).compute()
 
         adm = cls._adm_cast_times(adm, colname["adm"])
-        adm = cls._adm_add_adm_interval(adm, colname["adm"], 1 / 3600.0)
+        adm, colname["adm"] = cls._adm_add_adm_interval(
+            adm, colname["adm"], 1 / 3600.0)
         adm = cls._adm_remove_subjects_with_negative_adm_interval(
             adm, colname["adm"])
         adm, merger_map = cls._adm_merge_overlapping_admissions(
@@ -583,7 +513,7 @@ class MIMIC3Dataset(Dataset):
         logging.debug("Matching admission_id")
         df_with_adm_id = {
             name: df[name]
-            for name in df if "admission_id" in colname[name]
+            for name in df if colname[name].has('admission_id')
         }
         df_with_adm_id = cls._map_admission_ids(df_with_adm_id, colname,
                                                 merger_map)
@@ -596,26 +526,28 @@ class MIMIC3Dataset(Dataset):
         df["adm"] = adm
         return df
 
-    def to_subjects(self, subject_ids, num_workers, demographic_vector_config):
+    def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
+                    target_scheme: DatasetScheme):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
-            subject_ids)
+            subject_ids, target_scheme)
         admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
         logging.debug('Extracting dx codes...')
-        dx_codes = dict(self.dx_codes_extractor(adm_ids_list))
+        dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
         logging.debug('[DONE] Extracting dx codes')
         logging.debug('Extracting dx codes history...')
         dx_codes_history = dict(
-            self.dx_codes_history_extractor(dx_codes, admission_ids))
+            self.dx_codes_history_extractor(dx_codes, admission_ids,
+                                            target_scheme))
         logging.debug('[DONE] Extracting dx codes history')
         logging.debug('Extracting outcome...')
-        outcome = dict(self.outcome_extractor(dx_codes))
+        outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
         logging.debug('[DONE] Extracting outcome')
 
         logging.debug('Compiling admissions...')
-        c_admittime = self.colname['adm']['admittime']
-        c_dischtime = self.colname['adm']['dischtime']
+        c_admittime = self.colname['adm'].admittime
+        c_dischtime = self.colname['adm'].dischtime
         adf = self.df['adm']
         adm_dates = dict(
             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
@@ -650,17 +582,17 @@ class MIMIC3Dataset(Dataset):
         return list(map(_gen_subject, subject_ids))
 
     def _dx_fix_icd_dots(self):
-        c_code = self.colname["dx"]["code"]
-        add_dots = self.scheme.dx_source.add_dots
+        c_code = self.colname["dx"].code
+        add_dots = self.scheme.dx.add_dots
         df = self.df["dx"]
         df = df.assign(**{c_code: df[c_code].str.strip().map(add_dots)})
         self.df['dx'] = df
 
     def _dx_filter_unsupported_icd(self):
-        c_code = self.colname["dx"]["code"]
+        c_code = self.colname["dx"].code
         df = self.df["dx"]
         codeset = set(df[c_code])
-        scheme = self.scheme.dx_source
+        scheme = self.scheme.dx
         scheme_codes = set(scheme.codes)
 
         unrecognised = codeset - scheme_codes
@@ -687,8 +619,8 @@ class MIMIC3Dataset(Dataset):
         random.Random(random_seed).shuffle(subject_ids)
         subject_ids = np.array(subject_ids)
 
-        c_subject_id = self.colname['adm']['subject_id']
-        c_adm_interval = self.colname['adm']['adm_interval']
+        c_subject_id = self.colname['adm'].subject_id
+        c_adm_interval = self.colname['adm'].adm_interval
         adm_df = self.df['adm']
         adm_df = adm_df[adm_df[c_subject_id].isin(subject_ids)]
 
@@ -717,9 +649,9 @@ class MIMIC3Dataset(Dataset):
                                           colname,
                                           interval_inclusive=True):
         logging.debug("adm: Merging overlapping admissions")
-        c_subject_id = colname["subject_id"]
-        c_admittime = colname["admittime"]
-        c_dischtime = colname["dischtime"]
+        c_subject_id = colname.subject_id
+        c_admittime = colname.admittime
+        c_dischtime = colname.dischtime
         df = adm_df.copy()
 
         # Step 1: Collect overlapping admissions
@@ -781,7 +713,7 @@ class MIMIC3Dataset(Dataset):
     @staticmethod
     def _match_filter_admission_ids(adm_df, dfs, colname):
         dfs = {
-            name: _df[_df[colname[name]["admission_id"]].isin(adm_df.index)]
+            name: _df[_df[colname[name].admission_id].isin(adm_df.index)]
             for name, _df in dfs.items()
         }
         return {name: _df.reset_index() for name, _df in dfs.items()}
@@ -790,34 +722,34 @@ class MIMIC3Dataset(Dataset):
     def _adm_cast_times(adm_df, colname):
         df = adm_df.copy()
         # Cast timestamps for admissions
-        for time_col in (colname["admittime"], colname["dischtime"]):
+        for time_col in (colname.admittime, colname.dischtime):
             df[time_col] = pd.to_datetime(df[time_col])
         return df
 
     @staticmethod
     def _map_admission_ids(df, colname, merger_map):
         for name, _df in df.items():
-            c_adm_id = colname[name]["admission_id"]
+            c_adm_id = colname[name].admission_id
             _df[c_adm_id] = _df[c_adm_id].map(lambda x: merger_map.get(x, x))
             df[name] = _df
         return df
 
     @staticmethod
     def _adm_add_adm_interval(adm_df, colname, seconds_scaler=1 / 3600.0):
-        c_admittime = colname["admittime"]
-        c_dischtime = colname["dischtime"]
+        c_admittime = colname.admittime
+        c_dischtime = colname.dischtime
 
         delta = adm_df[c_dischtime] - adm_df[c_admittime]
         adm_df = adm_df.assign(
             adm_interval=(delta.dt.total_seconds() *
                           seconds_scaler).astype(np.float32))
-        colname["adm_interval"] = "adm_interval"
-        return adm_df
+        colname = colname._replace(adm_interval="adm_interval")
+        return adm_df, colname
 
     @staticmethod
     def _adm_remove_subjects_with_negative_adm_interval(adm_df, colname):
-        c_adm_interval = colname["adm_interval"]
-        c_subject = colname["subject_id"]
+        c_adm_interval = colname.adm_interval
+        c_subject = colname.subject_id
 
         subjects_neg_intervals = adm_df[adm_df[c_adm_interval] <
                                         0][c_subject].unique()
@@ -829,9 +761,9 @@ class MIMIC3Dataset(Dataset):
 
     @staticmethod
     def _adm_remove_subjects_with_overlapping_admissions(adm_df, colname):
-        c_admittime = colname["admittime"]
-        c_dischtime = colname["dischtime"]
-        c_subject = colname["subject_id"]
+        c_admittime = colname.admittime
+        c_dischtime = colname.dischtime
+        c_subject = colname.subject_id
         df = adm_df.copy()
 
         # df = df.sort_values(c_admittime)
@@ -855,7 +787,8 @@ class MIMIC3Dataset(Dataset):
     def subject_ids(self):
         return sorted(self.df["static"].index.unique())
 
-    def subject_info_extractor(self, subject_ids):
+    def subject_info_extractor(self, subject_ids: List[int],
+                               target_scheme: DatasetScheme):
         """
         Important comment from MIMIC-III documentation at \
             https://mimic.mit.edu/docs/iii/tables/patients/
@@ -866,19 +799,23 @@ class MIMIC3Dataset(Dataset):
             first admission was determined. The date of birth was then set to\
             exactly 300 years before their first admission.
         """
-        c_gender = self.colname["static"]["gender"]
-        c_eth = self.colname["static"]["ethnicity"]
-        c_dob = self.colname["static"]["date_of_birth"]
+        assert self.scheme.gender is target_scheme.gender, (
+            "No conversion assumed for gender attribute")
 
-        c_admittime = self.colname["adm"]["admittime"]
-        c_dischtime = self.colname["adm"]["dischtime"]
-        c_subject_id = self.colname["adm"]["subject_id"]
+        c_gender = self.colname["static"].gender
+        c_eth = self.colname["static"].ethnicity
+        c_dob = self.colname["static"].date_of_birth
+
+        c_admittime = self.colname["adm"].admittime
+        c_dischtime = self.colname["adm"].dischtime
+        c_subject_id = self.colname["adm"].subject_id
 
         adm_df = self.df['adm'][self.df['adm'][c_subject_id].isin(subject_ids)]
 
         df = self.df['static'].copy()
         df = df.loc[subject_ids]
         gender = df[c_gender].map(self.scheme.gender.codeset2vec)
+
         subject_gender = gender.to_dict()
 
         df[c_dob] = pd.to_datetime(df[c_dob])
@@ -895,7 +832,7 @@ class MIMIC3Dataset(Dataset):
 
         subject_dob = df[c_dob].dt.normalize().to_dict()
         # TODO: check https://mimic.mit.edu/docs/iii/about/time/
-        eth_mapper = self.scheme.eth_mapper()
+        eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
 
         def eth2vec(eth):
             code = eth_mapper.map_codeset(eth)
@@ -906,7 +843,7 @@ class MIMIC3Dataset(Dataset):
         return subject_dob, subject_gender, subject_eth
 
     def adm_extractor(self, subject_ids):
-        c_subject_id = self.colname["adm"]["subject_id"]
+        c_subject_id = self.colname["adm"].subject_id
         df = self.df["adm"]
         df = df[df[c_subject_id].isin(subject_ids)]
         return {
@@ -914,9 +851,10 @@ class MIMIC3Dataset(Dataset):
             for subject_id, subject_df in df.groupby(c_subject_id)
         }
 
-    def dx_codes_extractor(self, admission_ids_list):
-        c_adm_id = self.colname["dx"]["admission_id"]
-        c_code = self.colname["dx"]["code"]
+    def dx_codes_extractor(self, admission_ids_list,
+                           target_scheme: DatasetScheme):
+        c_adm_id = self.colname["dx"].admission_id
+        c_code = self.colname["dx"].code
 
         df = self.df["dx"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
@@ -924,8 +862,8 @@ class MIMIC3Dataset(Dataset):
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_vector = self.scheme.dx_target.empty_vector()
-        mapper = self.scheme.dx_mapper()
+        empty_vector = target_scheme.dx.empty_vector()
+        mapper = self.scheme.dx_mapper(target_scheme)
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
@@ -936,10 +874,11 @@ class MIMIC3Dataset(Dataset):
 
         return dict(map(_extract_codes, admission_ids_list))
 
-    def dx_codes_history_extractor(self, dx_codes, admission_ids):
+    def dx_codes_history_extractor(self, dx_codes, admission_ids,
+                                   target_scheme):
         for subject_id, subject_admission_ids in admission_ids.items():
             _adm_ids = sorted(subject_admission_ids)
-            vec = self.scheme.dx_target.empty_vector()
+            vec = target_scheme.dx.empty_vector()
             yield (_adm_ids[0], vec)
 
             for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
@@ -947,29 +886,130 @@ class MIMIC3Dataset(Dataset):
                     vec = vec.union(dx_codes[prev_adm_id])
                 yield (adm_id, vec)
 
-    def outcome_extractor(self, dx_codes):
+    def outcome_extractor(self, dx_codes, target_scheme):
         return zip(dx_codes.keys(),
-                   map(self.scheme.outcome.mapcodevector, dx_codes.values()))
+                   map(target_scheme.outcome.mapcodevector, dx_codes.values()))
 
     @classmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        meta['colname'] = {
+            f: ColumnNames.make(m)
+            for f, m in meta['colname'].items()
+        }
         meta['df'] = cls.load_dataframes(meta, **init_kwargs)
+        return cls(**meta, **init_kwargs)
+
+
+class CPRDDataset(MIMIC3Dataset):
+
+    @classmethod
+    def make_dataset_scheme(cls, **kwargs):
+        return CPRDDatasetScheme(**kwargs)
+
+    def __init__(self, df: Dict[str, pd.DataFrame], colname: Dict[str,
+                                                                  ColumnNames],
+                 code_scheme: Dict[str, Any], **kwargs):
+
+        scheme = self.make_dataset_scheme(**code_scheme)
+        # deepcopy to avoid modifying the original colname which is used by
+        # reference in the lazy evaluation of dask operations.
+        colname = copy.deepcopy(colname)
+        Dataset.__init__(self, df=df, colname=colname, scheme=scheme)
+        self._match_admissions_with_demographics(self.df, colname)
+
+    @classmethod
+    def load_dataframes(cls, path, colname, **kwargs):
+        df = pd.read_csv(path, sep='\t', dtype=str)
+
+        def listify(s):
+            return list(map(lambda e: e.strip(), s.split(',')))
+
+        adm_tups = []
+        dx_tups = []
+        demo_tups = []
+        admission_id = 0
+        for subject_id, _subj_df in df.groupby(colname.subject_id):
+            assert len(_subj_df) == 1, "Each patient should have a single row"
+            subject = _subj_df.iloc[0].to_dict()
+            codes = listify(subject[colname.dx])
+            year_month = listify(subject[colname.dischtime])
+
+            # To infer date-of-birth
+            age0 = int(float(listify(subject[colname.age])[0]))
+            year_month0 = pd.to_datetime(year_month[0]).normalize()
+            date_of_birth = year_month0 + pd.DateOffset(years=-age0)
+            gender = subject[colname.gender]
+            imd = subject[colname.imd_decile]
+            ethnicity = subject[colname.ethnicity]
+            demo_tups.append(
+                (subject_id, date_of_birth, gender, imd, ethnicity))
+            # codes aggregated by year-month.
+            dx_codes_ym_agg = defaultdict(set)
+            for code, ym in zip(codes, year_month):
+                ym = pd.to_datetime(ym).normalize()
+                dx_codes_ym_agg[ym].add(code)
+
+            for disch_date in sorted(dx_codes_ym_agg.keys()):
+                admit_date = disch_date + pd.DateOffset(days=-1)
+                adm_tups.append(
+                    (subject_id, admission_id, admit_date, disch_date))
+
+                dx_codes = dx_codes_ym_agg[admit_date]
+                dx_tups.extend([(admission_id, dx_code)
+                                for dx_code in dx_codes])
+                admission_id += 1
+
+        adm_keys = ('subject_id', 'admission_id', 'admittime', 'dischtime')
+        dx_keys = ('admission_id', 'dx_code')
+        demo_keys = ('subject_id', 'date_of_birth', 'gender', 'imd_decile',
+                     'ethnicity')
+        adm_cols = ColumnNames.make({k: colname.get(k, k) for k in adm_keys})
+        dx_cols = ColumnNames.make({k: colname.get(k, k) for k in dx_keys})
+        demo_cols = ColumnNames.make({k: colname.get(k, k) for k in demo_keys})
+        adm_cols = adm_cols._replace(index=adm_cols.admission_id)
+        demo_cols = demo_cols._replace(index=demo_cols.subject_id)
+
+        adm_df = pd.DataFrame(adm_tups,
+                              columns=list(
+                                  map(adm_cols._asdict().get,
+                                      adm_keys))).set_index(adm_cols.index)
+
+        dx_df = pd.DataFrame(dx_tups,
+                             columns=list(map(dx_cols._asdict().get, dx_keys)))
+        demo_df = pd.DataFrame(demo_tups,
+                               columns=list(
+                                   map(demo_cols._asdict().get,
+                                       demo_keys))).set_index(demo_cols.index)
+        df = {'adm': adm_df, 'dx': dx_df, 'demo': demo_df}
+        colname = {'adm': adm_cols, 'dx': dx_cols, 'demo': demo_cols}
+        return df, colname
+
+    @classmethod
+    def from_meta_json(cls, meta_fpath, **init_kwargs):
+        meta = load_config(meta_fpath)
+        meta['colname'] = ColumnNames.make(meta['colname'])
+        filepath = translate_path(meta['filepath'])
+        meta['df'], meta['colname'] = cls.load_dataframes(
+            filepath, **init_kwargs)
         return cls(**meta, **init_kwargs)
 
 
 class MIMIC4Dataset(MIMIC3Dataset):
     scheme: MIMIC4DatasetScheme
-    scheme_class: ClassVar[Type[MIMIC4DatasetScheme]] = MIMIC4DatasetScheme
+
+    @classmethod
+    def make_dataset_scheme(cls, **kwargs):
+        return MIMIC4DatasetScheme(**kwargs)
 
     def _dx_fix_icd_dots(self):
-        c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
+        c_code = self.colname["dx"].code
+        c_version = self.colname["dx"].version
         df = self.df["dx"]
         df = df.assign(**{c_code: df[c_code].str.strip()})
         self.df['dx'] = df
-        for version, scheme in self.scheme.dx_source.items():
+        for version, scheme in self.scheme.dx.items():
             if isinstance(scheme, ICDCommons):
                 ver_mask = df[c_version] == version
                 code_col = df[c_code]
@@ -980,11 +1020,10 @@ class MIMIC4Dataset(MIMIC3Dataset):
         self.df["dx"] = df
 
     def _dx_filter_unsupported_icd(self):
-        c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
+        c_code = self.colname["dx"].code
+        c_version = self.colname["dx"].version
         self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
-                                                c_version,
-                                                self.scheme.dx_source)
+                                                c_version, self.scheme.dx)
 
     @staticmethod
     def _validate_dx_codes(df, code_col, version_col, version_map):
@@ -1011,13 +1050,13 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
         return dd.concat(filtered_df).reset_index(drop=True)
 
-    def subject_info_extractor(self, subject_ids):
+    def subject_info_extractor(self, subject_ids, target_scheme):
 
         static_df = self.df['static']
-        c_gender = self.colname["static"]["gender"]
-        c_anchor_year = self.colname["static"]["anchor_year"]
-        c_anchor_age = self.colname["static"]["anchor_age"]
-        c_eth = self.colname["static"]["ethnicity"]
+        c_gender = self.colname["static"].gender
+        c_anchor_year = self.colname["static"].anchor_year
+        c_anchor_age = self.colname["static"].anchor_age
+        c_eth = self.colname["static"].ethnicity
 
         static_df = static_df.loc[subject_ids]
         gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
@@ -1030,7 +1069,7 @@ class MIMIC4Dataset(MIMIC3Dataset):
         dob = anchor_date + anchor_age
         subject_dob = dict(zip(static_df.index.values, dob))
         subject_eth = dict()
-        eth_mapper = self.scheme.eth_mapper()
+        eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
         for subject_id in static_df.index.values:
             eth_code = eth_mapper.map_codeset(
                 [static_df.loc[subject_id, c_eth]])
@@ -1038,10 +1077,10 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
         return subject_dob, subject_gender, subject_eth
 
-    def dx_codes_extractor(self, admission_ids_list):
-        c_adm_id = self.colname["dx"]["admission_id"]
-        c_code = self.colname["dx"]["code"]
-        c_version = self.colname["dx"]["version"]
+    def dx_codes_extractor(self, admission_ids_list, target_scheme):
+        c_adm_id = self.colname["dx"].admission_id
+        c_code = self.colname["dx"].code
+        c_version = self.colname["dx"].version
 
         df = self.df["dx"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
@@ -1049,7 +1088,9 @@ class MIMIC4Dataset(MIMIC3Dataset):
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_vector = self.scheme.dx_target.empty_vector()
+        empty_vector = target_scheme.dx.empty_vector()
+
+        dx_mapper = self.scheme.dx_mapper(target_scheme)
 
         def _extract_codes(adm_id):
             _codes_df = codes_df.get(adm_id)
@@ -1058,7 +1099,7 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
             vec = empty_vector
             for version, version_df in _codes_df.groupby(c_version):
-                mapper = self.scheme.dx_mapper(str(version))
+                mapper = dx_mapper[str(version)]
                 codeset = mapper.map_codeset(version_df[c_code])
                 vec = vec.union(mapper.codeset2vec(codeset))
             return (adm_id, vec)
@@ -1071,22 +1112,20 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
     scalers_history: Dict[str, Callable]
     outlier_remover_history: Dict[str, Callable]
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
-    scheme_class: ClassVar[
-        Type[MIMIC4ICUDatasetScheme]] = MIMIC4ICUDatasetScheme
 
-    def __init__(self, df, colname, code_scheme, name, **kwargs):
+    @classmethod
+    def make_dataset_scheme(cls, **kwargs):
+        return MIMIC4ICUDatasetScheme(**kwargs)
+
+    def __init__(self, df, colname, code_scheme, **kwargs):
         self.outlier_remover_history = dict()
         self.scalers_history = dict()
-        scheme = self.scheme_class(code_scheme)
+        scheme = self.make_dataset_scheme(**code_scheme)
         # deepcopy to avoid modifying the original colname which is used by
         # reference in the lazy evaluation of dask operations.
         colname = copy.deepcopy(colname)
 
-        Dataset.__init__(self,
-                         df=df,
-                         colname=colname,
-                         scheme=scheme,
-                         name=name)
+        Dataset.__init__(self, df=df, colname=colname, scheme=scheme)
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
@@ -1097,25 +1136,13 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                 f'Removed codes: {df[~mask][c_code].unique().compute()}')
             return df[mask]
 
-        self.df["int_proc"] = _filter_codes(self.df["int_proc"],
-                                            self.colname["int_proc"]["code"],
-                                            self.scheme.int_proc_source)
-        self.df["int_input"] = _filter_codes(self.df["int_input"],
-                                             self.colname["int_input"]["code"],
-                                             self.scheme.int_input_source)
-        self.df["obs"] = _filter_codes(self.df["obs"],
-                                       self.colname["obs"]["code"],
-                                       self.scheme.obs)
+        for name in ("int_proc", "int_input", "obs"):
+            self.df[name] = _filter_codes(self.df[name],
+                                          self.colname[name].code,
+                                          getattr(self.scheme, name))
 
-        self.df["int_proc"] = self._add_code_source_index(
-            self.df["int_proc"], self.scheme.int_proc_source,
-            self.colname["int_proc"])
-        self.df["int_input"] = self._add_code_source_index(
-            self.df["int_input"], self.scheme.int_input_source,
-            self.colname["int_input"])
-        self.df["obs"] = self._add_code_source_index(self.df["obs"],
-                                                     self.scheme.obs,
-                                                     self.colname["obs"])
+            self.df[name], self.colname[name] = self._add_code_source_index(
+                self.df[name], getattr(self.scheme, name), self.colname[name])
 
         # self.df["adm"] = self._adm_remove_subjects_with_overlapping_admissions(
         #     self.df["adm"], self.colname["adm"])
@@ -1135,9 +1162,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug("[DONE] Dataframes validation and time conversion")
 
     def _int_input_remove_subjects_with_nans(self):
-        c_subject = self.colname["adm"]["subject_id"]
-        c_adm_id = self.colname["int_input"]["admission_id"]
-        c_rate = self.colname["int_input"]["rate"]
+        c_subject = self.colname["adm"].subject_id
+        c_adm_id = self.colname["int_input"].admission_id
+        c_rate = self.colname["int_input"].rate
         adm_df = self.df["adm"]
         inp_df = self.df["int_input"]
 
@@ -1152,10 +1179,10 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
     @staticmethod
     def _add_code_source_index(df, source_scheme, colname):
         c_code = colname["code"]
-        colname["code_source_index"] = "code_source_index"
+        colname = colname.replace(code_source_index="code_source_index")
         df = df.assign(
             code_source_index=df[c_code].map(source_scheme.index).astype(int))
-        return df
+        return df, colname
 
     @staticmethod
     def _set_relative_times(df_dict,
@@ -1163,8 +1190,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                             df_name,
                             time_cols,
                             seconds_scaler=1 / 3600.0):
-        c_admittime = colname["adm"]["admittime"]
-        c_adm_id = colname[df_name]["admission_id"]
+        c_admittime = colname["adm"].admittime
+        c_adm_id = colname[df_name].admission_id
 
         target_df = df_dict[df_name]
         adm_df = df_dict["adm"][[c_admittime]]
@@ -1172,9 +1199,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                              left_on=c_adm_id,
                              right_index=True,
                              how='left')
-
+        df_colname = colname[df_name]._asdict()
         for time_col in time_cols:
-            col = colname[df_name][time_col]
+            col = df_colname[time_col]
             delta = df[col] - df[c_admittime]
             target_df = target_df.assign(
                 **{
@@ -1186,9 +1213,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
     def _fit_obs_outlier_remover(self, admission_ids, outlier_q1, outlier_q2,
                                  outlier_iqr_scale, outlier_z1, outlier_z2):
-        c_code_index = self.colname["obs"]["code_source_index"]
-        c_value = self.colname["obs"]["value"]
-        c_adm_id = self.colname["obs"]["admission_id"]
+        c_code_index = self.colname["obs"].code_source_index
+        c_value = self.colname["obs"].value
+        c_adm_id = self.colname["obs"].admission_id
         df = self.df['obs'][[c_code_index, c_value, c_adm_id]]
         df = df[df[c_adm_id].isin(admission_ids)]
         outlier_q = np.array([outlier_q1, outlier_q2])
@@ -1216,9 +1243,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                               max_val=max_val)
 
     def _fit_obs_scaler(self, admission_ids):
-        c_code_index = self.colname["obs"]["code_source_index"]
-        c_value = self.colname["obs"]["value"]
-        c_adm_id = self.colname["obs"]["admission_id"]
+        c_code_index = self.colname["obs"].code_source_index
+        c_value = self.colname["obs"].value
+        c_adm_id = self.colname["obs"].admission_id
         df = self.df['obs'][[c_code_index, c_value, c_adm_id]]
         df = df[df[c_adm_id].isin(admission_ids)]
         stat = df.groupby(c_code_index).apply(
@@ -1236,9 +1263,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                               max_val=stat['max'])
 
     def _fit_int_input_scaler(self, admission_ids):
-        c_adm_id = self.colname["int_input"]["admission_id"]
-        c_code_index = self.colname["int_input"]["code_source_index"]
-        c_rate = self.colname["int_input"]["rate"]
+        c_adm_id = self.colname["int_input"].admission_id
+        c_code_index = self.colname["int_input"].code_source_index
+        c_rate = self.colname["int_input"].rate
         df = self.df["int_input"][[c_adm_id, c_code_index, c_rate]]
         df = df[df[c_adm_id].isin(admission_ids)]
         return MaxScaler(c_value=c_rate,
@@ -1253,7 +1280,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                             outlier_z1=-2.5,
                             outlier_z2=2.5):
 
-        c_subject = self.colname["adm"]["subject_id"]
+        c_subject = self.colname["adm"].subject_id
         adm_df = self.df["adm"]
         if subject_ids is None:
             train_adms = adm_df.index
@@ -1271,7 +1298,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         }
 
     def fit_scalers(self, subject_ids: Optional[List[int]] = None):
-        c_subject = self.colname["adm"]["subject_id"]
+        c_subject = self.colname["adm"].subject_id
         adm_df = self.df["adm"]
         if subject_ids is None:
             train_adms = adm_df.index
@@ -1322,30 +1349,32 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         # Cast timestamps for intervensions
         for time_col in ("start_time", "end_time"):
             for file in ("int_proc", "int_input"):
-                df[file][colname[file][time_col]] = dd.to_datetime(
-                    df[file][colname[file][time_col]])
+                col = colname[file]._asdict()[time_col]
+                df[file][col] = dd.to_datetime(df[file][col])
 
         # Cast timestamps for observables
-        df["obs"][colname["obs"]["timestamp"]] = dd.to_datetime(
-            df["obs"][colname["obs"]["timestamp"]])
+        df["obs"][colname["obs"].timestamp] = dd.to_datetime(
+            df["obs"][colname["obs"].timestamp])
         logging.debug("[DONE] Time casting..")
         return df
 
-    def to_subjects(self, subject_ids, num_workers, demographic_vector_config):
+    def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
+                    target_scheme: MIMIC4ICUDatasetScheme):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
-            subject_ids)
+            subject_ids, target_scheme)
         admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
         logging.debug('Extracting dx codes...')
-        dx_codes = dict(self.dx_codes_extractor(adm_ids_list))
+        dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
         logging.debug('[DONE] Extracting dx codes')
         logging.debug('Extracting dx codes history...')
         dx_codes_history = dict(
-            self.dx_codes_history_extractor(dx_codes, admission_ids))
+            self.dx_codes_history_extractor(dx_codes, admission_ids,
+                                            target_scheme))
         logging.debug('[DONE] Extracting dx codes history')
         logging.debug('Extracting outcome...')
-        outcome = dict(self.outcome_extractor(dx_codes))
+        outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
         logging.debug('[DONE] Extracting outcome')
         logging.debug('Extracting procedures...')
         procedures = dict(self.procedure_extractor(adm_ids_list))
@@ -1359,15 +1388,15 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug('[DONE] Extracting observables')
 
         logging.debug('Compiling admissions...')
-        c_admittime = self.colname['adm']['admittime']
-        c_dischtime = self.colname['adm']['dischtime']
-        c_adm_interval = self.colname['adm']['adm_interval']
+        c_admittime = self.colname['adm'].admittime
+        c_dischtime = self.colname['adm'].dischtime
+        c_adm_interval = self.colname['adm'].adm_interval
         adf = self.df['adm']
         adm_dates = dict(
             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
         adm_interval = dict(zip(adf.index, adf[c_adm_interval]))
-        proc_repr = AggregateRepresentation(self.scheme.int_proc_source,
-                                            self.scheme.int_proc_target)
+        proc_repr = AggregateRepresentation(self.scheme.int_proc,
+                                            target_scheme.int_proc)
 
         def gen_admission(i):
             interventions = InpatientInterventions(
@@ -1408,10 +1437,10 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         return list(map(_gen_subject, subject_ids))
 
     def procedure_extractor(self, admission_ids_list):
-        c_adm_id = self.colname["int_proc"]["admission_id"]
-        c_code_index = self.colname["int_proc"]["code_source_index"]
-        c_start_time = self.colname["int_proc"]["start_time"]
-        c_end_time = self.colname["int_proc"]["end_time"]
+        c_adm_id = self.colname["int_proc"].admission_id
+        c_code_index = self.colname["int_proc"].code_source_index
+        c_start_time = self.colname["int_proc"].start_time
+        c_end_time = self.colname["int_proc"].end_time
         df = self.df["int_proc"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
 
@@ -1424,7 +1453,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
         grouped = df.groupby(c_adm_id).apply(group_fun)
         adm_arr = grouped.index.tolist()
-        input_size = len(self.scheme.int_proc_source)
+        input_size = len(self.scheme.int_proc)
         for i in adm_arr:
             yield (i,
                    InpatientInput(index=grouped.loc[i, 0],
@@ -1438,11 +1467,11 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             yield (adm_id, InpatientInput.empty(input_size))
 
     def inputs_extractor(self, admission_ids_list):
-        c_adm_id = self.colname["int_input"]["admission_id"]
-        c_start_time = self.colname["int_input"]["start_time"]
-        c_end_time = self.colname["int_input"]["end_time"]
-        c_rate = self.colname["int_input"]["rate"]
-        c_code_index = self.colname["int_input"]["code_source_index"]
+        c_adm_id = self.colname["int_input"].admission_id
+        c_start_time = self.colname["int_input"].start_time
+        c_end_time = self.colname["int_input"].end_time
+        c_rate = self.colname["int_input"].rate
+        c_code_index = self.colname["int_input"].code_source_index
 
         df = self.df["int_input"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
@@ -1457,7 +1486,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
         grouped = df.groupby(c_adm_id).apply(group_fun)
         adm_arr = grouped.index.tolist()
-        input_size = len(self.scheme.int_input_source)
+        input_size = len(self.scheme.int_input)
         for i in adm_arr:
             yield (i,
                    InpatientInput(index=grouped.loc[i, 0],
@@ -1469,10 +1498,10 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             yield (adm_id, InpatientInput.empty(input_size))
 
     def observables_extractor(self, admission_ids_list, num_workers):
-        c_adm_id = self.colname["obs"]["admission_id"]
-        c_time = self.colname["obs"]["timestamp"]
-        c_value = self.colname["obs"]["value"]
-        c_code_index = self.colname["obs"]["code_source_index"]
+        c_adm_id = self.colname["obs"].admission_id
+        c_time = self.colname["obs"].timestamp
+        c_value = self.colname["obs"].value
+        c_code_index = self.colname["obs"].code_source_index
 
         df = self.df["obs"][[c_adm_id, c_time, c_value, c_code_index]]
         logging.debug("obs: filter adms")
@@ -1545,12 +1574,10 @@ class SyntheticDataset(MIMIC3Dataset):
             dischtime = adm_dates[1:n_admissions:2]
             adms.append((subject_id, admittime, dischtime))
         df = pd.DataFrame(adms,
-                          columns=[
-                              colname[c]
-                              for c in ('subject_id', 'admittime', 'dischtime')
-                          ])
-
-        df.index.names = [colname['index']]
+                          columns=list(
+                              map(colname._asdict().get,
+                                  ('subject_id', 'admittime', 'dischtime'))))
+        df.index.names = [colname.index]
         return df
 
     @classmethod
@@ -1565,9 +1592,7 @@ class SyntheticDataset(MIMIC3Dataset):
                 (adm_id, c)
                 for c in rng.choices(dx_source_scheme.codes, k=n_codes))
 
-        df = pd.DataFrame(codes,
-                          columns=[dx_colname[c] for c in ('index', 'code')])
-        return df
+        return pd.DataFrame(codes, columns=[dx_colname.index, dx_colname.code])
 
     @classmethod
     def make_synthetic_demographic(cls,
@@ -1577,10 +1602,10 @@ class SyntheticDataset(MIMIC3Dataset):
                                    ethnicity_scheme=None,
                                    gender_scheme=None):
         rng = random.Random(0)
-        subject_ids = adm_df[adm_colname['subject_id']].unique()
+        subject_ids = adm_df[adm_colname.subject_id].unique()
         demo = []
-        for subject_id, df in adm_df.groupby(adm_colname['subject_id']):
-            first_adm = df[adm_colname['admittime']].min()
+        for subject_id, df in adm_df.groupby(adm_colname.subject_id):
+            first_adm = df[adm_colname.admittime].min()
             if gender_scheme is None:
                 gender = None
             else:
@@ -1598,11 +1623,11 @@ class SyntheticDataset(MIMIC3Dataset):
             row = (subject_id, date_of_birth) + (c for c in (gender, ethnicity)
                                                  if c is not None)
 
-        columns = [demo_colname[c] for c in ('subject_id', 'date_of_birth')]
+        columns = [demo_colname.subject_id, demo_colname.date_of_birth]
         if gender_scheme is not None:
-            columns.append(demo_colname['gender'])
+            columns.append(demo_colname.gender)
         if ethnicity_scheme is not None:
-            columns.append(demo_colname['ethncity'])
+            columns.append(demo_colname.ethncity)
 
         df = pd.DataFrame(demo, columns=columns)
         return df
@@ -1611,6 +1636,10 @@ class SyntheticDataset(MIMIC3Dataset):
     def synthetic_from_meta_json(cls, meta_fpath, n_subjects=100):
         meta = load_config(meta_fpath)
         # meta['base_dir'] = os.path.expandvars(meta['base_dir'])
+        meta['colname'] = {
+            f: ColumnNames.make(m)
+            for f, m in meta['colname'].items()
+        }
         adm_df = cls.make_synthetic_admissions(meta['colname'],
                                                n_subjects=n_subjects)
         return cls(**meta)
@@ -1619,16 +1648,16 @@ class SyntheticDataset(MIMIC3Dataset):
 def load_dataset_scheme(label):
     if label == 'M3':
         conf = load_config(f'{_META_DIR}/mimic3_meta.json')
-        return MIMIC3DatasetScheme(conf['code_scheme'])
+        return DatasetScheme(**conf['code_scheme'])
     if label == 'M4':
         conf = load_config(f'{_META_DIR}/mimic4_meta.json')
-        return MIMIC4DatasetScheme(conf['code_scheme'])
+        return MIMIC4DatasetScheme(**conf['code_scheme'])
     if label == 'CPRD':
         conf = load_config(f'{_META_DIR}/cprd_meta.json')
-        return MIMIC3DatasetScheme(conf['code_scheme'])
+        return CPRDDatasetScheme(**conf['code_scheme'])
     if label == 'M4ICU':
         conf = load_config(f'{_META_DIR}/mimic4icu_meta.json')
-        return MIMIC4ICUDatasetScheme(conf['code_scheme'])
+        return MIMIC4ICUDatasetScheme(**conf['code_scheme'])
 
 
 def load_dataset(label, **init_kwargs):
@@ -1640,8 +1669,8 @@ def load_dataset(label, **init_kwargs):
         return MIMIC4Dataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
                                             **init_kwargs)
     if label == 'CPRD':
-        return CPRDEHRDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json',
-                                             **init_kwargs)
+        return CPRDDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json',
+                                          **init_kwargs)
     if label == 'M4ICU':
         return MIMIC4ICUDataset.from_meta_json(
             f'{_META_DIR}/mimic4icu_meta.json', **init_kwargs)

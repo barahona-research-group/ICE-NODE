@@ -9,7 +9,7 @@ import equinox as eqx
 
 from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   MIMIC4ICUDatasetScheme, DemographicVectorConfig,
+                   DatasetScheme, DemographicVectorConfig,
                    CodesVector)
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
                          EmbeddedInAdmission)
@@ -46,29 +46,30 @@ class InICENODE(InpatientModel):
     f_dyn: Callable
     f_update: Callable
 
-    scheme: MIMIC4ICUDatasetScheme = eqx.static_field()
+    scheme: DatasetScheme = eqx.static_field()
     dims: InICENODEDimensions = eqx.static_field()
     demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 
     def __init__(self, dims: InICENODEDimensions,
-                 scheme: MIMIC4ICUDatasetScheme,
+                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
         (emb_key, obs_dec_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 5)
         f_emb = InpatientEmbedding(
-            scheme=scheme,
+            source_scheme=source_scheme,
+            target_scheme=target_scheme,
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=emb_key)
         f_dx_dec = eqx.nn.MLP(dims.dx,
-                              len(scheme.outcome),
+                              len(target_scheme.outcome),
                               dims.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
         self.f_obs_dec = eqx.nn.MLP(dims.obs,
-                                    len(scheme.obs),
+                                    len(target_scheme.obs),
                                     dims.obs * 5,
                                     depth=1,
                                     key=obs_dec_key)
@@ -84,11 +85,12 @@ class InICENODE(InpatientModel):
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
-                                       len(scheme.obs),
+                                       len(target_scheme.obs),
                                        key=update_key)
 
         super().__init__(dims=dims,
-                         scheme=scheme,
+                         source_scheme=source_scheme,
+                         target_scheme=target_scheme,
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)

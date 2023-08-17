@@ -10,7 +10,7 @@ import jax.tree_util as jtu
 import equinox as eqx
 
 from ..utils import tqdm_constructor, tree_hasnan, translate_path
-from .dataset import Dataset
+from .dataset import Dataset, DatasetScheme
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig)
 from .coding_scheme import CodesVector
@@ -97,7 +97,6 @@ class Predictions(dict):
         loss_v = jnp.nanmean(loss_v)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
-
     def prediction_obs_loss(self, obs_loss):
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
@@ -118,15 +117,19 @@ class Predictions(dict):
 
 class Patients(eqx.Module):
     dataset: Dataset
+    scheme: DatasetScheme
     demographic_vector_config: DemographicVectorConfig
     subjects: Optional[Dict[int, Patient]]
 
     def __init__(self,
                  dataset: Dataset,
                  demographic_vector_config: DemographicVectorConfig,
-                 subjects: Optional[Dict[int, Patient]] = None):
+                 subjects: Optional[Dict[int, Patient]] = None,
+                 **target_scheme_kwargs):
         super().__init__()
         self.dataset = dataset
+        self.scheme = dataset.scheme.make_target_scheme(**target_scheme_kwargs)
+
         self.demographic_vector_config = demographic_vector_config
         self.subjects = subjects
 
@@ -221,7 +224,7 @@ class Patients(eqx.Module):
 
         subject_ids = np.array(subject_ids)
 
-        c_subject_id = self.dataset.colname['adm']['subject_id']
+        c_subject_id = self.dataset.colname['adm'].subject_id
         adm_df = self.dataset.df['adm']
         adm_df = adm_df[adm_df[c_subject_id].isin(subject_ids)]
 
@@ -290,7 +293,7 @@ class Patients(eqx.Module):
         return sum(o.mask.sum() for s in subject_ids
                    for a in self.subjects[s].admissions
                    for o in a.observables) / self.n_obs_times() / len(
-                       self.dataset.scheme.obs)
+                       self.scheme.obs)
 
     def obs_coocurrence_matrix(self):
         obs = []

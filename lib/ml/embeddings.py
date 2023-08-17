@@ -6,8 +6,8 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import equinox as eqx
 
-from ..ehr import (Patient, Admission, StaticInfo, MIMIC4ICUDatasetScheme,
-                   MIMICDatasetScheme, AggregateRepresentation, InpatientInput,
+from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
+                   AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
 
 
@@ -51,20 +51,20 @@ class PatientEmbedding(eqx.Module):
     f_dem_emb: Callable
 
     def __init__(self, dims: OutpatientEmbeddingDimensions,
-                 scheme: MIMICDatasetScheme,
+                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
         super().__init__()
         (dx_emb_key, dem_emb_key) = jrandom.split(key, 2)
 
-        self.f_dx_emb = eqx.nn.MLP(len(scheme.dx_target),
+        self.f_dx_emb = eqx.nn.MLP(len(target_scheme.dx_target),
                                    dims.dx,
                                    width_size=dims.dx * 5,
                                    depth=1,
                                    final_activation=jnp.tanh,
                                    key=dx_emb_key)
 
-        demo_input_size = scheme.demographic_vector_size(
+        demo_input_size = target_scheme.demographic_vector_size(
             demographic_vector_config)
         self.f_dem_emb = eqx.nn.MLP(demo_input_size,
                                     dims.demo,
@@ -121,25 +121,26 @@ class InpatientEmbedding(PatientEmbedding):
     f_int_emb: Callable
 
     def __init__(self, dims: InpatientEmbeddingDimensions,
-                 scheme: MIMIC4ICUDatasetScheme,
+                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
         (super_key, inp_agg_key, inp_emb_key, proc_emb_key,
          int_emb_key) = jrandom.split(key, 5)
         super().__init__(dims=dims,
-                         scheme=scheme,
+                         source_scheme=source_scheme,
+                         target_scheme=target_scheme,
                          demographic_vector_config=demographic_vector_config,
                          key=super_key)
-        self.f_inp_agg = AggregateRepresentation(scheme.int_input_source,
-                                                 scheme.int_input_target,
+        self.f_inp_agg = AggregateRepresentation(source_scheme.int_input,
+                                                 target_scheme.int_input,
                                                  inp_agg_key, 'jax')
-        self.f_inp_emb = eqx.nn.MLP(len(scheme.int_input_target),
+        self.f_inp_emb = eqx.nn.MLP(len(target_scheme.int_input),
                                     dims.inp,
                                     dims.inp * 5,
                                     final_activation=jnp.tanh,
                                     depth=1,
                                     key=inp_emb_key)
-        self.f_proc_emb = eqx.nn.MLP(len(scheme.int_proc_target),
+        self.f_proc_emb = eqx.nn.MLP(len(target_scheme.int_proc),
                                      dims.proc,
                                      dims.proc * 5,
                                      final_activation=jnp.tanh,

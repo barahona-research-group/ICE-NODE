@@ -1,12 +1,13 @@
 {
     "base_dir": "$DATA_DIR/mimic4icu-cohort",
     "code_scheme": {
-        "dx": [{"9": "DxICD9", "10": "DxICD10"}, "DxICD9"],
+        "dx": {"9": "DxICD9", "10": "DxICD10"},
         "outcome": "dx_icd9_filter_v3_groups",
-        "int_proc": ["MIMICProcedures", "MIMICProcedureGroups"],
-        "int_input": ["MIMICInput", "MIMICInputGroups"],
-        "obs": ["MIMICObservables"],
-        "ethnicity": ["MIMICEth32", "MIMICEth5"]
+        "int_proc": "MIMICProcedures",
+        "int_input": "MIMICInput",
+        "obs": "MIMICObservables",
+        "ethnicity": "MIMIC4Eth32",
+        "gender": "Gender"
     },
     "colname": {
         "dx": {
@@ -55,8 +56,5 @@
         "obs": "obs_df.csv",
         "int_input": "int_input.csv",
         "int_proc": "int_proc.csv"
-    },
-    "name": "MIMIC-IV-ICU",
-    "python_class": "MIMIC4ICUDataset",
-    "version": "v2.2"
+    }
 }
