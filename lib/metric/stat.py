@@ -118,6 +118,9 @@ class Metric(metaclass=ABCMeta):
     def from_df_functor(self, colname, direction):
 
         def from_df(df, index=-1):
+            if isinstance(df, Predictions):
+                df = self.to_df(index, df)
+
             if index == 'best':
                 if direction == 1:
                     return df[colname].argmax(), df[colname].max()
@@ -766,6 +769,8 @@ class DeLongTest(CodeLevelMetric):
                 sorted(kw['pair'])), field)
 
         def from_df(df, **kw):
+            if isinstance(df, dict):
+                df = self.to_df(df)
             return df.loc[code_index, column_gen(kw)]
 
         return from_df

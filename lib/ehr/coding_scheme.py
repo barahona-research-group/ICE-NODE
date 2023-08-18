@@ -1765,7 +1765,7 @@ def register_mimic4proc_mapping(s_scheme: MIMICProcedures,
 
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
     for group, group_df in df.groupby('group'):
-        m.update({c: group for c in group_df.code})
+        m.update({c: {group} for c in group_df.code})
 
 
 def register_mimic4input_mapping(s_scheme: MIMICInput,
@@ -1775,7 +1775,7 @@ def register_mimic4input_mapping(s_scheme: MIMICInput,
 
     m = _CodeMapper(s_scheme, t_schame, t_dag_space=False)
     for group, group_df in df.groupby('group'):
-        m.update({c: group for c in group_df.label})
+        m.update({c: {group} for c in group_df.label})
 
 
 def register_cprd_eth_mapping(s_scheme: CPRDEthnicity16,

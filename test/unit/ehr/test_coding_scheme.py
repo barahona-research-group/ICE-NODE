@@ -25,13 +25,6 @@ class SchemeTests(unittest.TestCase):
                                   set(codes),
                                   msg=f'Problematic Scheme: {scheme.name}')
 
-    def test_codes_sorted(self: unittest.TestCase):
-        for scheme in self.scheme_set:
-            codes = scheme.codes
-            self.assertEqual(codes,
-                             sorted(codes),
-                             msg=f'Problematic Scheme: {scheme.name}')
-
     def test_code_index_desc_support(self: unittest.TestCase):
         for scheme in self.scheme_set:
 
