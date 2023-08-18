@@ -24,7 +24,8 @@ from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
                             AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
                             MIMICInputGroups, MIMICProcedures,
                             MIMICProcedureGroups, MIMICObservables, NullScheme,
-                            Gender, Ethnicity, CPRDIMDCategorical, CPRDGender)
+                            Gender, Ethnicity, CPRDIMDCategorical, CPRDGender,
+                            load_maps)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, StaticInfo, DemographicVectorConfig,
                        CPRDDemographicVectorConfig, CPRDStaticInfo,
@@ -48,7 +49,8 @@ keys = [
     'subject_id', 'admission_id', 'admittime', 'dischtime', 'adm_interval',
     'index', 'code', 'version', 'gender', 'ethnicity', 'imd_decile',
     'anchor_age', 'anchor_year', 'start_time', 'end_time', 'rate',
-    'code_index', 'code_source_index', 'value', 'timestamp', 'date_of_birth'
+    'code_index', 'code_source_index', 'value', 'timestamp', 'date_of_birth',
+    'age_at_dischtime'
 ]
 default_raw_types = {
     'subject_id': int,
@@ -196,7 +198,8 @@ class DatasetScheme(eqx.Module):
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
-        attrs = list(k for k in source.__dict__.keys() if k != 'outcome')
+        attrs = list(k for k in source.__dict__.keys()
+                     if k != 'outcome' and not k.startswith('_'))
         for attr in attrs:
             att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
@@ -219,10 +222,10 @@ class DatasetScheme(eqx.Module):
         assert 'outcome' in kwargs, "Outcome must be specified"
         updated_kwargs = {
             k: v.__class__.__name__
-            for k, v in self.__dict__.items()
+            for k, v in self.__dict__.items() if not k.startswith('_')
         }
         updated_kwargs.update(kwargs)
-        t_scheme = DatasetScheme(**updated_kwargs)
+        t_scheme = type(self)(**updated_kwargs)
         self._assert_valid_maps(self, t_scheme)
         return t_scheme
 
@@ -243,11 +246,28 @@ class DatasetScheme(eqx.Module):
     def ethnicity_mapper(self, target_scheme: DatasetScheme):
         return self.ethnicity.mapper_to(target_scheme.ethnicity)
 
+    @property
+    def supported_target_scheme_options(self):
+        attrs = tuple(k for k in self.__dict__.keys()
+                      if k != 'outcome' and not k.startswith('_'))
+        supproted_attr_targets = {
+            k: (getattr(self, k).__class__.__name__, ) +
+            getattr(self, k).supported_targets
+            for k in attrs
+        }
+        supported_outcomes = OutcomeExtractor.supported_outcomes(self.dx)
+        supproted_attr_targets['outcome'] = supported_outcomes
+        return supproted_attr_targets
+
 
 class Dataset(eqx.Module):
     df: Dict[str, pd.DataFrame]
     scheme: DatasetScheme
     colname: ColumnNames
+
+    @property
+    def supported_target_scheme_options(self):
+        return self.scheme.supported_target_scheme_options
 
     @classmethod
     @abstractmethod
@@ -389,7 +409,7 @@ class MIMIC4DatasetScheme(DatasetScheme):
     @classmethod
     def _assert_valid_maps(cls, source, target):
         attrs = list(k for k in source.__dict__.keys()
-                     if k not in ('outcome', 'dx'))
+                     if k not in ('outcome', 'dx') and not k.startswith('_'))
         for attr in attrs:
             att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
@@ -407,10 +427,12 @@ class MIMIC4DatasetScheme(DatasetScheme):
         assert 'outcome' in kwargs, 'Outcome must be specified.'
         updated_kwargs = {
             k: v.__class__.__name__
-            for k, v in self.__dict__.items()
+            for k, v in self.__dict__.items() if not k.startswith('_')
         }
+        print(updated_kwargs)
         updated_kwargs.update(kwargs)
-        t_scheme = MIMIC4DatasetScheme(**updated_kwargs)
+        print(updated_kwargs)
+        t_scheme = type(self)(**updated_kwargs)
         self._assert_valid_maps(self, t_scheme)
         return t_scheme
 
@@ -420,11 +442,50 @@ class MIMIC4DatasetScheme(DatasetScheme):
             for version, s_dx in self.dx.items()
         }
 
+    @property
+    def supported_target_scheme_options(self):
+        attrs = tuple(k for k in self.__dict__.keys()
+                      if k not in ('outcome', 'dx') and not k.startswith('_'))
+        supproted_attr_targets = {
+            k: (getattr(self, k).__class__.__name__, ) +
+            getattr(self, k).supported_targets
+            for k in attrs
+        }
+        supported_dx_targets = {
+            version: (scheme.__class__.__name__, ) + scheme.supported_targets
+            for version, scheme in self.dx.items()
+        }
+        supproted_attr_targets['dx'] = list(
+            set.intersection(*map(set, supported_dx_targets.values())))
+        supported_outcomes = {
+            version: OutcomeExtractor.supported_outcomes(scheme)
+            for version, scheme in self.dx.items()
+        }
+        supproted_attr_targets['outcome'] = list(
+            set.intersection(*map(set, supported_outcomes.values())))
+
+        return supproted_attr_targets
+
 
 class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
     int_proc: MIMICProcedures
     int_input: MIMICInput
     obs: MIMICObservables
+
+    def make_target_scheme(self, **kwargs):
+        assert 'outcome' in kwargs, "Outcome must be specified"
+        kwargs['int_proc'] = 'MIMICProcedureGroups'
+        kwargs['int_input'] = 'MIMICInputGroups'
+
+        updated_kwargs = {
+            k: v.__class__.__name__
+            for k, v in self.__dict__.items() if not k.startswith('_')
+        }
+        updated_kwargs.update(kwargs)
+        t_scheme = type(self)(**updated_kwargs)
+        self._assert_valid_maps(self, t_scheme)
+        return t_scheme
+
 
 
 class MIMIC3Dataset(Dataset):
@@ -920,8 +981,7 @@ class CPRDDataset(MIMIC3Dataset):
         self._match_admissions_with_demographics(self.df, colname)
 
     @classmethod
-    def load_dataframes(cls, path, colname, **kwargs):
-        df = pd.read_csv(path, sep='\t', dtype=str)
+    def load_dataframes(cls, df, colname, **kwargs):
 
         def listify(s):
             return list(map(lambda e: e.strip(), s.split(',')))
@@ -933,11 +993,11 @@ class CPRDDataset(MIMIC3Dataset):
         for subject_id, _subj_df in df.groupby(colname.subject_id):
             assert len(_subj_df) == 1, "Each patient should have a single row"
             subject = _subj_df.iloc[0].to_dict()
-            codes = listify(subject[colname.dx])
+            codes = listify(subject[colname.code])
             year_month = listify(subject[colname.dischtime])
 
             # To infer date-of-birth
-            age0 = int(float(listify(subject[colname.age])[0]))
+            age0 = int(float(listify(subject[colname.age_at_dischtime])[0]))
             year_month0 = pd.to_datetime(year_month[0]).normalize()
             date_of_birth = year_month0 + pd.DateOffset(years=-age0)
             gender = subject[colname.gender]
@@ -962,12 +1022,18 @@ class CPRDDataset(MIMIC3Dataset):
                 admission_id += 1
 
         adm_keys = ('subject_id', 'admission_id', 'admittime', 'dischtime')
-        dx_keys = ('admission_id', 'dx_code')
+        dx_keys = ('admission_id', 'code')
         demo_keys = ('subject_id', 'date_of_birth', 'gender', 'imd_decile',
                      'ethnicity')
-        adm_cols = ColumnNames.make({k: colname.get(k, k) for k in adm_keys})
-        dx_cols = ColumnNames.make({k: colname.get(k, k) for k in dx_keys})
-        demo_cols = ColumnNames.make({k: colname.get(k, k) for k in demo_keys})
+        adm_cols = ColumnNames.make(
+            {k: colname._asdict().get(k, k)
+             for k in adm_keys})
+        dx_cols = ColumnNames.make(
+            {k: colname._asdict().get(k, k)
+             for k in dx_keys})
+        demo_cols = ColumnNames.make(
+            {k: colname._asdict().get(k, k)
+             for k in demo_keys})
         adm_cols = adm_cols._replace(index=adm_cols.admission_id)
         demo_cols = demo_cols._replace(index=demo_cols.subject_id)
 
@@ -982,17 +1048,19 @@ class CPRDDataset(MIMIC3Dataset):
                                columns=list(
                                    map(demo_cols._asdict().get,
                                        demo_keys))).set_index(demo_cols.index)
-        df = {'adm': adm_df, 'dx': dx_df, 'demo': demo_df}
-        colname = {'adm': adm_cols, 'dx': dx_cols, 'demo': demo_cols}
+        df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
+        colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
         return df, colname
 
     @classmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):
         meta = load_config(meta_fpath)
         meta['colname'] = ColumnNames.make(meta['colname'])
-        filepath = translate_path(meta['filepath'])
+        meta['df'] = pd.read_csv(translate_path(meta['filepath']),
+                                 sep='\t',
+                                 dtype=str)
         meta['df'], meta['colname'] = cls.load_dataframes(
-            filepath, **init_kwargs)
+            **meta, **init_kwargs)
         return cls(**meta, **init_kwargs)
 
 
@@ -1178,8 +1246,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
     @staticmethod
     def _add_code_source_index(df, source_scheme, colname):
-        c_code = colname["code"]
-        colname = colname.replace(code_source_index="code_source_index")
+        c_code = colname.code
+        colname = colname._replace(code_source_index="code_source_index")
         df = df.assign(
             code_source_index=df[c_code].map(source_scheme.index).astype(int))
         return df, colname

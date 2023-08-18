@@ -10,7 +10,7 @@
         "code": "medcode_list",
         "subject_id": "patid",
         "dischtime": "year_month_list",
-        "age": "age_list",
+        "age_at_dischtime": "age_list",
         "gender": "gender",
         "ethnicity": "ethnicity",
         "imd_decile": "imd_decile"

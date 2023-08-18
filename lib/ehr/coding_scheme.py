@@ -36,6 +36,14 @@ class Singleton(object):
         return Singleton._instances[cls]
 
 
+def get_type(x):
+    if isinstance(x, str):
+        return eval(x)
+    if isinstance(x, type):
+        return x
+    return type(x)
+
+
 class _CodeMapper(defaultdict):
     maps = {}
 
@@ -64,7 +72,7 @@ class _CodeMapper(defaultdict):
         self._unrecognised_range = kwargs.get('unrecognised_target', set())
         self._unrecognised_domain = kwargs.get('unrecognised_source', set())
         self._conv_file = kwargs.get('conv_file', '')
-        _CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
+        _CodeMapper.maps[(get_type(s_scheme), get_type(t_scheme))] = self
 
     def __str__(self):
         return f'{self.s_scheme.name}->{self.t_scheme.name}'
@@ -124,12 +132,12 @@ class _CodeMapper(defaultdict):
             logging.error(f'{self}: {e}')
 
         if s_discrepancy['fwd_p'] > 0:
-            logging.warning('Source discrepancy')
-            logging.warning(s_discrepancy['msg'])
+            logging.debug('Source discrepancy')
+            logging.debug(s_discrepancy['msg'])
 
         if t_discrepancy['fwd_p'] > 0:
-            logging.warning('Target discrepancy')
-            logging.warning(t_discrepancy['msg'])
+            logging.debug('Target discrepancy')
+            logging.debug(t_discrepancy['msg'])
 
     def report_target_discrepancy(self):
         """
@@ -218,10 +226,19 @@ first5(M-domain) {sorted(M_domain)[:5]}.\n
         return self._t_dag_space
 
     @classmethod
+    def has_mapper(cls, s_scheme, t_scheme):
+        key = (get_type(s_scheme), get_type(t_scheme))
+        return (key in _CodeMapper.maps or key[0] == key[1] or key in load_maps
+                or any(
+                    isinstance(s, NullScheme) for s in (s_scheme, t_scheme)))
+
+    @classmethod
     def get_mapper(cls, s_scheme, t_scheme):
-        if any(isinstance(s, NullScheme) for s in (s_scheme, t_scheme)):
+        if not cls.has_mapper(s_scheme, t_scheme):
+            logging.warning(f'Mapping {s_scheme}->{t_scheme} is not available')
             return _NullCodeMapper()
-        key = (type(s_scheme), type(t_scheme))
+
+        key = (get_type(s_scheme), get_type(t_scheme))
         with maps_lock[key]:
             if key in _CodeMapper.maps:
                 return _CodeMapper.maps[key]
@@ -233,11 +250,7 @@ first5(M-domain) {sorted(M_domain)[:5]}.\n
                 load_maps[key]()
 
             mapper = _CodeMapper.maps.get(key)
-            if mapper:
-                mapper.report_discrepancy()
-            else:
-                logging.warning(f'Mapping {key} is not available')
-
+            mapper.report_discrepancy()
             return mapper
 
     def map_codeset(self, codeset: Set[str]):
@@ -398,6 +411,11 @@ class AbstractScheme:
 
     def empty_vector(self):
         return CodesVector.empty(self)
+
+    @classmethod
+    @property
+    def supported_targets(cls):
+        return tuple(t.__name__ for s, t in load_maps.keys() if s == cls)
 
 
 class SchemeWithMissing(AbstractScheme):
@@ -767,7 +785,7 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
         valid_target = df['target'].isin(t_scheme.index)
         unrecognised_target = set(df[~valid_target]["target"])
         if len(unrecognised_target) > 0:
-            logging.warning(f"""
+            logging.debug(f"""
                             {s_scheme}->{t_scheme} Unrecognised t_codes
                             ({len(unrecognised_target)}):
                             {sorted(unrecognised_target)[:20]}...""")
@@ -775,7 +793,7 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
         valid_source = df['source'].isin(s_scheme.index)
         unrecognised_source = set(df[~valid_source]["source"])
         if len(unrecognised_source) > 0:
-            logging.warning(f"""
+            logging.debug(f"""
                             {s_scheme}->{t_scheme} Unrecognised s_codes
                             ({len(unrecognised_source)}):
                             {sorted(unrecognised_source)[:20]}...""")
@@ -1928,29 +1946,29 @@ class OutcomeExtractor(AbstractScheme):
     def __init__(self, outcome_space='dx_flatccs_filter_v1'):
         conf = self.conf_from_json(outcome_conf_files[outcome_space])
 
-        self._t_scheme = scheme_from_classname(conf['code_scheme'])
+        self._base_scheme = scheme_from_classname(conf['code_scheme'])
         codes = [
-            c for c in sorted(self.t_scheme.index)
+            c for c in sorted(self.base_scheme.index)
             if c not in conf['exclude_codes']
         ]
 
         index = dict(zip(codes, range(len(codes))))
-        desc = {c: self.t_scheme.desc[c] for c in codes}
+        desc = {c: self.base_scheme.desc[c] for c in codes}
         super().__init__(codes=codes,
                          index=index,
                          desc=desc,
                          name=outcome_space)
 
     @property
-    def t_scheme(self):
-        return self._t_scheme
+    def base_scheme(self):
+        return self._base_scheme
 
     @property
     def outcome_dim(self):
         return len(self.index)
 
     def _map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
-        m = s_scheme.mapper_to(self._t_scheme)
+        m = s_scheme.mapper_to(self._base_scheme)
         codeset = m.map_codeset(codeset)
 
         if m.t_dag_space:
@@ -1964,6 +1982,16 @@ class OutcomeExtractor(AbstractScheme):
         for c in self._map_codeset(codes.to_codeset(), codes.scheme):
             vec[self.index[c]] = True
         return CodesVector(np.array(vec), self)
+
+    @classmethod
+    def supported_outcomes(cls, base_scheme: AbstractScheme):
+        outcome_base = {
+            k: load_config(os.path.join(_OUTCOME_DIR, v))['code_scheme']
+            for k, v in outcome_conf_files.items()
+        }
+        return tuple(k for k, v in outcome_base.items()
+                     if v in base_scheme.supported_targets
+                     or v == base_scheme.__class__.__name__)
 
     @staticmethod
     def conf_from_json(json_file: str):

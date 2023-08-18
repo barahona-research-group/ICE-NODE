@@ -635,7 +635,7 @@ class Trainer(eqx.Module):
         train_ids, valid_ids, test_ids = splits
         if self.epochs > 0 and self.epochs < 1:
             epochs = 1
-            train_ids = train_ids[:int(self.epochs * len(train_ids))]
+            train_ids = train_ids[:int(self.epochs * len(train_ids)) + 1]
         else:
             epochs = self.epochs
 

@@ -201,7 +201,7 @@ class CodeLevelMetric(Metric):
     aggregate_level: bool = field(default=True)
 
     def __post_init__(self):
-        index = self.patients.dataset.scheme.outcome.index
+        index = self.patients.scheme.outcome.index
         self.code2index = index
         self.index2code = {i: c for c, i in index.items()}
 
@@ -281,7 +281,7 @@ class CodeLevelMetric(Metric):
 class ObsCodeLevelMetric(CodeLevelMetric):
 
     def __post_init__(self):
-        index = self.patients.dataset.scheme.obs.index
+        index = self.patients.scheme.obs.index
         self.code2index = index
         self.index2code = {i: c for c, i in index.items()}
 
