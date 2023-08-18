@@ -10,12 +10,7 @@ from .. import embeddings as E
 
 _DIR = os.path.dirname(__file__)
 
-help_expand = dict(dataset_labels=ehr.datasets,
-                   dx_scheme_labels=[s for s in ehr.code_scheme if 'dx' in s],
-                   pr_scheme_labels=[s for s in ehr.code_scheme if 'pr' in s],
-                   dx_outcome_labels=[o for o in ehr.outcome_conf_files],
-                   emb_labels=[f'{v} ({k})' for k, v in E.short_tag.items()],
-                   model_labels=ml.model_cls)
+help_expand = dict()
 
 help_expand = {k: ', '.join(v) for k, v in help_expand.items()}
 

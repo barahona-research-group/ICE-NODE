@@ -1,21 +1,21 @@
 {
     "emb": {
         "dx": {
-           "decoder_n_layers": 2,
+           "decoder_n_layers": 3,
            "classname":  "MatrixEmbeddings",      
-           "embeddings_size": 200
+           "embeddings_size": 50
         }
     },
     "model": {
         "ode_init_var": 1e-7,
-        "timescale": 7,
+        "timescale": 30,
         "ode_nlayers": 3
     },
     "training": {
-        "batch_size": 128,
-        "decay_rate": [0.25, 0.33],
-        "lr": [7e-5,  1e-3],
-        "epochs": 60,
+        "batch_size": 64,
+        "decay_rate": [0.67, 0.67],
+        "lr": [1e-3,  1e-3],
+        "epochs": 150,
         "reg_hyperparams": {
             "L_dyn": 1000.0,
             "L_l1": 0,

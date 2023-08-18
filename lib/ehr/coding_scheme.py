@@ -1,57 +1,47 @@
 """Extract diagnostic/procedure information of CCS files into new
 data structures to support conversion between CCS and ICD9."""
 
+from __future__ import annotations
 from abc import ABC, abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from typing import Set, Optional
-
+from threading import Lock
 import re
 import os
 import gzip
 import xml.etree.ElementTree as ET
-from absl import logging
+import logging
 
 import numpy as np
 import pandas as pd
-
-try:
-    import networkx as nx
-except ImportError:
-    logging.warning('networkx library is not available')
-    _has_networkx = False
-else:
-    _has_networkx = True
-
-from ..utils import write_config
+import equinox as eqx
+from ..utils import write_config, load_config
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, 'resources')
 _CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
-"""
-Testing ideas:
-
-    - ICD9: #nodes > #ICD codes
-    - test *dfs vs *bfs algorithms.
-
-
-"""
-"""
-Ideas in mapping
-
-- For a certain scenario, a choice list of multiple code is represented by their common ancestor.
-- Use OrderedSet in ancestor/successor retrieval to retain the order of traversal (important in Breadth-firth search to have them sorted by level).
-"""
+singleton_lock = Lock()
+maps_lock = defaultdict(Lock)
 
 
 class Singleton(object):
     _instances = {}
 
     def __new__(cls, *args, **kwargs):
-        if cls._instances.get(cls, None) is None:
-            cls._instances[cls] = super(Singleton,
-                                        cls).__new__(cls, *args, **kwargs)
+        with singleton_lock:
+            if cls._instances.get(cls, None) is None:
+                cls._instances[cls] = super(Singleton,
+                                            cls).__new__(cls, *args, **kwargs)
 
         return Singleton._instances[cls]
+
+
+def get_type(x):
+    if isinstance(x, str):
+        return eval(x)
+    if isinstance(x, type):
+        return x
+    return type(x)
 
 
 class _CodeMapper(defaultdict):
@@ -82,13 +72,16 @@ class _CodeMapper(defaultdict):
         self._unrecognised_range = kwargs.get('unrecognised_target', set())
         self._unrecognised_domain = kwargs.get('unrecognised_source', set())
         self._conv_file = kwargs.get('conv_file', '')
-        _CodeMapper.maps[(type(s_scheme), type(t_scheme))] = self
+        _CodeMapper.maps[(get_type(s_scheme), get_type(t_scheme))] = self
 
     def __str__(self):
         return f'{self.s_scheme.name}->{self.t_scheme.name}'
 
     def __hash__(self):
         return hash(str(self))
+
+    def __bool__(self):
+        return len(self) > 0
 
     def log_unrecognised_range(self, json_fname):
         if self._unrecognised_range:
@@ -121,8 +114,10 @@ class _CodeMapper(defaultdict):
                     'n': len(uncovered),
                     'p': len(uncovered) / len(self._s_scheme.index),
                     'codes': sorted(uncovered),
-                    'desc': {c: self._s_scheme.desc[c]
-                             for c in uncovered}
+                    'desc': {
+                        c: self._s_scheme.desc[c]
+                        for c in uncovered
+                    }
                 }, json_fname)
 
     def report_discrepancy(self):
@@ -137,12 +132,12 @@ class _CodeMapper(defaultdict):
             logging.error(f'{self}: {e}')
 
         if s_discrepancy['fwd_p'] > 0:
-            logging.warning('Source discrepancy')
-            logging.warning(s_discrepancy['msg'])
+            logging.debug('Source discrepancy')
+            logging.debug(s_discrepancy['msg'])
 
         if t_discrepancy['fwd_p'] > 0:
-            logging.warning('Target discrepancy')
-            logging.warning(t_discrepancy['msg'])
+            logging.debug('Target discrepancy')
+            logging.debug(t_discrepancy['msg'])
 
     def report_target_discrepancy(self):
         """
@@ -156,18 +151,24 @@ class _CodeMapper(defaultdict):
         bwd_diff = T - M_range
         fwd_p = len(fwd_diff) / len(M_range)
         bwd_p = len(bwd_diff) / len(T)
+        msg = f"""M: {self} \n
+Mapping converts to codes that are not supported by the target scheme.
+|M-range - T|={len(fwd_diff)}; \
+|M-range - T|/|M-range|={fwd_p:0.2f}); \
+first5(M-range - T)={sorted(fwd_diff)[:5]}\n
+Target codes that not covered by the mapping. \
+|T - M-range|={len(bwd_diff)}; \
+|T - M-range|/|T|={bwd_p:0.2f}; \
+first5(T - M-range)={sorted(bwd_diff)[:5]}\n
+|M-range|={len(M_range)}; \
+first5(M-range) {sorted(M_range)[:5]}.\n
+|T|={len(T)}; first5(T)={sorted(T)[:5]}
+        """
         return dict(fwd_diff=fwd_diff,
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""M: {self} \n
-                            M_range - T ({len(fwd_diff)}, p={fwd_p}):
-                            {sorted(fwd_diff)[:5]}...\n
-                            T - M_range ({len(bwd_diff)}, p={bwd_p}):
-                            {sorted(bwd_diff)[:5]}...\n
-                            M_range ({len(M_range)}):
-                            {sorted(M_range)[:5]}...\n
-                            T ({len(T)}): {sorted(T)[:5]}...""")
+                    msg=msg)
 
     def report_source_discrepancy(self):
         """
@@ -181,18 +182,24 @@ class _CodeMapper(defaultdict):
         bwd_diff = M_domain - S
         fwd_p = len(fwd_diff) / len(S)
         bwd_p = len(bwd_diff) / len(M_domain)
+        msg = f"""M: {self} \n
+Mapping converts codes that are not supported by the source scheme.\
+|M-domain - S|={len(bwd_diff)}; \
+|M-domain - S|/|M-domain|={bwd_p:0.2f}); \
+first5(M-domain - S)={sorted(bwd_diff)[:5]}\n
+Source codes that not covered by the mapping. \
+|S - M-domain|={len(fwd_diff)}; \
+|S - M-domain|/|S|={fwd_p:0.2f}; \
+first5(S - M-domain)={sorted(fwd_diff)[:5]}\n
+|M-domain|={len(M_domain)}; \
+first5(M-domain) {sorted(M_domain)[:5]}.\n
+|S|={len(S)}; first5(S)={sorted(S)[:5]}
+        """
         return dict(fwd_diff=fwd_diff,
                     bwd_diff=bwd_diff,
                     fwd_p=fwd_p,
                     bwd_p=bwd_p,
-                    msg=f"""M: {self} \n
-                            S - M_domain ({len(fwd_diff)}, p={fwd_p}):
-                            {sorted(fwd_diff)[:5]}...\n
-                            M_domain - S ({len(bwd_diff)}, p={bwd_p}):
-                            {sorted(bwd_diff)[:5]}...\n
-                            M_domain ({len(M_domain)}):
-                            {sorted(M_domain)[:5]}...\n
-                            S ({len(S)}): {sorted(S)[:5]}...""")
+                    msg=msg)
 
     @property
     def t_index(self):
@@ -218,28 +225,33 @@ class _CodeMapper(defaultdict):
     def t_dag_space(self):
         return self._t_dag_space
 
-    @staticmethod
-    def get_mapper(s_scheme, t_scheme):
-        if any(s is NullScheme() for s in (s_scheme, t_scheme)):
+    @classmethod
+    def has_mapper(cls, s_scheme, t_scheme):
+        key = (get_type(s_scheme), get_type(t_scheme))
+        return (key in _CodeMapper.maps or key[0] == key[1] or key in load_maps
+                or any(
+                    isinstance(s, NullScheme) for s in (s_scheme, t_scheme)))
+
+    @classmethod
+    def get_mapper(cls, s_scheme, t_scheme):
+        if not cls.has_mapper(s_scheme, t_scheme):
+            logging.warning(f'Mapping {s_scheme}->{t_scheme} is not available')
             return _NullCodeMapper()
-        key = (type(s_scheme), type(t_scheme))
 
-        if key in _CodeMapper.maps:
-            return _CodeMapper.maps[key]
+        key = (get_type(s_scheme), get_type(t_scheme))
+        with maps_lock[key]:
+            if key in _CodeMapper.maps:
+                return _CodeMapper.maps[key]
 
-        if key[0] == key[1]:
-            return _IdentityCodeMapper(s_scheme)
+            if key[0] == key[1]:
+                return _IdentityCodeMapper(s_scheme)
 
-        if key in load_maps:
-            load_maps[key]()
+            if key in load_maps:
+                load_maps[key]()
 
-        mapper = _CodeMapper.maps.get(key)
-        if mapper:
+            mapper = _CodeMapper.maps.get(key)
             mapper.report_discrepancy()
-        else:
-            logging.warning(f'Mapping {key} is not available')
-
-        return mapper
+            return mapper
 
     def map_codeset(self, codeset: Set[str]):
         return set().union(*[self[c] for c in codeset])
@@ -260,7 +272,7 @@ class _CodeMapper(defaultdict):
             logging.error(
                 f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
-        return vec
+        return CodesVector(vec, self._t_scheme)
 
     def codeset2dagset(self, codeset: Set[str]):
         if self._t_dag_space == False:
@@ -319,11 +331,13 @@ class _NullCodeMapper(_CodeMapper):
 class AbstractScheme:
 
     def __init__(self, codes, index, desc, name):
-        logging.info(f'Constructing {name} ({type(self)}) scheme')
+        logging.debug(f'Constructing {name} ({type(self)}) scheme')
         self._codes = codes
         self._index = index
         self._desc = desc
         self._name = name
+        self._index2code = {idx: code for code, idx in index.items()}
+        self._index2desc = {index[code]: desc for code, desc in desc.items()}
 
         for collection in [codes, index, desc]:
             assert all(
@@ -331,6 +345,9 @@ class AbstractScheme:
                 for c in collection), f"{self}: All name types should be str."
 
         _IdentityCodeMapper(self)
+
+    def __len__(self):
+        return len(self.codes)
 
     def __bool__(self):
         return len(self.codes) > 0
@@ -359,19 +376,20 @@ class AbstractScheme:
         return self._name
 
     @property
-    def idx2code(self):
-        return {idx: code for code, idx in self.index.items()}
+    def index2code(self):
+        return self._index2code
 
     @property
-    def idx2desc(self):
-        return {self.index[code]: desc for code, desc in self.desc.items()}
+    def index2desc(self):
+        return self._index2desc
 
     def search_regex(self, query, regex_flags=re.I):
         """
-        a regex-supported search of codes by a `query` string. the search is
-        applied on the code description.
-        for example, you can use it to return all codes related to cancer
-        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
+        a regex-supported search of codes by a `query` string. the search is \
+            applied on the code description.\
+            for example, you can use it to return all codes related to cancer \
+            by setting the `query = 'cancer'` \
+            and `regex_flags = re.i` (for case-insensitive search).
         """
         return set(
             filter(lambda c: re.match(query, self._desc[c], flags=regex_flags),
@@ -380,8 +398,141 @@ class AbstractScheme:
     def mapper_to(self, target_scheme):
         return _CodeMapper.get_mapper(self, target_scheme)
 
+    def codeset2vec(self, codeset: Set[str]):
+        vec = np.zeros(len(self), dtype=bool)
+        try:
+            for c in codeset:
+                vec[self.index[c]] = True
+        except KeyError as missing:
+            logging.error(f'Code {missing} is missing.'
+                          f'Accepted keys: {self.index.keys()}')
 
-class NullScheme(AbstractScheme, Singleton):
+        return CodesVector(vec, self)
+
+    def empty_vector(self):
+        return CodesVector.empty(self)
+
+    @classmethod
+    @property
+    def supported_targets(cls):
+        return tuple(t.__name__ for s, t in load_maps.keys() if s == cls)
+
+
+class SchemeWithMissing(AbstractScheme):
+
+    def __len__(self):
+        return len(self.codes) - 1
+
+    @property
+    @abstractmethod
+    def missing_code(self):
+        pass
+
+    def codeset2vec(self, codeset: Set[str]):
+        vec = np.zeros(len(self), dtype=bool)
+        try:
+            for c in codeset:
+                idx = self.index[c]
+                if idx >= 0:
+                    vec[idx] = True
+        except KeyError as missing:
+            logging.error(f'Code {missing} is missing.'
+                          f'Accepted keys: {self.index.keys()}')
+
+        return CodesVectorWithMissing(vec, self)
+
+    def empty_vector(self):
+        return CodesVectorWithMissing.empty(self)
+
+
+class CodesVector(eqx.Module):
+    """
+    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
+    """
+    vec: np.ndarray
+    scheme: AbstractScheme  # Coding scheme for diagnostic codes
+
+    @classmethod
+    def empty_like(cls, other: CodesVector):
+        return cls(np.zeros_like(other.vec), other.scheme)
+
+    @classmethod
+    def empty(cls, scheme: AbstractScheme):
+        return cls(np.zeros(len(scheme), dtype=bool), scheme)
+
+    def to_codeset(self):
+        index = self.vec.nonzero()[0]
+        return set(self.scheme.index2code[i] for i in index)
+
+    def union(self, other):
+        return CodesVector(self.vec | other.vec, self.scheme)
+
+    def __len__(self):
+        return len(self.vec)
+
+
+class CodesVectorWithMissing(CodesVector):
+
+    def to_codeset(self):
+        index = self.vec.nonzero()[0]
+        if len(index) == 0:
+            return {self.scheme.missing_code}
+
+
+class BinaryCodesVector(CodesVector):
+
+    @classmethod
+    def empty(cls, scheme: BinaryScheme):
+        return cls(np.zeros(1, dtype=bool), scheme)
+
+    def to_codeset(self):
+        return set(self.scheme.index2code[self.vec[0]])
+
+    def __len__(self):
+        return 1
+
+
+class NumericalCodesVector(CodesVector):
+
+    @classmethod
+    def empty(cls, scheme: NumericalScheme):
+        return cls(np.zeros(1, dtype=np.float16), scheme)
+
+    def to_codeset(self):
+        return set(self.scheme.index2code[self.vec[0]])
+
+    def __len__(self):
+        return 1
+
+
+class BinaryScheme(AbstractScheme):
+
+    def __init__(self, codes, index, desc, name):
+        assert all(len(c) == 2 for c in (codes, index, desc)), \
+            f"{self}: Codes should be of length 2."
+        super().__init__(codes, index, desc, name)
+
+    def codeset2vec(self, code: str):
+        return BinaryCodesVector(np.array(self.index[code], dtype=bool), self)
+
+    def __len__(self):
+        return 1
+
+
+class NumericalScheme(AbstractScheme):
+
+    def __init__(self, codes, index, desc, name):
+        super().__init__(codes, index, desc, name)
+
+    def codeset2vec(self, code: str):
+        return NumericalCodesVector(
+            np.array(self.index[code], dtype=np.float16), self)
+
+    def __len__(self):
+        return 1
+
+
+class NullScheme(Singleton, AbstractScheme):
 
     def __init__(self):
         super().__init__([], {}, {}, 'none')
@@ -411,7 +562,8 @@ class HierarchicalScheme(AbstractScheme):
 
         self._dag2code = {d: c for c, d in self._code2dag.items()}
 
-        assert pt2ch or ch2pt, "Should provide ch2pt or pt2ch connection dictionary"
+        assert pt2ch or ch2pt, (
+            "Should provide ch2pt or pt2ch connection dictionary")
         if ch2pt and pt2ch:
             self._ch2pt = ch2pt
             self._pt2ch = pt2ch
@@ -549,11 +701,12 @@ class HierarchicalScheme(AbstractScheme):
 
     def search_regex(self, query, regex_flags=re.I):
         """
-        A regex-based search of codes by a `query` string. the search is
-        applied on the code descriptions.
-        for example, you can use it to return all codes related to cancer
-        by setting the `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
-        For all found codes, their successor codes are also returned in the resutls.
+        A regex-based search of codes by a `query` string. the search is \
+            applied on the code descriptions. for example, you can use it \
+            to return all codes related to cancer by setting the \
+            `query = 'cancer'` and `regex_flags = re.i` \
+            (for case-insensitive search). For all found codes, \
+            their successor codes are also returned in the resutls.
         """
 
         codes = filter(
@@ -571,32 +724,33 @@ class HierarchicalScheme(AbstractScheme):
 
         return all_codes
 
-    def to_digraph(self, discard_set=set(), node_attrs={}):
-        """
-        Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
-        Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
-        """
-        dag = nx.DiGraph()
 
-        def _populate_dag(ch):
-            for pt in self._ch2pt.get(ch, []):
-                dag.add_edge(ch, pt)
-                _populate_dag(pt)
+#     def to_digraph(self, discard_set=set(), node_attrs={}):
+#         """
+#         Generate a networkx.DiGraph (Directed Graph) representing the hierarchy.
+#         Filters can be applied through `discard_set`. Additional attributes can be added to the nodes through the dictionary `node_attrs`.
+#         """
+#         dag = nx.DiGraph()
 
-        for c in set(self._dag_codes) - set(discard_set):
-            _populate_dag(c)
+#         def _populate_dag(ch):
+#             for pt in self._ch2pt.get(ch, []):
+#                 dag.add_edge(ch, pt)
+#                 _populate_dag(pt)
 
-        for attr_name, attr_dict in node_attrs.items():
-            for node in dag.nodes:
-                dag.nodes[node][attr_name] = attr_dict.get(node, '')
-        return dag
+#         for c in set(self._dag_codes) - set(discard_set):
+#             _populate_dag(c)
+
+#         for attr_name, attr_dict in node_attrs.items():
+#             for node in dag.nodes:
+#                 dag.nodes[node][attr_name] = attr_dict.get(node, '')
+#         return dag
 
 
 class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def add_dot(code):
+    def add_dots(code):
         pass
 
     @staticmethod
@@ -625,13 +779,13 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
         df['combination'] = df['meta'].apply(lambda s: s[2])
         df['scenario'] = df['meta'].apply(lambda s: s[3])
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
-        df['source'] = df['source'].map(s_scheme.add_dot)
-        df['target'] = df['target'].map(t_scheme.add_dot)
+        df['source'] = df['source'].map(s_scheme.add_dots)
+        df['target'] = df['target'].map(t_scheme.add_dots)
 
         valid_target = df['target'].isin(t_scheme.index)
         unrecognised_target = set(df[~valid_target]["target"])
         if len(unrecognised_target) > 0:
-            logging.warning(f"""
+            logging.debug(f"""
                             {s_scheme}->{t_scheme} Unrecognised t_codes
                             ({len(unrecognised_target)}):
                             {sorted(unrecognised_target)[:20]}...""")
@@ -639,7 +793,7 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
         valid_source = df['source'].isin(s_scheme.index)
         unrecognised_source = set(df[~valid_source]["source"])
         if len(unrecognised_source) > 0:
-            logging.warning(f"""
+            logging.debug(f"""
                             {s_scheme}->{t_scheme} Unrecognised s_codes
                             ({len(unrecognised_source)}):
                             {sorted(unrecognised_source)[:20]}...""")
@@ -718,19 +872,21 @@ class ICDCommons(HierarchicalScheme, metaclass=ABCMeta):
             #     mapping[code] = represent
 
 
-class DxICD10(ICDCommons, Singleton):
+class DxICD10(Singleton, ICDCommons):
     """
     NOTE: for prediction targets, remember to exclude the following chapters:
-        - 'chapter:19': 'Injury, poisoning and certain other consequences of external causes (S00-T88)',
+        - 'chapter:19': 'Injury, poisoning and certain \
+            other consequences of external causes (S00-T88)',
         - 'chapter:20': 'External causes of morbidity (V00-Y99)',
-        - 'chapter:21': 'Factors influencing health status and contact with health services (Z00-Z99)',
+        - 'chapter:21': 'Factors influencing health status and \
+            contact with health services (Z00-Z99)',
         - 'chapter:22': 'Codes for special purposes (U00-U85)'
     """
 
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if len(code) > 3:
             return code[:3] + '.' + code[3:]
@@ -801,15 +957,15 @@ class DxICD10(ICDCommons, Singleton):
 
     def __init__(self):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
-        super().__init__(**self.distill_icd10_xml(
-            'icd10cm_tabular_2023.xml.gz'),
-                         name='dx_icd10')
+        super().__init__(
+            name='dx_icd10',
+            **self.distill_icd10_xml('icd10cm_tabular_2023.xml.gz'))
 
 
-class PrICD10(ICDCommons, Singleton):
+class PrICD10(Singleton, ICDCommons):
 
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         # No decimal point in ICD10-PCS
         return code
 
@@ -868,20 +1024,20 @@ class PrICD10(ICDCommons, Singleton):
         }
 
     def __init__(self):
-        super().__init__(**self.distill_icd10_xml(
-            'icd10pcs_codes_2023.txt.gz'),
-                         name='pr_icd10')
+        super().__init__(
+            name='pr_icd10',
+            **self.distill_icd10_xml('icd10pcs_codes_2023.txt.gz'))
 
 
-class DxICD9(ICDCommons, Singleton):
+class DxICD9(Singleton, ICDCommons):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
     _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
     _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
 
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if code[0] == 'E':
             if len(code) > 4:
@@ -988,12 +1144,12 @@ class DxICD9(ICDCommons, Singleton):
                          name='dx_icd9')
 
 
-class PrICD9(ICDCommons, Singleton):
+class PrICD9(Singleton, ICDCommons):
 
     @staticmethod
-    def add_dot(code):
+    def add_dots(code):
         if '.' in code:
-            logging.debug(f'Code {code} already is in decimal format')
+            # logging.debug(f'Code {code} already is in decimal format')
             return code
         if len(code) > 2:
             return code[:2] + '.' + code[2:]
@@ -1036,7 +1192,7 @@ class CCSCommons(HierarchicalScheme):
         icd_cname = '\'ICD-9-CM CODE\''
 
         df[icd_cname] = df[icd_cname].apply(lambda l: l.strip('\'').strip())
-        df[icd_cname] = df[icd_cname].map(icd9_scheme.add_dot)
+        df[icd_cname] = df[icd_cname].map(icd9_scheme.add_dots)
         valid_icd = df[icd_cname].isin(icd9_scheme.index)
         unrecognised_icd9 = set(df[~valid_icd][icd_cname])
         df = df[valid_icd]
@@ -1128,7 +1284,7 @@ class CCSCommons(HierarchicalScheme):
         return cls._code_ancestors_dots(code, include_itself)
 
 
-class DxCCS(CCSCommons, Singleton):
+class DxCCS(Singleton, CCSCommons):
     _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
     _N_LEVELS = 4
 
@@ -1146,7 +1302,7 @@ class DxCCS(CCSCommons, Singleton):
                          name='dx_ccs')
 
 
-class PrCCS(CCSCommons, Singleton):
+class PrCCS(Singleton, CCSCommons):
     _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
     _N_LEVELS = 3
 
@@ -1175,7 +1331,7 @@ class FlatCCSCommons(AbstractScheme):
         cat_cname = '\'CCS CATEGORY\''
         desc_cname = '\'CCS CATEGORY DESCRIPTION\''
         df[icd9_cname] = df[icd9_cname].map(lambda c: c.strip('\'').strip())
-        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dot)
+        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dots)
 
         valid_icd9 = df[icd9_cname].isin(icd9_scheme.index)
 
@@ -1219,7 +1375,7 @@ class FlatCCSCommons(AbstractScheme):
             icd92flatccs[icode].add(ccode)
 
 
-class DxFlatCCS(FlatCCSCommons, Singleton):
+class DxFlatCCS(Singleton, FlatCCSCommons):
 
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
@@ -1232,7 +1388,7 @@ class DxFlatCCS(FlatCCSCommons, Singleton):
                          name='dx_flatccs')
 
 
-class PrFlatCCS(FlatCCSCommons, Singleton):
+class PrFlatCCS(Singleton, FlatCCSCommons):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
     def __init__(self):
@@ -1244,7 +1400,7 @@ class PrFlatCCS(FlatCCSCommons, Singleton):
                          name='pr_flatccs')
 
 
-class DxLTC212FlatCodes(AbstractScheme, Singleton):
+class DxLTC212FlatCodes(Singleton, AbstractScheme):
     _SCHEME_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 
     def __init__(self):
@@ -1275,7 +1431,7 @@ class DxLTC212FlatCodes(AbstractScheme, Singleton):
 
             medcodes_list = sorted(set(disease_df[medcode_cname]))
 
-            desc[disease_num] = disease_name 
+            desc[disease_num] = disease_name
             system[disease_num] = system_num
             medcodes[disease_num] = medcodes_list
 
@@ -1297,7 +1453,7 @@ class DxLTC212FlatCodes(AbstractScheme, Singleton):
         return self._system
 
 
-class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
+class DxLTC9809FlatMedcodes(Singleton, AbstractScheme):
     _SCHEME_FILE = 'CPRD_212_LTC_ALL.csv.gz'
 
     def __init__(self):
@@ -1345,7 +1501,11 @@ class DxLTC9809FlatMedcodes(AbstractScheme, Singleton):
         return self._diseases
 
 
-class EthCPRD(AbstractScheme):
+class Ethnicity(AbstractScheme):
+    pass
+
+
+class CPRDEthnicity(Ethnicity):
     _SCHEME_FILE = 'cprd_eth.csv'
     NAME = None
     ETH_CODE_CNAME = None
@@ -1369,19 +1529,275 @@ class EthCPRD(AbstractScheme):
                          name=self.NAME)
 
 
-class EthCPRD16(EthCPRD, Singleton):
+class CPRDEthnicity16(Singleton, CPRDEthnicity):
     NAME = 'eth_cprd_16'
     ETH_CODE_CNAME = 'eth16'
     ETH_DESC_CNAME = 'eth16_desc'
 
 
-class EthCPRD5(EthCPRD, Singleton):
+class CPRDEthnicity5(Singleton, CPRDEthnicity):
     NAME = 'eth_cprd_5'
     ETH_CODE_CNAME = 'eth5'
     ETH_DESC_CNAME = 'eth5_desc'
 
 
-def register_cprd_eth_mapping(s_scheme: EthCPRD16, t_scheme: EthCPRD5):
+class CPRDGender(Singleton, SchemeWithMissing):
+
+    def __init__(self):
+        codes = ['0', '1', '2', '9']
+        index = {'0': 0, '1': 1, '2': 2, '9': -1}  # 9 is unknown
+        desc = {
+            '0': 'female',
+            '1': 'male',
+            '2': 'intermediate',
+            '9': 'missing'
+        }
+        name = 'cprd_gender'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+    @property
+    def missing_code(self):
+        return '9'
+
+
+class CPRDIMDCategorical(Singleton, SchemeWithMissing):
+
+    def __init__(self):
+        codes = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '99']
+        index = dict(zip(codes, range(len(codes))))
+        index['99'] = -1
+        desc = index.copy()
+        desc['99'] = 'missing'
+        name = 'cprd_imd_cat'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+    @property
+    def missing_code(self):
+        return '99'
+
+
+class MIMICEth(Ethnicity):
+    _SCHEME_FILE = 'mimic4_race_grouper.csv.gz'
+    NAME = 'mimic4_eth32'
+    ETH_CNAME = 'eth32'
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, self._SCHEME_FILE)
+        df = pd.read_csv(filepath, dtype=str)
+        desc = dict()
+        for eth_code, eth_df in df.groupby(self.ETH_CNAME):
+            eth_set = set(eth_df[self.ETH_CNAME])
+            assert len(eth_set) == 1, "Ethnicity description should be unique"
+            (eth_desc, ) = eth_set
+            desc[eth_code] = eth_code
+
+        codes = sorted(set(df[self.ETH_CNAME]))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name=self.NAME)
+
+
+class MIMIC4Eth32(Singleton, MIMICEth):
+    NAME = 'mimic4_eth32'
+    ETH_CNAME = 'eth32'
+
+
+class MIMIC4Eth5(Singleton, MIMICEth):
+    NAME = 'mimic4_eth5'
+    ETH_CNAME = 'eth5'
+
+
+class MIMIC3Eth37(Singleton, MIMICEth):
+    _SCHEME_FILE = 'mimic3_race_grouper.csv.gz'
+    NAME = 'mimic3_eth37'
+    ETH_CNAME = 'ETH37'
+
+
+class MIMIC3Eth7(Singleton, MIMICEth):
+    _SCHEME_FILE = 'mimic3_race_grouper.csv.gz'
+    NAME = 'mimic3_eth7'
+    ETH_CNAME = 'ETH7'
+
+
+def register_mimic_eth_mapping(s_scheme: MIMICEth, t_scheme: MIMICEth):
+    filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
+    df = pd.read_csv(filepath, dtype=str)
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    for eth, eth_df in df.groupby(s_scheme.ETH_CNAME):
+        m[eth] = set(eth_df[t_scheme.ETH_CNAME])
+
+
+class MIMICProcedures(Singleton, AbstractScheme):
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group != 'exclude']
+        df = df.sort_values(['group', 'label'])
+        codes = df.code.tolist()
+        labels = df.label.tolist()
+        desc = dict(zip(codes, labels))
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_proc')
+
+
+class AbstractGroupedProcedures(AbstractScheme):
+
+    def __init__(self, groups, aggregation, aggregation_groups, **init_kwargs):
+        super().__init__(**init_kwargs)
+        self._groups = groups
+        self._aggregation = aggregation
+        self._aggregation_groups = aggregation_groups
+
+    @property
+    def groups(self):
+        return self._groups
+
+    @property
+    def aggregation(self):
+        return self._aggregation
+
+    @property
+    def aggregation_groups(self):
+        return self._aggregation_groups
+
+
+class MIMICProcedureGroups(Singleton, AbstractGroupedProcedures):
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group != 'exclude']
+        df = df.sort_values(['group', 'label'])
+        codes = df.group.unique().tolist()
+        desc = dict(zip(codes, codes))
+
+        groups = {
+            group: set(group_df['code'])
+            for group, group_df in df.groupby('group')
+        }
+        aggregation_groups = {'or': set(codes)}
+
+        super().__init__(groups=groups,
+                         aggregation=['or'],
+                         aggregation_groups=aggregation_groups,
+                         codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_grouped_proc')
+
+
+class MIMICInputGroups(Singleton, AbstractGroupedProcedures):
+    """
+    InterventionGroup class encapsulates the similar interventions.
+    """
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group_decision != 'E']
+        df = df.sort_values(by=['group_decision', 'group', 'label'])
+        codes = df.group.unique().tolist()
+        desc = dict(zip(codes, codes))
+
+        aggs = df.group_decision.unique().tolist()
+
+        self._dose_impact = dict()
+        aggregation_groups = dict()
+        groups = dict()
+        for agg, agg_df in df.groupby('group_decision'):
+            aggregation_groups[agg] = set(agg_df['group'])
+            for group, group_df in agg_df.groupby('group'):
+                assert group not in groups, "Group should be unique"
+                groups[group] = set(group_df['label'])
+                self._dose_impact[group] = group_df['dose_impact'].iloc[0]
+
+        super().__init__(groups=groups,
+                         aggregation=aggs,
+                         aggregation_groups=aggregation_groups,
+                         codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_input_group')
+
+    @property
+    def dose_impact(self):
+        return self._dose_impact
+
+
+class MIMICInput(Singleton, AbstractScheme):
+    """
+    InterventionGroup class encapsulates the similar interventions.
+    """
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        df = df[df.group_decision != 'E']
+        df = df.sort_values(by=['group_decision', 'group', 'label'])
+        codes = df.label.unique().tolist()
+        desc = dict(zip(codes, codes))
+
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_input')
+
+
+class MIMICObservables(Singleton, AbstractScheme):
+
+    def __init__(self):
+        filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
+        df = pd.read_csv(filepath, dtype=str)
+        codes = df.code.tolist()
+        desc = dict(zip(codes, df.label.tolist()))
+        self._groups = dict(zip(codes, df.group.tolist()))
+        super().__init__(codes=codes,
+                         index=dict(zip(codes, range(len(codes)))),
+                         desc=desc,
+                         name='int_mimic4_obs')
+
+    @property
+    def groups(self):
+        return self._groups
+
+
+class Gender(Singleton, BinaryScheme):
+
+    def __init__(self):
+        codes = ['M', 'F']
+        index = {'M': 0, 'F': 1}
+        desc = {'M': 'male', 'F': 'female'}
+        name = 'gender'
+        super().__init__(codes=codes, index=index, desc=desc, name=name)
+
+
+def register_mimic4proc_mapping(s_scheme: MIMICProcedures,
+                                t_scheme: MIMICProcedureGroups):
+    filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
+    df = pd.read_csv(filepath, dtype=str)
+
+    m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
+    for group, group_df in df.groupby('group'):
+        m.update({c: {group} for c in group_df.code})
+
+
+def register_mimic4input_mapping(s_scheme: MIMICInput,
+                                 t_schame: MIMICInputGroups):
+    filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
+    df = pd.read_csv(filepath, dtype=str)
+
+    m = _CodeMapper(s_scheme, t_schame, t_dag_space=False)
+    for group, group_df in df.groupby('group'):
+        m.update({c: {group} for c in group_df.label})
+
+
+def register_cprd_eth_mapping(s_scheme: CPRDEthnicity16,
+                              t_scheme: CPRDEthnicity5):
     filepath = os.path.join(_RSC_DIR, s_scheme._SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
@@ -1397,11 +1813,15 @@ def register_medcode_mapping(s_scheme: DxLTC9809FlatMedcodes,
 
 
 def register_chained_map(s_scheme, t_scheme, inter_scheme):
-    inter_mapping = _CodeMapper.get_mapper(s_scheme, inter_scheme)
-    assert inter_mapping.t_dag_space == False
-    s_codes = set(s_scheme.codes) & set(inter_mapping)
+    m1 = _CodeMapper.get_mapper(s_scheme, inter_scheme)
+    m2 = _CodeMapper.get_mapper(inter_scheme, t_scheme)
+    assert m1.t_dag_space == False
+    assert m2.t_dag_space == False
+
+    m3 = lambda x: set.union(*[m2[c] for c in m1[x]])
+    s_codes = set(s_scheme.codes) & set(m1.keys())
     m = _CodeMapper(s_scheme, t_scheme, t_dag_space=False)
-    m.update({c: inter_mapping[c] for c in s_codes})
+    m.update({c: m3(c) for c in s_codes})
 
 
 def reg_dx_icd9_chained_map(s_scheme, t_scheme):
@@ -1471,6 +1891,18 @@ load_maps.update({
     lambda: reg_pr_icd9_chained_map(PrICD10(), PrFlatCCS())
 })
 
+# CCS <-> CCS
+load_maps.update({
+    (DxCCS, DxFlatCCS):
+    lambda: reg_dx_icd9_chained_map(DxCCS(), DxFlatCCS()),
+    (DxFlatCCS, DxCCS):
+    lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxCCS()),
+    (PrCCS, PrFlatCCS):
+    lambda: reg_pr_icd9_chained_map(PrCCS(), PrFlatCCS()),
+    (PrFlatCCS, PrCCS):
+    lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrCCS())
+})
+
 # CPRD conversions
 # LTC9809 -> LTC212
 # Eth16 -> Eth5
@@ -1479,6 +1911,108 @@ load_maps.update({
     (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
     lambda: register_medcode_mapping(DxLTC9809FlatMedcodes(),
                                      DxLTC212FlatCodes()),
-    (EthCPRD16, EthCPRD5):
-    lambda: register_cprd_eth_mapping(EthCPRD16(), EthCPRD5())
+    (CPRDEthnicity16, CPRDEthnicity5):
+    lambda: register_cprd_eth_mapping(CPRDEthnicity16(), CPRDEthnicity5())
 })
+
+# MIMIC Inpatient conversions
+load_maps.update({
+    (MIMICProcedures, MIMICProcedureGroups):
+    lambda: register_mimic4proc_mapping(MIMICProcedures(),
+                                        MIMICProcedureGroups()),
+    (MIMICInput, MIMICInputGroups):
+    lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
+    (MIMIC4Eth32, MIMIC4Eth5):
+    lambda: register_mimic_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5()),
+    (MIMIC3Eth37, MIMIC3Eth7):
+    lambda: register_mimic_eth_mapping(MIMIC3Eth37(), MIMIC3Eth7())
+})
+
+_OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
+
+outcome_conf_files = {
+    'dx_cprd_ltc212': 'dx_cprd_ltc212_v1.json',
+    'dx_cprd_ltc9809': 'dx_cprd_ltc9809_v1.json',
+    'dx_flatccs_mlhc_groups': 'dx_flatccs_mlhc_groups.json',
+    'dx_flatccs_filter_v1': 'dx_flatccs_v1.json',
+    'dx_icd9_filter_v1': 'dx_icd9_v1.json',
+    'dx_icd9_filter_v2_groups': 'dx_icd9_v2_groups.json',
+    'dx_icd9_filter_v3_groups': 'dx_icd9_v3_groups.json'
+}
+
+
+class OutcomeExtractor(AbstractScheme):
+
+    def __init__(self, outcome_space='dx_flatccs_filter_v1'):
+        conf = self.conf_from_json(outcome_conf_files[outcome_space])
+
+        self._base_scheme = scheme_from_classname(conf['code_scheme'])
+        codes = [
+            c for c in sorted(self.base_scheme.index)
+            if c not in conf['exclude_codes']
+        ]
+
+        index = dict(zip(codes, range(len(codes))))
+        desc = {c: self.base_scheme.desc[c] for c in codes}
+        super().__init__(codes=codes,
+                         index=index,
+                         desc=desc,
+                         name=outcome_space)
+
+    @property
+    def base_scheme(self):
+        return self._base_scheme
+
+    @property
+    def outcome_dim(self):
+        return len(self.index)
+
+    def _map_codeset(self, codeset: Set[str], s_scheme: AbstractScheme):
+        m = s_scheme.mapper_to(self._base_scheme)
+        codeset = m.map_codeset(codeset)
+
+        if m.t_dag_space:
+            codeset &= set(m.t_scheme.dag2code)
+            codeset = set(m.t_scheme.dag2code[c] for c in codeset)
+
+        return codeset & set(self.codes)
+
+    def mapcodevector(self, codes: CodesVector):
+        vec = np.zeros(len(self.index), dtype=bool)
+        for c in self._map_codeset(codes.to_codeset(), codes.scheme):
+            vec[self.index[c]] = True
+        return CodesVector(np.array(vec), self)
+
+    @classmethod
+    def supported_outcomes(cls, base_scheme: AbstractScheme):
+        outcome_base = {
+            k: load_config(os.path.join(_OUTCOME_DIR, v))['code_scheme']
+            for k, v in outcome_conf_files.items()
+        }
+        return tuple(k for k, v in outcome_base.items()
+                     if v in base_scheme.supported_targets
+                     or v == base_scheme.__class__.__name__)
+
+    @staticmethod
+    def conf_from_json(json_file: str):
+        json_file = os.path.join(_OUTCOME_DIR, json_file)
+        conf = load_config(json_file)
+
+        if 'exclude_branches' in conf:
+            # TODO
+            return None
+        elif 'select_branches' in conf:
+            # TODO
+            return None
+        elif 'selected_codes' in conf:
+            t_scheme = scheme_from_classname(conf['code_scheme'])
+            conf['exclude_codes'] = [
+                c for c in t_scheme.codes if c not in conf['selected_codes']
+            ]
+            return conf
+        elif 'exclude_codes' in conf:
+            return conf
+
+
+def scheme_from_classname(classname):
+    return eval(classname)()

@@ -1,31 +1,31 @@
 {
     "base_dir": "$DATA_DIR/mimic3-cohort",
-    "code_colname": {
-        "dx": "ICD9_CODE",
-        "pr": "ICD9_CODE"
-    },
-    "adm_colname": {
-        "admittime": "ADMITTIME",
-        "dischtime": "DISCHTIME",
-        "subject_id": "SUBJECT_ID",
-        "admission_id": "HADM_ID"
-    },
-    "static_colname": {
-        "subject_id": "SUBJECT_ID",
-	"gender": "GENDER",
-	"date_of_birth": "DOB"
-    },
     "code_scheme": {
         "dx": "DxICD9",
-        "pr": "PrICD9"
+        "ethnicity": "MIMIC3Eth37",
+        "gender": "Gender"
+    },
+    "colname": {
+        "dx": {
+            "admission_id": "HADM_ID",
+            "code": "ICD9_CODE"
+        },
+        "adm": {
+            "admittime": "ADMITTIME",
+            "dischtime": "DISCHTIME",
+            "subject_id": "SUBJECT_ID",
+            "index": "HADM_ID"
+        },
+        "static": {
+            "index": "SUBJECT_ID",
+            "gender": "GENDER",
+            "ethnicity": "ETHNICITY",
+            "date_of_birth": "DOB"
+        }
     },
     "files": {
         "adm": "adm_df.csv.gz",
         "dx": "dx_df.csv.gz",
-        "pr": "pr_df.csv.gz",
-	"static": "static_df.csv.gz"
-    },
-    "name": "MIMIC-III",
-    "python_class": "MIMICDataset",
-    "version": "v1.4"
+        "static": "static_df.csv.gz"
+    }
 }

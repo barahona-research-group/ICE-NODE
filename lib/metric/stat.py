@@ -2,7 +2,7 @@
 
 from typing import Dict, Optional, List, Tuple, Any, Callable
 from dataclasses import dataclass, field
-from abc import ABC, abstractmethod, ABCMeta
+from abc import abstractmethod, ABCMeta
 
 from tqdm import tqdm
 from absl import logging
@@ -12,9 +12,10 @@ import jax
 import jax.numpy as jnp
 from sklearn import metrics
 
-from ..ehr import Subject_JAX, BatchPredictedRisks
+from ..ehr import Patients, Predictions
 from .delong import FastDeLongTest
-from . import loss as L
+from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
+                   colwise_numeric_loss)
 
 
 @jax.jit
@@ -72,7 +73,7 @@ def compute_auc(v_truth, v_preds):
 
 @dataclass
 class Metric(metaclass=ABCMeta):
-    subject_interface: Subject_JAX
+    patients: Patients
 
     @staticmethod
     def fields():
@@ -82,9 +83,8 @@ class Metric(metaclass=ABCMeta):
     def dirs():
         return tuple()
 
-    @classmethod
-    def field_dir(cls, field):
-        return dict(zip(cls.fields(), cls.dirs()))[field]
+    def field_dir(self, field):
+        return dict(zip(self.fields(), self.dirs()))[field]
 
     @classmethod
     def classname(cls):
@@ -97,17 +97,17 @@ class Metric(metaclass=ABCMeta):
         return tuple(map(self.column, self.fields()))
 
     @abstractmethod
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         pass
 
     def row(self, result: Dict[str, Any]) -> Tuple[float]:
         return tuple(map(result.get, self.fields()))
 
-    def to_dict(self, predictions: BatchPredictedRisks):
+    def to_dict(self, predictions: Predictions):
         result = self(predictions)
         return dict(zip(self.columns(), self.row(result)))
 
-    def to_df(self, index: int, predictions: BatchPredictedRisks):
+    def to_df(self, index: int, predictions: Predictions):
         return pd.DataFrame(self.to_dict(predictions), index=[index])
 
     def value_extractor(self, keys: Dict[str, str]):
@@ -118,6 +118,9 @@ class Metric(metaclass=ABCMeta):
     def from_df_functor(self, colname, direction):
 
         def from_df(df, index=-1):
+            if isinstance(df, Predictions):
+                df = self.to_df(index, df)
+
             if index == 'best':
                 if direction == 1:
                     return df[colname].argmax(), df[colname].max()
@@ -139,17 +142,13 @@ class VisitsAUC(Metric):
     def dirs():
         return (1, 1)
 
-    @classmethod
-    def field_dir(cls, field):
-        return dict(zip(cls.fields(), cls.dirs()))[field]
-
-    def __call__(self, predictions: BatchPredictedRisks) -> Tuple[float]:
+    def __call__(self, predictions: Predictions) -> Tuple[float]:
         gtruth = []
         preds = []
-        for subject_risks in predictions.values():
-            for risk in subject_risks.values():
-                gtruth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+        for patient_predictions in predictions.values():
+            for p in patient_predictions.values():
+                gtruth.append(p.admission.outcome.vec)
+                preds.append(p.outcome.vec)
 
         gtruth_vec = onp.hstack(gtruth)
         preds_vec = onp.hstack(preds)
@@ -167,29 +166,27 @@ class VisitsAUC(Metric):
 
 @dataclass
 class LossMetric(Metric):
-    loss_functions: Dict[str, Callable] = field(init=False)
+    dx_loss: Dict[str, Callable]
+    obs_loss: Dict[str, Callable]
 
-    def __post_init__(self):
-        self.loss_functions = {
-            'softmax': L.softmax_logits_bce,
-            'weighted_softmax': L.softmax_logits_weighted_bce,
-            'focal_softmax': L.softmax_logits_balanced_focal_bce,
-            'focal_bce': L.balanced_focal_bce
-        }
+    def __init__(self, patients, dx_loss=[], obs_loss=[]):
+        super().__init__(patients)
+        self.dx_loss = {name: binary_loss[name] for name in dx_loss}
+        self.obs_loss = {name: numeric_loss[name] for name in obs_loss}
 
     def fields(self):
-        return sorted(self.loss_functions.keys())
+        return sorted(self.dx_loss.keys()) + sorted(self.obs_loss.keys())
 
     def dirs(self):
-        return (0, ) * len(self.loss_functions)
+        return (0, ) * (len(self.dx_loss) + len(self.obs_loss))
 
-    def field_dir(self, field):
-        return 0
-
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         return {
-            loss_key: float(predictions.prediction_loss(loss_f))
-            for loss_key, loss_f in self.loss_functions.items()
+            loss_key: predictions.prediction_dx_loss(dx_loss=loss_f)
+            for loss_key, loss_f in self.dx_loss.items()
+        } | {
+            loss_key: predictions.prediction_obs_loss(obs_loss=loss_f)
+            for loss_key, loss_f in self.obs_loss.items()
         }
 
 
@@ -204,8 +201,9 @@ class CodeLevelMetric(Metric):
     aggregate_level: bool = field(default=True)
 
     def __post_init__(self):
-        self.code2index = self.subject_interface.outcome_extractor.index
-        self.index2code = {i: c for c, i in self.code2index.items()}
+        index = self.patients.scheme.outcome.index
+        self.code2index = index
+        self.index2code = {i: c for c, i in index.items()}
 
     @staticmethod
     def agg_fields():
@@ -268,8 +266,8 @@ class CodeLevelMetric(Metric):
         code_index = keys.get('code_index')
         code = keys.get('code')
         assert (code_index is None) != (
-            code is
-            None), "providing code and code_index are mutually exlusive"
+            code
+            is None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
         column = self.column(code_index, keys['field'])
         return self.from_df_functor(column, self.field_dir(keys['field']))
@@ -278,6 +276,14 @@ class CodeLevelMetric(Metric):
         agg = keys['aggregate']
         column = self.agg_column(agg, keys.get('field', self.fields()[0]))
         return self.from_df_functor(column, self.field_dir(keys['field']))
+
+
+class ObsCodeLevelMetric(CodeLevelMetric):
+
+    def __post_init__(self):
+        index = self.patients.scheme.obs.index
+        self.code2index = index
+        self.index2code = {i: c for c, i in index.items()}
 
 
 @dataclass
@@ -291,15 +297,15 @@ class CodeAUC(CodeLevelMetric):
     def dirs():
         return (1, 1)
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         ground_truth = []
         preds = []
 
         for subj_id, admission_risks in predictions.items():
             for admission_idx in sorted(admission_risks):
-                risk = admission_risks[admission_idx]
-                ground_truth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+                pred = admission_risks[admission_idx]
+                ground_truth.append(pred.admission.outcome.vec)
+                preds.append(pred.outcome.vec)
 
         ground_truth_mat = onp.vstack(ground_truth)
         predictions_mat = onp.vstack(preds)
@@ -315,24 +321,85 @@ class CodeAUC(CodeLevelMetric):
 
 
 @dataclass
+class CodeLevelLossMetric(CodeLevelMetric):
+    dx_loss: Tuple[str] = field(default_factory=list)
+    loss_functions: Dict[str, Callable] = field(init=False)
+
+    def __post_init__(self):
+        CodeLevelMetric.__post_init__(self)
+        self.loss_functions = {
+            name: colwise_binary_loss[name]
+            for name in self.dx_loss
+        }
+
+    def fields(self):
+        return sorted(self.loss_functions.keys())
+
+    def dirs(self):
+        return (0, ) * len(self.loss_functions)
+
+    def __call__(self, predictions: Predictions):
+        loss_vals = {
+            name: predictions.prediction_dx_loss(loss_f)
+            for name, loss_f in self.loss_functions.items()
+        }
+        loss_vals = {
+            name: dict(zip(range(len(v)), v))
+            for name, v in loss_vals.items()
+        }
+        return loss_vals
+
+
+@dataclass
+class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
+    obs_loss: Tuple[str] = field(default_factory=list)
+    loss_functions: Dict[str, Callable] = field(init=False)
+
+    def __post_init__(self):
+        ObsCodeLevelMetric.__post_init__(self)
+        self.loss_functions = {
+            name: colwise_numeric_loss[name]
+            for name in self.obs_loss
+        }
+
+    def fields(self):
+        return sorted(self.loss_functions.keys())
+
+    def dirs(self):
+        return (0, ) * len(self.loss_functions)
+
+    def __call__(self, predictions: Predictions):
+        loss_vals = {
+            name: predictions.prediction_obs_loss(loss_f)
+            for name, loss_f in self.loss_functions.items()
+        }
+        loss_vals = {
+            name: dict(zip(range(len(v)), v))
+            for name, v in loss_vals.items()
+        }
+        return loss_vals
+
+
+@dataclass
 class UntilFirstCodeAUC(CodeAUC):
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         ground_truth = []
         preds = []
         masks = []
 
-        for subj_id, admission_risks in predictions.items():
-            # first_occ is a vector of admission indices where the code at the corresponding
+        for subj_id, adms_predictions in predictions.items():
+            # first_occ is a vector of admission indices
+            # where the code at the corresponding
             # coordinate has first appeard for the patient. the index value of
             # (-1) means that the code will not appear at all for this patient.
-            first_occ = self.subject_interface.code_first_occurrence(subj_id)
+            first_occ = self.patients.outcome_first_occurrence(subj_id)
 
-            for admission_id in sorted(admission_risks):
+            for admission_id in sorted(adms_predictions):
                 mask = (admission_id <= first_occ)
-                risk = admission_risks[admission_id]
-                ground_truth.append(risk.get_outcome())
-                preds.append(risk.prediction)
+                pred = adms_predictions[admission_id]
+                ground_truth.append(pred.admission.outcome.vec)
+                preds.append(pred.outcome.vec)
                 masks.append(mask)
 
         ground_truth_mat = onp.vstack(ground_truth)
@@ -416,11 +483,11 @@ class AdmissionAUC(Metric):
         return tuple(cols)
 
     @classmethod
-    def ordered_subjects(cls, predictions):
+    def ordered_subjects(cls, predictions: Predictions):
         return sorted(predictions)
 
     @classmethod
-    def order(cls, predictions):
+    def order(cls, predictions: Predictions):
         for subject_id in cls.ordered_subjects(predictions):
             subject_predictions = predictions[subject_id]
             for admission_id in sorted(subject_predictions):
@@ -440,15 +507,15 @@ class AdmissionAUC(Metric):
 
         return sum(tuple(cols), tuple())
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         auc = {}
         for subject_id in sorted(predictions):
             subject_predictions = predictions[subject_id]
             subject_auc = {}
             for admission_id in sorted(subject_predictions):
-                prediction = subject_predictions[admission_id]
-                auc_score = compute_auc(prediction.get_outcome(),
-                                        prediction.prediction)
+                pred = subject_predictions[admission_id]
+                auc_score = compute_auc(pred.admission.outcome.vec,
+                                        pred.outcome.vec)
                 subject_auc[admission_id] = auc_score
             auc[subject_id] = subject_auc
         return {'auc': auc}
@@ -483,7 +550,7 @@ class AdmissionAUC(Metric):
             row.append(self.agg_row(result))
         return sum(tuple(row), tuple())
 
-    def to_dict(self, predictions: BatchPredictedRisks):
+    def to_dict(self, predictions: Predictions):
         order_gen = lambda: self.order(predictions)
         subject_order_gen = lambda: self.ordered_subjects(predictions)
         result = self(predictions)
@@ -513,9 +580,20 @@ class AdmissionAUC(Metric):
 
 @dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
-
     code_groups: List[List[int]]
     top_k_list: List[int]
+
+    def __init__(self,
+                 patients: Patients,
+                 train_split: List[int] = [],
+                 n_partitions=5,
+                 top_k_list=[1, 3, 5, 10, 15, 20]):
+        if len(train_split) == 0:
+            train_split = patients.dataset.subject_ids
+
+        self.code_groups = patients.outcome_frequency_partitions(
+            n_partitions, train_split)
+        self.top_k_list = top_k_list
 
     @staticmethod
     def fields():
@@ -537,7 +615,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def columns(self):
         return tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
-    def __call__(self, predictions: BatchPredictedRisks):
+    def __call__(self, predictions: Predictions):
         top_k_list = sorted(self.top_k_list)
 
         ground_truth = []
@@ -545,8 +623,8 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
         for subject_risks in predictions.values():
             for pred in subject_risks.values():
-                preds.append(pred.prediction)
-                ground_truth.append(pred.get_outcome())
+                preds.append(pred.outcome.vec)
+                ground_truth.append(pred.admission.outcome.vec)
 
         preds = onp.vstack(preds)
         ground_truth = onp.vstack(ground_truth).astype(bool)
@@ -608,12 +686,12 @@ class OtherMetrics(Metric):
 
 @dataclass
 class MetricsCollection:
-    metrics: List[Metric]
+    metrics: List[Metric] = field(default_factory=list)
     other_metrics: OtherMetrics = OtherMetrics()
 
     def to_df(self,
               iteration: int,
-              predictions: BatchPredictedRisks,
+              predictions: Predictions,
               other_estimated_metrics: Dict[str, float] = None):
 
         dfs = [m.to_df(iteration, predictions) for m in self.metrics]
@@ -626,6 +704,7 @@ class MetricsCollection:
 
 @dataclass
 class DeLongTest(CodeLevelMetric):
+    masking: str = 'all'
 
     # def __post_init__(self, *args, **kwargs):
     #     super().__init__(*args, **kwargs)
@@ -677,8 +756,8 @@ class DeLongTest(CodeLevelMetric):
             as {'pairs': (model1, model2), ....}.
         """
         assert (code_index is None) != (
-            code is
-            None), "providing code and code_index are mutually exlusive"
+            code
+            is None), "providing code and code_index are mutually exlusive"
         code_index = self.code2index[code] if code is not None else code_index
 
         if field in self.fields()['model']:
@@ -690,6 +769,8 @@ class DeLongTest(CodeLevelMetric):
                 sorted(kw['pair'])), field)
 
         def from_df(df, **kw):
+            if isinstance(df, dict):
+                df = self.to_df(df)
             return df.loc[code_index, column_gen(kw)]
 
         return from_df
@@ -730,7 +811,7 @@ class DeLongTest(CodeLevelMetric):
                     tuple()))
         return rows
 
-    def to_df(self, predictions: Dict[str, BatchPredictedRisks]):
+    def to_df(self, predictions: Dict[str, Predictions]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -739,7 +820,7 @@ class DeLongTest(CodeLevelMetric):
             df.loc[idx] = row
         return df
 
-    def to_dict(self, predictions: Dict[str, BatchPredictedRisks]):
+    def to_dict(self, predictions: Dict[str, Predictions]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -779,15 +860,24 @@ class DeLongTest(CodeLevelMetric):
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
     @classmethod
-    def _extract_subjects(cls, predictions: Dict[str, BatchPredictedRisks]):
-        subject_sets = [preds.get_subjects() for preds in predictions.values()]
+    def _extract_subjects(cls, predictions: Dict[str, Predictions]):
+        subject_sets = [preds.subject_ids for preds in predictions.values()]
         for s1, s2 in zip(subject_sets[:-1], subject_sets[1:]):
             assert set(s1) == set(s2), "Subjects mismatch across model outputs"
         return list(sorted(subject_sets[0]))
 
-    @classmethod
-    def _extract_grountruth_vs_predictions(cls, predictions):
-        subjects = cls._extract_subjects(predictions)
+    def _extract_grountruth_vs_predictions(self, predictions):
+
+        def masks(subj_id):
+            adms = self.patients.subjects[subj_id].admissions
+            if self.masking == 'all':
+                return self.patients.outcome_all_masks(subj_id)
+            elif self.masking == 'first':
+                return self.patients.outcome_first_occurrence_masks(subj_id)
+            else:
+                raise ValueError(f"Unknown masking type {self.masking}")
+
+        subjects = self._extract_subjects(predictions)
         true_mat = {}
         pred_mat = {}
         mask_mat = {}
@@ -796,12 +886,15 @@ class DeLongTest(CodeLevelMetric):
             clf_pred = []
             clf_mask = []
             for subject_id in subjects:
-                subj_preds = clf_preds[subject_id]
-                for adm_index in sorted(subj_preds):
-                    pred = subj_preds[adm_index]
-                    clf_true.append(pred.get_outcome())
-                    clf_mask.append(pred.get_mask())
-                    clf_pred.append(pred.prediction)
+                subj_preds = [
+                    clf_preds[subject_id][aid]
+                    for aid in sorted(clf_preds[subject_id])
+                ]
+                subj_masks = masks(subject_id)
+                for pred, mask in zip(subj_preds, subj_masks):
+                    clf_true.append(pred.admission.outcome.vec)
+                    clf_mask.append(mask)
+                    clf_pred.append(pred.outcome.vec)
 
             true_mat[clf_label] = onp.vstack(clf_true)
             pred_mat[clf_label] = onp.vstack(clf_pred)
@@ -815,12 +908,14 @@ class DeLongTest(CodeLevelMetric):
 
         return tm0, mask, pred_mat
 
-    def __call__(self, predictions: Dict[str, BatchPredictedRisks]):
+    def __call__(self, predictions: Dict[str, Predictions]):
         """
-        Evaluate the AUC scores for each diagnosis code for each classifier. In addition,
-        conduct a pairwise test on the difference of AUC scores between each
-        pair of classifiers using DeLong test. Codes that have either less than two positive cases or
-        have less than two negative cases are discarded (AUC computation and difference test requirements).
+        Evaluate the AUC scores for each diagnosis code for each classifier. \
+            In addition, conduct a pairwise test on the difference of AUC \
+            scores between each pair of classifiers using DeLong test. \
+            Codes that have either less than two positive cases or \
+            have less than two negative cases are discarded \
+            (AUC computation and difference test requirements).
         """
         # Classifier labels
         clf_labels = list(sorted(predictions.keys()))
@@ -843,8 +938,8 @@ class DeLongTest(CodeLevelMetric):
             invalid_test = _n_pos < 2 or n_neg < 2
 
             # Since we iterate on pairs, some AUC are computed more than once.
-            # Update this dictionary for each AUC computed, then append the results
-            # to the big list of auc.
+            # Update this dictionary for each AUC computed,
+            # then append the results to the big list of auc.
             code_auc = {}
             code_auc_var = {}
             code_p_val = {}

@@ -3,16 +3,16 @@
         "dx": {
            "decoder_n_layers": 2,
            "classname":  "MatrixEmbeddings",      
-           "embeddings_size": 300
+           "embeddings_size": 50
         }
     },
     "model": {
-        "state_size": 250
+        "state_size": 30
     },
     "training": {
-        "batch_size": 17,
+        "batch_size": 16,
         "decay_rate": null,
-        "epochs": 60,
+        "epochs": 120,
         "reg_hyperparams": {
             "L_l1": 0,
             "L_l2": 0

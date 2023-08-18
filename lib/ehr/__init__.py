@@ -1,7 +1,10 @@
-from .dataset import (load_dataset, AbstractEHRDataset, MIMIC3EHRDataset,
-                      MIMIC4EHRDataset, CPRDEHRDataset)
-from .concept import Subject, Admission, StaticInfoFlags
-from .jax_interface import (Subject_JAX, Admission_JAX, BatchPredictedRisks)
-from .coding_scheme import AbstractScheme
-from .outcome import (OutcomeExtractor, outcome_conf_files,
-                      SurvivalOutcomeExtractor)
+from .dataset import (load_dataset, load_dataset_scheme, Dataset,
+                      DatasetScheme, MIMIC3Dataset, MIMIC4Dataset, CPRDDataset,
+                      MIMIC4ICUDataset)
+from .coding_scheme import (AbstractScheme, OutcomeExtractor, Gender,
+                            Ethnicity)
+from .concepts import (Admission, Patient, InpatientObservables,
+                       InpatientInterventions, AggregateRepresentation,
+                       StaticInfo, InpatientInput, CodesVector,
+                       DemographicVectorConfig)
+from .interface import (AdmissionPrediction, Predictions, Patients)
