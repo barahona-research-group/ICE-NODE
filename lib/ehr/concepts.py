@@ -393,13 +393,13 @@ class Admission(eqx.Module):
 
 
 class DemographicVectorConfig(eqx.Module):
-    gender: bool
-    age: bool
-    ethnicity: bool
+    gender: bool = False
+    age: bool = False
+    ethnicity: bool = False
 
 
 class CPRDDemographicVectorConfig(DemographicVectorConfig):
-    imd: bool
+    imd: bool = False
 
 
 class StaticInfo(eqx.Module):
@@ -419,7 +419,11 @@ class StaticInfo(eqx.Module):
             assert self.ethnicity is not None, \
                 "Ethnicity is not extracted from the dataset"
             attrs_vec.append(self.ethnicity.vec)
-        self.constant_vec = np.hstack(attrs_vec)
+
+        if len(attrs_vec) == 0:
+            self.constant_vec = np.array([], dtype=jnp.float16)
+        else:
+            self.constant_vec = np.hstack(attrs_vec)
 
     def age(self, current_date: date):
         return (current_date - self.date_of_birth).days / 365.25
@@ -452,7 +456,10 @@ class CPRDStaticInfo(StaticInfo):
                 "IMD is not extracted from the dataset"
             attrs_vec.append(self.imd.vec)
 
-        self.constant_vec = np.hstack(attrs_vec)
+        if len(attrs_vec) == 0:
+            self.constant_vec = np.array([], dtype=jnp.float16)
+        else:
+            self.constant_vec = np.hstack(attrs_vec)
 
 
 

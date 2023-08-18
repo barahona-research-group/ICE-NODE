@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import (Any, Dict, List, Callable, Optional)
+from typing import (Any, Dict, List, Callable, Optional, Tuple)
 from abc import abstractmethod
 import jax
 import jax.numpy as jnp
@@ -51,27 +51,30 @@ class PatientEmbedding(eqx.Module):
     f_dem_emb: Callable
 
     def __init__(self, dims: OutpatientEmbeddingDimensions,
-                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
+                 schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
         super().__init__()
         (dx_emb_key, dem_emb_key) = jrandom.split(key, 2)
 
-        self.f_dx_emb = eqx.nn.MLP(len(target_scheme.dx_target),
+        self.f_dx_emb = eqx.nn.MLP(len(schemes[1].dx),
                                    dims.dx,
                                    width_size=dims.dx * 5,
                                    depth=1,
                                    final_activation=jnp.tanh,
                                    key=dx_emb_key)
 
-        demo_input_size = target_scheme.demographic_vector_size(
+        demo_input_size = schemes[1].demographic_vector_size(
             demographic_vector_config)
-        self.f_dem_emb = eqx.nn.MLP(demo_input_size,
-                                    dims.demo,
-                                    dims.demo * 5,
-                                    depth=1,
-                                    final_activation=jnp.tanh,
-                                    key=dem_emb_key)
+        if demo_input_size > 0:
+            self.f_dem_emb = eqx.nn.MLP(demo_input_size,
+                                        dims.demo,
+                                        dims.demo * 5,
+                                        depth=1,
+                                        final_activation=jnp.tanh,
+                                        key=dem_emb_key)
+        else:
+            self.f_dem_emb = lambda x: jnp.array([], dtype=jnp.float16)
 
     @abstractmethod
     def embed_admission(self, static_info: StaticInfo,
@@ -121,26 +124,29 @@ class InpatientEmbedding(PatientEmbedding):
     f_int_emb: Callable
 
     def __init__(self, dims: InpatientEmbeddingDimensions,
-                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
+                 schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
         (super_key, inp_agg_key, inp_emb_key, proc_emb_key,
          int_emb_key) = jrandom.split(key, 5)
+
+        if schemes[1].demographic_vector_size(demographic_vector_config) == 0:
+            dims = eqx.tree_at(lambda d: d.demo, dims, 0)
+
         super().__init__(dims=dims,
-                         source_scheme=source_scheme,
-                         target_scheme=target_scheme,
+                         schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          key=super_key)
-        self.f_inp_agg = AggregateRepresentation(source_scheme.int_input,
-                                                 target_scheme.int_input,
+        self.f_inp_agg = AggregateRepresentation(schemes[0].int_input,
+                                                 schemes[1].int_input,
                                                  inp_agg_key, 'jax')
-        self.f_inp_emb = eqx.nn.MLP(len(target_scheme.int_input),
+        self.f_inp_emb = eqx.nn.MLP(len(schemes[1].int_input),
                                     dims.inp,
                                     dims.inp * 5,
                                     final_activation=jnp.tanh,
                                     depth=1,
                                     key=inp_emb_key)
-        self.f_proc_emb = eqx.nn.MLP(len(target_scheme.int_proc),
+        self.f_proc_emb = eqx.nn.MLP(len(schemes[1].int_proc),
                                      dims.proc,
                                      dims.proc * 5,
                                      final_activation=jnp.tanh,

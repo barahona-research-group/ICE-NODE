@@ -138,6 +138,10 @@ class Patients(eqx.Module):
         self.demographic_vector_config = demographic_vector_config
         self.subjects = subjects
 
+    @property
+    def schemes(self):
+        return (self.dataset.scheme, self.scheme)
+
     def random_splits(self,
                       splits: List[float],
                       random_seed: int = 42,
@@ -214,7 +218,8 @@ class Patients(eqx.Module):
         return Patients(
             dataset=self.dataset,
             demographic_vector_config=self.demographic_vector_config,
-            subjects=subjects)
+            subjects=subjects,
+            target_scheme=self.scheme)
 
     def batch_gen(self,
                   subject_ids,

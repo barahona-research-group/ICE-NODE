@@ -1,6 +1,6 @@
 """."""
 from __future__ import annotations
-from typing import Callable
+from typing import Callable, Tuple
 import jax
 import jax.numpy as jnp
 import jax.nn as jnn
@@ -9,8 +9,7 @@ import equinox as eqx
 
 from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   DatasetScheme, DemographicVectorConfig,
-                   CodesVector)
+                   DatasetScheme, DemographicVectorConfig, CodesVector)
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
                          EmbeddedInAdmission)
 
@@ -20,14 +19,12 @@ from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 
 class InICENODEDimensions(ModelDimensions):
     mem: int = 15
-    dx: int = 30
     obs: int = 25
 
     def __init__(self, emb: InpatientEmbeddingDimensions, mem: int, obs: int):
         super().__init__(emb=emb)
         self.emb = emb
         self.mem = mem
-        self.dx = emb.dx
         self.obs = obs
 
 
@@ -46,34 +43,34 @@ class InICENODE(InpatientModel):
     f_dyn: Callable
     f_update: Callable
 
-    scheme: DatasetScheme = eqx.static_field()
+    schemes: Tuple[DatasetScheme] = eqx.static_field()
     dims: InICENODEDimensions = eqx.static_field()
     demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 
     def __init__(self, dims: InICENODEDimensions,
-                 source_scheme: DatasetScheme, target_scheme: DatasetScheme,
+                 schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
+        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 5)
         f_emb = InpatientEmbedding(
-            source_scheme=source_scheme,
-            target_scheme=target_scheme,
+            schemes=schemes,
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=emb_key)
-        f_dx_dec = eqx.nn.MLP(dims.dx,
-                              len(target_scheme.outcome),
-                              dims.dx * 5,
+        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+                              len(schemes[1].outcome),
+                              dims.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
         self.f_obs_dec = eqx.nn.MLP(dims.obs,
-                                    len(target_scheme.obs),
+                                    len(schemes[1].obs),
                                     dims.obs * 5,
                                     depth=1,
                                     key=obs_dec_key)
-        dyn_state_size = dims.obs + dims.dx + dims.mem
+        dyn_state_size = dims.obs + dims.emb.dx + dims.mem
         dyn_input_size = dyn_state_size + dims.emb.inp_proc_demo
 
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
@@ -85,12 +82,11 @@ class InICENODE(InpatientModel):
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
         self.f_update = ObsStateUpdate(dyn_state_size,
-                                       len(target_scheme.obs),
+                                       len(schemes[1].obs),
                                        key=update_key)
 
         super().__init__(dims=dims,
-                         source_scheme=source_scheme,
-                         target_scheme=target_scheme,
+                         schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
@@ -145,8 +141,9 @@ class InICENODE(InpatientModel):
 
         return state, InpatientObservables(obs.time, pred_obs_val, obs.mask)
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: EmbeddedInAdmission) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: EmbeddedInAdmission) -> AdmissionPrediction:
         state = self.join_state(None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo
         obs = admission.observables

@@ -1,7 +1,7 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Callable, Union
+from typing import List, TYPE_CHECKING, Callable, Union, Tuple
 from abc import abstractmethod, ABCMeta
 import zipfile
 import jax.numpy as jnp
@@ -9,8 +9,8 @@ import jax.tree_util as jtu
 import equinox as eqx
 
 from ..utils import tqdm_constructor, translate_path
-from ..ehr import (Patients, Patient, DemographicVectorConfig,
-                   DatasetScheme, Predictions, Admission)
+from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
+                   Predictions, Admission)
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
                          EmbeddedAdmission)
 
@@ -26,10 +26,20 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     f_emb: PatientEmbedding
     f_dx_dec: Callable
 
-    source_scheme: DatasetScheme = eqx.static_field()
-    target_scheme: DatasetScheme = eqx.static_field()
+    schemes: Tuple[DatasetScheme] = eqx.static_field()
     dims: ModelDimensions = eqx.static_field()
     demographic_vector_config: DemographicVectorConfig = eqx.static_field()
+
+    @classmethod
+    def _assert_demo_dim(cls, dims: ModelDimensions, scheme: DatasetScheme,
+                        demographic_vector_config: DemographicVectorConfig):
+        demo_vec_dim = scheme.demographic_vector_size(
+            demographic_vector_config)
+        assert ((demo_vec_dim == 0 and dims.emb.demo == 0) or
+                (demo_vec_dim > 0 and dims.emb.demo > 0)), \
+            f"Model dimensionality for demographic embedding size "\
+            f"({dims.emb.demo}) and input demographic vector size "\
+            f"({demo_vec_dim}) must both be zero or non-zero."
 
     @abstractmethod
     def __call__(self, x: Union[Patient, Admission],

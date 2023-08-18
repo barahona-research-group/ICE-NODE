@@ -1,6 +1,6 @@
 """."""
 from __future__ import annotations
-from typing import List, Callable
+from typing import List, Callable, Tuple
 
 from absl import logging
 import jax
@@ -32,19 +32,19 @@ class ICENODE(OutpatientModel):
     f_update: Callable
     dims: ICENODEDimensions = eqx.static_field()
 
-    def __init__(self, dims: ICENODEDimensions, source_scheme: DatasetScheme,
-                 target_scheme: DatasetScheme,
+    def __init__(self, dims: ICENODEDimensions, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
+        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
         (emb_key, dx_dec_key, dyn_key, up_key) = jrandom.split(key, 4)
+
         f_emb = OutpatientEmbedding(
-            source_scheme=source_scheme,
-            target_scheme=target_scheme,
+            schemes=schemes,
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=emb_key)
         f_dx_dec = eqx.nn.MLP(dims.emb.dx,
-                              len(target_scheme.outcome),
+                              len(schemes[1].outcome),
                               dims.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
@@ -66,8 +66,7 @@ class ICENODE(OutpatientModel):
                                     key=up_key)
 
         super().__init__(dims=dims,
-                         source_scheme=source_scheme,
-                         target_scheme=target_scheme,
+                         schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
@@ -158,19 +157,18 @@ class GRU(OutpatientModel):
     f_update: Callable
     dims: GRUDimensions = eqx.static_field()
 
-    def __init__(self, dims: GRUDimensions, source_scheme: DatasetScheme,
-                 target_scheme: DatasetScheme,
+    def __init__(self, dims: GRUDimensions, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
+        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
         (emb_key, dx_dec_key, up_key) = jrandom.split(key, 3)
         f_emb = OutpatientEmbedding(
-            source_scheme=source_scheme,
-            target_scheme=target_scheme,
+            schemes=schemes,
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=emb_key)
         f_dx_dec = eqx.nn.MLP(dims.emb.dx,
-                              len(target_scheme.outcome),
+                              len(schemes[1].outcome),
                               dims.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
@@ -181,8 +179,7 @@ class GRU(OutpatientModel):
                                        key=up_key)
 
         super().__init__(dims=dims,
-                         source_scheme=source_scheme,
-                         target_scheme=target_scheme,
+                         schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
@@ -237,20 +234,19 @@ class RETAIN(OutpatientModel):
     f_att_b: Callable
     dims: RETAINDimensions = eqx.static_field()
 
-    def __init__(self, dims: RETAINDimensions, source_scheme: DatasetScheme,
-                 target_scheme: DatasetScheme,
+    def __init__(self, dims: RETAINDimensions, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
+        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
         k1, k2, k3, k4, k5, k6 = jrandom.split(key, 6)
 
         f_emb = OutpatientEmbedding(
-            source_scheme=source_scheme,
-            target_scheme=target_scheme,
+            schemes=schemes,
             demographic_vector_config=demographic_vector_config,
             dims=dims.emb,
             key=k1)
         f_dx_dec = eqx.nn.MLP(dims.emb.dx,
-                              len(scheme.outcome),
+                              len(schemes[1].outcome),
                               dims.emb.dx * 5,
                               depth=1,
                               key=k2)
@@ -270,8 +266,7 @@ class RETAIN(OutpatientModel):
                                      key=k6)
 
         super().__init__(dims=dims,
-                         source_scheme=source_scheme,
-                         target_scheme=target_scheme,
+                         schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
