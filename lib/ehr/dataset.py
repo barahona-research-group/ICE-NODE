@@ -487,7 +487,6 @@ class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
         return t_scheme
 
 
-
 class MIMIC3Dataset(Dataset):
     df: Dict[str, dd.DataFrame]
     scheme: DatasetScheme
@@ -1717,6 +1716,9 @@ def load_dataset_scheme(label):
     if label == 'M3':
         conf = load_config(f'{_META_DIR}/mimic3_meta.json')
         return DatasetScheme(**conf['code_scheme'])
+    if label == 'M3CV':
+        conf = load_config(f'{_META_DIR}/mimic3cv_meta.json')
+        return DatasetScheme(**conf['code_scheme'])
     if label == 'M4':
         conf = load_config(f'{_META_DIR}/mimic4_meta.json')
         return MIMIC4DatasetScheme(**conf['code_scheme'])
@@ -1733,6 +1735,10 @@ def load_dataset(label, **init_kwargs):
     if label == 'M3':
         return MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json',
                                             **init_kwargs)
+    if label == 'M3CV':
+        return MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3cv_meta.json',
+                                            **init_kwargs)
+
     if label == 'M4':
         return MIMIC4Dataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
                                             **init_kwargs)
