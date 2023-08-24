@@ -572,11 +572,8 @@ class Trainer(eqx.Module):
                 'TrainerReporting must support continue_training. '
                 'Make sure to include a ParamsDiskWriter '
                 'in the reporters list.')
-            assert warmup_config is None, (
-                'warmup_config cannot be provided when '
-                'continue_training is True')
 
-        if warmup_config is not None:
+        if not continue_training and warmup_config is not None:
             logging.info('Warming up...')
             model = self._warmup(model=model,
                                  patients=patients,
@@ -771,5 +768,5 @@ class InTrainer(Trainer):
         preds = model.batch_predict(patients, leave_pbar=False)
         dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
         obs_loss = preds.prediction_obs_loss(obs_loss=self.obs_loss)
-        loss = dx_loss + obs_loss
+        loss = dx_loss + 5e0 * obs_loss
         return loss
