@@ -4,6 +4,7 @@ from datetime import datetime
 
 import os
 import re
+import random
 import contextlib
 from pathlib import Path
 import pickle
@@ -644,7 +645,7 @@ class Trainer(eqx.Module):
         iters = round(self.epochs * n_train_admissions / batch_size)
         optimizer = Optimizer(self.optimizer_config, iters=iters, model=model)
         key = jrandom.PRNGKey(prng_seed)
-
+        pyrng = random.Random(prng_seed)
         eval_steps = sorted(set(
             np.linspace(0, iters - 1, n_evals).astype(int)))
 
@@ -667,10 +668,9 @@ class Trainer(eqx.Module):
         val_batch = patients.device_batch(valid_ids)
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=True, unit='Epoch'):
-            (key, ) = jrandom.split(key, 1)
-            train_ids = jrandom.permutation(key, jnp.array(train_ids))
+            pyrng.shuffle(train_ids)
             batch_gen = patients.batch_gen(
-                train_ids.tolist(),
+                train_ids,
                 batch_n_admissions=batch_size,
                 ignore_first_admission=model.counts_ignore_first_admission)
             n_batches = n_train_admissions // batch_size
