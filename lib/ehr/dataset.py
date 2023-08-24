@@ -990,6 +990,7 @@ class CPRDDataset(MIMIC3Dataset):
         demo_tups = []
         admission_id = 0
         for subject_id, _subj_df in df.groupby(colname.subject_id):
+            subject_id = int(subject_id)
             assert len(_subj_df) == 1, "Each patient should have a single row"
             subject = _subj_df.iloc[0].to_dict()
             codes = listify(subject[colname.code])
