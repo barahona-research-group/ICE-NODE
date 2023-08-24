@@ -193,7 +193,6 @@ class OutpatientModel(AbstractModel):
                       inpatients: Patients,
                       leave_pbar: bool = False) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
-
         inpatients_emb = {
             i: self.f_emb(subject)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
@@ -201,7 +200,6 @@ class OutpatientModel(AbstractModel):
                                                unit='subject',
                                                leave=leave_pbar)
         }
-
         r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
         bar_format = '{l_bar}{bar}' + r_bar
         with tqdm_constructor(total=total_int_days,
