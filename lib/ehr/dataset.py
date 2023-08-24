@@ -348,7 +348,7 @@ class Dataset(eqx.Module):
                 col for col in dtype if dtype[col] == 'datetime64[ns]'
             ]
 
-            _dtypes = {}
+            _dtypes = dtype.copy()
             for col in dtype:
                 if col in f16_cols:
                     _dtypes[col] = np.float32
