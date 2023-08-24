@@ -234,7 +234,7 @@ class Patients(eqx.Module):
             n_splits = 1
         p_splits = np.linspace(0, 1, n_splits + 1)[1:-1]
 
-        subject_ids = np.array(subject_ids)
+        subject_ids = np.array(subject_ids, np.int64)
 
         c_subject_id = self.dataset.colname['adm'].subject_id
         adm_df = self.dataset.df['adm']
