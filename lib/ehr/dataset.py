@@ -920,6 +920,7 @@ class MIMIC3Dataset(Dataset):
 
         df = self.df["dx"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
+
         codes_df = {
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
@@ -1033,16 +1034,16 @@ class CPRDDataset(MIMIC3Dataset):
                 (subject_id, date_of_birth, gender, imd, ethnicity))
             # codes aggregated by year-month.
             dx_codes_ym_agg = defaultdict(set)
+
             for code, ym in zip(codes, year_month):
                 ym = pd.to_datetime(ym).normalize()
                 dx_codes_ym_agg[ym].add(code)
-
             for disch_date in sorted(dx_codes_ym_agg.keys()):
                 admit_date = disch_date + pd.DateOffset(days=-1)
                 adm_tups.append(
                     (subject_id, admission_id, admit_date, disch_date))
 
-                dx_codes = dx_codes_ym_agg[admit_date]
+                dx_codes = dx_codes_ym_agg[disch_date]
                 dx_tups.extend([(admission_id, dx_code)
                                 for dx_code in dx_codes])
                 admission_id += 1
@@ -1051,6 +1052,7 @@ class CPRDDataset(MIMIC3Dataset):
         dx_keys = ('admission_id', 'code')
         demo_keys = ('subject_id', 'date_of_birth', 'gender', 'imd_decile',
                      'ethnicity')
+
         adm_cols = ColumnNames.make(
             {k: colname._asdict().get(k, k)
              for k in adm_keys})
@@ -1065,15 +1067,23 @@ class CPRDDataset(MIMIC3Dataset):
 
         adm_df = pd.DataFrame(adm_tups,
                               columns=list(
-                                  map(adm_cols._asdict().get,
-                                      adm_keys))).set_index(adm_cols.index)
+                                  map(adm_cols._asdict().get, adm_keys)))
+        adm_df = adm_df.astype({
+            adm_cols.admission_id: int,
+            adm_cols.subject_id: int
+        }).set_index(adm_cols.index)
 
         dx_df = pd.DataFrame(dx_tups,
                              columns=list(map(dx_cols._asdict().get, dx_keys)))
+        dx_df = dx_df.astype({dx_cols.admission_id: int})
+
         demo_df = pd.DataFrame(demo_tups,
                                columns=list(
-                                   map(demo_cols._asdict().get,
-                                       demo_keys))).set_index(demo_cols.index)
+                                   map(demo_cols._asdict().get, demo_keys)))
+        demo_df = demo_df.astype({
+            demo_cols.subject_id: int
+        }).set_index(demo_cols.index)
+
         df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
         colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
         return df, colname
