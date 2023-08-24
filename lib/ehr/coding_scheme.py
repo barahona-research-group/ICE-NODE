@@ -1563,7 +1563,7 @@ class CPRDGender(Singleton, SchemeWithMissing):
 class CPRDIMDCategorical(Singleton, SchemeWithMissing):
 
     def __init__(self):
-        codes = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '99']
+        codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '99']
         index = dict(zip(codes, range(len(codes))))
         index['99'] = -1
         desc = index.copy()

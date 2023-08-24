@@ -265,6 +265,8 @@ class Dataset(eqx.Module):
     scheme: DatasetScheme
     colname: ColumnNames
 
+    static_info_class: ClassVar[Type[StaticInfo]] = StaticInfo
+
     @property
     def supported_target_scheme_options(self):
         return self.scheme.supported_target_scheme_options
@@ -627,7 +629,7 @@ class MIMIC3Dataset(Dataset):
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids,
                                     key=lambda aid: adm_dates[aid][0])
-            static_info = StaticInfo(
+            static_info = self.static_info_class(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
                 ethnicity=subject_eth[subject_id],
@@ -963,6 +965,7 @@ class MIMIC3Dataset(Dataset):
 
 
 class CPRDDataset(MIMIC3Dataset):
+    static_info_class: ClassVar[Type[StaticInfo]] = CPRDStaticInfo
 
     @classmethod
     def make_dataset_scheme(cls, **kwargs):
@@ -978,6 +981,29 @@ class CPRDDataset(MIMIC3Dataset):
         colname = copy.deepcopy(colname)
         Dataset.__init__(self, df=df, colname=colname, scheme=scheme)
         self._match_admissions_with_demographics(self.df, colname)
+
+    def subject_info_extractor(self, subject_ids, target_scheme):
+
+        static_df = self.df['static']
+        c_gender = self.colname["static"].gender
+        c_eth = self.colname["static"].ethnicity
+        c_imd = self.colname["static"].imd_decile
+        c_dob = self.colname["static"].date_of_birth
+
+        static_df = static_df.loc[subject_ids]
+        gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
+        subject_gender = gender.to_dict()
+
+        subject_dob = static_df[c_dob].dt.normalize().to_dict()
+        subject_eth = dict()
+        eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
+        eth_map = lambda eth: eth_mapper.codeset2vec(
+            eth_mapper.map_codeset(eth))
+        subject_eth = static_df[c_eth].map(eth_map).to_dict()
+
+        subject_imd = static_df[c_imd].map(
+            self.scheme.imd.codeset2vec).to_dict()
+        return subject_dob, subject_gender, subject_eth, subject_imd
 
     @classmethod
     def load_dataframes(cls, df, colname, **kwargs):
@@ -1051,6 +1077,62 @@ class CPRDDataset(MIMIC3Dataset):
         df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
         colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
         return df, colname
+
+    def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
+                    target_scheme: DatasetScheme):
+
+        (subject_dob, subject_gender, subject_eth,
+         subject_imd) = self.subject_info_extractor(subject_ids, target_scheme)
+        admission_ids = self.adm_extractor(subject_ids)
+        adm_ids_list = sum(map(list, admission_ids.values()), [])
+        logging.debug('Extracting dx codes...')
+        dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
+        logging.debug('[DONE] Extracting dx codes')
+        logging.debug('Extracting dx codes history...')
+        dx_codes_history = dict(
+            self.dx_codes_history_extractor(dx_codes, admission_ids,
+                                            target_scheme))
+        logging.debug('[DONE] Extracting dx codes history')
+        logging.debug('Extracting outcome...')
+        outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
+        logging.debug('[DONE] Extracting outcome')
+
+        logging.debug('Compiling admissions...')
+        c_admittime = self.colname['adm'].admittime
+        c_dischtime = self.colname['adm'].dischtime
+        adf = self.df['adm']
+        adm_dates = dict(
+            zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
+
+        def gen_admission(i):
+            return Admission(admission_id=i,
+                             admission_dates=adm_dates[i],
+                             dx_codes=dx_codes[i],
+                             dx_codes_history=dx_codes_history[i],
+                             outcome=outcome[i],
+                             observables=None,
+                             interventions=None)
+
+        def _gen_subject(subject_id):
+
+            _admission_ids = admission_ids[subject_id]
+            # for subject_id, subject_admission_ids in admission_ids.items():
+            _admission_ids = sorted(_admission_ids,
+                                    key=lambda aid: adm_dates[aid][0])
+            static_info = self.static_info_class(
+                date_of_birth=subject_dob[subject_id],
+                gender=subject_gender[subject_id],
+                ethnicity=subject_eth[subject_id],
+                imd=subject_imd[subject_id],
+                demographic_vector_config=demographic_vector_config)
+
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                admissions = list(executor.map(gen_admission, _admission_ids))
+            return Patient(subject_id=subject_id,
+                           admissions=admissions,
+                           static_info=static_info)
+
+        return list(map(_gen_subject, subject_ids))
 
     @classmethod
     def from_meta_json(cls, meta_fpath, **init_kwargs):
@@ -1490,7 +1572,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             _admission_ids = sorted(_admission_ids,
                                     key=lambda aid: adm_dates[aid][0])
 
-            static_info = StaticInfo(
+            static_info = self.static_info_class(
                 date_of_birth=subject_dob[subject_id],
                 gender=subject_gender[subject_id],
                 ethnicity=subject_eth[subject_id],

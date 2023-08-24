@@ -1,0 +1,31 @@
+{
+    "base_dir": "$DATA_DIR/mimic3cv-cohort",
+    "code_scheme": {
+        "dx": "DxICD9",
+        "ethnicity": "MIMIC3Eth37",
+        "gender": "Gender"
+    },
+    "colname": {
+        "dx": {
+            "admission_id": "hadm_id",
+            "code": "icd9_code"
+        },
+        "adm": {
+            "admittime": "admittime",
+            "dischtime": "dischtime",
+            "subject_id": "subject_id",
+            "index": "hadm_id"
+        },
+        "static": {
+            "index": "subject_id",
+            "gender": "gender",
+            "ethnicity": "ethnicity",
+            "date_of_birth": "dob"
+        }
+    },
+    "files": {
+        "adm": "adm_df.csv.gz",
+        "dx": "dx_df.csv.gz",
+        "static": "static_df.csv.gz"
+    }
+}
