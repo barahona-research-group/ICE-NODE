@@ -313,10 +313,16 @@ class CodeAUC(CodeLevelMetric):
         vals = {'auc': {}, 'n': {}}
         for code_index in range(ground_truth_mat.shape[1]):
             code_ground_truth = ground_truth_mat[:, code_index]
+            npos = code_ground_truth.sum()
+            nneg = len(code_ground_truth) - npos
             code_predictions = predictions_mat[:, code_index]
             vals['n'][code_index] = code_ground_truth.sum()
-            vals['auc'][code_index] = compute_auc(code_ground_truth,
-                                                  code_predictions)
+
+            if npos > 2 and nneg > 2:
+                vals['auc'][code_index] = compute_auc(code_ground_truth,
+                                                      code_predictions)
+            else:
+                vals['auc'][code_index] = onp.nan
         return vals
 
 
