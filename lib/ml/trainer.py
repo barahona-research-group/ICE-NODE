@@ -66,17 +66,24 @@ class TrainingHistory:
     def stats_df(self):
         return self._stats_df
 
+    @staticmethod
+    def _concat(df, row):
+        if df is None:
+            return row 
+        else:
+            return pd.concat([df, row], axis=0)
+
     def append_train_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
-        self._train_df = pd.concat([self._train_df, row_df])
+        self._train_df = self._concat(self._train_df, row_df)
 
     def append_val_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
-        self._val_df = pd.concat([self._val_df, row_df])
+        self._val_df = self._concat(self._val_df, row_df)
 
     def append_test_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
-        self._test_df = pd.concat([self._test_df, row_df])
+        self._test_df = self._concat(self._test_df, row_df)
 
     def append_stats(self, step: int, model: AbstractModel, loss):
         pathwise_stats = model.pathwise_params_stats()
@@ -90,7 +97,7 @@ class TrainingHistory:
         row_df = pd.DataFrame.from_dict(reform, 'index').transpose()
         row_df.columns = pd.MultiIndex.from_tuples(row_df.columns)
         row_df = row_df.set_index(pd.Index([step]).rename('step'))
-        self._stats_df = pd.concat([self._stats_df, row_df], axis=0)
+        self._stats_df = self._concat(self._stats_df, row_df)
 
 
 class TrainerSignals:
@@ -715,6 +722,7 @@ class Trainer(eqx.Module):
                 batch_gen.set_description('Evaluating (Train)...')
                 history.append_train_preds(
                     step, model.batch_predict(batch, leave_pbar=False))
+
                 if len(valid_ids) > 0:
                     batch_gen.set_description('Evaluating (Val)...')
                     history.append_val_preds(
