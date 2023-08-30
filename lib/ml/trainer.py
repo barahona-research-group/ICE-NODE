@@ -69,20 +69,23 @@ class TrainingHistory:
     @staticmethod
     def _concat(df, row):
         if df is None:
-            return row 
+            return row
         else:
             return pd.concat([df, row], axis=0)
 
     def append_train_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
+        row_df['date_time'] = pd.Timestamp('now')
         self._train_df = self._concat(self._train_df, row_df)
 
     def append_val_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
+        row_df['date_time'] = pd.Timestamp('now')
         self._val_df = self._concat(self._val_df, row_df)
 
     def append_test_preds(self, step: int, res: Predictions):
         row_df = self.metrics.to_df(step, res)
+        row_df['date_time'] = pd.Timestamp('now')
         self._test_df = self._concat(self._test_df, row_df)
 
     def append_stats(self, step: int, model: AbstractModel, loss):
@@ -674,18 +677,16 @@ class Trainer(eqx.Module):
                                     config=self.config)
         val_batch = patients.device_batch(valid_ids)
         step = 0
-        for _ in tqdm_constructor(range(epochs), leave=True, unit='Epoch'):
+        for _ in tqdm_constructor(range(epochs), leave=False, unit='Epoch'):
             pyrng.shuffle(train_ids)
-            batch_gen = patients.batch_gen(
+            epoch_splits = patients.epoch_splits(
                 train_ids,
                 batch_n_admissions=batch_size,
                 ignore_first_admission=model.counts_ignore_first_admission)
-            n_batches = n_train_admissions // batch_size
-            batch_gen = tqdm_constructor(batch_gen,
+            split_gen = tqdm_constructor(epoch_splits,
                                          leave=False,
-                                         total=n_batches,
                                          unit='Batch')
-            for batch in batch_gen:
+            for batch_split in split_gen:
                 if datetime.now() > trial_terminate_time:
                     signals.timeout.send(self)
                     signals.exit_training.send(self)
@@ -695,9 +696,10 @@ class Trainer(eqx.Module):
                 if step <= first_step:
                     continue
                 try:
+                    batch = patients.device_batch(batch_split)
                     optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
-                    batch_gen.set_description(f'Loss: {loss_val:.4E}')
+                    split_gen.set_description(f'Loss: {loss_val:.4E}')
                     signals.model_updated.send(self,
                                                model=model,
                                                history=history,
@@ -719,28 +721,32 @@ class Trainer(eqx.Module):
                 if step not in eval_steps:
                     continue
 
-                batch_gen.set_description('Evaluating (Train)...')
-                history.append_train_preds(
-                    step, model.batch_predict(batch, leave_pbar=False))
+                split_gen.set_description('Evaluating (Train) (A)...')
+                preds = model.batch_predict(batch, leave_pbar=False)
+                split_gen.set_description('Evaluating (Train) (B)...')
+                history.append_train_preds(step, preds)
 
                 if len(valid_ids) > 0:
-                    batch_gen.set_description('Evaluating (Val)...')
-                    history.append_val_preds(
-                        step, model.batch_predict(val_batch, leave_pbar=False))
-
-                if step == iters - 1 and len(test_ids) > 0:
-                    batch_gen.set_description('Evaluating (Test)...')
-                    test_batch = patients.device_batch(test_ids)
-                    history.append_test_preds(
-                        step, model.batch_predict(test_batch,
-                                                  leave_pbar=False))
-
+                    split_gen.set_description('Evaluating (Val) (A)...')
+                    preds = model.batch_predict(val_batch, leave_pbar=False)
+                    split_gen.set_description('Evaluating (Val) (B)...')
+                    history.append_val_preds(step, preds)
                 signals.end_evaluation.send(self,
                                             step=step,
                                             model=model,
                                             optimizer=optimizer,
                                             history=history)
-            batch_gen.close()
+            split_gen.close()
+
+        if len(test_ids) > 0 and first_step < step:
+            test_batch = patients.device_batch(test_ids)
+            preds = model.batch_predict(test_batch, leave_pbar=False)
+            history.append_test_preds(step, preds)
+            signals.end_evaluation.send(self,
+                                        step=step,
+                                        model=model,
+                                        optimizer=optimizer,
+                                        history=history)
 
         signals.exit_training.send(self, history=history)
         return model
