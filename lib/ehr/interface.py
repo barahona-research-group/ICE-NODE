@@ -221,10 +221,10 @@ class Patients(eqx.Module):
             subjects=subjects,
             target_scheme=self.scheme)
 
-    def batch_gen(self,
-                  subject_ids,
-                  batch_n_admissions: int,
-                  ignore_first_admission: bool = False):
+    def epoch_splits(self,
+                     subject_ids: Optional[List[int]],
+                     batch_n_admissions: int,
+                     ignore_first_admission: bool = False):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -248,7 +248,14 @@ class Patients(eqx.Module):
         splits = np.searchsorted(weights, p_splits)
         splits = [a.tolist() for a in np.split(subject_ids, splits)]
         splits = [s for s in splits if len(s) > 0]
+        return splits
 
+    def batch_gen(self,
+                  subject_ids,
+                  batch_n_admissions: int,
+                  ignore_first_admission: bool = False):
+        splits = self.epoch_splits(subject_ids, batch_n_admissions,
+                                   ignore_first_admission)
         for split in splits:
             yield self.device_batch(split)
 

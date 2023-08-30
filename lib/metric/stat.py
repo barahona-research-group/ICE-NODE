@@ -18,6 +18,11 @@ from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
                    colwise_numeric_loss)
 
 
+def nanaverage(A, weights, axis):
+    return onp.nansum(A * weights, axis=axis) / (
+        (~onp.isnan(A)) * weights).sum(axis=axis)
+
+
 @jax.jit
 def confusion_matrix(y_true: jnp.ndarray, y_hat: jnp.ndarray):
     """Return the confusion matrix given the ground-truth `y_true`
@@ -288,6 +293,25 @@ class ObsCodeLevelMetric(CodeLevelMetric):
 
 @dataclass
 class CodeAUC(CodeLevelMetric):
+
+    @staticmethod
+    def agg_fields():
+        return (('mean', onp.nanmean), ('weighted_mean', nanaverage),
+                ('median', onp.nanmedian), ('max', onp.nanmax), ('min',
+                                                                 onp.nanmin))
+
+    def agg_row(self, result: Dict[str, Dict[int, float]]):
+        row = []
+        for field in self.fields():
+            field_vals = onp.array(list(result[field].values()))
+            for agg_k, agg_f in self.agg_fields():
+                if agg_k.startswith('weighted'):
+                    weights = onp.array(list(result['n'].values()))
+                    row.append(agg_f(field_vals, weights=weights, axis=None))
+                else:
+                    row.append(agg_f(field_vals))
+
+        return tuple(row)
 
     @staticmethod
     def fields():

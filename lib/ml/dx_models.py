@@ -308,13 +308,10 @@ class RETAIN(OutpatientModel):
         # step 1 @RETAIN paper
 
         # v1, v2, ..., vT
-        v_seq = jnp.vstack([adm.dx for adm in embedded_admissions])
-
-        # c1, c2, ..., cT. <- controls
-        c_seq = jnp.vstack([adm.demo for adm in embedded_admissions])
-
         # Merge controls with embeddings
-        cv_seq = jnp.hstack([c_seq, v_seq])
+        cv_seq = [
+            jnp.hstack([adm.demo, adm.dx]) for adm in embedded_admissions
+        ]
 
         for i in range(1, len(adms)):
             # e: i, ..., 1
@@ -340,15 +337,13 @@ class RETAIN(OutpatientModel):
 
                 b_seq.append(jnp.tanh(b_j))
 
-            b_seq = jnp.vstack(b_seq)
-
             # alpha: i, ..., 1
             a_seq = jax.nn.softmax(jnp.hstack(e_seq))
 
             # step 4 @RETAIN paper
 
             # v_i, ..., v_1
-            v_context = v_seq[:i][::-1]
+            v_context = cv_seq[:i][::-1]
             c_context = sum(a * (b * v)
                             for a, b, v in zip(a_seq, b_seq, v_context))
 
