@@ -30,9 +30,29 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     dims: ModelDimensions = eqx.static_field()
     demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 
+    @property
+    @abstractmethod
+    def dyn_params_list(self):
+        pass
+
+    def flat_params_mask(self, pytree):
+        flatten = jtu.tree_leaves(pytree, eqx.is_inexact_array)
+        if isinstance(pytree, float):
+            return [True for _ in flatten]
+        assert 'dyn' in pytree and len(
+            pytree) == 2, 'Expected a "dyn" label in Dict'
+
+        dyn_params = self.dyn_params_list
+        is_dyn_param = lambda x: any(x is y for y in dyn_params)
+        mask = {'dyn': [is_dyn_param(x) for x in flatten['dyn']]}
+        (other_k,) = set(flatten.keys()) - {'dyn'}
+        mask['other'] = [not m for m in mask['dyn']]
+        return mask
+
+
     @classmethod
     def _assert_demo_dim(cls, dims: ModelDimensions, scheme: DatasetScheme,
-                        demographic_vector_config: DemographicVectorConfig):
+                         demographic_vector_config: DemographicVectorConfig):
         demo_vec_dim = scheme.demographic_vector_size(
             demographic_vector_config)
         assert ((demo_vec_dim == 0 and dims.emb.demo == 0) or
@@ -110,7 +130,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
                 return eqx.tree_deserialise_leaves(zip_member, self)
 
     def pathwise_params(self):
-
         def label(x):
             if hasattr(x, 'key'):
                 return x.key
@@ -145,7 +164,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
 
 
 class InpatientModel(AbstractModel):
-
     @property
     def counts_ignore_first_admission(self):
         return False
@@ -184,7 +202,6 @@ class InpatientModel(AbstractModel):
 
 
 class OutpatientModel(AbstractModel):
-
     @property
     def counts_ignore_first_admission(self):
         return True

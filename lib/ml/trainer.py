@@ -29,6 +29,8 @@ from .model import AbstractModel
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
 
+LRType = Union[float, Dict[str, float]]
+
 
 class ResourceTimeout(Exception):
     """Raised when a trial is anticipated to
@@ -42,7 +44,6 @@ class StudyHalted(Exception):
 
 
 class TrainingHistory:
-
     def __init__(self, metrics: MetricsCollection):
         self.metrics = metrics
         self._train_df = None
@@ -69,7 +70,7 @@ class TrainingHistory:
     @staticmethod
     def _concat(df, row):
         if df is None:
-            return row 
+            return row
         else:
             return pd.concat([df, row], axis=0)
 
@@ -89,11 +90,9 @@ class TrainingHistory:
         pathwise_stats = model.pathwise_params_stats()
         data = pathwise_stats | {'other_stats': {'step': step, 'loss': loss}}
         # https://stackoverflow.com/a/66383008
-        reform = {
-            (outer_key, inner_key): values
-            for outer_key, inner_dict in data.items()
-            for inner_key, values in inner_dict.items()
-        }
+        reform = {(outer_key, inner_key): values
+                  for outer_key, inner_dict in data.items()
+                  for inner_key, values in inner_dict.items()}
         row_df = pd.DataFrame.from_dict(reform, 'index').transpose()
         row_df.columns = pd.MultiIndex.from_tuples(row_df.columns)
         row_df = row_df.set_index(pd.Index([step]).rename('step'))
@@ -122,14 +121,12 @@ class TrainerSignals:
 
 
 class AbstractReporter(metaclass=ABCMeta):
-
     @abstractmethod
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         pass
 
 
 class ConsoleReporter(AbstractReporter):
-
     def log_config(self, sender, **kw):
         logging.info(f'HPs: {sender.config}')
 
@@ -142,7 +139,6 @@ class ConsoleReporter(AbstractReporter):
 
 
 class EvaluationDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -179,7 +175,6 @@ class EvaluationDiskWriter(AbstractReporter):
 
 
 class ModelStatsDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -209,7 +204,6 @@ class ModelStatsDiskWriter(AbstractReporter):
 
 
 class ParamsDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -269,7 +263,6 @@ class ParamsDiskWriter(AbstractReporter):
 
 
 class ConfigDiskWriter(AbstractReporter):
-
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -288,7 +281,6 @@ class ConfigDiskWriter(AbstractReporter):
 
 
 class OptunaReporter(AbstractReporter):
-
     def __init__(self, trial, objective):
         self.trial = trial
 
@@ -341,8 +333,8 @@ class OptunaReporter(AbstractReporter):
 
 class OptimizerConfig(eqx.Module):
     opt: str
-    lr: Union[float, Tuple[float, float]]
-    decay_rate: Optional[Union[float, Tuple[float, float]]] = None
+    lr: LRType
+    decay_rate: Optional[LRType] = None
     reverse_schedule: bool = False
 
 
@@ -417,6 +409,48 @@ class Optimizer(eqx.Module):
             'lr': trial.suggest_categorical('lr', [2e-3, 5e-3]),
             'opt': 'adam'
         }
+
+
+class MultiLearningRateOptimizer(Optimizer):
+    grads_filter: Dict[str, Any]
+
+    def __init__(self, config: OptimizerConfig, model=None, iters=None):
+        super().__init__(config, model, iters)
+        if model is not None:
+            self.grads_filter = model.flat_params_mask(config.lr)
+
+    def step(self, step, grads):
+        grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
+        optstate = self.opt_update(step, grads, self.optstate)
+        return eqx.tree_at(lambda x: x.optstate, self, optstate)
+
+    def __call__(self, model):
+        new_params = self.get_params(self.optstate)
+        param_part, other_part = eqx.partition(model, eqx.is_inexact_array)
+        _, pdef = jtu.tree_flatten(param_part)
+        params_part = jtu.tree_unflatten(pdef, new_params)
+        return eqx.combine(params_part, other_part)
+
+    @staticmethod
+    def lr_schedule(config, iters=None, reverse=False):
+        if isinstance(config.lr, float):
+            return Optimizer.lr_schedule(config, iters, reverse)
+
+        assert isinstance(config.lr, dict), 'lr must be either float or dict'
+
+        if config.decay_rate is None or iters is None:
+            return config.lr
+
+        def schedule_gen(lr):
+            schedule = jopt.exponential_decay(lr,
+                                              decay_steps=iters // 2,
+                                              decay_rate=config.decay_rate)
+            if reverse:
+                return lambda i: schedule(iters - i)
+
+            return schedule
+
+        return {k: schedule_gen(v) for k, v in config.lr.items()}
 
 
 class TrainerReporting(eqx.Module):
@@ -759,7 +793,6 @@ def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
 
 class LassoNetTrainer(Trainer):
-
     def loss(self, model: AbstractModel, patients: Patients):
         return self.unreg_loss(model, patients)
 
@@ -771,7 +804,6 @@ class LassoNetTrainer(Trainer):
 
 
 class InTrainer(Trainer):
-
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         preds = model.batch_predict(patients, leave_pbar=False)
         dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
