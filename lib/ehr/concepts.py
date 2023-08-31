@@ -13,26 +13,30 @@ import equinox as eqx
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
                             CodesVector)
 
+
 def leading_window(x):
     return pd.DataFrame(x)[0].expanding()
 
+
 def nan_concat_sliding_windows(x):
     n = len(x)
-    add_arr = np.full(n-1, np.nan)
+    add_arr = np.full(n - 1, np.nan)
     x_ext = np.concatenate((add_arr, x))
     strided = np.lib.stride_tricks.as_strided
-    nrows = len(x_ext)-n+1
+    nrows = len(x_ext) - n + 1
     s = x_ext.strides[0]
-    return strided(x_ext, shape=(nrows,n), strides=(s,s))
+    return strided(x_ext, shape=(nrows, n), strides=(s, s))
+
 
 def nan_concat_leading_windows(x):
     n = len(x)
-    add_arr = np.full(n-1, np.nan)
+    add_arr = np.full(n - 1, np.nan)
     x_ext = np.concatenate((add_arr, x[::-1]))
     strided = np.lib.stride_tricks.as_strided
-    nrows = len(x_ext)-n+1
+    nrows = len(x_ext) - n + 1
     s = x_ext.strides[0]
-    return strided(x_ext, shape=(nrows,n), strides=(s,s))[::-1, ::-1]
+    return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
+
 
 class LeadingObservableConfig(eqx.Module):
     code: str
@@ -41,9 +45,7 @@ class LeadingObservableConfig(eqx.Module):
     leading_times: List[float]
     window_aggregate: Callable[[jnp.ndarray], float]
 
-    def __ini__(self,
-                codes: List[str],
-                leading_times: List[float],
+    def __ini__(self, codes: List[str], leading_times: List[float],
                 window_aggregate: Callable[[jnp.ndarray], float]):
         super().__init__()
         self.code = code
@@ -52,7 +54,6 @@ class LeadingObservableConfig(eqx.Module):
 
         def window(x):
             return pd.DataFrame(x)[0].expanding()
-
 
         if window_aggregate == 'min':
             self.window_aggregate = lambda x, axis: np.nanmin(x, axis=axis)
@@ -64,6 +65,7 @@ class LeadingObservableConfig(eqx.Module):
             self.window_aggregate = lambda x, axis: np.nanmean(x, axis=axis)
 
         self.window_aggregate = window_aggregate
+
 
 class InpatientObservables(eqx.Module):
     time: jnp.narray
@@ -114,12 +116,11 @@ class InpatientObservables(eqx.Module):
         value = value[mask]
         time = self.time[mask]
 
-        for t in config.leading_times:
-
-
+        # for t in config.leading_times:
 
     def __len__(self):
         return len(self.time)
+
 
 class MaskedAggregator(eqx.Module):
     mask: jnp.array = eqx.static_field()
@@ -500,6 +501,7 @@ class StaticInfo(eqx.Module):
     def _concat(age, vec):
         return jnp.hstack((age, vec), dtype=jnp.float16)
 
+
 class CPRDStaticInfo(StaticInfo):
     imd: Optional[CodesVector] = None
 
@@ -523,7 +525,6 @@ class CPRDStaticInfo(StaticInfo):
             self.constant_vec = np.array([], dtype=jnp.float16)
         else:
             self.constant_vec = np.hstack(attrs_vec)
-
 
 
 class Patient(eqx.Module):
