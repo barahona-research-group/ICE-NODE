@@ -2,16 +2,68 @@
 
 from __future__ import annotations
 from datetime import date
-from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union, Any)
+from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union, Any,
+                    Callable)
 import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-
+import pandas as pd
 import equinox as eqx
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
                             CodesVector)
 
+def leading_window(x):
+    return pd.DataFrame(x)[0].expanding()
+
+def nan_concat_sliding_windows(x):
+    n = len(x)
+    add_arr = np.full(n-1, np.nan)
+    x_ext = np.concatenate((add_arr, x))
+    strided = np.lib.stride_tricks.as_strided
+    nrows = len(x_ext)-n+1
+    s = x_ext.strides[0]
+    return strided(x_ext, shape=(nrows,n), strides=(s,s))
+
+def nan_concat_leading_windows(x):
+    n = len(x)
+    add_arr = np.full(n-1, np.nan)
+    x_ext = np.concatenate((add_arr, x[::-1]))
+    strided = np.lib.stride_tricks.as_strided
+    nrows = len(x_ext)-n+1
+    s = x_ext.strides[0]
+    return strided(x_ext, shape=(nrows,n), strides=(s,s))[::-1, ::-1]
+
+class LeadingObservableConfig(eqx.Module):
+    code: str
+    index: int
+    scheme: AbstractScheme
+    leading_times: List[float]
+    window_aggregate: Callable[[jnp.ndarray], float]
+
+    def __ini__(self,
+                codes: List[str],
+                leading_times: List[float],
+                window_aggregate: Callable[[jnp.ndarray], float]):
+        super().__init__()
+        self.code = code
+        self.index = scheme.index[code]
+        self.leading_times = leading_times
+
+        def window(x):
+            return pd.DataFrame(x)[0].expanding()
+
+
+        if window_aggregate == 'min':
+            self.window_aggregate = lambda x, axis: np.nanmin(x, axis=axis)
+        elif window_aggregate == 'max':
+            self.window_aggregate = lambda x, axis: np.nanmax(x, axis=axis)
+        elif window_aggregate == 'median':
+            self.window_aggregate = lambda x, axis: np.nanmedian(x, axis=axis)
+        elif window_aggregate == 'mean':
+            self.window_aggregate = lambda x, axis: np.nanmean(x, axis=axis)
+
+        self.window_aggregate = window_aggregate
 
 class InpatientObservables(eqx.Module):
     time: jnp.narray
@@ -54,9 +106,20 @@ class InpatientObservables(eqx.Module):
 
         return InpatientObservables(time, value, mask)
 
+    def make_leading_observable(self, config: LeadingObservableConfig):
+        leads = []
+        value = self.value[:, config.index]
+        mask = self.mask[:, config.index]
+
+        value = value[mask]
+        time = self.time[mask]
+
+        for t in config.leading_times:
+
+
+
     def __len__(self):
         return len(self.time)
-
 
 class MaskedAggregator(eqx.Module):
     mask: jnp.array = eqx.static_field()
