@@ -57,7 +57,7 @@ class ICENODE(OutpatientModel):
                            depth=2,
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
-        ode_dyn_f = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        ode_dyn_f = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
 
         self.f_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
 
@@ -70,6 +70,10 @@ class ICENODE(OutpatientModel):
                          demographic_vector_config=demographic_vector_config,
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
+
+    @property
+    def dyn_params_list(self):
+        return self.params_list(self.f_dyn)
 
     def join_state_emb(self, state, emb):
         if state is None:
@@ -184,6 +188,10 @@ class GRU(OutpatientModel):
                          f_emb=f_emb,
                          f_dx_dec=f_dx_dec)
 
+    @property
+    def dyn_params_list(self):
+        return self.params_list(self.f_update)
+
     def weights(self):
         return [self.f_update.weight_hh, self.f_update.weight_ih]
 
@@ -277,6 +285,11 @@ class RETAIN(OutpatientModel):
             self.f_gru_b.weight_hh, self.f_gru_b.weight_ih,
             self.f_att_a.weight, self.f_att_b.weight
         ]
+
+    @property
+    def dyn_params_list(self):
+        return self.params_list(
+            (self.f_gru_a, self.f_gru_b, self.f_att_a, self.f_att_b))
 
     @eqx.filter_jit
     def _gru_a(self, x, state):

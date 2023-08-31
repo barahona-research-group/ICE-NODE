@@ -1,7 +1,7 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Callable, Union, Tuple
+from typing import List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any
 from abc import abstractmethod, ABCMeta
 import zipfile
 import jax.numpy as jnp
@@ -35,20 +35,22 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     def dyn_params_list(self):
         pass
 
-    def flat_params_mask(self, pytree):
-        flatten = jtu.tree_leaves(pytree, eqx.is_inexact_array)
-        if isinstance(pytree, float):
-            return [True for _ in flatten]
-        assert 'dyn' in pytree and len(
-            pytree) == 2, 'Expected a "dyn" label in Dict'
+    def params_list(self, pytree: Optional[Any] = None):
+        if pytree is None:
+            pytree = self
+        return jtu.tree_leaves(eqx.filter(pytree, eqx.is_inexact_array))
 
+    def params_list_mask(self, pytree):
+        assert isinstance(pytree, dict) and 'dyn' in pytree and len(
+            pytree) == 2, 'Expected a "dyn" label in Dict'
+        (other_key, ) = set(pytree.keys()) - {'dyn'}
+
+        params_list = self.params_list()
         dyn_params = self.dyn_params_list
         is_dyn_param = lambda x: any(x is y for y in dyn_params)
-        mask = {'dyn': [is_dyn_param(x) for x in flatten['dyn']]}
-        (other_k,) = set(flatten.keys()) - {'dyn'}
-        mask['other'] = [not m for m in mask['dyn']]
+        mask = {'dyn': [is_dyn_param(x) for x in params_list]}
+        mask[other_key] = [not m for m in mask['dyn']]
         return mask
-
 
     @classmethod
     def _assert_demo_dim(cls, dims: ModelDimensions, scheme: DatasetScheme,
@@ -130,6 +132,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
                 return eqx.tree_deserialise_leaves(zip_member, self)
 
     def pathwise_params(self):
+
         def label(x):
             if hasattr(x, 'key'):
                 return x.key
@@ -164,6 +167,7 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
 
 
 class InpatientModel(AbstractModel):
+
     @property
     def counts_ignore_first_admission(self):
         return False
@@ -202,6 +206,7 @@ class InpatientModel(AbstractModel):
 
 
 class OutpatientModel(AbstractModel):
+
     @property
     def counts_ignore_first_admission(self):
         return True

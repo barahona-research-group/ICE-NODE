@@ -44,6 +44,7 @@ class StudyHalted(Exception):
 
 
 class TrainingHistory:
+
     def __init__(self, metrics: MetricsCollection):
         self.metrics = metrics
         self._train_df = None
@@ -93,9 +94,11 @@ class TrainingHistory:
         pathwise_stats = model.pathwise_params_stats()
         data = pathwise_stats | {'other_stats': {'step': step, 'loss': loss}}
         # https://stackoverflow.com/a/66383008
-        reform = {(outer_key, inner_key): values
-                  for outer_key, inner_dict in data.items()
-                  for inner_key, values in inner_dict.items()}
+        reform = {
+            (outer_key, inner_key): values
+            for outer_key, inner_dict in data.items()
+            for inner_key, values in inner_dict.items()
+        }
         row_df = pd.DataFrame.from_dict(reform, 'index').transpose()
         row_df.columns = pd.MultiIndex.from_tuples(row_df.columns)
         row_df = row_df.set_index(pd.Index([step]).rename('step'))
@@ -124,12 +127,14 @@ class TrainerSignals:
 
 
 class AbstractReporter(metaclass=ABCMeta):
+
     @abstractmethod
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         pass
 
 
 class ConsoleReporter(AbstractReporter):
+
     def log_config(self, sender, **kw):
         logging.info(f'HPs: {sender.config}')
 
@@ -142,6 +147,7 @@ class ConsoleReporter(AbstractReporter):
 
 
 class EvaluationDiskWriter(AbstractReporter):
+
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -178,6 +184,7 @@ class EvaluationDiskWriter(AbstractReporter):
 
 
 class ModelStatsDiskWriter(AbstractReporter):
+
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -207,6 +214,7 @@ class ModelStatsDiskWriter(AbstractReporter):
 
 
 class ParamsDiskWriter(AbstractReporter):
+
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -266,6 +274,7 @@ class ParamsDiskWriter(AbstractReporter):
 
 
 class ConfigDiskWriter(AbstractReporter):
+
     def __init__(self, output_dir):
         self.output_dir = output_dir
 
@@ -284,6 +293,7 @@ class ConfigDiskWriter(AbstractReporter):
 
 
 class OptunaReporter(AbstractReporter):
+
     def __init__(self, trial, objective):
         self.trial = trial
 
@@ -360,8 +370,7 @@ class Optimizer(eqx.Module):
         opt_init, self.opt_update, self.get_params = _opts[config.opt](lr)
 
         if optstate is None and model is not None:
-            leaves = jtu.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
-            self.optstate = opt_init(leaves)
+            self.optstate = opt_init(model.params_list())
         elif optstate is not None:
             self.optstate = optstate
         else:
@@ -417,43 +426,124 @@ class Optimizer(eqx.Module):
 class MultiLearningRateOptimizer(Optimizer):
     grads_filter: Dict[str, Any]
 
-    def __init__(self, config: OptimizerConfig, model=None, iters=None):
-        super().__init__(config, model, iters)
+    def __init__(self,
+                 config: OptimizerConfig,
+                 model=None,
+                 iters=None,
+                 optstate=None,
+                 grads_filter=None):
+        self.config = config
+        self.iters = iters
+        lr = self.lr_schedule(config, iters)
+
+        self.get_params = {}
+        self.optstate = {}
+        self.opt_update = {}
+
+        opt = _opts[config.opt]
         if model is not None:
-            self.grads_filter = model.flat_params_mask(config.lr)
+            if grads_filter is None:
+                self.grads_filter = model.params_list_mask(config.lr)
+            if optstate is None:
+                params_list = model.params_list()
+                for k, lr in self.lr_schedule(config, iters).items():
+                    params = eqx.filter(params_list, self.grads_filter[k])
+                    opt_init, self.opt_update[k], self.get_params[k] = opt(lr)
+                    self.optstate[k] = opt_init(params)
+
+        elif optstate is not None and grads_filter is not None:
+            for k, lr in self.lr_schedule(config, iters).items():
+                opt_init, self.opt_update[k], self.get_params[k] = opt(lr)
+            self.optstate = optstate
+            self.grads_filter = grads_filter
+        else:
+            raise ValueError(
+                'Either (optstate AND grads_filter) or model must be provided')
 
     def step(self, step, grads):
         grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
-        optstate = self.opt_update(step, grads, self.optstate)
-        return eqx.tree_at(lambda x: x.optstate, self, optstate)
+        updated_state = {}
+        for k, grads_filter in self.grads_filter.items():
+            grad_k = eqx.filter(grads, grads_filter)
+            updated_state[k] = self.opt_update[k](step, grad_k,
+                                                  self.optstate[k])
+
+        return eqx.tree_at(lambda x: x.optstate, self, updated_state)
 
     def __call__(self, model):
-        new_params = self.get_params(self.optstate)
+
         param_part, other_part = eqx.partition(model, eqx.is_inexact_array)
         _, pdef = jtu.tree_flatten(param_part)
+        new_params = []
+        for k, get_params in self.get_params.items():
+            new_params.append(get_params(self.optstate[k]))
+        new_params = eqx.combine(*new_params)
         params_part = jtu.tree_unflatten(pdef, new_params)
         return eqx.combine(params_part, other_part)
 
     @staticmethod
     def lr_schedule(config, iters=None, reverse=False):
-        if isinstance(config.lr, float):
-            return Optimizer.lr_schedule(config, iters, reverse)
-
         assert isinstance(config.lr, dict), 'lr must be either float or dict'
 
         if config.decay_rate is None or iters is None:
             return config.lr
 
-        def schedule_gen(lr):
+        def schedule_gen(key):
+            lr = config.lr[key]
+            if isinstance(config.decay_rate, dict):
+                _decay_rate = config.decay_rate[key]
+            else:
+                _decay_rate = config.decay_rate
+
             schedule = jopt.exponential_decay(lr,
                                               decay_steps=iters // 2,
-                                              decay_rate=config.decay_rate)
+                                              decay_rate=_decay_rate)
             if reverse:
                 return lambda i: schedule(iters - i)
 
             return schedule
 
-        return {k: schedule_gen(v) for k, v in config.lr.items()}
+        return {k: schedule_gen(k) for k in config.lr.keys()}
+
+    def load(self, filename):
+        state_filename = filename + '.st'
+        filter_filname = filename + '.flt'
+
+        with open(filter_filname, "rb") as filter_file:
+            grads_filter = pickle.load(filter_file)
+
+        optstate = {}
+        for k in grads_filter.keys():
+            _filename = state_filename + '.' + k
+            with open(_filename, "rb") as optstate_file:
+                optstate_k = pickle.load(optstate_file)
+                optstate_k = jopt.pack_optimizer_state(optstate_k)
+                optstate[k] = optstate_k
+
+        return MultiLearningRateOptimizer(config=self.config,
+                                          optstate=optstate,
+                                          iters=self.iters,
+                                          grads_filter=grads_filter)
+
+    def save(self, filename):
+        state_filename = filename + '.st'
+        filter_filname = filename + '.flt'
+
+        for k, optstate_k in self.optstate.items():
+            _filename = state_filename + '.' + k
+            optstate_k = jopt.unpack_optimizer_state(optstate_k)
+            with open(_filename, "wb") as optstate_file:
+                pickle.dump(optstate_k, optstate_file)
+
+        with open(filter_filname, "wb") as filter_file:
+            pickle.dump(self.grads_filter, filter_file)
+
+
+def make_optimizer(config: OptimizerConfig, *args, **kwargs):
+    if isinstance(config.lr, dict):
+        return MultiLearningRateOptimizer(config, *args, **kwargs)
+    else:
+        return Optimizer(config, *args, **kwargs)
 
 
 class TrainerReporting(eqx.Module):
@@ -687,7 +777,9 @@ class Trainer(eqx.Module):
 
         batch_size = min(self.batch_size, n_train_admissions)
         iters = round(self.epochs * n_train_admissions / batch_size)
-        optimizer = Optimizer(self.optimizer_config, iters=iters, model=model)
+        optimizer = make_optimizer(self.optimizer_config,
+                                   iters=iters,
+                                   model=model)
         key = jrandom.PRNGKey(prng_seed)
         pyrng = random.Random(prng_seed)
         eval_steps = sorted(set(
@@ -799,6 +891,7 @@ def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
 
 class LassoNetTrainer(Trainer):
+
     def loss(self, model: AbstractModel, patients: Patients):
         return self.unreg_loss(model, patients)
 
@@ -810,6 +903,7 @@ class LassoNetTrainer(Trainer):
 
 
 class InTrainer(Trainer):
+
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         preds = model.batch_predict(patients, leave_pbar=False)
         dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
