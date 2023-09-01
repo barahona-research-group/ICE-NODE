@@ -629,6 +629,7 @@ class Trainer(eqx.Module):
     batch_size: int
     dx_loss: Callable
     obs_loss: Callable
+    lead_loss: Callable
     kwargs: Dict[str, Any]
 
     def __init__(self,
@@ -638,6 +639,7 @@ class Trainer(eqx.Module):
                  batch_size,
                  dx_loss='balanced_focal_bce',
                  obs_loss='mse',
+                 lead_loss='mse',
                  **kwargs):
         self.optimizer_config = optimizer_config
         self.reg_hyperparams = reg_hyperparams
@@ -645,8 +647,10 @@ class Trainer(eqx.Module):
         self.batch_size = batch_size
         self.dx_loss = binary_loss[dx_loss]
         self.obs_loss = numeric_loss[obs_loss]
+        self.lead_loss = numeric_loss[lead_loss]
         kwargs = kwargs or {}
-        kwargs.update({'dx_loss': dx_loss, 'obs_loss': obs_loss})
+        kwargs.update({'dx_loss': dx_loss, 'obs_loss': obs_loss,
+                       'lead_loss': lead_loss})
         self.kwargs = kwargs
 
     @property
@@ -908,5 +912,6 @@ class InTrainer(Trainer):
         preds = model.batch_predict(patients, leave_pbar=False)
         dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
         obs_loss = preds.prediction_obs_loss(obs_loss=self.obs_loss)
-        loss = dx_loss + 5e0 * obs_loss
+        lead_loss = preds.prediction_lead_loss(lead_loss=self.lead_loss)
+        loss = dx_loss + 5e0 * obs_loss + 5e0 * lead_loss
         return loss

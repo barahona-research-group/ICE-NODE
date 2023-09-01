@@ -417,6 +417,16 @@ class AbstractScheme:
     def supported_targets(cls):
         return tuple(t.__name__ for s, t in load_maps.keys() if s == cls)
 
+    def as_dataframe(self):
+        index = sorted(self.index.values())
+        return pd.DataFrame(
+            {
+                'code': self.index2code,
+                'desc': self.index2desc,
+            },
+            index=index
+        )
+
 
 class SchemeWithMissing(AbstractScheme):
 

@@ -37,34 +37,91 @@ def nan_concat_leading_windows(x):
     s = x_ext.strides[0]
     return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
 
+def nan_agg_min(x, axis):
+    return np.nanmin(x, axis=axis)
+
+def nan_agg_max(x, axis):
+    return np.nanmax(x, axis=axis)
+
+def nan_agg_mean(x, axis):
+    return np.nanmean(x, axis=axis)
+
+def nan_agg_median(x, axis):
+    return np.nanmedian(x, axis=axis)
+
+def nan_agg_quantile(q):
+    def _nan_agg_quantile(x, axis):
+        return np.nanquantile(x, q, axis=axis)
+    return _nan_agg_quantile
+
 
 class LeadingObservableConfig(eqx.Module):
-    code: str
     index: int
-    scheme: AbstractScheme
-    leading_times: List[float]
+    leading_hours: List[float]
     window_aggregate: Callable[[jnp.ndarray], float]
+    _index2code: Dict[int, str] = eqx.static_field()
+    _code2index: Dict[str, int] = eqx.static_field()
 
-    def __ini__(self, codes: List[str], leading_times: List[float],
-                window_aggregate: Callable[[jnp.ndarray], float]):
+    def __init__(self,
+                 leading_hours: List[float],
+                 window_aggregate: Callable[[jnp.ndarray], float],
+                 scheme: AbstractScheme,
+                 index: Optional[int] = None,
+                 code: Optional[str] = None):
         super().__init__()
-        self.code = code
-        self.index = scheme.index[code]
-        self.leading_times = leading_times
+
+        assert (index is None) != (code is None), \
+            'Either index or code must be specified'
+        if index is None:
+            index = scheme.index[code]
+
+        if code is None:
+            code = scheme.index2code[index]
+
+        desc = scheme.index2desc[index]
+
+        self.index = index
+        assert all(l1 <= l2 for l1, l2 in zip(leading_hours[:-1],
+                                              leading_hours[1:])), \
+            'leading_hours must be sorted'
+
+        self.leading_hours = leading_hours
 
         def window(x):
             return pd.DataFrame(x)[0].expanding()
 
         if window_aggregate == 'min':
-            self.window_aggregate = lambda x, axis: np.nanmin(x, axis=axis)
+            self.window_aggregate = nan_agg_min
         elif window_aggregate == 'max':
-            self.window_aggregate = lambda x, axis: np.nanmax(x, axis=axis)
+            self.window_aggregate = nan_agg_max
         elif window_aggregate == 'median':
-            self.window_aggregate = lambda x, axis: np.nanmedian(x, axis=axis)
+            self.window_aggregate = nan_agg_median
         elif window_aggregate == 'mean':
-            self.window_aggregate = lambda x, axis: np.nanmean(x, axis=axis)
+            self.window_aggregate = nan_agg_mean
+        elif isinstance(window_aggregate, Tuple):
+            if window_aggregate[0] == 'quantile':
+                self.window_aggregate = nan_agg_quantile(window_aggregate[1])
+            else:
+                raise ValueError(
+                    f'Unknown window_aggregate {window_aggregate}')
+        else:
+            raise ValueError(f'Unknown window_aggregate {window_aggregate}')
 
-        self.window_aggregate = window_aggregate
+        self._index2code = dict(
+            zip(range(len(self.leading_hours)),
+                [f'{desc}_next_{h}hrs' for h in self.leading_hours]))
+        self._code2index = {v: k for k, v in self._index2code.items()}
+
+    @property
+    def index2code(self):
+        return self._index2code
+
+    @property
+    def code2index(self):
+        return self._code2index
+
+    def empty(self):
+        return InpatientObservables.empty(len(self.leading_hours))
 
 
 class InpatientObservables(eqx.Module):
@@ -78,6 +135,9 @@ class InpatientObservables(eqx.Module):
                                     value=np.zeros((0, size),
                                                    dtype=np.float16),
                                     mask=np.zeros((0, size), dtype=bool))
+
+    def __len__(self):
+        return len(self.time)
 
     def segment(self, t_sep: jnp.ndarray):
         if len(t_sep) == 0:
@@ -109,17 +169,36 @@ class InpatientObservables(eqx.Module):
         return InpatientObservables(time, value, mask)
 
     def make_leading_observable(self, config: LeadingObservableConfig):
-        leads = []
-        value = self.value[:, config.index]
+        if len(self) == 0:
+            return config.empty()
+
         mask = self.mask[:, config.index]
+        value = np.where(mask, self.value[:, config.index], np.nan)
+        time = self.time
+        # a time-window starting from timestamp_i for each row_i
+        t_leads = nan_concat_leading_windows(time)
+        # time relative to the first timestamp in the window
+        t_leads = t_leads - t_leads[:, 0, None]
+        # a value-window starting from timestamp_i for each row_i
+        v_leads = nan_concat_leading_windows(value)
 
-        value = value[mask]
-        time = self.time[mask]
+        values = []
+        masks = []
 
-        # for t in config.leading_times:
+        for t in config.leading_hours:
+            # select the rows where the time-window is less than t
+            mask = t_leads < t
+            # mask out the values outside the window
+            v_lead = np.where(mask, v_leads, np.nan)
+            # aggregate the values in the window
+            values.append(config.window_aggregate(v_lead, axis=1).flatten())
 
-    def __len__(self):
-        return len(self.time)
+            # mask for the valid aggregates
+            masks.append(np.where(np.isnan(values[-1]), False, True))
+
+        values = np.stack(values, axis=1)
+        masks = np.stack(masks, axis=1)
+        return InpatientObservables(time=time, value=values, mask=masks)
 
 
 class MaskedAggregator(eqx.Module):
@@ -440,6 +519,8 @@ class Admission(eqx.Module):
     observables: Optional[Union[InpatientObservables,
                                 List[InpatientObservables]]]
     interventions: Optional[InpatientInterventions]
+    leading_observable: Optional[Union[InpatientObservables,
+                                       List[InpatientObservables]]] = None
 
     @property
     def interval_hours(self):

@@ -12,7 +12,8 @@ import equinox as eqx
 from ..utils import tqdm_constructor, tree_hasnan, translate_path
 from .dataset import Dataset, DatasetScheme
 from .concepts import (Admission, Patient, InpatientObservables,
-                       InpatientInterventions, DemographicVectorConfig)
+                       InpatientInterventions, DemographicVectorConfig,
+                       LeadingObservableConfig)
 from .coding_scheme import CodesVector
 
 
@@ -30,10 +31,12 @@ class AdmissionPrediction(eqx.Module):
     admission: Admission
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
+    leading_observable: Optional[List[InpatientObservables]] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
-        return tree_hasnan((self.outcome, self.observables, self.other))
+        return tree_hasnan((self.outcome, self.observables, self.other,
+                            self.leading_observable))
 
 
 class Predictions(dict):
@@ -97,16 +100,23 @@ class Predictions(dict):
         loss_v = jnp.nanmean(loss_v)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
-    def prediction_obs_loss(self, obs_loss):
+    def _numeric_loss(self, loss_fn, attr: str):
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
-        obs_true = [o.value for a in adms for o in a.observables]
-        obs_mask = [o.mask for a in adms for o in a.observables]
-        obs_pred = [o.value for p in preds for o in p.observables]
-        obs_true = jnp.vstack(obs_true)
-        obs_mask = jnp.vstack(obs_mask)
-        obs_pred = jnp.vstack(obs_pred)
-        return obs_loss(obs_true, obs_pred, obs_mask)
+        l_true = [o.value for a in adms for o in getattr(a, attr)]
+        l_mask = [o.mask for a in adms for o in getattr(a, attr)]
+        l_pred = [o.value for p in preds for o in getattr(p, attr)]
+        true = jnp.vstack(l_true)
+        mask = jnp.vstack(l_mask)
+        pred = jnp.vstack(l_pred)
+        loss_v = loss_fn(true, pred, mask)
+        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
+
+    def prediction_obs_loss(self, obs_loss):
+        return self._numeric_loss(obs_loss, 'observables')
+
+    def prediction_lead_loss(self, lead_loss):
+        return self._numeric_loss(lead_loss, 'leading_observable')
 
     def outcome_first_occurrence_masks(self, subject_id):
         preds = self[subject_id]
@@ -119,11 +129,14 @@ class Patients(eqx.Module):
     dataset: Dataset
     scheme: DatasetScheme
     demographic_vector_config: DemographicVectorConfig
+    leading_observable_config: Optional[LeadingObservableConfig]
     subjects: Optional[Dict[int, Patient]]
 
     def __init__(self,
                  dataset: Dataset,
                  demographic_vector_config: DemographicVectorConfig,
+                 leading_observable_config: Optional[
+                     List[LeadingObservableConfig]] = None,
                  subjects: Optional[Dict[int, Patient]] = None,
                  target_scheme: Optional[DatasetScheme] = None,
                  **target_scheme_kwargs):
@@ -136,6 +149,7 @@ class Patients(eqx.Module):
             self.scheme = target_scheme
 
         self.demographic_vector_config = demographic_vector_config
+        self.leading_observable_config = leading_observable_config
         self.subjects = subjects
 
     @property
@@ -189,12 +203,14 @@ class Patients(eqx.Module):
             subject_ids,
             num_workers=num_workers,
             demographic_vector_config=self.demographic_vector_config,
+            leading_observable_config=self.leading_observable_config,
             target_scheme=self.scheme)
 
         subjects = {s.subject_id: s for s in subjects}
         return Patients(
             dataset=self.dataset,
             demographic_vector_config=self.demographic_vector_config,
+            leading_observable_config=self.leading_observable_config,
             subjects=subjects,
             target_scheme=self.scheme)
 
@@ -218,6 +234,7 @@ class Patients(eqx.Module):
         return Patients(
             dataset=self.dataset,
             demographic_vector_config=self.demographic_vector_config,
+            leading_observable_config=self.leading_observable_config,
             subjects=subjects,
             target_scheme=self.scheme)
 

@@ -6,5 +6,5 @@ from .coding_scheme import (AbstractScheme, OutcomeExtractor, Gender,
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, AggregateRepresentation,
                        StaticInfo, InpatientInput, CodesVector,
-                       DemographicVectorConfig)
+                       DemographicVectorConfig, LeadingObservableConfig)
 from .interface import (AdmissionPrediction, Predictions, Patients)

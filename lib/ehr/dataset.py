@@ -29,7 +29,8 @@ from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, StaticInfo, DemographicVectorConfig,
                        CPRDDemographicVectorConfig, CPRDStaticInfo,
-                       AggregateRepresentation, InpatientInterventions)
+                       AggregateRepresentation, InpatientInterventions,
+                       LeadingObservableConfig)
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -588,8 +589,9 @@ class MIMIC3Dataset(Dataset):
         df["adm"] = adm
         return df
 
-    def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
-                    target_scheme: DatasetScheme):
+    def to_subjects(self, subject_ids: List[int], num_workers: int,
+                    demographic_vector_config: DemographicVectorConfig,
+                    target_scheme: DatasetScheme, **kwargs):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids, target_scheme)
@@ -1089,7 +1091,7 @@ class CPRDDataset(MIMIC3Dataset):
         return df, colname
 
     def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
-                    target_scheme: DatasetScheme):
+                    target_scheme: DatasetScheme, **kwargs):
 
         (subject_dob, subject_gender, subject_eth,
          subject_imd) = self.subject_info_extractor(subject_ids, target_scheme)
@@ -1518,8 +1520,10 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug("[DONE] Time casting..")
         return df
 
-    def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
-                    target_scheme: MIMIC4ICUDatasetScheme):
+    def to_subjects(self, subject_ids: List[int], num_workers: int,
+                    demographic_vector_config: DemographicVectorConfig,
+                    leading_observable_config: LeadingObservableConfig,
+                    target_scheme: MIMIC4ICUDatasetScheme, **kwargs):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids, target_scheme)
@@ -1565,14 +1569,17 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                 adm_interval=adm_interval[i])
             interventions = interventions.segment_proc(proc_repr)
             interventions = interventions.segment_input()
-
-            obs = observables[i].segment(interventions.t_sep)
+            obs = observables[i]
+            lead_obs = obs.make_leading_observable(leading_observable_config)
+            lead_obs = lead_obs.segment(interventions.t_sep)
+            obs = obs.segment(interventions.t_sep)
             return Admission(admission_id=i,
                              admission_dates=adm_dates[i],
                              dx_codes=dx_codes[i],
                              dx_codes_history=dx_codes_history[i],
                              outcome=outcome[i],
                              observables=obs,
+                             leading_observable=lead_obs,
                              interventions=interventions)
 
         def _gen_subject(subject_id):
