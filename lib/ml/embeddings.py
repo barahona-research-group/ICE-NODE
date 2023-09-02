@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys, inspect
 from typing import (Any, Dict, List, Callable, Optional, Tuple)
 from abc import abstractmethod
 import jax
@@ -28,6 +29,18 @@ class EmbeddedOutAdmission(EmbeddedAdmission):
 class PatientEmbeddingDimensions(eqx.Module):
     dx: int = 30
     demo: int = 5
+
+    def to_config(self) -> Dict[str, int]:
+        d = {
+            k: v
+            for k, v in self.__dict__.items() if not k.startswith('_')
+        }
+        d['type'] = self.__class__.__name__
+
+    @staticmethod
+    def from_config(config: Dict[str, int]) -> PatientEmbeddingDimensions:
+        clas = dimensions_classes[config.pop('type')]
+        return clas(**config)
 
 
 class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
@@ -96,7 +109,6 @@ class PatientEmbedding(eqx.Module):
 
 
 class OutpatientEmbedding(PatientEmbedding):
-
     @eqx.filter_jit
     def _embed_admission(self, demo: jnp.ndarray,
                          dx_vec: jnp.ndarray) -> EmbeddedOutAdmission:
@@ -186,7 +198,6 @@ class InpatientEmbedding(PatientEmbedding):
                          segmented_inp: jnp.ndarray,
                          segmented_proc: jnp.ndarray) -> EmbeddedInAdmission:
         """ Embeds an admission into fixed vectors as described above."""
-
         def _embed_segment(inp, proc):
             return self._embed_segment(inp, proc, demo_e)
 
@@ -200,3 +211,11 @@ class InpatientEmbedding(PatientEmbedding):
         return self._embed_admission(demo, admission.dx_codes_history.vec,
                                      admission.interventions.segmented_input,
                                      admission.interventions.segmented_proc)
+
+
+dimensions_classes = {
+    name: clas
+    for name, clas in inspect.getmembers(sys.modules[__name__],
+                                         inspect.isclass)
+    if issubclass(clas, PatientEmbeddingDimensions)
+}

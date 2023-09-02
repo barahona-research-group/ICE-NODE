@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Any
 import logging
 import pickle
 from pathlib import Path
@@ -151,6 +151,30 @@ class Patients(eqx.Module):
         self.demographic_vector_config = demographic_vector_config
         self.leading_observable_config = leading_observable_config
         self.subjects = subjects
+
+    def to_config(self):
+        c = {}
+        for att in [
+                'scheme', 'demographic_vector_config',
+                'leading_observable_config'
+        ]:
+            if getattr(self, att) is not None:
+                c[att] = getattr(self, att).to_config()
+            else:
+                c[att] = None
+        return c
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], **init_kwargs):
+        for att, clas in [
+            ('scheme', DatasetScheme),
+            ('demographic_vector_config', DemographicVectorConfig),
+            ('leading_observable_config', LeadingObservableConfig)
+        ]:
+            if config[att] is not None:
+                config[att] = clas.from_config(config[att])
+
+        return cls(**config, **init_kwargs)
 
     @property
     def schemes(self):

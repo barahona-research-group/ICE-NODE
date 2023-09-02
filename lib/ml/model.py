@@ -1,8 +1,11 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any
+from typing import (List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any,
+                    Dict, Type)
 from abc import abstractmethod, ABCMeta
+import sys
+import inspect
 import zipfile
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -11,6 +14,7 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission)
+
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
                          EmbeddedAdmission)
 
@@ -20,6 +24,23 @@ if TYPE_CHECKING:
 
 class ModelDimensions(eqx.Module):
     emb: PatientEmbeddingDimensions = PatientEmbeddingDimensions()
+
+    def to_config(self) -> Dict[str, int]:
+        d = {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+        return {
+            'type': self.__class__.__name__,
+            'emb': self.emb.to_config(),
+            **d
+        }
+
+    @staticmethod
+    def from_config(config: Dict[str, int]) -> ModelDimensions:
+        config['emb'] = PatientEmbeddingDimensions.from_config(config['emb'])
+        clas = model_dim_classes[config.pop('type')]
+        return clas(**config)
+
+
+model_dim_classes = {'ModelDimensions': ModelDimensions}
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
@@ -62,6 +83,16 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             f"Model dimensionality for demographic embedding size "\
             f"({dims.emb.demo}) and input demographic vector size "\
             f"({demo_vec_dim}) must both be zero or non-zero."
+
+    def to_config(self):
+        dims = self.dims.to_config()
+        return {'dims': dims, 'type': self.__class__.__name__}
+
+    @staticmethod
+    def from_config(config: Dict[str, Any], **kwargs):
+        dims = ModelDimensions.from_config(config['dims'])
+        model_cls = model_classes[config.pop('type')]
+        return model_cls(dims=dims, **config, **kwargs)
 
     @abstractmethod
     def __call__(self, x: Union[Patient, Admission],
@@ -239,6 +270,13 @@ class OutpatientModel(AbstractModel):
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
 
+
+model_classes = {
+    name: clas
+    for name, clas in inspect.getmembers(sys.modules[__name__],
+                                         inspect.isclass)
+    if issubclass(clas, AbstractModel)
+}
 
 #     @classmethod
 #     def from_config(cls, conf: Dict[str, Any], patients: Patients,

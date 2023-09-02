@@ -1,6 +1,8 @@
 """Data Model for Subjects in MIMIC-III and MIMIC-IV"""
 
 from __future__ import annotations
+import sys
+import inspect
 from datetime import date
 from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union, Any,
                     Callable)
@@ -37,21 +39,27 @@ def nan_concat_leading_windows(x):
     s = x_ext.strides[0]
     return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
 
+
 def nan_agg_min(x, axis):
     return np.nanmin(x, axis=axis)
+
 
 def nan_agg_max(x, axis):
     return np.nanmax(x, axis=axis)
 
+
 def nan_agg_mean(x, axis):
     return np.nanmean(x, axis=axis)
+
 
 def nan_agg_median(x, axis):
     return np.nanmedian(x, axis=axis)
 
+
 def nan_agg_quantile(q):
     def _nan_agg_quantile(x, axis):
         return np.nanquantile(x, q, axis=axis)
+
     return _nan_agg_quantile
 
 
@@ -61,15 +69,19 @@ class LeadingObservableConfig(eqx.Module):
     window_aggregate: Callable[[jnp.ndarray], float]
     _index2code: Dict[int, str] = eqx.static_field()
     _code2index: Dict[str, int] = eqx.static_field()
+    _init_kwargs: Dict[str, Any] = eqx.static_field()
 
     def __init__(self,
                  leading_hours: List[float],
-                 window_aggregate: Callable[[jnp.ndarray], float],
+                 window_aggregate: str,
                  scheme: AbstractScheme,
                  index: Optional[int] = None,
                  code: Optional[str] = None):
         super().__init__()
-
+        self._init_kwargs = dict(leading_hours=leading_hours,
+                                 window_aggregate=window_aggregate,
+                                 index=index,
+                                 code=code)
         assert (index is None) != (code is None), \
             'Either index or code must be specified'
         if index is None:
@@ -111,6 +123,13 @@ class LeadingObservableConfig(eqx.Module):
             zip(range(len(self.leading_hours)),
                 [f'{desc}_next_{h}hrs' for h in self.leading_hours]))
         self._code2index = {v: k for k, v in self._index2code.items()}
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], scheme: AbstractScheme):
+        return cls(scheme=scheme, **config)
+
+    def to_config(self):
+        return self._init_kwargs
 
     @property
     def index2code(self):
@@ -245,13 +264,11 @@ class MaskedPerceptron(MaskedAggregator):
 
 
 class MaskedSum(MaskedAggregator):
-
     def __call__(self, x):
         return self.mask @ x
 
 
 class MaskedOr(MaskedAggregator):
-
     def __call__(self, x):
         if isinstance(x, np.ndarray):
             return np.any(self.mask & (x != 0), axis=1)
@@ -542,6 +559,18 @@ class DemographicVectorConfig(eqx.Module):
     age: bool = False
     ethnicity: bool = False
 
+    def to_config(self):
+        d = {
+            k: v
+            for k, v in self.__dict__.items() if not k.startswith("_")
+        }
+        return {'type': self.__class__.__name__, **d}
+
+    @staticmethod
+    def from_config(config):
+        clas = config_classes[config.pop('type')]
+        return clas(**config)
+
 
 class CPRDDemographicVectorConfig(DemographicVectorConfig):
     imd: bool = False
@@ -625,3 +654,8 @@ class Patient(eqx.Module):
     @classmethod
     def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
         return dataset.to_subjects()
+
+
+config_classes = {
+    name: c for name, c in inspect.getmembers(sys.modules[__name__])
+    if inspect.isclass(c) and name.endswith("Config")}

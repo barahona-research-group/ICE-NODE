@@ -1,6 +1,8 @@
 """."""
 from __future__ import annotations
 import os
+import sys
+import inspect
 from pathlib import Path
 from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
 from collections import defaultdict, namedtuple
@@ -195,6 +197,8 @@ class DatasetScheme(eqx.Module):
     dx: AbstractScheme
     ethnicity: Ethnicity
     gender: Gender
+
+    _init_kwargs: Dict[str, Any]
     outcome: Optional[OutcomeExtractor] = None
 
     @classmethod
@@ -209,8 +213,9 @@ class DatasetScheme(eqx.Module):
                 att_t_scheme
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
 
-    def __init__(self, source_clone=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
+        self._init_kwargs = kwargs
 
         if 'outcome' in kwargs:
             self.outcome = OutcomeExtractor(kwargs['outcome'])
@@ -218,6 +223,14 @@ class DatasetScheme(eqx.Module):
 
         for k, v in kwargs.items():
             setattr(self, k, scheme_from_classname(v))
+
+    def to_config(self):
+        return {'type': self.__class__.__name__, **self._init_kwargs}
+
+    @staticmethod
+    def from_config(config):
+        clas = dataset_scheme_classes[config.pop('type')]
+        return clas(**config)
 
     def make_target_scheme(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
@@ -394,7 +407,8 @@ class CPRDDatasetScheme(DatasetScheme):
 class MIMIC4DatasetScheme(DatasetScheme):
     dx: Union[Dict[str, ICDCommons], ICDCommons]
 
-    def __init__(self, source_clone=None, **kwargs):
+    def __init__(self, **kwargs):
+        self._init_kwargs = kwargs
         if 'outcome' in kwargs:
             self.outcome = OutcomeExtractor(kwargs['outcome'])
             del kwargs['outcome']
@@ -1848,3 +1862,11 @@ def load_dataset(label, **init_kwargs):
     if label == 'M4ICU':
         return MIMIC4ICUDataset.from_meta_json(
             f'{_META_DIR}/mimic4icu_meta.json', **init_kwargs)
+
+
+dataset_scheme_classes = {
+    name: clas
+    for name, clas in inspect.getmembers(sys.modules[__name__],
+                                         inspect.isclass)
+    if issubclass(clas, DatasetScheme)
+}
