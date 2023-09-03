@@ -10,6 +10,7 @@ import equinox as eqx
 from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
                    AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
+from ..base import AbstractConfig
 
 
 class EmbeddedAdmission(eqx.Module):
@@ -26,22 +27,9 @@ class EmbeddedOutAdmission(EmbeddedAdmission):
     demo: Optional[jnp.ndarray]
 
 
-class PatientEmbeddingDimensions(eqx.Module):
+class PatientEmbeddingDimensions(AbstractConfig):
     dx: int = 30
     demo: int = 5
-
-    def to_config(self) -> Dict[str, int]:
-        d = {
-            k: v
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        }
-        d['type'] = self.__class__.__name__
-
-    @staticmethod
-    def from_config(config: Dict[str, int]) -> PatientEmbeddingDimensions:
-        clas = dimensions_classes[config.pop('type')]
-        return clas(**config)
-
 
 class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
     pass
@@ -212,10 +200,3 @@ class InpatientEmbedding(PatientEmbedding):
                                      admission.interventions.segmented_input,
                                      admission.interventions.segmented_proc)
 
-
-dimensions_classes = {
-    name: clas
-    for name, clas in inspect.getmembers(sys.modules[__name__],
-                                         inspect.isclass)
-    if issubclass(clas, PatientEmbeddingDimensions)
-}

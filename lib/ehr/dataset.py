@@ -1,12 +1,9 @@
 """."""
 from __future__ import annotations
 import os
-import sys
-import inspect
 from pathlib import Path
 from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
 from collections import defaultdict, namedtuple
-import copy
 from concurrent.futures import ThreadPoolExecutor
 import pickle
 from datetime import datetime, timedelta
@@ -21,6 +18,7 @@ import numpy as np
 import equinox as eqx
 
 from ..utils import load_config, translate_path
+from ..base import AbstractConfig
 
 from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
                             AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
@@ -193,12 +191,21 @@ class AdaptiveScaler(eqx.Module):
         return np.where(min_val >= 0.0, minmax_unscaled, z_unscaled)
 
 
+class DatasetConfig(AbstractConfig):
+    label: str
+    sample: int
+    base_dir: str
+    meta_fpath: str
+    scheme: Dict[str, str]
+    colname: Dict[str, Dict[str, str]]
+    files: Dict[str, str] = eqx.field(default_factory=dict)
+    tag: str = ''
+
+
 class DatasetScheme(eqx.Module):
     dx: AbstractScheme
     ethnicity: Ethnicity
     gender: Gender
-
-    _init_kwargs: Dict[str, Any]
     outcome: Optional[OutcomeExtractor] = None
 
     @classmethod
@@ -213,33 +220,49 @@ class DatasetScheme(eqx.Module):
                 att_t_scheme
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
 
-    def __init__(self, **kwargs):
+    def __init__(self, config: Dict[str, str], **kwargs):
         super().__init__()
-        self._init_kwargs = kwargs
+        if config is not None:
+            config = config.copy()
+            config.update(kwargs)
+        else:
+            config = kwargs
 
-        if 'outcome' in kwargs:
-            self.outcome = OutcomeExtractor(kwargs['outcome'])
-            del kwargs['outcome']
+        if config['outcome'] is not None:
+            self.outcome = OutcomeExtractor(config.outcome)
+            del config['outcome']
 
-        for k, v in kwargs.items():
-            setattr(self, k, scheme_from_classname(v))
+        for k, v in config.items():
+            if isinstance(v, str):
+                setattr(self, k, scheme_from_classname(v))
 
-    def to_config(self):
-        return {'type': self.__class__.__name__, **self._init_kwargs}
+    def to_dict(self):
 
-    @staticmethod
-    def from_config(config):
-        clas = dataset_scheme_classes[config.pop('type')]
-        return clas(**config)
+        def _to_dict(x):
 
-    def make_target_scheme(self, **kwargs):
+            def value(x):
+                if isinstance(x, AbstractScheme):
+                    return x.__class__.__name__
+                elif isinstance(x, dict):
+                    return _to_dict(x)
+
+            return {
+                k: value(v)
+                for k, v in self.__dict__.items() if not k.startswith('_')
+            }
+
+        return _to_dict(self)
+
+    def make_target_scheme_config(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
-        updated_kwargs = {
-            k: v.__class__.__name__
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        }
-        updated_kwargs.update(kwargs)
-        t_scheme = type(self)(**updated_kwargs)
+        config = self.to_dict()
+        config.update(kwargs)
+        return config
+
+    def make_target_scheme(self, config=None, **kwargs):
+        if config is None:
+            config = self.make_target_scheme_config(**kwargs)
+        t_scheme = type(self)(config)
         self._assert_valid_maps(self, t_scheme)
         return t_scheme
 
@@ -276,27 +299,34 @@ class DatasetScheme(eqx.Module):
 
 class Dataset(eqx.Module):
     df: Dict[str, pd.DataFrame]
+    config: DatasetConfig
     scheme: DatasetScheme
-    colname: ColumnNames
-
+    colname: Dict[str, ColumnNames]
     static_info_class: ClassVar[Type[StaticInfo]] = StaticInfo
+
+    def __init__(self, config: DatasetConfig = None, config_path: str = None):
+        if config is None:
+            config = AbstractConfig.from_dict(load_config(config_path))
+
+        super().__init__()
+        self.config = config
+        self.scheme = DatasetScheme(config.scheme)
+        self.colname = {
+            f: ColumnNames.make(m)
+            for f, m in config.colname.items()
+        }
+        self._load_dataframes()
 
     @property
     def supported_target_scheme_options(self):
         return self.scheme.supported_target_scheme_options
 
-    @classmethod
-    @abstractmethod
-    def from_meta_json(cls, meta_fpath, **init_kwargs):
-        pass
-
     @abstractmethod
     def to_subjects(self, **kwargs):
         pass
 
-    @classmethod
     @abstractmethod
-    def load_dataframes(cls, meta, **kwargs):
+    def _load_dataframes(self):
         pass
 
     @classmethod
@@ -407,21 +437,13 @@ class CPRDDatasetScheme(DatasetScheme):
 class MIMIC4DatasetScheme(DatasetScheme):
     dx: Union[Dict[str, ICDCommons], ICDCommons]
 
-    def __init__(self, **kwargs):
-        self._init_kwargs = kwargs
-        if 'outcome' in kwargs:
-            self.outcome = OutcomeExtractor(kwargs['outcome'])
-            del kwargs['outcome']
-
+    def __init__(self, config=None, **kwargs):
+        super().__init__(config, **kwargs)
         if isinstance(kwargs['dx'], dict):
             self.dx = {
                 version: scheme_from_classname(scheme)
                 for version, scheme in kwargs['dx'].items()
             }
-            del kwargs['dx']
-
-        for k, v in kwargs.items():
-            setattr(self, k, scheme_from_classname(v))
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
@@ -439,19 +461,6 @@ class MIMIC4DatasetScheme(DatasetScheme):
             assert s_scheme.mapper_to(
                 t_scheme
             ), f"Cannot map dx (version={version}) from {s_scheme} to {t_scheme}"
-
-    def make_target_scheme(self, **kwargs):
-        assert 'outcome' in kwargs, 'Outcome must be specified.'
-        updated_kwargs = {
-            k: v.__class__.__name__
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        }
-        print(updated_kwargs)
-        updated_kwargs.update(kwargs)
-        print(updated_kwargs)
-        t_scheme = type(self)(**updated_kwargs)
-        self._assert_valid_maps(self, t_scheme)
-        return t_scheme
 
     def dx_mapper(self, target_scheme: DatasetScheme):
         return {
@@ -489,41 +498,18 @@ class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
     int_input: MIMICInput
     obs: MIMICObservables
 
-    def make_target_scheme(self, **kwargs):
+    def make_target_scheme_config(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
-        kwargs['int_proc'] = 'MIMICProcedureGroups'
-        kwargs['int_input'] = 'MIMICInputGroups'
-
-        updated_kwargs = {
-            k: v.__class__.__name__
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        }
-        updated_kwargs.update(kwargs)
-        t_scheme = type(self)(**updated_kwargs)
-        self._assert_valid_maps(self, t_scheme)
-        return t_scheme
+        config = self.to_dict()
+        config.update(kwargs)
+        config['int_proc'] = 'MIMICProcedureGroups'
+        config['int_input'] = 'MIMICInputGroups'
+        return config
 
 
 class MIMIC3Dataset(Dataset):
     df: Dict[str, dd.DataFrame]
     scheme: DatasetScheme
-
-    def __init__(self, df: Dict[str, pd.DataFrame], colname: Dict[str,
-                                                                  ColumnNames],
-                 code_scheme: Dict[str, Any], **kwargs):
-
-        scheme = self.make_dataset_scheme(**code_scheme)
-        # deepcopy to avoid modifying the original colname which is used by
-        # reference in the lazy evaluation of dask operations.
-        colname = copy.deepcopy(colname)
-
-        super().__init__(df=df, colname=colname, scheme=scheme)
-        logging.debug("Dataframes validation and time conversion")
-        self._dx_fix_icd_dots()
-        self._dx_filter_unsupported_icd()
-        self._match_admissions_with_demographics(self.df, colname)
-        self.df = {k: try_compute(v) for k, v in self.df.items()}
-        logging.debug("[DONE] Dataframes validation and time conversion")
 
     @classmethod
     def sample_n_subjects(cls, df, c_subject_id, n, seed=None):
@@ -552,23 +538,22 @@ class MIMIC3Dataset(Dataset):
         df["adm"] = adm
         df["static"] = static
 
-    @classmethod
-    def load_dataframes(cls, meta, sample=None, **kwargs):
-        files = meta['files']
-        base_dir = meta['base_dir']
-        colname = meta['colname']
+    def _load_dataframes(self):
+        config = self.config.copy()
+        files = config.files
+        colname = self.colname
         logging.debug('Loading dataframe files')
         df = {
             k:
-            dd.read_csv(os.path.join(base_dir, files[k]),
+            dd.read_csv(os.path.join(config.path, files[k]),
                         usecols=colname[k].columns,
                         dtype=colname[k].default_raw_types)
             for k in files.keys()
         }
-        if sample is not None:
-            df["adm"] = cls.sample_n_subjects(df["adm"],
-                                              colname["adm"].subject_id,
-                                              sample, 0)
+        if config.sample is not None:
+            df["adm"] = self.sample_n_subjects(df["adm"],
+                                               colname["adm"].subject_id,
+                                               config.sample, 0)
         logging.debug('[DONE] Loading dataframe files')
         logging.debug('Preprocess admissions')
         adm = df["adm"]
@@ -576,12 +561,12 @@ class MIMIC3Dataset(Dataset):
         static = static.set_index(colname["static"].index).compute()
         adm = adm.set_index(colname["adm"].index).compute()
 
-        adm = cls._adm_cast_times(adm, colname["adm"])
-        adm, colname["adm"] = cls._adm_add_adm_interval(
+        adm = self._adm_cast_times(adm, colname["adm"])
+        adm, colname["adm"] = self._adm_add_adm_interval(
             adm, colname["adm"], 1 / 3600.0)
-        adm = cls._adm_remove_subjects_with_negative_adm_interval(
+        adm = self._adm_remove_subjects_with_negative_adm_interval(
             adm, colname["adm"])
-        adm, merger_map = cls._adm_merge_overlapping_admissions(
+        adm, merger_map = self._adm_merge_overlapping_admissions(
             adm, colname["adm"])
 
         logging.debug('[DONE] Preprocess admissions')
@@ -592,16 +577,23 @@ class MIMIC3Dataset(Dataset):
             name: df[name]
             for name in df if colname[name].has('admission_id')
         }
-        df_with_adm_id = cls._map_admission_ids(df_with_adm_id, colname,
-                                                merger_map)
-        df_with_adm_id = cls._match_filter_admission_ids(
+        df_with_adm_id = self._map_admission_ids(df_with_adm_id, colname,
+                                                 merger_map)
+        df_with_adm_id = self._match_filter_admission_ids(
             adm, df_with_adm_id, colname)
         df.update(df_with_adm_id)
         logging.debug("[DONE] Matching admission_id")
 
         df["static"] = static
         df["adm"] = adm
-        return df
+        self.df = df
+
+        logging.debug("Dataframes validation and time conversion")
+        self._dx_fix_icd_dots()
+        self._dx_filter_unsupported_icd()
+        self._match_admissions_with_demographics(self.df, colname)
+        self.df = {k: try_compute(v) for k, v in self.df.items()}
+        logging.debug("[DONE] Dataframes validation and time conversion")
 
     def to_subjects(self, subject_ids: List[int], num_workers: int,
                     demographic_vector_config: DemographicVectorConfig,
@@ -969,35 +961,9 @@ class MIMIC3Dataset(Dataset):
         return zip(dx_codes.keys(),
                    map(target_scheme.outcome.mapcodevector, dx_codes.values()))
 
-    @classmethod
-    def from_meta_json(cls, meta_fpath, **init_kwargs):
-        meta = load_config(meta_fpath)
-        meta['base_dir'] = os.path.expandvars(meta['base_dir'])
-        meta['colname'] = {
-            f: ColumnNames.make(m)
-            for f, m in meta['colname'].items()
-        }
-        meta['df'] = cls.load_dataframes(meta, **init_kwargs)
-        return cls(**meta, **init_kwargs)
-
 
 class CPRDDataset(MIMIC3Dataset):
     static_info_class: ClassVar[Type[StaticInfo]] = CPRDStaticInfo
-
-    @classmethod
-    def make_dataset_scheme(cls, **kwargs):
-        return CPRDDatasetScheme(**kwargs)
-
-    def __init__(self, df: Dict[str, pd.DataFrame], colname: Dict[str,
-                                                                  ColumnNames],
-                 code_scheme: Dict[str, Any], **kwargs):
-
-        scheme = self.make_dataset_scheme(**code_scheme)
-        # deepcopy to avoid modifying the original colname which is used by
-        # reference in the lazy evaluation of dask operations.
-        colname = copy.deepcopy(colname)
-        Dataset.__init__(self, df=df, colname=colname, scheme=scheme)
-        self._match_admissions_with_demographics(self.df, colname)
 
     def subject_info_extractor(self, subject_ids, target_scheme):
 
@@ -1022,8 +988,11 @@ class CPRDDataset(MIMIC3Dataset):
             self.scheme.imd.codeset2vec).to_dict()
         return subject_dob, subject_gender, subject_eth, subject_imd
 
-    @classmethod
-    def load_dataframes(cls, df, colname, **kwargs):
+    def _load_dataframes(self):
+        colname = self.colname
+        config = self.config.copy()
+
+        df = pd.read_csv(translate_path(config.path), sep='\t', dtype=str)
 
         def listify(s):
             return list(map(lambda e: e.strip(), s.split(',')))
@@ -1100,9 +1069,9 @@ class CPRDDataset(MIMIC3Dataset):
             demo_cols.subject_id: int
         }).set_index(demo_cols.index)
 
-        df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
-        colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
-        return df, colname
+        self.df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
+        self.colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
+        self._match_admissions_with_demographics(self.df, colname)
 
     def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
                     target_scheme: DatasetScheme, **kwargs):
@@ -1160,24 +1129,9 @@ class CPRDDataset(MIMIC3Dataset):
 
         return list(map(_gen_subject, subject_ids))
 
-    @classmethod
-    def from_meta_json(cls, meta_fpath, **init_kwargs):
-        meta = load_config(meta_fpath)
-        meta['colname'] = ColumnNames.make(meta['colname'])
-        meta['df'] = pd.read_csv(translate_path(meta['filepath']),
-                                 sep='\t',
-                                 dtype=str)
-        meta['df'], meta['colname'] = cls.load_dataframes(
-            **meta, **init_kwargs)
-        return cls(**meta, **init_kwargs)
-
 
 class MIMIC4Dataset(MIMIC3Dataset):
     scheme: MIMIC4DatasetScheme
-
-    @classmethod
-    def make_dataset_scheme(cls, **kwargs):
-        return MIMIC4DatasetScheme(**kwargs)
 
     def _dx_fix_icd_dots(self):
         c_code = self.colname["dx"].code
@@ -1289,53 +1243,9 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
     outlier_remover_history: Dict[str, Callable]
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
-    @classmethod
-    def make_dataset_scheme(cls, **kwargs):
-        return MIMIC4ICUDatasetScheme(**kwargs)
-
-    def __init__(self, df, colname, code_scheme, **kwargs):
-        self.outlier_remover_history = dict()
+    def __post_init__(self):
         self.scalers_history = dict()
-        scheme = self.make_dataset_scheme(**code_scheme)
-        # deepcopy to avoid modifying the original colname which is used by
-        # reference in the lazy evaluation of dask operations.
-        colname = copy.deepcopy(colname)
-
-        Dataset.__init__(self, df=df, colname=colname, scheme=scheme)
-        logging.debug("Dataframes validation and time conversion")
-        self._dx_fix_icd_dots()
-        self._dx_filter_unsupported_icd()
-
-        def _filter_codes(df, c_code, source_scheme):
-            mask = df[c_code].isin(source_scheme.codes)
-            logging.debug(
-                f'Removed codes: {df[~mask][c_code].unique().compute()}')
-            return df[mask]
-
-        for name in ("int_proc", "int_input", "obs"):
-            self.df[name] = _filter_codes(self.df[name],
-                                          self.colname[name].code,
-                                          getattr(self.scheme, name))
-
-            self.df[name], self.colname[name] = self._add_code_source_index(
-                self.df[name], getattr(self.scheme, name), self.colname[name])
-
-        # self.df["adm"] = self._adm_remove_subjects_with_overlapping_admissions(
-        #     self.df["adm"], self.colname["adm"])
-        self._int_input_remove_subjects_with_nans()
-        self._set_relative_times(self.df, self.colname, "int_proc",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(self.df, self.colname, "int_input",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(self.df,
-                                 self.colname,
-                                 "obs", ["timestamp"],
-                                 seconds_scaler=self.seconds_scaler)
-        self._match_admissions_with_demographics(self.df, self.colname)
-        self.df = {k: try_compute(v) for k, v in self.df.items()}
-        logging.debug("[DONE] Dataframes validation and time conversion")
+        self.outlier_remover_history = dict()
 
     def _int_input_remove_subjects_with_nans(self):
         c_subject = self.colname["adm"].subject_id
@@ -1515,11 +1425,12 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         updated = eqx.tree_at(lambda x: x.scalers_history, updated, history)
         return updated
 
-    @classmethod
-    def load_dataframes(cls, meta, sample=None, **kwargs):
+    def _load_dataframes(self):
 
-        df = MIMIC4Dataset.load_dataframes(meta, sample=sample, **kwargs)
-        colname = meta['colname']
+        MIMIC4Dataset._load_dataframes(self)
+        colname = self.colname.copy()
+        scheme = self.scheme
+        df = self.df
 
         logging.debug("Time casting..")
         # Cast timestamps for intervensions
@@ -1532,7 +1443,38 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         df["obs"][colname["obs"].timestamp] = dd.to_datetime(
             df["obs"][colname["obs"].timestamp])
         logging.debug("[DONE] Time casting..")
-        return df
+
+        logging.debug("Dataframes validation and time conversion")
+
+        def _filter_codes(df, c_code, source_scheme):
+            mask = df[c_code].isin(source_scheme.codes)
+            logging.debug(
+                f'Removed codes: {df[~mask][c_code].unique().compute()}')
+            return df[mask]
+
+        for name in ("int_proc", "int_input", "obs"):
+            df[name] = _filter_codes(df[name], colname[name].code,
+                                     getattr(scheme, name))
+
+            df[name], colname[name] = self._add_code_source_index(
+                df[name], getattr(scheme, name), colname[name])
+
+        # self.df["adm"] = self._adm_remove_subjects_with_overlapping_admissions(
+        #     self.df["adm"], self.colname["adm"])
+        self._int_input_remove_subjects_with_nans()
+        self._set_relative_times(df, colname, "int_proc",
+                                 ["start_time", "end_time"],
+                                 self.seconds_scaler)
+        self._set_relative_times(df, colname, "int_input",
+                                 ["start_time", "end_time"],
+                                 self.seconds_scaler)
+        self._set_relative_times(df,
+                                 colname,
+                                 "obs", ["timestamp"],
+                                 seconds_scaler=self.seconds_scaler)
+        self.df = {k: try_compute(v) for k, v in df.items()}
+        self.colname = colname
+        logging.debug("[DONE] Dataframes validation and time conversion")
 
     def to_subjects(self, subject_ids: List[int], num_workers: int,
                     demographic_vector_config: DemographicVectorConfig,
@@ -1813,60 +1755,47 @@ class SyntheticDataset(MIMIC3Dataset):
         df = pd.DataFrame(demo, columns=columns)
         return df
 
-    @classmethod
-    def synthetic_from_meta_json(cls, meta_fpath, n_subjects=100):
-        meta = load_config(meta_fpath)
-        # meta['base_dir'] = os.path.expandvars(meta['base_dir'])
-        meta['colname'] = {
-            f: ColumnNames.make(m)
-            for f, m in meta['colname'].items()
-        }
-        adm_df = cls.make_synthetic_admissions(meta['colname'],
-                                               n_subjects=n_subjects)
-        return cls(**meta)
 
-
-def load_dataset_scheme(label):
-    if label == 'M3':
-        conf = load_config(f'{_META_DIR}/mimic3_meta.json')
-        return DatasetScheme(**conf['code_scheme'])
-    if label == 'M3CV':
-        conf = load_config(f'{_META_DIR}/mimic3cv_meta.json')
-        return DatasetScheme(**conf['code_scheme'])
-    if label == 'M4':
-        conf = load_config(f'{_META_DIR}/mimic4_meta.json')
-        return MIMIC4DatasetScheme(**conf['code_scheme'])
-    if label == 'CPRD':
-        conf = load_config(f'{_META_DIR}/cprd_meta.json')
-        return CPRDDatasetScheme(**conf['code_scheme'])
-    if label == 'M4ICU':
-        conf = load_config(f'{_META_DIR}/mimic4icu_meta.json')
-        return MIMIC4ICUDatasetScheme(**conf['code_scheme'])
-
-
-def load_dataset(label, **init_kwargs):
-
-    if label == 'M3':
-        return MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3_meta.json',
-                                            **init_kwargs)
-    if label == 'M3CV':
-        return MIMIC3Dataset.from_meta_json(f'{_META_DIR}/mimic3cv_meta.json',
-                                            **init_kwargs)
-
-    if label == 'M4':
-        return MIMIC4Dataset.from_meta_json(f'{_META_DIR}/mimic4_meta.json',
-                                            **init_kwargs)
-    if label == 'CPRD':
-        return CPRDDataset.from_meta_json(f'{_META_DIR}/cprd_meta.json',
-                                          **init_kwargs)
-    if label == 'M4ICU':
-        return MIMIC4ICUDataset.from_meta_json(
-            f'{_META_DIR}/mimic4icu_meta.json', **init_kwargs)
-
-
-dataset_scheme_classes = {
-    name: clas
-    for name, clas in inspect.getmembers(sys.modules[__name__],
-                                         inspect.isclass)
-    if issubclass(clas, DatasetScheme)
+default_config_files = {
+    'M3': f'{_META_DIR}/mimic3_meta.json',
+    'M3CV': f'{_META_DIR}/mimic3cv_meta.json',
+    'M4': f'{_META_DIR}/mimic4_meta.json',
+    'CPRD': f'{_META_DIR}/cprd_meta.json',
+    'M4ICU': f'{_META_DIR}/mimic4icu_meta.json',
 }
+
+
+def load_dataset_scheme(tag) -> DatasetScheme:
+    conf = load_config(default_config_files[tag])
+    scheme_conf = conf['code_scheme']
+
+    if tag == 'M3':
+        return DatasetScheme(scheme_conf)
+    if tag == 'M3CV':
+        return DatasetScheme(scheme_conf)
+    if tag == 'M4':
+        return MIMIC4DatasetScheme(scheme_conf)
+    if tag == 'CPRD':
+        return CPRDDatasetScheme(scheme_conf)
+    if tag == 'M4ICU':
+        return MIMIC4ICUDatasetScheme(scheme_conf)
+
+
+def load_dataset(config: AbstractConfig = None,
+                 tag: str = None,
+                 **init_kwargs):
+    if config is not None:
+        tag = config.tag
+    else:
+        config = load_config(default_config_files[tag])
+        config = AbstractConfig.from_dict(config)
+        config = config.update(**init_kwargs)
+
+    if tag in ('M3', 'M3CV'):
+        return MIMIC3Dataset(config)
+    if tag == 'M4':
+        return MIMIC4Dataset(config)
+    if tag == 'CPRD':
+        return CPRDDataset(config)
+    if tag == 'M4ICU':
+        return MIMIC4ICUDataset(config)

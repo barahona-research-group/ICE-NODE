@@ -1,18 +1,21 @@
 {
-    "filepath": "$DATA_FILE",
-    "code_scheme": {
+    "scheme": {
         "dx": "DxLTC9809FlatMedcodes",
-	    "ethnicity": "CPRDEthnicity16",
-        "gender": "CPRDGender",
+		"ethnicity": "CPRDEthnicity16",
+    	"gender": "CPRDGender",
         "imd": "CPRDIMDCategorical"
     },
-    "colname": {
-        "code": "medcode_list",
-        "subject_id": "patid",
-        "dischtime": "year_month_list",
-        "age_at_dischtime": "age_list",
-        "gender": "gender",
-        "ethnicity": "ethnicity",
-        "imd_decile": "imd_decile"
-    }
+    "colname": { 
+    	"adm": {
+        	"code": "medcode_list",
+        	"subject_id": "patid",
+        	"dischtime": "year_month_list",
+        	"age_at_dischtime": "age_list",
+        	"gender": "gender",
+        	"ethnicity": "ethnicity",
+        	"imd_decile": "imd_decile"
+    	}
+	},
+	"tag": "CPRD",
+    "_type": "DatasetConfig"
 }

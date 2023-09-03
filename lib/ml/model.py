@@ -14,6 +14,7 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission)
+from ..base import AbstractConfig
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
                          EmbeddedAdmission)
@@ -22,25 +23,8 @@ if TYPE_CHECKING:
     import optuna
 
 
-class ModelDimensions(eqx.Module):
+class ModelDimensions(AbstractConfig):
     emb: PatientEmbeddingDimensions = PatientEmbeddingDimensions()
-
-    def to_config(self) -> Dict[str, int]:
-        d = {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
-        return {
-            'type': self.__class__.__name__,
-            'emb': self.emb.to_config(),
-            **d
-        }
-
-    @staticmethod
-    def from_config(config: Dict[str, int]) -> ModelDimensions:
-        config['emb'] = PatientEmbeddingDimensions.from_config(config['emb'])
-        clas = model_dim_classes[config.pop('type')]
-        return clas(**config)
-
-
-model_dim_classes = {'ModelDimensions': ModelDimensions}
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
@@ -55,6 +39,13 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     @abstractmethod
     def dyn_params_list(self):
         pass
+
+    @classmethod
+    def register(cls):
+        model_class_registry[cls.__name__] = cls
+
+    def export_config(self):
+        return {'dims': self.dims.to_dict()}
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -83,16 +74,6 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
             f"Model dimensionality for demographic embedding size "\
             f"({dims.emb.demo}) and input demographic vector size "\
             f"({demo_vec_dim}) must both be zero or non-zero."
-
-    def to_config(self):
-        dims = self.dims.to_config()
-        return {'dims': dims, 'type': self.__class__.__name__}
-
-    @staticmethod
-    def from_config(config: Dict[str, Any], **kwargs):
-        dims = ModelDimensions.from_config(config['dims'])
-        model_cls = model_classes[config.pop('type')]
-        return model_cls(dims=dims, **config, **kwargs)
 
     @abstractmethod
     def __call__(self, x: Union[Patient, Admission],
@@ -271,12 +252,7 @@ class OutpatientModel(AbstractModel):
             return results.filter_nans()
 
 
-model_classes = {
-    name: clas
-    for name, clas in inspect.getmembers(sys.modules[__name__],
-                                         inspect.isclass)
-    if issubclass(clas, AbstractModel)
-}
+model_class_registry = {}
 
 #     @classmethod
 #     def from_config(cls, conf: Dict[str, Any], patients: Patients,

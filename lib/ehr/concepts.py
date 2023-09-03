@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import pandas as pd
 import equinox as eqx
+from ..base import AbstractConfig
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
                             CodesVector)
 
@@ -57,16 +58,18 @@ def nan_agg_median(x, axis):
 
 
 def nan_agg_quantile(q):
+
     def _nan_agg_quantile(x, axis):
         return np.nanquantile(x, q, axis=axis)
 
     return _nan_agg_quantile
 
 
-class LeadingObservableConfig(eqx.Module):
+class LeadingObservableConfig(AbstractConfig):
     index: int
     leading_hours: List[float]
-    window_aggregate: Callable[[jnp.ndarray], float]
+    window_aggregate: str
+    _window_aggregate: Callable[[jnp.ndarray], float]
     _index2code: Dict[int, str] = eqx.static_field()
     _code2index: Dict[str, int] = eqx.static_field()
     _init_kwargs: Dict[str, Any] = eqx.static_field()
@@ -78,10 +81,7 @@ class LeadingObservableConfig(eqx.Module):
                  index: Optional[int] = None,
                  code: Optional[str] = None):
         super().__init__()
-        self._init_kwargs = dict(leading_hours=leading_hours,
-                                 window_aggregate=window_aggregate,
-                                 index=index,
-                                 code=code)
+
         assert (index is None) != (code is None), \
             'Either index or code must be specified'
         if index is None:
@@ -98,21 +98,22 @@ class LeadingObservableConfig(eqx.Module):
             'leading_hours must be sorted'
 
         self.leading_hours = leading_hours
+        self.window_aggregate = window_aggregate
 
         def window(x):
             return pd.DataFrame(x)[0].expanding()
 
         if window_aggregate == 'min':
-            self.window_aggregate = nan_agg_min
+            self._window_aggregate = nan_agg_min
         elif window_aggregate == 'max':
-            self.window_aggregate = nan_agg_max
+            self._window_aggregate = nan_agg_max
         elif window_aggregate == 'median':
-            self.window_aggregate = nan_agg_median
+            self._window_aggregate = nan_agg_median
         elif window_aggregate == 'mean':
-            self.window_aggregate = nan_agg_mean
+            self._window_aggregate = nan_agg_mean
         elif isinstance(window_aggregate, Tuple):
             if window_aggregate[0] == 'quantile':
-                self.window_aggregate = nan_agg_quantile(window_aggregate[1])
+                self._window_aggregate = nan_agg_quantile(window_aggregate[1])
             else:
                 raise ValueError(
                     f'Unknown window_aggregate {window_aggregate}')
@@ -125,11 +126,9 @@ class LeadingObservableConfig(eqx.Module):
         self._code2index = {v: k for k, v in self._index2code.items()}
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any], scheme: AbstractScheme):
-        return cls(scheme=scheme, **config)
-
-    def to_config(self):
-        return self._init_kwargs
+    def from_dict(cls, config: Dict[str, Any], scheme: AbstractScheme):
+        conf = AbstractConfig.from_dict(config)
+        return cls(scheme=scheme, **conf)
 
     @property
     def index2code(self):
@@ -264,11 +263,13 @@ class MaskedPerceptron(MaskedAggregator):
 
 
 class MaskedSum(MaskedAggregator):
+
     def __call__(self, x):
         return self.mask @ x
 
 
 class MaskedOr(MaskedAggregator):
+
     def __call__(self, x):
         if isinstance(x, np.ndarray):
             return np.any(self.mask & (x != 0), axis=1)
@@ -554,22 +555,10 @@ class Admission(eqx.Module):
         return d1, d2
 
 
-class DemographicVectorConfig(eqx.Module):
+class DemographicVectorConfig(AbstractConfig):
     gender: bool = False
     age: bool = False
     ethnicity: bool = False
-
-    def to_config(self):
-        d = {
-            k: v
-            for k, v in self.__dict__.items() if not k.startswith("_")
-        }
-        return {'type': self.__class__.__name__, **d}
-
-    @staticmethod
-    def from_config(config):
-        clas = config_classes[config.pop('type')]
-        return clas(**config)
 
 
 class CPRDDemographicVectorConfig(DemographicVectorConfig):
@@ -651,11 +640,3 @@ class Patient(eqx.Module):
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)
 
-    @classmethod
-    def from_dataset(cls, dataset: "lib.ehr.dataset.AbstractEHRDataset"):
-        return dataset.to_subjects()
-
-
-config_classes = {
-    name: c for name, c in inspect.getmembers(sys.modules[__name__])
-    if inspect.isclass(c) and name.endswith("Config")}

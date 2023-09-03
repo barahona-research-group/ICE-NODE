@@ -12,8 +12,6 @@ import logging
 from abc import abstractmethod, ABCMeta
 import pandas as pd
 import numpy as np
-import jax
-import jax.numpy as jnp
 import jax.random as jrandom
 import jax.example_libraries.optimizers as jopt
 import jax.tree_util as jtu
@@ -25,6 +23,7 @@ from ..ehr import Predictions, Patients
 from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
+from ..base import AbstractConfig
 from .model import AbstractModel
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
@@ -344,7 +343,7 @@ class OptunaReporter(AbstractReporter):
                 (trainer_signals.end_evaluation, self.report_evaluation)]
 
 
-class OptimizerConfig(eqx.Module):
+class OptimizerConfig(AbstractConfig):
     opt: str
     lr: LRType
     decay_rate: Optional[LRType] = None
@@ -546,39 +545,43 @@ def make_optimizer(config: OptimizerConfig, *args, **kwargs):
         return Optimizer(config, *args, **kwargs)
 
 
+class ReportingConfig(AbstractConfig):
+    output_dir: Optional[str] = None
+    console: bool = True
+    parameter_snapshots: bool = False
+    config_json: bool = False
+    model_stats: bool = False
+
+
 class TrainerReporting(eqx.Module):
     reporters: List[AbstractReporter]
     metrics: MetricsCollection
 
     def __init__(self,
-                 output_dir: Optional[str] = None,
-                 console: bool = True,
+                 config: ReportingConfig = ReportingConfig(),
                  metrics: Optional[List[Metric]] = None,
-                 parameter_snapshots: bool = False,
-                 config_json: bool = False,
-                 model_stats: bool = False,
                  optuna_trial: Optional[optuna.Trial] = None,
                  optuna_objective: Optional[Callable] = None):
         reporters = []
-        if (config_json or metrics is not None or parameter_snapshots
-                or model_stats):
-            assert output_dir is not None, 'output_dir must be provided'
-            output_dir = translate_path(output_dir)
+        if (config.config_json or metrics is not None
+                or config.parameter_snapshots or config.model_stats):
+            assert config.output_dir is not None, 'output_dir must be provided'
+            output_dir = translate_path(config.output_dir)
             Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        if console:
+        if config.console:
             reporters.append(ConsoleReporter())
 
-        if parameter_snapshots:
+        if config.parameter_snapshots:
             reporters.append(ParamsDiskWriter(output_dir))
 
         if metrics is not None and len(metrics) > 0:
             reporters.append(EvaluationDiskWriter(output_dir))
 
-        if config_json:
+        if config.config_json:
             reporters.append(ConfigDiskWriter(output_dir))
 
-        if model_stats:
+        if config.model_stats:
             reporters.append(ModelStatsDiskWriter(output_dir))
 
         if optuna_trial is not None:
@@ -603,7 +606,7 @@ class TrainerReporting(eqx.Module):
         ]
 
 
-class WarmupConfig(eqx.Module):
+class WarmupConfig(AbstractConfig):
     epochs: int
     batch_size: int
     optimizer_config: OptimizerConfig
@@ -611,64 +614,69 @@ class WarmupConfig(eqx.Module):
     def __init__(self,
                  epochs: int,
                  batch_size: int,
-                 opt: str,
-                 lr: float,
+                 opt_config=None,
+                 opt: str = None,
+                 lr: float = None,
                  decay_rate: Optional[float] = None):
         self.epochs = epochs
         self.batch_size = batch_size
-        self.optimizer_config = OptimizerConfig(opt=opt,
-                                                lr=lr,
-                                                decay_rate=decay_rate,
-                                                reverse_schedule=True)
+        if opt_config is not None:
+            self.optimizer_config = opt_config
+        else:
+            self.optimizer_config = OptimizerConfig(opt=opt,
+                                                    lr=lr,
+                                                    decay_rate=decay_rate,
+                                                    reverse_schedule=True)
+
+
+class TrainerConfig(AbstractConfig):
+    optimizer_config: OptimizerConfig
+    epochs: int
+    batch_size: int
+    dx_loss: str = 'balanced_focal_bce'
+    obs_loss: str = 'mse'
+    lead_loss: str = 'mse'
 
 
 class Trainer(eqx.Module):
-    optimizer_config: OptimizerConfig
-    reg_hyperparams: Dict[str, float]
-    epochs: int
-    batch_size: int
-    dx_loss: Callable
-    obs_loss: Callable
-    lead_loss: Callable
-    kwargs: Dict[str, Any]
+    config: TrainerConfig
+    reg_hyperparams: AbstractConfig
+    _dx_loss: Callable
+    _obs_loss: Callable
+    _lead_loss: Callable
 
     def __init__(self,
-                 optimizer_config: OptimizerConfig,
-                 reg_hyperparams,
-                 epochs,
-                 batch_size,
-                 dx_loss='balanced_focal_bce',
-                 obs_loss='mse',
-                 lead_loss='mse',
-                 **kwargs):
-        self.optimizer_config = optimizer_config
+                 config: TrainerConfig,
+                 reg_hyperparams: AbstractConfig = AbstractConfig()):
+        self.optimizer_config = config
         self.reg_hyperparams = reg_hyperparams
-        self.epochs = epochs
-        self.batch_size = batch_size
-        self.dx_loss = binary_loss[dx_loss]
-        self.obs_loss = numeric_loss[obs_loss]
-        self.lead_loss = numeric_loss[lead_loss]
-        kwargs = kwargs or {}
-        kwargs.update({'dx_loss': dx_loss, 'obs_loss': obs_loss,
-                       'lead_loss': lead_loss})
-        self.kwargs = kwargs
+        self._dx_loss = binary_loss[config.dx_loss]
+        self._obs_loss = numeric_loss[config.obs_loss]
+        self._lead_loss = numeric_loss[config.lead_loss]
 
-    @property
-    def config(self):
+    def export_config(self):
         return {
-            'opt_config': self.optimizer_config.__dict__,
-            'reg_hyperparams': self.reg_hyperparams,
-            'epochs': self.epochs,
-            'batch_size': self.batch_size
+            'config': self.optimizer_config.to_dict(),
+            'reg_hyperparams': self.reg_hyperparams.to_dict()
         }
+
+    def export_expirement_config(self, interface, model):
+        return {
+            'trainer': self.export_config(),
+            'model': model.export_config(),
+            'interface': interface.export_config()
+        }
+
+    def from_config(self, config):
+        return Trainer(**{k: v.from_dict() for k, v in config.items()})
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        return predictions.prediction_dx_loss(dx_loss=self.dx_loss)
+        return predictions.prediction_dx_loss(dx_loss=self._dx_loss)
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_dx_loss(dx_loss=self.dx_loss)
+        l = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
@@ -679,7 +687,7 @@ class Trainer(eqx.Module):
         return loss
 
     def loss(self, model: AbstractModel, patients: Patients):
-        if self.reg_hyperparams is None:
+        if len(self.reg_hyperparams) == 0:
             return self.unreg_loss(model, patients)
         else:
             return self.reg_loss(model, patients)
@@ -769,19 +777,20 @@ class Trainer(eqx.Module):
                signals: TrainerSignals):
 
         train_ids, valid_ids, test_ids = splits
-        if self.epochs > 0 and self.epochs < 1:
+        if self.config.epochs > 0 and self.config.epochs < 1:
             epochs = 1
-            train_ids = train_ids[:int(self.epochs * len(train_ids)) + 1]
+            train_ids = train_ids[:int(self.config.epochs * len(train_ids)) +
+                                  1]
         else:
-            epochs = self.epochs
+            epochs = self.config.epochs
 
         n_train_admissions = patients.n_admissions(
             train_ids,
             ignore_first_admission=model.counts_ignore_first_admission)
 
-        batch_size = min(self.batch_size, n_train_admissions)
-        iters = round(self.epochs * n_train_admissions / batch_size)
-        optimizer = make_optimizer(self.optimizer_config,
+        batch_size = min(self.config.batch_size, n_train_admissions)
+        iters = round(self.config.epochs * n_train_admissions / batch_size)
+        optimizer = make_optimizer(self.config.optimizer_config,
                                    iters=iters,
                                    model=model)
         key = jrandom.PRNGKey(prng_seed)
@@ -804,7 +813,8 @@ class Trainer(eqx.Module):
         signals.start_training.send(self,
                                     params_size=params_size(model),
                                     n_iters=iters,
-                                    config=self.config)
+                                    config=self.export_expirement_config(
+                                        interface=patients, model=model))
         val_batch = patients.device_batch(valid_ids)
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=False, unit='Epoch'):
@@ -882,16 +892,16 @@ class Trainer(eqx.Module):
         return model
 
 
-def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
+# def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
 
-    return {
-        'epochs': 10,
-        'batch_size': trial.suggest_int('B', 2, 27, 5),
-        'opt': 'adam',
-        'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
-        'decay_rate': None,
-        'reg_hyperparams': model.sample_reg_hyperparams(trial)
-    }
+#     return {
+#         'epochs': 10,
+#         'batch_size': trial.suggest_int('B', 2, 27, 5),
+#         'opt': 'adam',
+#         'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
+#         'decay_rate': None,
+#         'reg_hyperparams': model.sample_reg_hyperparams(trial)
+#     }
 
 
 class LassoNetTrainer(Trainer):
@@ -910,8 +920,8 @@ class InTrainer(Trainer):
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         preds = model.batch_predict(patients, leave_pbar=False)
-        dx_loss = preds.prediction_dx_loss(dx_loss=self.dx_loss)
-        obs_loss = preds.prediction_obs_loss(obs_loss=self.obs_loss)
-        lead_loss = preds.prediction_lead_loss(lead_loss=self.lead_loss)
+        dx_loss = preds.prediction_dx_loss(dx_loss=self._dx_loss)
+        obs_loss = preds.prediction_obs_loss(obs_loss=self._obs_loss)
+        lead_loss = preds.prediction_lead_loss(lead_loss=self._lead_loss)
         loss = dx_loss + 5e0 * obs_loss + 5e0 * lead_loss
         return loss
