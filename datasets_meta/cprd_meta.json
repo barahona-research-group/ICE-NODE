@@ -1,4 +1,5 @@
 {
+	"path": "",
     "scheme": {
         "dx": "DxLTC9809FlatMedcodes",
 		"ethnicity": "CPRDEthnicity16",
@@ -16,6 +17,7 @@
         	"imd_decile": "imd_decile"
     	}
 	},
+	"scheme_classname": "CPRDDatasetScheme",
 	"tag": "CPRD",
     "_type": "DatasetConfig"
 }

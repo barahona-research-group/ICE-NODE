@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Union, Any
+from typing import List, Optional, Dict, Union, Any, Callable
 import logging
 import pickle
 from pathlib import Path
@@ -9,10 +9,10 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
-
+import dask
 from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
 from ..base import AbstractConfig
-from .dataset import Dataset, DatasetScheme
+from .dataset import Dataset, DatasetScheme, DatasetConfig
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig,
                        LeadingObservableConfig)
@@ -131,24 +131,22 @@ class InterfaceConfig(AbstractConfig):
     demographic_vector: DemographicVectorConfig
     leading_observable: Optional[LeadingObservableConfig]
     scheme: Dict[str, str]
-    cache: Optional[str] = None
+    cache: Optional[str]
 
     def __init__(self,
-                 demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: Optional[
-                     LeadingObservableConfig] = None,
+                 demographic_vector: DemographicVectorConfig,
+                 leading_observable: Optional[LeadingObservableConfig] = None,
                  dataset_scheme: Optional[DatasetScheme] = None,
-                 interface_scheme_config: Optional[Dict[str, str]] = None,
+                 scheme: Optional[Dict[str, str]] = None,
                  cache: Optional[str] = None,
                  **interface_scheme_kwargs):
         super().__init__()
-        self.demographic_vector = demographic_vector_config
-        self.leading_observable = leading_observable_config
-        if interface_scheme_config is None:
-            self.scheme = dataset_scheme.make_target_scheme_config(
-                **interface_scheme_kwargs)
+        self.demographic_vector = demographic_vector
+        self.leading_observable = leading_observable
+        if scheme is None:
+            self.scheme = dataset_scheme.make_target_scheme_config(**scheme)
         else:
-            self.scheme = interface_scheme_config
+            self.scheme = scheme
 
         self.cache = cache
 
@@ -156,13 +154,13 @@ class InterfaceConfig(AbstractConfig):
 class Patients(eqx.Module):
     config: InterfaceConfig
     dataset: Dataset
-    subjects: Optional[Dict[int, Patient]]
+    subjects: Dict[int, Patient]
     _scheme: DatasetScheme
 
     def __init__(self,
                  config: InterfaceConfig,
                  dataset: Dataset,
-                 subjects: Optional[Dict[int, Patient]] = None):
+                 subjects: Dict[int, Patient] = {}):
         super().__init__()
         self.config = config
         self.dataset = dataset
@@ -181,6 +179,10 @@ class Patients(eqx.Module):
         return cls(AbstractConfig.from_dict(config), **init_kwargs)
 
     @property
+    def scheme(self):
+        return self._scheme
+
+    @property
     def schemes(self):
         return (self.dataset.scheme, self._scheme)
 
@@ -194,31 +196,29 @@ class Patients(eqx.Module):
     def __len__(self):
         return len(self.subjects)
 
-    def equal_config(self, path, subject_ids=None):
+    @staticmethod
+    def equal_config(path, config=None, dataset_config=None, subject_ids=None):
         path = Path(path)
         try:
-            config = load_config(path.with_suffix('.config.json'))
+            cached_dsconfig = load_config(
+                path.with_suffix('.dataset.config.json'))
+            cached_config = load_config(path.with_suffix('.config.json'))
             cached_ids = load_config(path.with_suffix('.subject_ids.json'))
         except FileNotFoundError:
             return False
+        pairs = []
+        for a, b in [(config, cached_config),
+                     (dataset_config, cached_dsconfig),
+                     (subject_ids, cached_ids)]:
+            if a is None:
+                continue
+            if issubclass(type(a), AbstractConfig):
+                a = a.to_dict()
+            pairs.append((a, b))
 
-        if subject_ids is None:
-            subject_ids = self.subject_ids
+        return all(a == b for a, b in pairs)
 
-        return (self.config.to_dict() == config
-                and subject_ids == cached_ids)
-
-    def save(self,
-             path: Union[str, Path],
-             overwrite_force: bool = False,
-             overwrite_with_new_config: bool = False):
-        assert not (overwrite_force and overwrite_with_new_config)
-
-        if overwrite_with_new_config:
-            if self.equal_config(path):
-                logging.info('Already saved with same config. Skipping.')
-
-        overwrite = overwrite_force or overwrite_with_new_config
+    def save(self, path: Union[str, Path], overwrite: bool = False):
 
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,8 +234,10 @@ class Patients(eqx.Module):
         with open(subj_path, 'wb') as file:
             pickle.dump(self.subjects, file)
 
-        write_config(path.with_suffix('.config.json'), self.export_config())
-        write_config(path.with_suffix('.subject_ids.json'), self.subject_ids)
+        write_config(self.dataset.export_config(),
+                     path.with_suffix('.dataset.config.json'))
+        write_config(self.export_config(), path.with_suffix('.config.json'))
+        write_config(self.subject_ids, path.with_suffix('.subject_ids.json'))
 
     @staticmethod
     def load(path: Union[str, Path]) -> jtu.pytree:
@@ -246,16 +248,36 @@ class Patients(eqx.Module):
         config = load_config(path.with_suffix('.config.json'))
         return Patients.from_config(config, dataset=dataset, subjects=subjects)
 
+    @staticmethod
+    def try_load_cached(config: InterfaceConfig,
+                        dataset_config: DatasetConfig,
+                        dataset_generator: Callable[[DatasetConfig], Dataset],
+                        subject_subset: Optional[List[int]] = None,
+                        num_workers: int = 8):
+        if config.cache is None or not Patients.equal_config(
+                config.cache, config, dataset_config, subject_subset):
+            if config.cache is not None:
+                logging.info('Cache does not match config, ignoring cache.')
+            logging.info('Loading subjects from scratch.')
+
+            with dask.config.set(scheduler='processes', num_workers=12):
+                interface = Patients(config, dataset_generator(dataset_config))
+                interface = interface.load_subjects(num_workers=num_workers,
+                                                    subject_ids=subject_subset)
+
+            if config.cache is not None:
+                interface.save(config.cache, overwrite=True)
+
+            return interface
+        else:
+            logging.info('Loading cached subjects.')
+            return Patients.load(config.cache)
+
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,
                       num_workers: int = 1):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
-
-        if self.config.cache is not None:
-            if self.equal_config(self.config.cache, subject_ids):
-                logging.info('Loading cached subjects.')
-                return self.load(self.config.cache)
 
         subjects = self.dataset.to_subjects(
             subject_ids,
@@ -266,9 +288,6 @@ class Patients(eqx.Module):
 
         subjects = {s.subject_id: s for s in subjects}
         interface = eqx.tree_at(lambda x: x.subjects, self, subjects)
-
-        if self.config.cache is not None:
-            interface.save(self.config.cache)
 
         return interface
 

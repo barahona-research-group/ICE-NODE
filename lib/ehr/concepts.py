@@ -14,7 +14,7 @@ import pandas as pd
 import equinox as eqx
 from ..base import AbstractConfig
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
-                            CodesVector)
+                            CodesVector, scheme_from_classname)
 
 
 def leading_window(x):
@@ -69,10 +69,11 @@ class LeadingObservableConfig(AbstractConfig):
     index: int
     leading_hours: List[float]
     window_aggregate: str
+    scheme: str
+    _scheme: AbstractScheme
     _window_aggregate: Callable[[jnp.ndarray], float]
-    _index2code: Dict[int, str] = eqx.static_field()
-    _code2index: Dict[str, int] = eqx.static_field()
-    _init_kwargs: Dict[str, Any] = eqx.static_field()
+    _index2code: Dict[int, str]
+    _code2index: Dict[str, int]
 
     def __init__(self,
                  leading_hours: List[float],
@@ -82,15 +83,23 @@ class LeadingObservableConfig(AbstractConfig):
                  code: Optional[str] = None):
         super().__init__()
 
+        if isinstance(scheme, str):
+            self.scheme = scheme
+            self._scheme = scheme_from_classname(scheme)
+        else:
+            self.scheme = scheme.__class__.__name__
+            self._scheme = scheme
+
+
         assert (index is None) != (code is None), \
             'Either index or code must be specified'
         if index is None:
-            index = scheme.index[code]
+            index = self._scheme.index[code]
 
         if code is None:
-            code = scheme.index2code[index]
+            code = self._scheme.index2code[index]
 
-        desc = scheme.index2desc[index]
+        desc = self._scheme.index2desc[index]
 
         self.index = index
         assert all(l1 <= l2 for l1, l2 in zip(leading_hours[:-1],
@@ -124,11 +133,6 @@ class LeadingObservableConfig(AbstractConfig):
             zip(range(len(self.leading_hours)),
                 [f'{desc}_next_{h}hrs' for h in self.leading_hours]))
         self._code2index = {v: k for k, v in self._index2code.items()}
-
-    @classmethod
-    def from_dict(cls, config: Dict[str, Any], scheme: AbstractScheme):
-        conf = AbstractConfig.from_dict(config)
-        return cls(scheme=scheme, **conf)
 
     @property
     def index2code(self):
@@ -639,4 +643,3 @@ class Patient(eqx.Module):
 
     def outcome_frequency_vec(self):
         return sum(a.outcome.vec for a in self.admissions)
-

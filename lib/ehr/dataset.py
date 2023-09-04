@@ -192,13 +192,13 @@ class AdaptiveScaler(eqx.Module):
 
 
 class DatasetConfig(AbstractConfig):
-    label: str
-    sample: int
-    base_dir: str
-    meta_fpath: str
+    path: str
     scheme: Dict[str, str]
     colname: Dict[str, Dict[str, str]]
     files: Dict[str, str] = eqx.field(default_factory=dict)
+    sample: Optional[int] = None
+    scheme_classname: str = 'DatasetScheme'
+    meta_fpath: str = ''
     tag: str = ''
 
 
@@ -228,9 +228,8 @@ class DatasetScheme(eqx.Module):
         else:
             config = kwargs
 
-        if config['outcome'] is not None:
-            self.outcome = OutcomeExtractor(config.outcome)
-            del config['outcome']
+        if config.get('outcome') is not None:
+            self.outcome = OutcomeExtractor(config.pop('outcome'))
 
         for k, v in config.items():
             if isinstance(v, str):
@@ -240,18 +239,21 @@ class DatasetScheme(eqx.Module):
 
         def _to_dict(x):
 
-            def value(x):
-                if isinstance(x, AbstractScheme):
-                    return x.__class__.__name__
-                elif isinstance(x, dict):
-                    return _to_dict(x)
+            def value(v):
+                if isinstance(v, AbstractScheme):
+                    return v.__class__.__name__
+                if isinstance(v, dict):
+                    return _to_dict(v)
+                return v
 
-            return {
-                k: value(v)
-                for k, v in self.__dict__.items() if not k.startswith('_')
-            }
+            return {k: value(v) for k, v in x.items()}
 
-        return _to_dict(self)
+        return _to_dict(self.__dict__)
+
+    @staticmethod
+    def from_dict(config: Dict[str, str], scheme_classname, **kwargs):
+        scheme_class = eval(scheme_classname)
+        return scheme_class(config, **kwargs)
 
     def make_target_scheme_config(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
@@ -310,7 +312,8 @@ class Dataset(eqx.Module):
 
         super().__init__()
         self.config = config
-        self.scheme = DatasetScheme(config.scheme)
+        self.scheme = DatasetScheme.from_dict(config.scheme,
+                                              config.scheme_classname)
         self.colname = {
             f: ColumnNames.make(m)
             for f, m in config.colname.items()
@@ -421,6 +424,9 @@ class Dataset(eqx.Module):
                 df[name] = df[name].set_index(cols.index)
         return eqx.tree_at(lambda x: x.df, rest, df)
 
+    def export_config(self):
+        return self.config.to_dict()
+
 
 class CPRDDatasetScheme(DatasetScheme):
     imd: CPRDIMDCategorical
@@ -439,10 +445,16 @@ class MIMIC4DatasetScheme(DatasetScheme):
 
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
-        if isinstance(kwargs['dx'], dict):
+        if config is not None:
+            config = config.copy()
+            config.update(kwargs)
+        else:
+            config = kwargs
+
+        if isinstance(config['dx'], dict):
             self.dx = {
                 version: scheme_from_classname(scheme)
-                for version, scheme in kwargs['dx'].items()
+                for version, scheme in config['dx'].items()
             }
 
     @classmethod
@@ -1239,13 +1251,10 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
 class MIMIC4ICUDataset(MIMIC4Dataset):
     scheme: MIMIC4ICUDatasetScheme
-    scalers_history: Dict[str, Callable]
-    outlier_remover_history: Dict[str, Callable]
+    scalers_history: Dict[str, Callable] = eqx.field(default_factory=dict)
+    outlier_remover_history: Dict[str,
+                                  Callable] = eqx.field(default_factory=dict)
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
-
-    def __post_init__(self):
-        self.scalers_history = dict()
-        self.outlier_remover_history = dict()
 
     def _int_input_remove_subjects_with_nans(self):
         c_subject = self.colname["adm"].subject_id
@@ -1448,8 +1457,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
         def _filter_codes(df, c_code, source_scheme):
             mask = df[c_code].isin(source_scheme.codes)
-            logging.debug(
-                f'Removed codes: {df[~mask][c_code].unique().compute()}')
+            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
             return df[mask]
 
         for name in ("int_proc", "int_input", "obs"):
@@ -1767,30 +1775,28 @@ default_config_files = {
 
 def load_dataset_scheme(tag) -> DatasetScheme:
     conf = load_config(default_config_files[tag])
-    scheme_conf = conf['code_scheme']
-
-    if tag == 'M3':
-        return DatasetScheme(scheme_conf)
-    if tag == 'M3CV':
-        return DatasetScheme(scheme_conf)
-    if tag == 'M4':
-        return MIMIC4DatasetScheme(scheme_conf)
-    if tag == 'CPRD':
-        return CPRDDatasetScheme(scheme_conf)
-    if tag == 'M4ICU':
-        return MIMIC4ICUDatasetScheme(scheme_conf)
+    scheme_conf = conf['scheme']
+    return DatasetScheme.from_dict(scheme_conf, conf['scheme_classname'])
 
 
-def load_dataset(config: AbstractConfig = None,
-                 tag: str = None,
-                 **init_kwargs):
+def load_dataset_config(tag: str = None,
+                        config: AbstractConfig = None,
+                        **init_kwargs):
     if config is not None:
         tag = config.tag
     else:
         config = load_config(default_config_files[tag])
         config = AbstractConfig.from_dict(config)
         config = config.update(**init_kwargs)
+    return config
 
+
+def load_dataset(tag: str = None,
+                 config: AbstractConfig = None,
+                 **init_kwargs):
+    config = load_dataset_config(tag=tag, config=config, **init_kwargs)
+    if tag is None:
+        tag = config.tag
     if tag in ('M3', 'M3CV'):
         return MIMIC3Dataset(config)
     if tag == 'M4':

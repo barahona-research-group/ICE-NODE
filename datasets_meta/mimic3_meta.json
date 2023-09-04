@@ -1,6 +1,6 @@
 {
-    "path": "$DATA_DIR/mimic3-cohort",
-    "code_scheme": {
+    "path": "",
+    "scheme": {
         "dx": "DxICD9",
         "ethnicity": "MIMIC3Eth37",
         "gender": "Gender"
@@ -28,6 +28,7 @@
         "dx": "dx_df.csv.gz",
         "static": "static_df.csv.gz"
     },
+    "scheme_classname": "DatasetScheme",
     "tag": "M3",
     "_type": "DatasetConfig"
 }

@@ -344,8 +344,8 @@ class OptunaReporter(AbstractReporter):
 
 
 class OptimizerConfig(AbstractConfig):
-    opt: str
-    lr: LRType
+    opt: str = 'adam'
+    lr: LRType = 1e-3
     decay_rate: Optional[LRType] = None
     reverse_schedule: bool = False
 
@@ -607,32 +607,32 @@ class TrainerReporting(eqx.Module):
 
 
 class WarmupConfig(AbstractConfig):
-    epochs: int
+    epochs: float
     batch_size: int
-    optimizer_config: OptimizerConfig
+    optimizer: OptimizerConfig = OptimizerConfig(reverse_schedule=True)
 
     def __init__(self,
-                 epochs: int,
-                 batch_size: int,
-                 opt_config=None,
+                 epochs: float = 0.1,
+                 batch_size: int = 16,
+                 optimizer=None,
                  opt: str = None,
                  lr: float = None,
                  decay_rate: Optional[float] = None):
         self.epochs = epochs
         self.batch_size = batch_size
-        if opt_config is not None:
-            self.optimizer_config = opt_config
+        if optimizer is not None:
+            self.optimizer = optimizer
         else:
-            self.optimizer_config = OptimizerConfig(opt=opt,
-                                                    lr=lr,
-                                                    decay_rate=decay_rate,
-                                                    reverse_schedule=True)
+            self.optimizer = OptimizerConfig(opt=opt,
+                                             lr=lr,
+                                             decay_rate=decay_rate,
+                                             reverse_schedule=True)
 
 
 class TrainerConfig(AbstractConfig):
-    optimizer_config: OptimizerConfig
-    epochs: int
-    batch_size: int
+    optimizer: OptimizerConfig = OptimizerConfig()
+    epochs: int = 100
+    batch_size: int = 32
     dx_loss: str = 'balanced_focal_bce'
     obs_loss: str = 'mse'
     lead_loss: str = 'mse'
@@ -648,7 +648,7 @@ class Trainer(eqx.Module):
     def __init__(self,
                  config: TrainerConfig,
                  reg_hyperparams: AbstractConfig = AbstractConfig()):
-        self.optimizer_config = config
+        self.config = config
         self.reg_hyperparams = reg_hyperparams
         self._dx_loss = binary_loss[config.dx_loss]
         self._obs_loss = numeric_loss[config.obs_loss]
@@ -656,7 +656,7 @@ class Trainer(eqx.Module):
 
     def export_config(self):
         return {
-            'config': self.optimizer_config.to_dict(),
+            'config': self.config.to_dict(),
             'reg_hyperparams': self.reg_hyperparams.to_dict()
         }
 
@@ -666,9 +666,6 @@ class Trainer(eqx.Module):
             'model': model.export_config(),
             'interface': interface.export_config()
         }
-
-    def from_config(self, config):
-        return Trainer(**{k: v.from_dict() for k, v in config.items()})
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
@@ -754,13 +751,9 @@ class Trainer(eqx.Module):
                 splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
                 history: TrainingHistory, signals: TrainerSignals,
                 warmup_config: WarmupConfig):
-        trainer = type(self)(
-            optimizer_config=warmup_config.optimizer_config,
-            reg_hyperparams=self.reg_hyperparams,
-            epochs=warmup_config.epochs,
-            batch_size=warmup_config.batch_size,
-            counts_ignore_first_admission=model.counts_ignore_first_admission,
-            **self.kwargs)
+
+        conf = self.config.update(warmup_config)
+        trainer = type(self)(conf, reg_hyperparams=self.reg_hyperparams)
         return trainer._train(model=model,
                               patients=patients,
                               splits=(splits[0], [], []),
@@ -790,7 +783,7 @@ class Trainer(eqx.Module):
 
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
-        optimizer = make_optimizer(self.config.optimizer_config,
+        optimizer = make_optimizer(self.config.optimizer,
                                    iters=iters,
                                    model=model)
         key = jrandom.PRNGKey(prng_seed)

@@ -21,14 +21,7 @@ from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 class InICENODEDimensions(ModelDimensions):
     mem: int = 15
     obs: int = 25
-
-    def __init__(self, emb: InpatientEmbeddingDimensions, mem: int, obs: int,
-                 leading_observable_config: LeadingObservableConfig):
-        super().__init__(emb=emb)
-        self.emb = emb
-        self.mem = mem
-        self.obs = obs
-        self.lead = len(leading_observable_config.leading_hours)
+    lead: int = 5
 
 
 class LeadingObsPredictor(eqx.Module):
@@ -193,8 +186,9 @@ class InICENODE(InpatientModel):
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
         for i in range(len(t0)):
-            state, (pred_obs, pred_lead) = self.step_segment(
-                state, int_e[i], obs[i], lead[i], t0[i], t1[i])
+            state, (pred_obs,
+                    pred_lead) = self.step_segment(state, int_e[i], obs[i],
+                                                   lead[i], t0[i], t1[i])
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)

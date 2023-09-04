@@ -10,7 +10,7 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
                          OutpatientEmbeddingDimensions,
                          PatientEmbeddingDimensions, PatientEmbedding)
 from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
-                      WarmupConfig)
+                      WarmupConfig, TrainerConfig, ReportingConfig)
 
 from . import model
 from . import dx_models

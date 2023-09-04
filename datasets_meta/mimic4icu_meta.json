@@ -1,6 +1,6 @@
 {
-    "path": "$DATA_DIR/mimic4icu-cohort",
-    "code_scheme": {
+    "path": "",
+    "scheme": {
         "dx": {"9": "DxICD9", "10": "DxICD10"},
         "outcome": "dx_icd9_filter_v3_groups",
         "int_proc": "MIMICProcedures",
@@ -57,6 +57,7 @@
         "int_input": "int_input.csv",
         "int_proc": "int_proc.csv"
     },
+    "scheme_classname": "MIMIC4ICUDatasetScheme",
     "tag": "M4ICU",
     "_type": "DatasetConfig"
 }
