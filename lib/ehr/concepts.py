@@ -213,7 +213,7 @@ class InpatientObservables(eqx.Module):
             # mask out the values outside the window
             v_lead = np.where(mask, v_leads, np.nan)
             # aggregate the values in the window
-            values.append(config.window_aggregate(v_lead, axis=1).flatten())
+            values.append(config._window_aggregate(v_lead, axis=1).flatten())
 
             # mask for the valid aggregates
             masks.append(np.where(np.isnan(values[-1]), False, True))

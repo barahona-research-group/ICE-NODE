@@ -1251,11 +1251,24 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
 class MIMIC4ICUDataset(MIMIC4Dataset):
     scheme: MIMIC4ICUDatasetScheme
-    scalers_history: Dict[str, Callable] = eqx.field(init=False)
-    outlier_remover_history: Dict[str, Callable] = eqx.field(init=False)
+    scalers_history: Dict[str, Callable]
+    outlier_remover_history: Dict[str, Callable]
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
-    def __post_init__(self):
+    def __init__(self, config: DatasetConfig = None, config_path: str = None):
+        if config is None:
+            config = AbstractConfig.from_dict(load_config(config_path))
+
+        eqx.Module.__init__(self)
+        self.config = config
+        self.scheme = DatasetScheme.from_dict(config.scheme,
+                                              config.scheme_classname)
+        self.colname = {
+            f: ColumnNames.make(m)
+            for f, m in config.colname.items()
+        }
+        self._load_dataframes()
+
         self.scalers_history = dict()
         self.outlier_remover_history = dict()
 
