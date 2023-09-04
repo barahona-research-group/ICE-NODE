@@ -1001,8 +1001,8 @@ class CPRDDataset(MIMIC3Dataset):
         return subject_dob, subject_gender, subject_eth, subject_imd
 
     def _load_dataframes(self):
-        colname = self.colname
         config = self.config.copy()
+        colname = self.colname["adm"]
 
         df = pd.read_csv(translate_path(config.path), sep='\t', dtype=str)
 
@@ -1083,7 +1083,7 @@ class CPRDDataset(MIMIC3Dataset):
 
         self.df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
         self.colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
-        self._match_admissions_with_demographics(self.df, colname)
+        self._match_admissions_with_demographics(self.df, self.colname)
 
     def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
                     target_scheme: DatasetScheme, **kwargs):
@@ -1251,10 +1251,13 @@ class MIMIC4Dataset(MIMIC3Dataset):
 
 class MIMIC4ICUDataset(MIMIC4Dataset):
     scheme: MIMIC4ICUDatasetScheme
-    scalers_history: Dict[str, Callable] = eqx.field(default_factory=dict)
-    outlier_remover_history: Dict[str,
-                                  Callable] = eqx.field(default_factory=dict)
+    scalers_history: Dict[str, Callable] = eqx.field(init=False)
+    outlier_remover_history: Dict[str, Callable] = eqx.field(init=False)
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
+
+    def __post_init__(self):
+        self.scalers_history = dict()
+        self.outlier_remover_history = dict()
 
     def _int_input_remove_subjects_with_nans(self):
         c_subject = self.colname["adm"].subject_id
