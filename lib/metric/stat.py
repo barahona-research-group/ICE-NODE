@@ -3,6 +3,8 @@
 from typing import Dict, Optional, List, Tuple, Any, Callable
 from dataclasses import dataclass, field
 from abc import abstractmethod, ABCMeta
+import sys
+import inspect
 
 from tqdm import tqdm
 from absl import logging
@@ -136,6 +138,24 @@ class Metric(metaclass=ABCMeta):
 
         return from_df
 
+    def export_config(self):
+        return {
+            "metric_classname": self.classname(),
+            "metric_config": self.export_metric_config()
+        }
+
+    def export_metric_config(self):
+        return {
+            att: val
+            for att, val in self.__dict__.items()
+            if att != 'patients' and not att.startswith('_')
+        }
+
+    @staticmethod
+    def from_config(config: Dict[str, Any], patients: Patients):
+        metric_class = metric_class_registry[config['metric_classname']]
+        return metric_class(patients=patients, **config['metric_config'])
+
 
 class VisitsAUC(Metric):
 
@@ -171,34 +191,50 @@ class VisitsAUC(Metric):
 
 @dataclass
 class LossMetric(Metric):
-    dx_loss: Dict[str, Callable]
-    obs_loss: Dict[str, Callable]
+    dx_loss: List[str]
+    obs_loss: List[str]
+    lead_loss: List[str]
+    _dx_loss: Dict[str, Callable]
+    _obs_loss: Dict[str, Callable]
+    _lead_loss: Dict[str, Callable]
 
-    def __init__(self, patients, dx_loss=[], obs_loss=[]):
+    def __init__(self, patients, dx_loss=[], obs_loss=[], lead_loss=[]):
+        self.dx_loss = dx_loss
+        self.obs_loss = obs_loss
+        self.lead_loss = lead_loss
+
         super().__init__(patients)
-        self.dx_loss = {name: binary_loss[name] for name in dx_loss}
-        self.obs_loss = {name: numeric_loss[name] for name in obs_loss}
+        self._dx_loss = {name: binary_loss[name] for name in dx_loss}
+        self._obs_loss = {name: numeric_loss[name] for name in obs_loss}
+        self._lead_loss = {name: numeric_loss[name] for name in lead_loss}
 
     def fields(self):
-        return sorted(self.dx_loss.keys()) + sorted(self.obs_loss.keys())
+        return sorted(self.dx_loss) + sorted(self.obs_loss) + sorted(
+            self.lead_loss)
 
     def dirs(self):
-        return (0, ) * (len(self.dx_loss) + len(self.obs_loss))
+        return (0, ) * len(self)
+
+    def __len__(self):
+        return len(self.dx_loss) + len(self.obs_loss) + len(self.lead_loss)
 
     def __call__(self, predictions: Predictions):
         return {
             loss_key: predictions.prediction_dx_loss(dx_loss=loss_f)
-            for loss_key, loss_f in self.dx_loss.items()
+            for loss_key, loss_f in self._dx_loss.items()
         } | {
             loss_key: predictions.prediction_obs_loss(obs_loss=loss_f)
-            for loss_key, loss_f in self.obs_loss.items()
+            for loss_key, loss_f in self._obs_loss.items()
+        } | {
+            loss_key: predictions.prediction_lead_loss(lead_loss=loss_f)
+            for loss_key, loss_f in self._lead_loss.items()
         }
 
 
 @dataclass
 class CodeLevelMetric(Metric):
-    index2code: Dict[int, str] = field(init=False)
-    code2index: Dict[str, int] = field(init=False)
+    _index2code: Dict[int, str] = field(init=False)
+    _code2index: Dict[str, int] = field(init=False)
     # Show estimates per code
     code_level: bool = field(default=True)
 
@@ -207,8 +243,8 @@ class CodeLevelMetric(Metric):
 
     def __post_init__(self):
         index = self.patients.scheme.outcome.index
-        self.code2index = index
-        self.index2code = {i: c for c, i in index.items()}
+        self._code2index = index
+        self._index2code = {i: c for c, i in index.items()}
 
     @staticmethod
     def agg_fields():
@@ -216,7 +252,7 @@ class CodeLevelMetric(Metric):
                 ('max', onp.nanmax), ('min', onp.nanmin))
 
     def code_qualifier(self, code_index):
-        return f'I{code_index}C{self.index2code[code_index]}'
+        return f'I{code_index}C{self._index2code[code_index]}'
 
     def column(self, code_index, field):
         clsname = self.classname()
@@ -235,7 +271,7 @@ class CodeLevelMetric(Metric):
         return tuple(cols)
 
     def order(self):
-        for index in sorted(self.index2code):
+        for index in sorted(self._index2code):
             for field in self.fields():
                 yield (index, field)
 
@@ -273,7 +309,7 @@ class CodeLevelMetric(Metric):
         assert (code_index is None) != (
             code
             is None), "providing code and code_index are mutually exlusive"
-        code_index = self.code2index[code] if code is not None else code_index
+        code_index = self._code2index[code] if code is not None else code_index
         column = self.column(code_index, keys['field'])
         return self.from_df_functor(column, self.field_dir(keys['field']))
 
@@ -287,16 +323,16 @@ class ObsCodeLevelMetric(CodeLevelMetric):
 
     def __post_init__(self):
         index = self.patients.scheme.obs.index
-        self.code2index = index
-        self.index2code = {i: c for c, i in index.items()}
+        self._code2index = index
+        self._index2code = {i: c for c, i in index.items()}
 
 
 class LeadingObsMetric(CodeLevelMetric):
 
     def __post_init__(self):
-        conf = self.patients.leading_observable_config
-        self.code2index = conf.code2index
-        self.index2code = conf.index2code
+        conf = self.patients.config.leading_observable
+        self._code2index = conf.code2index
+        self._index2code = conf.index2code
 
 
 @dataclass
@@ -361,25 +397,25 @@ class CodeAUC(CodeLevelMetric):
 @dataclass
 class CodeLevelLossMetric(CodeLevelMetric):
     dx_loss: Tuple[str] = field(default_factory=list)
-    loss_functions: Dict[str, Callable] = field(init=False)
+    _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         CodeLevelMetric.__post_init__(self)
-        self.loss_functions = {
+        self._loss_functions = {
             name: colwise_binary_loss[name]
             for name in self.dx_loss
         }
 
     def fields(self):
-        return sorted(self.loss_functions.keys())
+        return sorted(self.dx_loss)
 
     def dirs(self):
-        return (0, ) * len(self.loss_functions)
+        return (0, ) * len(self.dx_loss)
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
             name: predictions.prediction_dx_loss(loss_f)
-            for name, loss_f in self.loss_functions.items()
+            for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {
             name: dict(zip(range(len(v)), v))
@@ -391,25 +427,25 @@ class CodeLevelLossMetric(CodeLevelMetric):
 @dataclass
 class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
     obs_loss: Tuple[str] = field(default_factory=list)
-    loss_functions: Dict[str, Callable] = field(init=False)
+    _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         ObsCodeLevelMetric.__post_init__(self)
-        self.loss_functions = {
+        self._loss_functions = {
             name: colwise_numeric_loss[name]
             for name in self.obs_loss
         }
 
     def fields(self):
-        return sorted(self.loss_functions.keys())
+        return sorted(self.obs_loss)
 
     def dirs(self):
-        return (0, ) * len(self.loss_functions)
+        return (0, ) * len(self.obs_loss)
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
             name: predictions.prediction_obs_loss(loss_f)
-            for name, loss_f in self.loss_functions.items()
+            for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {
             name: dict(zip(range(len(v)), v))
@@ -420,20 +456,20 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
 
 @dataclass
 class LeadingObsLossMetric(ObsCodeLevelLossMetric):
-    obs_loss: Tuple[str] = field(default_factory=list)
-    loss_functions: Dict[str, Callable] = field(init=False)
+    lead_loss: Tuple[str] = field(default_factory=list)
+    _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         LeadingObsLossMetric.__post_init__(self)
-        self.loss_functions = {
+        self._loss_functions = {
             name: colwise_numeric_loss[name]
-            for name in self.obs_loss
+            for name in self.lead_loss
         }
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
             name: predictions.prediction_lead_loss(loss_f)
-            for name, loss_f in self.loss_functions.items()
+            for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {
             name: dict(zip(range(len(v)), v))
@@ -642,20 +678,26 @@ class AdmissionAUC(Metric):
 
 @dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
-    code_groups: List[List[int]]
+    _code_groups: List[List[int]]
     top_k_list: List[int]
+    train_split: List[int]
+    n_partitions: int
 
     def __init__(self,
                  patients: Patients,
                  train_split: List[int] = [],
                  n_partitions=5,
                  top_k_list=[1, 3, 5, 10, 15, 20]):
+        super().__init__(patients=patients)
+        self.train_split = train_split
+        self.top_k_list = top_k_list
+        self.n_partitions = n_partitions
+
         if len(train_split) == 0:
             train_split = patients.dataset.subject_ids
 
-        self.code_groups = patients.outcome_frequency_partitions(
+        self._code_groups = patients.outcome_frequency_partitions(
             n_partitions, train_split)
-        self.top_k_list = top_k_list
 
     @staticmethod
     def fields():
@@ -670,7 +712,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
     def order(self):
         for k in self.top_k_list:
-            for gi in range(len(self.code_groups)):
+            for gi in range(len(self._code_groups)):
                 for field in self.fields():
                     yield gi, k, field
 
@@ -700,7 +742,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
             true_positive[k] = (topk_risks_k & ground_truth)
 
         alarm_acc = {}
-        for gi, code_indices in enumerate(self.code_groups):
+        for gi, code_indices in enumerate(self._code_groups):
             group_true = ground_truth[:, tuple(code_indices)]
             group_alarm_acc = {}
             for k in top_k_list:
@@ -717,7 +759,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         gi = keys['group_index']
         assert k in self.top_k_list, f"k={k} is not in {self.top_k_list}"
         assert gi < len(
-            self.code_groups), f"group_index ({gi}) >= len(self.code_groups)"
+            self._code_groups), f"group_index ({gi}) >= len(self.code_groups)"
         field = keys.get('field', self.fields()[0])
         colname = self.column(gi, k, field)
         return self.from_df_functor(colname, self.field_dir(field))
@@ -763,13 +805,18 @@ class MetricsCollection:
                 self.other_metrics.to_df(iteration, other_estimated_metrics))
         return pd.concat(dfs, axis=1)
 
+    def export_config(self):
+        return [m.export_config() for m in self.metrics]
+
+    @staticmethod
+    def from_config(config, patients):
+        metrics = [Metric.from_config(c, patients) for c in config]
+        return MetricsCollection(metrics)
+
 
 @dataclass
 class DeLongTest(CodeLevelMetric):
     masking: str = 'all'
-
-    # def __post_init__(self, *args, **kwargs):
-    #     super().__init__(*args, **kwargs)
 
     @staticmethod
     def fields():
@@ -820,7 +867,7 @@ class DeLongTest(CodeLevelMetric):
         assert (code_index is None) != (
             code
             is None), "providing code and code_index are mutually exlusive"
-        code_index = self.code2index[code] if code is not None else code_index
+        code_index = self._code2index[code] if code is not None else code_index
 
         if field in self.fields()['model']:
             column_gen = lambda kw: self.column()['model'](kw['model'], field)
@@ -866,7 +913,7 @@ class DeLongTest(CodeLevelMetric):
 
     def rows(self, data, clfs):
         rows = []
-        for code_index in sorted(self.index2code):
+        for code_index in sorted(self._index2code):
             row_gen = self._row(code_index, data, clfs)
             rows.append(
                 sum((row_gen[cat]() for cat in self.fields_category()),
@@ -1070,3 +1117,10 @@ class DeLongTest(CodeLevelMetric):
         pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
         insigificant = results.loc[:, pval_cols].min(axis=1) > p_value
         return results[insigificant]
+
+
+metric_class_registry = {}
+for name, m_class in inspect.getmembers(sys.modules[__name__],
+                                        inspect.isclass):
+    if issubclass(m_class, Metric):
+        metric_class_registry[name] = m_class

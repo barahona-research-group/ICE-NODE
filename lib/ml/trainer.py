@@ -554,14 +554,20 @@ class ReportingConfig(AbstractConfig):
 
 
 class TrainerReporting(eqx.Module):
-    reporters: List[AbstractReporter]
-    metrics: MetricsCollection
+    config: ReportingConfig
+    _reporters: List[AbstractReporter]
+    _metrics: MetricsCollection
 
-    def __init__(self,
-                 config: ReportingConfig = ReportingConfig(),
-                 metrics: Optional[List[Metric]] = None,
-                 optuna_trial: Optional[optuna.Trial] = None,
-                 optuna_objective: Optional[Callable] = None):
+    def __init__(
+        self,
+        config: ReportingConfig = ReportingConfig(),
+        metrics: Optional[List[Metric]] = None,
+        # optuna_trial: Optional[optuna.Trial] = None,
+        # optuna_objective: Optional[Callable] = None
+    ):
+        super().__init__()
+        self.config = config
+
         reporters = []
         if (config.config_json or metrics is not None
                 or config.parameter_snapshots or config.model_stats):
@@ -584,24 +590,39 @@ class TrainerReporting(eqx.Module):
         if config.model_stats:
             reporters.append(ModelStatsDiskWriter(output_dir))
 
-        if optuna_trial is not None:
-            assert optuna_objective is not None, ('optuna_objective must '
-                                                  'be provided')
-            reporters.append(OptunaReporter(optuna_trial, optuna_objective))
 
-        self.reporters = reporters
-        self.metrics = MetricsCollection(metrics or [])
+#         if optuna_trial is not None:
+#             assert optuna_objective is not None, ('optuna_objective must '
+#                                                   'be provided')
+#             reporters.append(OptunaReporter(optuna_trial, optuna_objective))
+
+        self._reporters = reporters
+        self._metrics = MetricsCollection(metrics or [])
+
+    def export_config(self):
+        return {
+            'config': self.config,
+            'metrics': self._metrics.export_config(),
+        }
+
+    @staticmethod
+    def from_config(config, metrics=None, patients=None):
+        if metrics is None:
+            metrics = MetricsCollection.from_config(config['metrics'],
+                                                    patients=patients)
+        config = AbstractConfig.from_dict(config['config'])
+        return TrainerReporting(config, metrics=metrics)
 
     def new_training_history(self):
-        return TrainingHistory(self.metrics)
+        return TrainingHistory(self._metrics)
 
     @property
     def supports_continue_training(self):
-        return any([isinstance(r, ParamsDiskWriter) for r in self.reporters])
+        return any([isinstance(r, ParamsDiskWriter) for r in self._reporters])
 
     def connections(self, trainer_signals: TrainerSignals):
         return [
-            signal.connected_to(slot) for r in self.reporters
+            signal.connected_to(slot) for r in self._reporters
             for signal, slot in r.signal_slot_pairs(trainer_signals)
         ]
 
@@ -660,11 +681,16 @@ class Trainer(eqx.Module):
             'reg_hyperparams': self.reg_hyperparams.to_dict()
         }
 
-    def export_expirement_config(self, interface, model):
+    def export_expirement_config(self, interface, model, **run_kwargs):
+        _run_kwargs = {
+            k: v if not isinstance(v, AbstractConfig) else v.to_dict()
+            for k, v in run_kwargs.items()
+        }
         return {
             'trainer': self.export_config(),
             'model': model.export_config(),
-            'interface': interface.export_config()
+            'interface': interface.export_config(),
+            'run': _run_kwargs
         }
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
@@ -673,13 +699,13 @@ class Trainer(eqx.Module):
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
-        l = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
+        loss = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
         l1_loss = model.l1()
         l2_loss = model.l2()
         l1_alpha = self.reg_hyperparams['L_l1']
         l2_alpha = self.reg_hyperparams['L_l2']
 
-        loss = l + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
+        loss = loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
 
         return loss
 
@@ -729,6 +755,15 @@ class Trainer(eqx.Module):
                                  warmup_config=warmup_config)
             logging.info('[DONE] Warming up.')
 
+        exported_config = self.export_expirement_config(
+            interface=patients,
+            model=model,
+            n_evals=n_evals,
+            reporting=reporting,
+            warmup_config=warmup_config,
+            continue_training=continue_training,
+            prng_seed=prng_seed)
+
         with contextlib.ExitStack() as stack:
             signals = TrainerSignals()
             # In case Context Managers failed to exit from a previous
@@ -745,7 +780,8 @@ class Trainer(eqx.Module):
                                prng_seed=prng_seed,
                                trial_terminate_time=trial_terminate_time,
                                history=reporting.new_training_history(),
-                               signals=signals)
+                               signals=signals,
+                               exported_config=exported_config)
 
     def _warmup(self, model: AbstractModel, patients: Patients,
                 splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
@@ -764,10 +800,17 @@ class Trainer(eqx.Module):
                               history=history,
                               signals=signals)
 
-    def _train(self, model: AbstractModel, patients: Patients,
-               splits: Tuple[List[int], ...], n_evals, continue_training: bool,
-               prng_seed, trial_terminate_time, history: TrainingHistory,
-               signals: TrainerSignals):
+    def _train(self,
+               model: AbstractModel,
+               patients: Patients,
+               splits: Tuple[List[int], ...],
+               n_evals,
+               continue_training: bool,
+               prng_seed,
+               trial_terminate_time,
+               history: TrainingHistory,
+               signals: TrainerSignals,
+               exported_config: Any = {}):
 
         train_ids, valid_ids, test_ids = splits
         if self.config.epochs > 0 and self.config.epochs < 1:
@@ -786,7 +829,6 @@ class Trainer(eqx.Module):
         optimizer = make_optimizer(self.config.optimizer,
                                    iters=iters,
                                    model=model)
-        key = jrandom.PRNGKey(prng_seed)
         pyrng = random.Random(prng_seed)
         eval_steps = sorted(set(
             np.linspace(0, iters - 1, n_evals).astype(int)))
@@ -806,8 +848,7 @@ class Trainer(eqx.Module):
         signals.start_training.send(self,
                                     params_size=params_size(model),
                                     n_iters=iters,
-                                    config=self.export_expirement_config(
-                                        interface=patients, model=model))
+                                    config=exported_config)
         val_batch = patients.device_batch(valid_ids)
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=False, unit='Epoch'):
@@ -883,18 +924,6 @@ class Trainer(eqx.Module):
 
         signals.exit_training.send(self, history=history)
         return model
-
-
-# def sample_training_config(cls, trial: optuna.Trial, model: AbstractModel):
-
-#     return {
-#         'epochs': 10,
-#         'batch_size': trial.suggest_int('B', 2, 27, 5),
-#         'opt': 'adam',
-#         'lr': trial.suggest_float('lr', 5e-5, 5e-3, log=True),
-#         'decay_rate': None,
-#         'reg_hyperparams': model.sample_reg_hyperparams(trial)
-#     }
 
 
 class LassoNetTrainer(Trainer):
