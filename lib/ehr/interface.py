@@ -231,6 +231,13 @@ class Patients(eqx.Module):
                 a = a.to_dict()
             pairs.append((a, b))
 
+        for a, b in pairs:
+            if a != b:
+                logging.debug('Config mismatch:')
+                logging.debug(f'a:  {a}')
+                logging.debug(f'b:  {b}')
+                return False
+
         return all(a == b for a, b in pairs)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):

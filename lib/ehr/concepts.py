@@ -106,7 +106,7 @@ class LeadingObservableConfig(AbstractConfig):
                                               leading_hours[1:])), \
             'leading_hours must be sorted'
 
-        self.leading_hours = leading_hours
+        self.leading_hours = list(leading_hours)
         self.window_aggregate = window_aggregate
 
         def window(x):
