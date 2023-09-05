@@ -141,7 +141,8 @@ class Metric(metaclass=ABCMeta):
     def export_config(self):
         return {
             "metric_classname": self.classname(),
-            "metric_config": self.export_metric_config()
+            "metric_config": self.export_metric_config(),
+            "metric_external_argnames": self.external_argnames()
         }
 
     def export_metric_config(self):
@@ -151,10 +152,17 @@ class Metric(metaclass=ABCMeta):
             if att != 'patients' and not att.startswith('_')
         }
 
+    def external_argnames(self):
+        return {}
+
     @staticmethod
-    def from_config(config: Dict[str, Any], patients: Patients):
+    def from_config(config: Dict[str, Any], patients: Patients, **kwargs):
+        argnames = config.get('metric_external_argnames', [])
+        kwargs = {k: kwargs[k] for k in argnames}
         metric_class = metric_class_registry[config['metric_classname']]
-        return metric_class(patients=patients, **config['metric_config'])
+        return metric_class(patients=patients,
+                            **config['metric_config'],
+                            **kwargs)
 
 
 class VisitsAUC(Metric):
@@ -680,7 +688,6 @@ class AdmissionAUC(Metric):
 class CodeGroupTopAlarmAccuracy(Metric):
     _code_groups: List[List[int]]
     top_k_list: List[int]
-    train_split: List[int]
     n_partitions: int
 
     def __init__(self,
@@ -689,7 +696,6 @@ class CodeGroupTopAlarmAccuracy(Metric):
                  n_partitions=5,
                  top_k_list=[1, 3, 5, 10, 15, 20]):
         super().__init__(patients=patients)
-        self.train_split = train_split
         self.top_k_list = top_k_list
         self.n_partitions = n_partitions
 
@@ -698,6 +704,9 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
         self._code_groups = patients.outcome_frequency_partitions(
             n_partitions, train_split)
+
+    def external_argnames(self):
+        return ('train_split', )
 
     @staticmethod
     def fields():
@@ -809,8 +818,11 @@ class MetricsCollection:
         return [m.export_config() for m in self.metrics]
 
     @staticmethod
-    def from_config(config, patients):
-        metrics = [Metric.from_config(c, patients) for c in config]
+    def from_config(config, patients, train_split=0):
+        metrics = [
+            Metric.from_config(c, patients, train_split=train_split)
+            for c in config
+        ]
         return MetricsCollection(metrics)
 
 

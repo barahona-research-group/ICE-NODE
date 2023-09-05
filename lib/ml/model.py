@@ -4,8 +4,6 @@ from __future__ import annotations
 from typing import (List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any,
                     Dict, Type)
 from abc import abstractmethod, ABCMeta
-import sys
-import inspect
 import zipfile
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -28,12 +26,10 @@ class ModelDimensions(AbstractConfig):
 
 
 class AbstractModel(eqx.Module, metaclass=ABCMeta):
-    f_emb: PatientEmbedding
-    f_dx_dec: Callable
+    _f_emb: PatientEmbedding
+    _f_dx_dec: Callable
 
-    schemes: Tuple[DatasetScheme] = eqx.static_field()
     dims: ModelDimensions = eqx.static_field()
-    demographic_vector_config: DemographicVectorConfig = eqx.static_field()
 
     @property
     @abstractmethod
@@ -45,7 +41,21 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         model_class_registry[cls.__name__] = cls
 
     def export_config(self):
-        return {'dims': self.dims.to_dict()}
+        return {
+            'dims': self.dims.to_dict(),
+            'external_argnames': self.external_argnames(),
+            'model_classname': self.__class__.__name__
+        }
+
+    def from_config(self, config: Dict[str, Any], **kwargs):
+        self.dims = ModelDimensions.from_dict(config['dims'])
+        kwargs = {k: kwargs[k] for k in config['external_argnames']}
+        model_class = model_class_registry[config['model_classname']]
+        return model_class(**kwargs)
+
+    @classmethod
+    def external_argnames(cls):
+        return []
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -184,13 +194,20 @@ class InpatientModel(AbstractModel):
     def counts_ignore_first_admission(self):
         return False
 
+    @classmethod
+    def external_argnames(cls):
+        return [
+            "schemes", "demographic_vector_config", "key",
+            "leading_observable_config"
+        ]
+
     def batch_predict(self,
                       inpatients: Patients,
                       leave_pbar: bool = False) -> Predictions:
         total_int_days = inpatients.interval_days()
 
         inpatients_emb = {
-            i: self.f_emb(subject)
+            i: self._f_emb(subject)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',
@@ -223,12 +240,16 @@ class OutpatientModel(AbstractModel):
     def counts_ignore_first_admission(self):
         return True
 
+    @classmethod
+    def external_argnames(cls):
+        return ["schemes", "demographic_vector_config", "key"]
+
     def batch_predict(self,
                       inpatients: Patients,
                       leave_pbar: bool = False) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
         inpatients_emb = {
-            i: self.f_emb(subject)
+            i: self._f_emb(subject)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',

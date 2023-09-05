@@ -603,8 +603,8 @@ class MIMIC3Dataset(Dataset):
         logging.debug("Dataframes validation and time conversion")
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
-        self._match_admissions_with_demographics(self.df, colname)
         self.df = {k: try_compute(v) for k, v in self.df.items()}
+        self._match_admissions_with_demographics(self.df, colname)
         logging.debug("[DONE] Dataframes validation and time conversion")
 
     def to_subjects(self, subject_ids: List[int], num_workers: int,
@@ -1497,6 +1497,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                                  "obs", ["timestamp"],
                                  seconds_scaler=self.seconds_scaler)
         self.df = {k: try_compute(v) for k, v in df.items()}
+        self._match_admissions_with_demographics(self.df, colname)
         self.colname = colname
         logging.debug("[DONE] Dataframes validation and time conversion")
 

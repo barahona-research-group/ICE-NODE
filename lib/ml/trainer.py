@@ -601,15 +601,16 @@ class TrainerReporting(eqx.Module):
 
     def export_config(self):
         return {
-            'config': self.config,
+            'config': self.config.to_dict(),
             'metrics': self._metrics.export_config(),
         }
 
     @staticmethod
-    def from_config(config, metrics=None, patients=None):
+    def from_config(config, metrics=None, patients=None, train_split=None):
         if metrics is None:
             metrics = MetricsCollection.from_config(config['metrics'],
-                                                    patients=patients)
+                                                    patients=patients,
+                                                    train_split=train_split)
         config = AbstractConfig.from_dict(config['config'])
         return TrainerReporting(config, metrics=metrics)
 
@@ -759,7 +760,7 @@ class Trainer(eqx.Module):
             interface=patients,
             model=model,
             n_evals=n_evals,
-            reporting=reporting,
+            reporting=reporting.export_config(),
             warmup_config=warmup_config,
             continue_training=continue_training,
             prng_seed=prng_seed)

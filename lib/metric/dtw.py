@@ -2,13 +2,46 @@
 the Dynamic Time Warping (DTW) distance
 """
 
+from abc import ABC, abstractmethod
+from typing import Callable
 from jax.scipy.special import logsumexp
 
 import jax
 import jax.numpy as jnp
-from jax.nn import sigmoid
+import equinox as eqx
 
-from .utils import OOPError
+
+@jax.jit
+def distance_matrix_bce(a, b_logits):
+    """
+    Return pairwise crossentropy between two timeseries.
+    Args:
+        a: First time series (m, p).
+        b: Second time series (n, p).
+    Returns:
+        An (m, n) distance matrix computed by a pairwise distance function.
+            on the elements of a and b.
+    """
+    m, p = a.shape
+    n, p = b_logits.shape
+    assert a.shape[1] == b_logits.shape[1], "Dimensions mismatch."
+
+    b_logits = jnp.broadcast_to(b_logits, (m, n, p))
+    a = jnp.expand_dims(a, 1)
+    a = jnp.broadcast_to(a, (m, n, p))
+
+    D = a * jax.nn.softplus(-b_logits) + (1 - a) * jax.nn.softplus(b_logits)
+
+    return jnp.mean(D, axis=2)
+
+
+@jax.jit
+def distance_matrix_euc(a, b):
+    a = jnp.expand_dims(a, axis=1)
+    b = jnp.expand_dims(b, axis=0)
+    D = jnp.square(a - b)
+    return jnp.mean(D, axis=2)
+
 
 # MIT License
 
@@ -21,8 +54,8 @@ from .utils import OOPError
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 
 
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -32,16 +65,34 @@ from .utils import OOPError
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-class AbstractDTW:
-    """https://github.com/khdlr/softdtw_jax/blob/main/softdtw_jax/softdtw_jax.py"""
+class DTW(eqx.Module):
+    """https://github.com/khdlr/softdtw_jax/blob/main/softdtw_jax/softdtw_jax.py
+    SoftDTW as proposed in the paper "Dynamic programming algorithm
+    optimization for spoken word recognition"
+    by Hiroaki Sakoe and Seibi Chiba (https://arxiv.org/abs/1703.01541)
 
-    def __init__(self, pairwise_distance_f):
-        self.pairwise_distance_f = pairwise_distance_f
+    Expects inputs of the shape [T, D], where T is the time dimension
+    and D is the feature dimension.
+    """
+    pairwise_distance: str = eqx.static_field()
+    _f_pairwise_distance: Callable = eqx.static_field()
 
-    def minimum(self, *args):
-        raise OOPError('This should be implemented')
+    def __init__(self, pairwise_distance: str):
+        super().__init__()
+        self.pairwise_distance = pairwise_distance
+        if pairwise_distance == 'euc':
+            self._f_pairwise_distance = distance_matrix_euc
+        elif pairwise_distance == 'bce':
+            self._f_pairwise_distance = distance_matrix_bce
+        else:
+            raise ValueError(
+                'Unknown pairwise distance: {}'.format(pairwise_distance))
 
-    def __call__(self, target, prediction):
+    def minimum(self, array):
+        return jnp.min(array, axis=-1)
+
+    @eqx.filter_jit
+    def __call__(self, y, y_hat):
         """
         Compute the DTW distance.
 
@@ -50,7 +101,11 @@ class AbstractDTW:
         def pad_inf(inp, before, after):
             return jnp.pad(inp, (before, after), constant_values=jnp.inf)
 
-        D = self.pairwise_distance_f(target, prediction)
+        if len(y.shape) == 1:
+            y = jnp.expand_dims(y, axis=1)
+            y_hat = jnp.expand_dims(y_hat, axis=1)
+
+        D = self._f_pairwise_distance(y, y_hat)
 
         # wlog: H >= W
         if D.shape[0] < D.shape[1]:
@@ -87,39 +142,27 @@ class AbstractDTW:
         return carry[1][-1]
 
 
-class DTW(AbstractDTW):
+class SoftDTW(DTW):
     """
-    SoftDTW as proposed in the paper "Dynamic programming algorithm optimization for spoken word recognition"
-    by Hiroaki Sakoe and Seibi Chiba (https://arxiv.org/abs/1703.01541)
-
-    Expects inputs of the shape [T, D], where T is the time dimension
-    and D is the feature dimension.
-    """
-    __name__ = 'DTW'
-
-    def minimum(self, args):
-        return jnp.min(args, axis=-1)
-
-
-class SoftDTW(AbstractDTW):
-    """
-    SoftDTW as proposed in the paper "Soft-DTW: a Differentiable Loss Function for Time-Series"
+    SoftDTW as proposed in the paper "Soft-DTW: a Differentiable Loss
+    Function for Time-Series"
     by Marco Cuturi and Mathieu Blondel (https://arxiv.org/abs/1703.01541)
 
     Expects inputs of the shape [T, D], where T is the time dimension
     and D is the feature dimension.
     """
-    __name__ = 'SoftDTW'
+    gamma: float = eqx.static_field()
+    _f_minimum: Callable = eqx.static_field()
 
-    def __init__(self, pairwise_distance_f, gamma=1.0):
-        super().__init__(pairwise_distance_f=pairwise_distance_f)
+    def __init__(self, pairwise_distance='euc', gamma=1.0):
+        super().__init__(pairwise_distance=pairwise_distance)
 
         assert gamma > 0, "Gamma needs to be positive."
         self.gamma = gamma
-        self.__name__ = f'SoftDTW({self.gamma})'
-        self.minimum_impl = self.make_softmin(gamma)
+        self._f_minimum = self.make_softmin(gamma)
 
-    def make_softmin(self, gamma):
+    @staticmethod
+    def make_softmin(gamma):
         """
         We need to manually define the gradient of softmin
         to ensure (1) numerical stability and (2) prevent nans from
@@ -144,38 +187,5 @@ class SoftDTW(AbstractDTW):
         softmin.defvjp(softmin_fwd, softmin_bwd)
         return softmin
 
-    def minimum(self, args):
-        return self.minimum_impl(args)
-
-
-@jax.jit
-def distance_matrix_bce(a, b_logits):
-    """
-    Return pairwise crossentropy between two timeseries.
-    Args:
-        a: First time series (m, p).
-        b: Second time series (n, p).
-    Returns:
-        An (m, n) distance matrix computed by a pairwise distance function.
-            on the elements of a and b.
-    """
-    m, p = a.shape
-    n, p = b_logits.shape
-    assert a.shape[1] == b_logits.shape[1], "Dimensions mismatch."
-
-    b_logits = jnp.broadcast_to(b_logits, (m, n, p))
-    a = jnp.expand_dims(a, 1)
-    a = jnp.broadcast_to(a, (m, n, p))
-
-    D = a * jax.nn.softplus(-b_logits) + (1 - a) * jax.nn.softplus(b_logits)
-
-    return jnp.mean(D, axis=-1)
-
-
-@jax.jit
-def distance_matrix_euc(a, b_logits):
-    b = sigmoid(b_logits)
-    a = jnp.expand_dims(a, axis=1)
-    b = jnp.expand_dims(b, axis=0)
-    D = jnp.square(a - b)
-    return jnp.mean(D, axis=-1)
+    def minimum(self, array):
+        return self._f_minimum(array)

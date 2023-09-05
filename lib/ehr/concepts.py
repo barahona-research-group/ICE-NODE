@@ -191,6 +191,9 @@ class InpatientObservables(eqx.Module):
         return InpatientObservables(time, value, mask)
 
     def make_leading_observable(self, config: LeadingObservableConfig):
+        """
+        Make a leading observable from the current timestamp.
+        """
         if len(self) == 0:
             return config.empty()
 

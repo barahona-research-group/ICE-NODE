@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import jax.nn as jnn
 from jax.tree_util import tree_flatten
 import equinox as eqx
+import re
+from .dtw import SoftDTW
 
 
 @eqx.filter_jit
@@ -253,6 +255,24 @@ def masked_rms(y: jnp.ndarray,
 #                         sigma_2=obs_noise_std) * mask).sum() / (jnp.sum(mask) +
 #                                                                 1e-10)
 
+
+class SoftDTWDict(dict):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._keys = set()
+
+    def __setitem__(self, key, value):
+        self._keys.add(key)
+        super().__setitem__(key, value)
+
+    def __getitem__(self, key):
+        if key not in self._keys and key.startswith('softdtw'):
+            gamma = float(key.split('(')[1].split(')')[0])
+            self.__setitem__(key, SoftDTW(gamma=gamma))
+        return super().__getitem__(key)
+
+
 binary_loss = {
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
@@ -262,7 +282,12 @@ binary_loss = {
     'allpairs_sigmoid_rank': allpairs_sigmoid_rank
 }
 
-numeric_loss = {'mse': masked_mse, 'mae': masked_mae, 'rms': masked_rms}
+numeric_loss = SoftDTWDict({
+    'mse': masked_mse,
+    'mae': masked_mae,
+    'rms': masked_rms,
+    'softdtw(0.1)': SoftDTW(gamma=0.1),  # And so any other gamma!
+})
 
 colwise_binary_loss = {
     'softmax_bce':

@@ -118,7 +118,22 @@ class Predictions(dict):
         return self._numeric_loss(obs_loss, 'observables')
 
     def prediction_lead_loss(self, lead_loss):
-        return self._numeric_loss(lead_loss, 'leading_observable')
+        preds = self.get_predictions()
+        loss_v = []
+        for pred in preds:
+            adm = pred.admission
+            for pred_lo, adm_lo in zip(pred.leading_observable,
+                                       adm.leading_observable):
+                for i in len(adm_lo.time):
+                    m = adm_lo.mask[i]
+                    if m.sum() == 0:
+                        continue
+                    y = adm_lo.value[i][m]
+                    y_hat = pred_lo.value[i][m]
+                    loss_v.append(lead_loss(y, y_hat) / m.sum())
+        loss_v = jnp.array(loss_v)
+        loss_v = jnp.nanmean(loss_v)
+        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def outcome_first_occurrence_masks(self, subject_id):
         preds = self[subject_id]
@@ -260,7 +275,8 @@ class Patients(eqx.Module):
                 logging.info('Cache does not match config, ignoring cache.')
             logging.info('Loading subjects from scratch.')
 
-            with dask.config.set(scheduler='processes', num_workers=12):
+            with dask.config.set(scheduler='processes',
+                                 num_workers=num_workers):
                 interface = Patients(config, dataset_generator(dataset_config))
                 interface = interface.load_subjects(num_workers=num_workers,
                                                     subject_ids=subject_subset)

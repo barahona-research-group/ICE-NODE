@@ -22,25 +22,44 @@ class InICENODEDimensions(ModelDimensions):
     mem: int = 15
     obs: int = 25
     lead: int = 5
+    lead_predictor: str = "monotonic"
 
 
-class LeadingObsPredictor(eqx.Module):
-    mlp: eqx.nn.MLP
+class MonotonicLeadingObsPredictor(eqx.Module):
     dims: InICENODEDimensions = eqx.static_field()
+
+    _mlp: eqx.nn.MLP
 
     def __init__(self, dims: InICENODEDimensions, key: jax.random.PRNGKey):
         self.dims = dims
-        self.mlp = eqx.nn.MLP(dims.lead,
-                              dims.lead + 1,
-                              dims.lead * 5,
-                              depth=2,
-                              key=key)
+        self._mlp = eqx.nn.MLP(dims.lead,
+                               dims.lead + 1,
+                               dims.lead * 5,
+                               depth=2,
+                               key=key)
 
     def __call__(self, lead):
-        y = self.mlp(lead)
+        y = self._mlp(lead)
         risk = y[-1]
         p = jnp.cumsum(jnn.softmax(y[:-1]))
         return risk * p
+
+
+class SigmoidLeadingObsPredictor(eqx.Module):
+    dims: InICENODEDimensions = eqx.static_field()
+    _t: jnp.ndarray = eqx.static_field()
+    _mlp: eqx.nn.MLP
+
+    def __init__(self, dims: InICENODEDimensions,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: jax.random.PRNGKey):
+        self.dims = dims
+        self._t = jnp.array(leading_observable_config.leading_hours)
+        self._mlp = eqx.nn.MLP(dims.lead, 4, dims.lead * 5, depth=3, key=key)
+
+    def __call__(self, lead):
+        [vscale, hscale, vshift, hshift] = self._mlp(lead)
+        return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
 
 
 class InICENODE(InpatientModel):
@@ -52,17 +71,14 @@ class InICENODE(InpatientModel):
         - f_dyn: Dynamics function.
         - f_update: Update function.
     """
-    f_emb: Callable[[Admission], EmbeddedInAdmission]
-    f_obs_dec: Callable
-    f_lead_dec: Callable
-    f_dx_dec: Callable
-    f_dyn: Callable
-    f_update: Callable
+    _f_emb: Callable[[Admission], EmbeddedInAdmission]
+    _f_obs_dec: Callable
+    _f_lead_dec: Callable
+    _f_dx_dec: Callable
+    _f_dyn: Callable
+    _f_update: Callable
 
-    schemes: Tuple[DatasetScheme] = eqx.static_field()
     dims: InICENODEDimensions = eqx.static_field()
-    demographic_vector_config: DemographicVectorConfig = eqx.static_field()
-    leading_observable_config: LeadingObservableConfig = eqx.static_field()
 
     def __init__(self, dims: InICENODEDimensions,
                  schemes: Tuple[DatasetScheme],
@@ -84,12 +100,18 @@ class InICENODE(InpatientModel):
                               depth=1,
                               key=dx_dec_key)
 
-        self.f_obs_dec = eqx.nn.MLP(dims.obs,
-                                    len(schemes[1].obs),
-                                    dims.obs * 5,
-                                    depth=1,
-                                    key=obs_dec_key)
-        self.f_lead_dec = LeadingObsPredictor(dims, key=lead_key)
+        self._f_obs_dec = eqx.nn.MLP(dims.obs,
+                                     len(schemes[1].obs),
+                                     dims.obs * 5,
+                                     depth=1,
+                                     key=obs_dec_key)
+        if dims.leading_predictor == "monotonic":
+            self._f_lead_dec = MonotonicLeadingObsPredictor(dims, key=lead_key)
+        elif dims.leading_predictor == "sigmoid":
+            self._f_lead_dec = SigmoidLeadingObsPredictor(
+                dims, leading_observable_config, key=lead_key)
+        else:
+            raise ValueError("Unknown leading predictor type")
 
         dyn_state_size = dims.obs + dims.emb.dx + dims.mem
         dyn_input_size = dyn_state_size + dims.emb.inp_proc_demo
@@ -101,16 +123,12 @@ class InICENODE(InpatientModel):
                            width_size=dyn_state_size * 5,
                            key=dyn_key)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
-        self.f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
-        self.f_update = ObsStateUpdate(dyn_state_size,
-                                       len(schemes[1].obs),
-                                       key=update_key)
+        self._f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
+        self._f_update = ObsStateUpdate(dyn_state_size,
+                                        len(schemes[1].obs),
+                                        key=update_key)
 
-        super().__init__(dims=dims,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         f_emb=f_emb,
-                         f_dx_dec=f_dx_dec)
+        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @eqx.filter_jit
     def join_state(self, mem, obs, lead, dx):
@@ -142,7 +160,7 @@ class InICENODE(InpatientModel):
         # else:
         second = jnp.array(1 / 3600.0)
         delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
-        return self.f_dyn(delta, state, args=dict(control=int_e))[-1]
+        return self._f_dyn(delta, state, args=dict(control=int_e))[-1]
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
@@ -154,9 +172,9 @@ class InICENODE(InpatientModel):
             # if time-diff is more than 1 seconds, we integrate.
             state = self._safe_integrate(t_obs - t, state, int_e)
             _, obs_e, lead_e, _ = self.split_state(state)
-            pred_obs = self.f_obs_dec(obs_e)
-            pred_lead = self.f_lead_dec(lead_e)
-            state = self.f_update(state, pred_obs, val, mask)
+            pred_obs = self._f_obs_dec(obs_e)
+            pred_lead = self._f_lead_dec(lead_e)
+            state = self._f_update(state, pred_obs, val, mask)
             t = t_obs
             preds.append(pred_obs)
             lead_preds.append(pred_lead)
@@ -193,7 +211,7 @@ class InICENODE(InpatientModel):
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
 
-        pred_dx = CodesVector(self.f_dx_dec(self.split_state(state)[2]),
+        pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[2]),
                               admission.outcome.scheme)
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,

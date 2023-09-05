@@ -28,8 +28,8 @@ class ICENODEDimensions(ModelDimensions):
 
 
 class ICENODE(OutpatientModel):
-    f_dyn: Callable
-    f_update: Callable
+    _f_dyn: Callable
+    _f_update: Callable
     dims: ICENODEDimensions = eqx.static_field()
 
     def __init__(self, dims: ICENODEDimensions, schemes: Tuple[DatasetScheme],
@@ -59,21 +59,17 @@ class ICENODE(OutpatientModel):
                            key=dyn_key)
         ode_dyn_f = model_params_scaler(f_dyn, 1e-3, eqx.is_inexact_array)
 
-        self.f_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
+        self._f_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
 
-        self.f_update = StateUpdate(state_size=dims.mem,
-                                    embeddings_size=dims.emb.dx,
-                                    key=up_key)
+        self._f_update = StateUpdate(state_size=dims.mem,
+                                     embeddings_size=dims.emb.dx,
+                                     key=up_key)
 
-        super().__init__(dims=dims,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         f_emb=f_emb,
-                         f_dx_dec=f_dx_dec)
+        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @property
     def dyn_params_list(self):
-        return self.params_list(self.f_dyn)
+        return self.params_list(self._f_dyn)
 
     def join_state_emb(self, state, emb):
         if state is None:
@@ -87,15 +83,15 @@ class ICENODE(OutpatientModel):
     def _integrate(self, state, delta, ctrl):
         second = jnp.array(1 / (3600.0 * 24.0))
         delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
-        return self.f_dyn(delta, state, args=dict(control=ctrl))[-1]
+        return self._f_dyn(delta, state, args=dict(control=ctrl))[-1]
 
     @eqx.filter_jit
     def _update(self, *args):
-        return self.f_update(*args)
+        return self._f_update(*args)
 
     @eqx.filter_jit
     def _decode(self, dx_e: jnp.ndarray):
-        return self.f_dx_dec(dx_e)
+        return self._f_dx_dec(dx_e)
 
     @staticmethod
     def _time_diff(t1, t2):
@@ -158,7 +154,7 @@ class GRUDimensions(ModelDimensions):
 
 
 class GRU(OutpatientModel):
-    f_update: Callable
+    _f_update: Callable
     dims: GRUDimensions = eqx.static_field()
 
     def __init__(self, dims: GRUDimensions, schemes: Tuple[DatasetScheme],
@@ -177,33 +173,29 @@ class GRU(OutpatientModel):
                               depth=1,
                               key=dx_dec_key)
 
-        self.f_update = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                       dims.emb.dx,
-                                       use_bias=True,
-                                       key=up_key)
+        self._f_update = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
+                                        dims.emb.dx,
+                                        use_bias=True,
+                                        key=up_key)
 
-        super().__init__(dims=dims,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         f_emb=f_emb,
-                         f_dx_dec=f_dx_dec)
+        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @property
     def dyn_params_list(self):
-        return self.params_list(self.f_update)
+        return self.params_list(self._f_update)
 
     def weights(self):
-        return [self.f_update.weight_hh, self.f_update.weight_ih]
+        return [self._f_update.weight_hh, self._f_update.weight_ih]
 
     @eqx.filter_jit
     def _update(self, mem: jnp.ndarray, dx_e_prev: jnp.ndarray,
                 demo: jnp.ndarray):
         x = jnp.hstack((dx_e_prev, demo))
-        return self.f_update(x, mem)
+        return self._f_update(x, mem)
 
     @eqx.filter_jit
     def _decode(self, dx_e_hat: jnp.ndarray):
-        return self.f_dx_dec(dx_e_hat)
+        return self._f_dx_dec(dx_e_hat)
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission]):
@@ -236,10 +228,10 @@ class RETAINDimensions(ModelDimensions):
 
 class RETAIN(OutpatientModel):
 
-    f_gru_a: Callable
-    f_gru_b: Callable
-    f_att_a: Callable
-    f_att_b: Callable
+    _f_gru_a: Callable
+    _f_gru_b: Callable
+    _f_att_a: Callable
+    _f_att_b: Callable
     dims: RETAINDimensions = eqx.static_field()
 
     def __init__(self, dims: RETAINDimensions, schemes: Tuple[DatasetScheme],
@@ -258,58 +250,54 @@ class RETAIN(OutpatientModel):
                               dims.emb.dx * 5,
                               depth=1,
                               key=k2)
-        self.f_gru_a = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                      dims.mem_a,
-                                      use_bias=True,
-                                      key=k3)
-        self.f_gru_b = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                      dims.mem_b,
-                                      use_bias=True,
-                                      key=k4)
+        self._f_gru_a = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
+                                       dims.mem_a,
+                                       use_bias=True,
+                                       key=k3)
+        self._f_gru_b = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
+                                       dims.mem_b,
+                                       use_bias=True,
+                                       key=k4)
 
-        self.f_att_a = eqx.nn.Linear(dims.mem_a, 1, use_bias=True, key=k5)
-        self.f_att_b = eqx.nn.Linear(dims.mem_b,
-                                     dims.emb.dx,
-                                     use_bias=True,
-                                     key=k6)
+        self._f_att_a = eqx.nn.Linear(dims.mem_a, 1, use_bias=True, key=k5)
+        self._f_att_b = eqx.nn.Linear(dims.mem_b,
+                                      dims.emb.dx,
+                                      use_bias=True,
+                                      key=k6)
 
-        super().__init__(dims=dims,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         f_emb=f_emb,
-                         f_dx_dec=f_dx_dec)
+        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     def weights(self):
         return [
-            self.f_gru_a.weight_hh, self.f_gru_a.weight_ih,
-            self.f_gru_b.weight_hh, self.f_gru_b.weight_ih,
-            self.f_att_a.weight, self.f_att_b.weight
+            self._f_gru_a.weight_hh, self._f_gru_a.weight_ih,
+            self._f_gru_b.weight_hh, self._f_gru_b.weight_ih,
+            self._f_att_a.weight, self._f_att_b.weight
         ]
 
     @property
     def dyn_params_list(self):
         return self.params_list(
-            (self.f_gru_a, self.f_gru_b, self.f_att_a, self.f_att_b))
+            (self._f_gru_a, self._f_gru_b, self._f_att_a, self._f_att_b))
 
     @eqx.filter_jit
     def _gru_a(self, x, state):
-        return self.f_gru_a(x, state)
+        return self._f_gru_a(x, state)
 
     @eqx.filter_jit
     def _gru_b(self, x, state):
-        return self.f_gru_b(x, state)
+        return self._f_gru_b(x, state)
 
     @eqx.filter_jit
     def _att_a(self, x):
-        return self.f_att_a(x)
+        return self._f_att_a(x)
 
     @eqx.filter_jit
     def _att_b(self, x):
-        return self.f_att_b(x)
+        return self._f_att_b(x)
 
     @eqx.filter_jit
     def _dx_dec(self, x):
-        return self.f_dx_dec(x)
+        return self._f_dx_dec(x)
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission]):
