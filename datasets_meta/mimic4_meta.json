@@ -1,6 +1,6 @@
 {
-    "base_dir": "$DATA_DIR/mimic4-cohort",
-    "code_scheme": {
+    "path": "",
+    "scheme": {
         "dx": {"9": "DxICD9", "10": "DxICD10"},
         "ethnicity": "MIMIC4Eth32",
         "gender": "Gender"
@@ -29,5 +29,8 @@
         "adm": "adm_df.csv.gz",
         "dx": "dx_df.csv.gz",
         "static": "static_df.csv.gz"
-    }
+    },
+    "scheme_classname": "MIMIC4DatasetScheme",
+    "tag": "M4",
+    "_type": "DatasetConfig"
 }

@@ -291,6 +291,14 @@ class ObsCodeLevelMetric(CodeLevelMetric):
         self.index2code = {i: c for c, i in index.items()}
 
 
+class LeadingObsMetric(CodeLevelMetric):
+
+    def __post_init__(self):
+        conf = self.patients.leading_observable_config
+        self.code2index = conf.code2index
+        self.index2code = conf.index2code
+
+
 @dataclass
 class CodeAUC(CodeLevelMetric):
 
@@ -401,6 +409,30 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
     def __call__(self, predictions: Predictions):
         loss_vals = {
             name: predictions.prediction_obs_loss(loss_f)
+            for name, loss_f in self.loss_functions.items()
+        }
+        loss_vals = {
+            name: dict(zip(range(len(v)), v))
+            for name, v in loss_vals.items()
+        }
+        return loss_vals
+
+
+@dataclass
+class LeadingObsLossMetric(ObsCodeLevelLossMetric):
+    obs_loss: Tuple[str] = field(default_factory=list)
+    loss_functions: Dict[str, Callable] = field(init=False)
+
+    def __post_init__(self):
+        LeadingObsLossMetric.__post_init__(self)
+        self.loss_functions = {
+            name: colwise_numeric_loss[name]
+            for name in self.obs_loss
+        }
+
+    def __call__(self, predictions: Predictions):
+        loss_vals = {
+            name: predictions.prediction_lead_loss(loss_f)
             for name, loss_f in self.loss_functions.items()
         }
         loss_vals = {

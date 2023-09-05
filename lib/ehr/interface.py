@@ -1,18 +1,21 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Any, Callable
 import logging
 import pickle
 from pathlib import Path
+import json
 import numpy as np
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
-
-from ..utils import tqdm_constructor, tree_hasnan, translate_path
-from .dataset import Dataset, DatasetScheme
+import dask
+from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
+from ..base import AbstractConfig
+from .dataset import Dataset, DatasetScheme, DatasetConfig
 from .concepts import (Admission, Patient, InpatientObservables,
-                       InpatientInterventions, DemographicVectorConfig)
+                       InpatientInterventions, DemographicVectorConfig,
+                       LeadingObservableConfig)
 from .coding_scheme import CodesVector
 
 
@@ -30,10 +33,12 @@ class AdmissionPrediction(eqx.Module):
     admission: Admission
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
+    leading_observable: Optional[List[InpatientObservables]] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
-        return tree_hasnan((self.outcome, self.observables, self.other))
+        return tree_hasnan((self.outcome, self.observables, self.other,
+                            self.leading_observable))
 
 
 class Predictions(dict):
@@ -97,16 +102,23 @@ class Predictions(dict):
         loss_v = jnp.nanmean(loss_v)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
-    def prediction_obs_loss(self, obs_loss):
+    def _numeric_loss(self, loss_fn, attr: str):
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
-        obs_true = [o.value for a in adms for o in a.observables]
-        obs_mask = [o.mask for a in adms for o in a.observables]
-        obs_pred = [o.value for p in preds for o in p.observables]
-        obs_true = jnp.vstack(obs_true)
-        obs_mask = jnp.vstack(obs_mask)
-        obs_pred = jnp.vstack(obs_pred)
-        return obs_loss(obs_true, obs_pred, obs_mask)
+        l_true = [o.value for a in adms for o in getattr(a, attr)]
+        l_mask = [o.mask for a in adms for o in getattr(a, attr)]
+        l_pred = [o.value for p in preds for o in getattr(p, attr)]
+        true = jnp.vstack(l_true)
+        mask = jnp.vstack(l_mask)
+        pred = jnp.vstack(l_pred)
+        loss_v = loss_fn(true, pred, mask)
+        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
+
+    def prediction_obs_loss(self, obs_loss):
+        return self._numeric_loss(obs_loss, 'observables')
+
+    def prediction_lead_loss(self, lead_loss):
+        return self._numeric_loss(lead_loss, 'leading_observable')
 
     def outcome_first_occurrence_masks(self, subject_id):
         preds = self[subject_id]
@@ -115,32 +127,64 @@ class Predictions(dict):
         return [first_occ_adm_id == a.admission_id for a in adms]
 
 
-class Patients(eqx.Module):
-    dataset: Dataset
-    scheme: DatasetScheme
-    demographic_vector_config: DemographicVectorConfig
-    subjects: Optional[Dict[int, Patient]]
+class InterfaceConfig(AbstractConfig):
+    demographic_vector: DemographicVectorConfig
+    leading_observable: Optional[LeadingObservableConfig]
+    scheme: Dict[str, str]
+    cache: Optional[str]
 
     def __init__(self,
-                 dataset: Dataset,
-                 demographic_vector_config: DemographicVectorConfig,
-                 subjects: Optional[Dict[int, Patient]] = None,
-                 target_scheme: Optional[DatasetScheme] = None,
-                 **target_scheme_kwargs):
+                 demographic_vector: DemographicVectorConfig,
+                 leading_observable: Optional[LeadingObservableConfig] = None,
+                 dataset_scheme: Optional[DatasetScheme] = None,
+                 scheme: Optional[Dict[str, str]] = None,
+                 cache: Optional[str] = None,
+                 **interface_scheme_kwargs):
         super().__init__()
-        self.dataset = dataset
-        if target_scheme is None:
-            self.scheme = dataset.scheme.make_target_scheme(
-                **target_scheme_kwargs)
+        self.demographic_vector = demographic_vector
+        self.leading_observable = leading_observable
+        if scheme is None:
+            self.scheme = dataset_scheme.make_target_scheme_config(**scheme)
         else:
-            self.scheme = target_scheme
+            self.scheme = scheme
 
-        self.demographic_vector_config = demographic_vector_config
+        self.cache = cache
+
+
+class Patients(eqx.Module):
+    config: InterfaceConfig
+    dataset: Dataset
+    subjects: Dict[int, Patient]
+    _scheme: DatasetScheme
+
+    def __init__(self,
+                 config: InterfaceConfig,
+                 dataset: Dataset,
+                 subjects: Dict[int, Patient] = {}):
+        super().__init__()
+        self.config = config
+        self.dataset = dataset
         self.subjects = subjects
+        self._scheme = dataset.scheme.make_target_scheme(config.scheme)
+
+    @property
+    def subject_ids(self):
+        return sorted(self.subjects.keys())
+
+    def export_config(self):
+        return self.config.to_dict()
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], **init_kwargs):
+        return cls(AbstractConfig.from_dict(config), **init_kwargs)
+
+    @property
+    def scheme(self):
+        return self._scheme
 
     @property
     def schemes(self):
-        return (self.dataset.scheme, self.scheme)
+        return (self.dataset.scheme, self._scheme)
 
     def random_splits(self,
                       splits: List[float],
@@ -152,51 +196,100 @@ class Patients(eqx.Module):
     def __len__(self):
         return len(self.subjects)
 
-    def save(self, path: Union[str, Path], overwrite: bool = False):
+    @staticmethod
+    def equal_config(path, config=None, dataset_config=None, subject_ids=None):
         path = Path(path)
+        try:
+            cached_dsconfig = load_config(
+                path.with_suffix('.dataset.config.json'))
+            cached_config = load_config(path.with_suffix('.config.json'))
+            cached_ids = load_config(path.with_suffix('.subject_ids.json'))
+        except FileNotFoundError:
+            return False
+        pairs = []
+        for a, b in [(config, cached_config),
+                     (dataset_config, cached_dsconfig),
+                     (subject_ids, cached_ids)]:
+            if a is None:
+                continue
+            if issubclass(type(a), AbstractConfig):
+                a = a.to_dict()
+            pairs.append((a, b))
 
+        return all(a == b for a, b in pairs)
+
+    def save(self, path: Union[str, Path], overwrite: bool = False):
+
+        path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-
         self.dataset.save(path.with_suffix('.dataset'), overwrite)
 
-        rest = eqx.tree_at(lambda x: x.dataset, self, None)
-        path = path.with_suffix('.interface.pickle')
-        if path.exists():
+        # rest = eqx.tree_at(lambda x: x.dataset, self, None)
+        subj_path = path.with_suffix('.subjects.pickle')
+        if subj_path.exists():
             if overwrite:
-                path.unlink()
+                subj_path.unlink()
             else:
-                raise RuntimeError(f'File {path} already exists.')
-        with open(path, 'wb') as file:
-            pickle.dump(rest, file)
+                raise RuntimeError(f'File {subj_path} already exists.')
+        with open(subj_path, 'wb') as file:
+            pickle.dump(self.subjects, file)
+
+        write_config(self.dataset.export_config(),
+                     path.with_suffix('.dataset.config.json'))
+        write_config(self.export_config(), path.with_suffix('.config.json'))
+        write_config(self.subject_ids, path.with_suffix('.subject_ids.json'))
 
     @staticmethod
     def load(path: Union[str, Path]) -> jtu.pytree:
         path = Path(path)
-        with open(path.with_suffix('.interface.pickle'), 'rb') as file:
-            rest = pickle.load(file)
+        with open(path.with_suffix('.subjects.pickle'), 'rb') as file:
+            subjects = pickle.load(file)
         dataset = Dataset.load(path.with_suffix('.dataset'))
-        return eqx.tree_at(lambda x: x.dataset,
-                           rest,
-                           dataset,
-                           is_leaf=lambda x: x is None)
+        config = load_config(path.with_suffix('.config.json'))
+        return Patients.from_config(config, dataset=dataset, subjects=subjects)
+
+    @staticmethod
+    def try_load_cached(config: InterfaceConfig,
+                        dataset_config: DatasetConfig,
+                        dataset_generator: Callable[[DatasetConfig], Dataset],
+                        subject_subset: Optional[List[int]] = None,
+                        num_workers: int = 8):
+        if config.cache is None or not Patients.equal_config(
+                config.cache, config, dataset_config, subject_subset):
+            if config.cache is not None:
+                logging.info('Cache does not match config, ignoring cache.')
+            logging.info('Loading subjects from scratch.')
+
+            with dask.config.set(scheduler='processes', num_workers=12):
+                interface = Patients(config, dataset_generator(dataset_config))
+                interface = interface.load_subjects(num_workers=num_workers,
+                                                    subject_ids=subject_subset)
+
+            if config.cache is not None:
+                interface.save(config.cache, overwrite=True)
+
+            return interface
+        else:
+            logging.info('Loading cached subjects.')
+            return Patients.load(config.cache)
 
     def load_subjects(self,
                       subject_ids: Optional[List[int]] = None,
                       num_workers: int = 1):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
+
         subjects = self.dataset.to_subjects(
             subject_ids,
             num_workers=num_workers,
-            demographic_vector_config=self.demographic_vector_config,
-            target_scheme=self.scheme)
+            demographic_vector_config=self.config.demographic_vector,
+            leading_observable_config=self.config.leading_observable,
+            target_scheme=self._scheme)
 
         subjects = {s.subject_id: s for s in subjects}
-        return Patients(
-            dataset=self.dataset,
-            demographic_vector_config=self.demographic_vector_config,
-            subjects=subjects,
-            target_scheme=self.scheme)
+        interface = eqx.tree_at(lambda x: x.subjects, self, subjects)
+
+        return interface
 
     def _subject_to_device(self, subject_id: int):
         s = self.subjects[subject_id]
@@ -209,17 +302,13 @@ class Patients(eqx.Module):
             subject_ids = self.subjects.keys()
 
         subjects = {
-            i: jax.block_until_ready(self._subject_to_device(i))
+            i: self._subject_to_device(i)
             for i in tqdm_constructor(subject_ids,
                                       desc="Loading to device",
                                       unit='subject',
                                       leave=False)
         }
-        return Patients(
-            dataset=self.dataset,
-            demographic_vector_config=self.demographic_vector_config,
-            subjects=subjects,
-            target_scheme=self.scheme)
+        return eqx.tree_at(lambda x: x.subjects, self, subjects)
 
     def epoch_splits(self,
                      subject_ids: Optional[List[int]],
@@ -312,7 +401,7 @@ class Patients(eqx.Module):
         return sum(o.mask.sum() for s in subject_ids
                    for a in self.subjects[s].admissions
                    for o in a.observables) / self.n_obs_times() / len(
-                       self.scheme.obs)
+                       self._scheme.obs)
 
     def obs_coocurrence_matrix(self):
         obs = []

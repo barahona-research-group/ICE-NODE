@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys, inspect
 from typing import (Any, Dict, List, Callable, Optional, Tuple)
 from abc import abstractmethod
 import jax
@@ -9,6 +10,7 @@ import equinox as eqx
 from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
                    AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
+from ..base import AbstractConfig
 
 
 class EmbeddedAdmission(eqx.Module):
@@ -25,10 +27,9 @@ class EmbeddedOutAdmission(EmbeddedAdmission):
     demo: Optional[jnp.ndarray]
 
 
-class PatientEmbeddingDimensions(eqx.Module):
+class PatientEmbeddingDimensions(AbstractConfig):
     dx: int = 30
     demo: int = 5
-
 
 class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
     pass
@@ -96,7 +97,6 @@ class PatientEmbedding(eqx.Module):
 
 
 class OutpatientEmbedding(PatientEmbedding):
-
     @eqx.filter_jit
     def _embed_admission(self, demo: jnp.ndarray,
                          dx_vec: jnp.ndarray) -> EmbeddedOutAdmission:
@@ -186,7 +186,6 @@ class InpatientEmbedding(PatientEmbedding):
                          segmented_inp: jnp.ndarray,
                          segmented_proc: jnp.ndarray) -> EmbeddedInAdmission:
         """ Embeds an admission into fixed vectors as described above."""
-
         def _embed_segment(inp, proc):
             return self._embed_segment(inp, proc, demo_e)
 
@@ -200,3 +199,4 @@ class InpatientEmbedding(PatientEmbedding):
         return self._embed_admission(demo, admission.dx_codes_history.vec,
                                      admission.interventions.segmented_input,
                                      admission.interventions.segmented_proc)
+

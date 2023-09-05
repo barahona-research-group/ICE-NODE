@@ -1,8 +1,11 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any
+from typing import (List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any,
+                    Dict, Type)
 from abc import abstractmethod, ABCMeta
+import sys
+import inspect
 import zipfile
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -11,6 +14,8 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission)
+from ..base import AbstractConfig
+
 from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
                          EmbeddedAdmission)
 
@@ -18,7 +23,7 @@ if TYPE_CHECKING:
     import optuna
 
 
-class ModelDimensions(eqx.Module):
+class ModelDimensions(AbstractConfig):
     emb: PatientEmbeddingDimensions = PatientEmbeddingDimensions()
 
 
@@ -34,6 +39,13 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
     @abstractmethod
     def dyn_params_list(self):
         pass
+
+    @classmethod
+    def register(cls):
+        model_class_registry[cls.__name__] = cls
+
+    def export_config(self):
+        return {'dims': self.dims.to_dict()}
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -239,6 +251,8 @@ class OutpatientModel(AbstractModel):
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
 
+
+model_class_registry = {}
 
 #     @classmethod
 #     def from_config(cls, conf: Dict[str, Any], patients: Patients,
