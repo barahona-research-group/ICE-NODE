@@ -12,46 +12,29 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission)
-from ..base import AbstractConfig
+from ..base import Config, Module
 
-from .embeddings import (PatientEmbedding, PatientEmbeddingDimensions,
+from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
                          EmbeddedAdmission)
 
 if TYPE_CHECKING:
     import optuna
 
 
-class ModelDimensions(AbstractConfig):
-    emb: PatientEmbeddingDimensions = PatientEmbeddingDimensions()
+class ModelConfig(Config):
+    emb: PatientEmbeddingConfig = PatientEmbeddingConfig()
 
 
-class AbstractModel(eqx.Module, metaclass=ABCMeta):
+class AbstractModel(Module):
     _f_emb: PatientEmbedding
     _f_dx_dec: Callable
 
-    dims: ModelDimensions = eqx.static_field()
+    config: ModelConfig = eqx.static_field()
 
     @property
     @abstractmethod
     def dyn_params_list(self):
         pass
-
-    @classmethod
-    def register(cls):
-        model_class_registry[cls.__name__] = cls
-
-    def export_config(self):
-        return {
-            'dims': self.dims.to_dict(),
-            'external_argnames': self.external_argnames(),
-            'model_classname': self.__class__.__name__
-        }
-
-    def from_config(self, config: Dict[str, Any], **kwargs):
-        self.dims = ModelDimensions.from_dict(config['dims'])
-        kwargs = {k: kwargs[k] for k in config['external_argnames']}
-        model_class = model_class_registry[config['model_classname']]
-        return model_class(**kwargs)
 
     @classmethod
     def external_argnames(cls):
@@ -75,14 +58,14 @@ class AbstractModel(eqx.Module, metaclass=ABCMeta):
         return mask
 
     @classmethod
-    def _assert_demo_dim(cls, dims: ModelDimensions, scheme: DatasetScheme,
+    def _assert_demo_dim(cls, config: ModelConfig, scheme: DatasetScheme,
                          demographic_vector_config: DemographicVectorConfig):
         demo_vec_dim = scheme.demographic_vector_size(
             demographic_vector_config)
-        assert ((demo_vec_dim == 0 and dims.emb.demo == 0) or
-                (demo_vec_dim > 0 and dims.emb.demo > 0)), \
+        assert ((demo_vec_dim == 0 and config.emb.demo == 0) or
+                (demo_vec_dim > 0 and config.emb.demo > 0)), \
             f"Model dimensionality for demographic embedding size "\
-            f"({dims.emb.demo}) and input demographic vector size "\
+            f"({config.emb.demo}) and input demographic vector size "\
             f"({demo_vec_dim}) must both be zero or non-zero."
 
     @abstractmethod
@@ -272,8 +255,6 @@ class OutpatientModel(AbstractModel):
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
 
-
-model_class_registry = {}
 
 #     @classmethod
 #     def from_config(cls, conf: Dict[str, Any], patients: Patients,

@@ -15,10 +15,10 @@ from ..ehr import (Patient, AdmissionPrediction, DemographicVectorConfig,
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import OutpatientModel, ModelDimensions
+from .model import OutpatientModel, ModelConfig
 
 
-class ICENODEDimensions(ModelDimensions):
+class ICENODEConfig(ModelConfig):
     mem: int = 15
 
 
@@ -30,27 +30,27 @@ class ICENODEDimensions(ModelDimensions):
 class ICENODE(OutpatientModel):
     _f_dyn: Callable
     _f_update: Callable
-    dims: ICENODEDimensions = eqx.static_field()
+    config: ICENODEConfig = eqx.static_field()
 
-    def __init__(self, dims: ICENODEDimensions, schemes: Tuple[DatasetScheme],
+    def __init__(self, config: ICENODEConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
-        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
+        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, dx_dec_key, dyn_key, up_key) = jrandom.split(key, 4)
 
         f_emb = OutpatientEmbedding(
             schemes=schemes,
             demographic_vector_config=demographic_vector_config,
-            dims=dims.emb,
+            config=config.emb,
             key=emb_key)
-        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+        f_dx_dec = eqx.nn.MLP(config.emb.dx,
                               len(schemes[1].outcome),
-                              dims.emb.dx * 5,
+                              config.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
-        dyn_state_size = dims.emb.dx + dims.mem
-        dyn_input_size = dyn_state_size + dims.emb.demo
+        dyn_state_size = config.emb.dx + config.mem
+        dyn_input_size = dyn_state_size + config.emb.demo
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
                            out_size=dyn_state_size,
                            activation=jnn.tanh,
@@ -61,11 +61,11 @@ class ICENODE(OutpatientModel):
 
         self._f_dyn = NeuralODE_JAX(ode_dyn_f, timescale=1.0)
 
-        self._f_update = StateUpdate(state_size=dims.mem,
-                                     embeddings_size=dims.emb.dx,
+        self._f_update = StateUpdate(state_size=config.mem,
+                                     embeddings_size=config.emb.dx,
                                      key=up_key)
 
-        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
+        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @property
     def dyn_params_list(self):
@@ -73,11 +73,11 @@ class ICENODE(OutpatientModel):
 
     def join_state_emb(self, state, emb):
         if state is None:
-            state = jnp.zeros((self.dims.mem, ))
+            state = jnp.zeros((self.config.mem, ))
         return jnp.hstack((state, emb))
 
     def split_state_emb(self, state: jnp.ndarray):
-        return jnp.hsplit(state, (self.dims.mem, ))
+        return jnp.hsplit(state, (self.config.mem, ))
 
     @eqx.filter_jit
     def _integrate(self, state, delta, ctrl):
@@ -149,36 +149,36 @@ class ICENODE_ZERO(ICENODE_UNIFORM):
         return state
 
 
-class GRUDimensions(ModelDimensions):
+class GRUConfig(ModelConfig):
     pass
 
 
 class GRU(OutpatientModel):
     _f_update: Callable
-    dims: GRUDimensions = eqx.static_field()
+    config: GRUConfig = eqx.static_field()
 
-    def __init__(self, dims: GRUDimensions, schemes: Tuple[DatasetScheme],
+    def __init__(self, config: GRUConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
-        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
+        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, dx_dec_key, up_key) = jrandom.split(key, 3)
         f_emb = OutpatientEmbedding(
             schemes=schemes,
             demographic_vector_config=demographic_vector_config,
-            dims=dims.emb,
+            config=config.emb,
             key=emb_key)
-        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+        f_dx_dec = eqx.nn.MLP(config.emb.dx,
                               len(schemes[1].outcome),
-                              dims.emb.dx * 5,
+                              config.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
-        self._f_update = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                        dims.emb.dx,
+        self._f_update = eqx.nn.GRUCell(config.emb.dx + config.emb.demo,
+                                        config.emb.dx,
                                         use_bias=True,
                                         key=up_key)
 
-        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
+        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @property
     def dyn_params_list(self):
@@ -200,7 +200,7 @@ class GRU(OutpatientModel):
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission]):
         adms = patient.admissions
-        state = jnp.zeros((self.dims.emb.dx, ))
+        state = jnp.zeros((self.config.emb.dx, ))
         preds = []
         for i in range(1, len(adms)):
             adm = adms[i]
@@ -215,7 +215,7 @@ class GRU(OutpatientModel):
         return preds
 
 
-class RETAINDimensions(ModelDimensions):
+class RETAINConfig(ModelConfig):
     mem_a: int = eqx.static_field(default=45)
     mem_b: int = eqx.static_field(default=45)
 
@@ -232,40 +232,40 @@ class RETAIN(OutpatientModel):
     _f_gru_b: Callable
     _f_att_a: Callable
     _f_att_b: Callable
-    dims: RETAINDimensions = eqx.static_field()
+    config: RETAINConfig = eqx.static_field()
 
-    def __init__(self, dims: RETAINDimensions, schemes: Tuple[DatasetScheme],
+    def __init__(self, config: RETAINConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
-        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
+        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         k1, k2, k3, k4, k5, k6 = jrandom.split(key, 6)
 
         f_emb = OutpatientEmbedding(
             schemes=schemes,
             demographic_vector_config=demographic_vector_config,
-            dims=dims.emb,
+            config=config.emb,
             key=k1)
-        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+        f_dx_dec = eqx.nn.MLP(config.emb.dx,
                               len(schemes[1].outcome),
-                              dims.emb.dx * 5,
+                              config.emb.dx * 5,
                               depth=1,
                               key=k2)
-        self._f_gru_a = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                       dims.mem_a,
+        self._f_gru_a = eqx.nn.GRUCell(config.emb.dx + config.emb.demo,
+                                       config.mem_a,
                                        use_bias=True,
                                        key=k3)
-        self._f_gru_b = eqx.nn.GRUCell(dims.emb.dx + dims.emb.demo,
-                                       dims.mem_b,
+        self._f_gru_b = eqx.nn.GRUCell(config.emb.dx + config.emb.demo,
+                                       config.mem_b,
                                        use_bias=True,
                                        key=k4)
 
-        self._f_att_a = eqx.nn.Linear(dims.mem_a, 1, use_bias=True, key=k5)
-        self._f_att_b = eqx.nn.Linear(dims.mem_b,
-                                      dims.emb.dx,
+        self._f_att_a = eqx.nn.Linear(config.mem_a, 1, use_bias=True, key=k5)
+        self._f_att_b = eqx.nn.Linear(config.mem_b,
+                                      config.emb.dx,
                                       use_bias=True,
                                       key=k6)
 
-        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
+        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     def weights(self):
         return [
@@ -302,8 +302,8 @@ class RETAIN(OutpatientModel):
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission]):
         adms = patient.admissions
-        state_a0 = jnp.zeros(self.dims.mem_a)
-        state_b0 = jnp.zeros(self.dims.mem_b)
+        state_a0 = jnp.zeros(self.config.mem_a)
+        state_b0 = jnp.zeros(self.config.mem_b)
         preds = []
 
         # step 1 @RETAIN paper

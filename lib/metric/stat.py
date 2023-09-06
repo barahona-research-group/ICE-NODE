@@ -1,8 +1,8 @@
 """Performance metrics and loss functions."""
 
 from typing import Dict, Optional, List, Tuple, Any, Callable
-from dataclasses import dataclass, field
 from abc import abstractmethod, ABCMeta
+from dataclasses import field, dataclass
 import sys
 import inspect
 
@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from sklearn import metrics
 
 from ..ehr import Patients, Predictions
+from ..base import Module, Config
 from .delong import FastDeLongTest
 from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
                    colwise_numeric_loss)
@@ -78,8 +79,8 @@ def compute_auc(v_truth, v_preds):
     return metrics.auc(fpr, tpr)
 
 
-@dataclass
-class Metric(metaclass=ABCMeta):
+class Metric(Module):
+    config: Config = Config()
     patients: Patients
 
     @staticmethod
@@ -138,22 +139,9 @@ class Metric(metaclass=ABCMeta):
 
         return from_df
 
-    def export_config(self):
-        return {
-            "metric_classname": self.classname(),
-            "metric_config": self.export_metric_config(),
-            "metric_external_argnames": self.external_argnames()
-        }
-
-    def export_metric_config(self):
-        return {
-            att: val
-            for att, val in self.__dict__.items()
-            if att != 'patients' and not att.startswith('_')
-        }
-
-    def external_argnames(self):
-        return {}
+    @classmethod
+    def external_argnames(cls):
+        return ['patients']
 
     @staticmethod
     def from_config(config: Dict[str, Any], patients: Patients, **kwargs):
@@ -197,34 +185,39 @@ class VisitsAUC(Metric):
         }
 
 
-@dataclass
+class LossMetricConfig(Config):
+    dx_loss: List[str] = field(default_factory=list)
+    obs_loss: List[str] = field(default_factory=list)
+    lead_loss: List[str] = field(default_factory=list)
+
+
 class LossMetric(Metric):
-    dx_loss: List[str]
-    obs_loss: List[str]
-    lead_loss: List[str]
     _dx_loss: Dict[str, Callable]
     _obs_loss: Dict[str, Callable]
     _lead_loss: Dict[str, Callable]
 
-    def __init__(self, patients, dx_loss=[], obs_loss=[], lead_loss=[]):
-        self.dx_loss = dx_loss
-        self.obs_loss = obs_loss
-        self.lead_loss = lead_loss
-
-        super().__init__(patients)
-        self._dx_loss = {name: binary_loss[name] for name in dx_loss}
-        self._obs_loss = {name: numeric_loss[name] for name in obs_loss}
-        self._lead_loss = {name: numeric_loss[name] for name in lead_loss}
+    def __init__(self, patients, config=None, **kwargs):
+        if config is None:
+            config = LossMetricConfig()
+        config = config.update(**kwargs)
+        super().__init__(patients=patients, config=config)
+        self._dx_loss = {name: binary_loss[name] for name in config.dx_loss}
+        self._obs_loss = {name: numeric_loss[name] for name in config.obs_loss}
+        self._lead_loss = {
+            name: numeric_loss[name]
+            for name in config.lead_loss
+        }
 
     def fields(self):
-        return sorted(self.dx_loss) + sorted(self.obs_loss) + sorted(
-            self.lead_loss)
+        return sorted(self.config.dx_loss) + sorted(
+            self.config.obs_loss) + sorted(self.config.lead_loss)
 
     def dirs(self):
         return (0, ) * len(self)
 
     def __len__(self):
-        return len(self.dx_loss) + len(self.obs_loss) + len(self.lead_loss)
+        return len(self.config.dx_loss) + len(self.config.obs_loss) + len(
+            self.config.lead_loss)
 
     def __call__(self, predictions: Predictions):
         return {
@@ -239,15 +232,21 @@ class LossMetric(Metric):
         }
 
 
-@dataclass
+class CodeLevelMetricConfig(Config):
+    code_level: bool = True
+    aggregate_level: bool = True
+
+
 class CodeLevelMetric(Metric):
     _index2code: Dict[int, str] = field(init=False)
     _code2index: Dict[str, int] = field(init=False)
-    # Show estimates per code
-    code_level: bool = field(default=True)
 
-    # Show estimates aggregated over all codes.
-    aggregate_level: bool = field(default=True)
+    # Show estimates per code
+    def __init__(self, patients, config=None, **kwargs):
+        if config is None:
+            config = CodeLevelMetricConfig()
+        config = config.update(**kwargs)
+        super().__init__(patients=patients, config=config)
 
     def __post_init__(self):
         index = self.patients.scheme.outcome.index
@@ -285,10 +284,10 @@ class CodeLevelMetric(Metric):
 
     def columns(self):
         cols = []
-        if self.code_level:
+        if self.config.code_level:
             cols.append(
                 tuple(self.column(idx, field) for idx, field in self.order()))
-        if self.aggregate_level:
+        if self.config.aggregate_level:
             cols.append(self.agg_columns())
 
         return sum(tuple(cols), tuple())
@@ -303,10 +302,10 @@ class CodeLevelMetric(Metric):
 
     def row(self, result: Dict[str, Dict[int, float]]):
         row = []
-        if self.code_level:
+        if self.config.code_level:
             row.append(
                 tuple(result[field][index] for index, field in self.order()))
-        if self.aggregate_level:
+        if self.config.aggregate_level:
             row.append(self.agg_row(result))
 
         return sum(tuple(row), tuple())
@@ -343,7 +342,6 @@ class LeadingObsMetric(CodeLevelMetric):
         self._index2code = conf.index2code
 
 
-@dataclass
 class CodeAUC(CodeLevelMetric):
 
     @staticmethod
@@ -402,23 +400,25 @@ class CodeAUC(CodeLevelMetric):
         return vals
 
 
-@dataclass
+class ColwiseLossMetricConfig(Config):
+    loss: List[str] = field(default_factory=list)
+
+
 class CodeLevelLossMetric(CodeLevelMetric):
-    dx_loss: Tuple[str] = field(default_factory=list)
     _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         CodeLevelMetric.__post_init__(self)
         self._loss_functions = {
             name: colwise_binary_loss[name]
-            for name in self.dx_loss
+            for name in self.config.loss
         }
 
     def fields(self):
-        return sorted(self.dx_loss)
+        return sorted(self.config.loss)
 
     def dirs(self):
-        return (0, ) * len(self.dx_loss)
+        return (0, ) * len(self.config.loss)
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
@@ -432,23 +432,15 @@ class CodeLevelLossMetric(CodeLevelMetric):
         return loss_vals
 
 
-@dataclass
 class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
-    obs_loss: Tuple[str] = field(default_factory=list)
     _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         ObsCodeLevelMetric.__post_init__(self)
         self._loss_functions = {
             name: colwise_numeric_loss[name]
-            for name in self.obs_loss
+            for name in self.config.loss
         }
-
-    def fields(self):
-        return sorted(self.obs_loss)
-
-    def dirs(self):
-        return (0, ) * len(self.obs_loss)
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
@@ -462,16 +454,14 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
         return loss_vals
 
 
-@dataclass
 class LeadingObsLossMetric(ObsCodeLevelLossMetric):
-    lead_loss: Tuple[str] = field(default_factory=list)
     _loss_functions: Dict[str, Callable] = field(init=False)
 
     def __post_init__(self):
         LeadingObsLossMetric.__post_init__(self)
         self._loss_functions = {
             name: colwise_numeric_loss[name]
-            for name in self.lead_loss
+            for name in self.config.loss
         }
 
     def __call__(self, predictions: Predictions):
@@ -486,7 +476,6 @@ class LeadingObsLossMetric(ObsCodeLevelLossMetric):
         return loss_vals
 
 
-@dataclass
 class UntilFirstCodeAUC(CodeAUC):
 
     def __call__(self, predictions: Predictions):
@@ -523,18 +512,30 @@ class UntilFirstCodeAUC(CodeAUC):
         return vals
 
 
-@dataclass
-class AdmissionAUC(Metric):
+class MetricLevelsConfig(Config):
 
     # Show estimates for each admission for each subject (extremely large
     # table)
-    admission_level: bool = field(default=False)
+    admission: bool = False
 
     # Show estimates aggregated on the subject level (very large table)
-    subject_aggregate_level: bool = field(default=False)
+    subject_aggregate: bool = False
 
     # Show estimates aggregated across the entire subjects and admissions.
-    aggregate_level: bool = field(default=True)
+    aggregate: bool = True
+
+
+class AdmissionAUC(Metric):
+
+    def __init__(self,
+                 patients: Patients,
+                 config: MetricLevelsConfig = None,
+                 **kwargs):
+        if config is None:
+            config = MetricLevelsConfig()
+        config = config.update(**kwargs)
+        self.patients = patients
+        self.config = config
 
     @staticmethod
     def fields():
@@ -602,13 +603,13 @@ class AdmissionAUC(Metric):
 
     def columns(self, order_gen, subject_order_gen):
         cols = []
-        if self.admission_level:
+        if self.config.admission:
             cols.append(tuple(self.column(*o) for o in order_gen()))
 
-        if self.subject_aggregate_level:
+        if self.config.subject_aggregate:
             cols.append(self.subject_agg_columns(subject_order_gen))
 
-        if self.aggregate_level:
+        if self.config.aggregate:
             cols.append(self.agg_columns())
 
         return sum(tuple(cols), tuple())
@@ -648,11 +649,11 @@ class AdmissionAUC(Metric):
 
     def row(self, result: Dict[str, Any], order_gen, subject_order_gen):
         row = []
-        if self.admission_level:
+        if self.config.admission:
             row.append(tuple(result[f][s][a] for s, a, f in order_gen()))
-        if self.subject_aggregate_level:
+        if self.config.subject_aggregate:
             row.append(self.subject_agg_row(result, subject_order_gen))
-        if self.aggregate_level:
+        if self.config.aggregate:
             row.append(self.agg_row(result))
         return sum(tuple(row), tuple())
 
@@ -684,7 +685,6 @@ class AdmissionAUC(Metric):
         return self.from_df_functor(column, self.field_dir(field))
 
 
-@dataclass
 class CodeGroupTopAlarmAccuracy(Metric):
     _code_groups: List[List[int]]
     top_k_list: List[int]
@@ -774,11 +774,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return self.from_df_functor(colname, self.field_dir(field))
 
 
-@dataclass
 class OtherMetrics(Metric):
-
-    def __init__(self):
-        super().__init__(None)
 
     def __call__(self, some_flat_dict: Dict[str, float]):
         return some_flat_dict
@@ -800,7 +796,6 @@ class OtherMetrics(Metric):
 @dataclass
 class MetricsCollection:
     metrics: List[Metric] = field(default_factory=list)
-    other_metrics: OtherMetrics = OtherMetrics()
 
     def to_df(self,
               iteration: int,
@@ -808,27 +803,20 @@ class MetricsCollection:
               other_estimated_metrics: Dict[str, float] = None):
 
         dfs = [m.to_df(iteration, predictions) for m in self.metrics]
-
-        if other_estimated_metrics:
-            dfs.append(
-                self.other_metrics.to_df(iteration, other_estimated_metrics))
         return pd.concat(dfs, axis=1)
 
-    def export_config(self):
-        return [m.export_config() for m in self.metrics]
 
-    @staticmethod
-    def from_config(config, patients, train_split=0):
-        metrics = [
-            Metric.from_config(c, patients, train_split=train_split)
-            for c in config
-        ]
-        return MetricsCollection(metrics)
-
-
-@dataclass
-class DeLongTest(CodeLevelMetric):
+class DeLongTestConfig(Config):
     masking: str = 'all'
+
+
+class DeLongTest(CodeLevelMetric):
+
+    def __init__(self,
+                 patients,
+                 config: DeLongTestConfig = DeLongTestConfig(),
+                 **kwargs):
+        super().__init__(patients, config=config, **kwargs)
 
     @staticmethod
     def fields():
@@ -1129,10 +1117,3 @@ class DeLongTest(CodeLevelMetric):
         pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
         insigificant = results.loc[:, pval_cols].min(axis=1) > p_value
         return results[insigificant]
-
-
-metric_class_registry = {}
-for name, m_class in inspect.getmembers(sys.modules[__name__],
-                                        inspect.isclass):
-    if issubclass(m_class, Metric):
-        metric_class_registry[name] = m_class

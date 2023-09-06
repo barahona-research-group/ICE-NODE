@@ -1,23 +1,28 @@
 {
-	"path": "",
-    "scheme": {
-        "dx": "DxLTC9809FlatMedcodes",
-		"ethnicity": "CPRDEthnicity16",
-    	"gender": "CPRDGender",
-        "imd": "CPRDIMDCategorical"
-    },
-    "colname": { 
-    	"adm": {
-        	"code": "medcode_list",
-        	"subject_id": "patid",
-        	"dischtime": "year_month_list",
-        	"age_at_dischtime": "age_list",
-        	"gender": "gender",
-        	"ethnicity": "ethnicity",
-        	"imd_decile": "imd_decile"
-    	}
+	"config": {
+		"path": "",
+		"overlapping_admissions": "merge",
+		"scheme": {
+			"dx": "DxLTC9809FlatMedcodes",
+			"ethnicity": "CPRDEthnicity16",
+			"gender": "CPRDGender",
+			"imd": "CPRDIMDCategorical",
+			"_type": "CPRDDatasetSchemeConfig"
+		},
+		"colname": { 
+			"adm": {
+				"code": "medcode_list",
+				"subject_id": "patid",
+				"dischtime": "year_month_list",
+				"age_at_dischtime": "age_list",
+				"gender": "gender",
+				"ethnicity": "ethnicity",
+				"imd_decile": "imd_decile"
+			}
+		},
+		"scheme_classname": "CPRDDatasetScheme",
+		"tag": "CPRD",
+		"_type": "DatasetConfig"
 	},
-	"scheme_classname": "CPRDDatasetScheme",
-	"tag": "CPRD",
-    "_type": "DatasetConfig"
+    "classname": "CPRDDataset"
 }

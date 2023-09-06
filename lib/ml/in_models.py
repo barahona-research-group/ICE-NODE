@@ -11,14 +11,14 @@ from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
                    DatasetScheme, DemographicVectorConfig, CodesVector,
                    LeadingObservableConfig)
-from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
+from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedInAdmission)
 
-from .model import InpatientModel, ModelDimensions
+from .model import InpatientModel, ModelConfig
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 
 
-class InICENODEDimensions(ModelDimensions):
+class InICENODEConfig(ModelConfig):
     mem: int = 15
     obs: int = 25
     lead: int = 5
@@ -26,15 +26,13 @@ class InICENODEDimensions(ModelDimensions):
 
 
 class MonotonicLeadingObsPredictor(eqx.Module):
-    dims: InICENODEDimensions = eqx.static_field()
-
     _mlp: eqx.nn.MLP
 
-    def __init__(self, dims: InICENODEDimensions, key: jax.random.PRNGKey):
-        self.dims = dims
-        self._mlp = eqx.nn.MLP(dims.lead,
-                               dims.lead + 1,
-                               dims.lead * 5,
+    def __init__(self, config: InICENODEConfig, key: jax.random.PRNGKey):
+        self.config = config
+        self._mlp = eqx.nn.MLP(config.lead,
+                               config.lead + 1,
+                               config.lead * 5,
                                depth=2,
                                key=key)
 
@@ -46,16 +44,19 @@ class MonotonicLeadingObsPredictor(eqx.Module):
 
 
 class SigmoidLeadingObsPredictor(eqx.Module):
-    dims: InICENODEDimensions = eqx.static_field()
     _t: jnp.ndarray = eqx.static_field()
     _mlp: eqx.nn.MLP
 
-    def __init__(self, dims: InICENODEDimensions,
+    def __init__(self, config: InICENODEConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
-        self.dims = dims
+        self.config = config
         self._t = jnp.array(leading_observable_config.leading_hours)
-        self._mlp = eqx.nn.MLP(dims.lead, 4, dims.lead * 5, depth=3, key=key)
+        self._mlp = eqx.nn.MLP(config.lead,
+                               4,
+                               config.lead * 5,
+                               depth=3,
+                               key=key)
 
     def __call__(self, lead):
         [vscale, hscale, vshift, hshift] = self._mlp(lead)
@@ -78,43 +79,43 @@ class InICENODE(InpatientModel):
     _f_dyn: Callable
     _f_update: Callable
 
-    dims: InICENODEDimensions = eqx.static_field()
+    config: InICENODEConfig = eqx.static_field()
 
-    def __init__(self, dims: InICENODEDimensions,
-                 schemes: Tuple[DatasetScheme],
+    def __init__(self, config: InICENODEConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: "jax.random.PRNGKey"):
         self.leading_observable_config = leading_observable_config
-        self._assert_demo_dim(dims, schemes[1], demographic_vector_config)
+        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 5)
         f_emb = InpatientEmbedding(
             schemes=schemes,
             demographic_vector_config=demographic_vector_config,
-            dims=dims.emb,
+            config=config.emb,
             key=emb_key)
-        f_dx_dec = eqx.nn.MLP(dims.emb.dx,
+        f_dx_dec = eqx.nn.MLP(config.emb.dx,
                               len(schemes[1].outcome),
-                              dims.emb.dx * 5,
+                              config.emb.dx * 5,
                               depth=1,
                               key=dx_dec_key)
 
-        self._f_obs_dec = eqx.nn.MLP(dims.obs,
+        self._f_obs_dec = eqx.nn.MLP(config.obs,
                                      len(schemes[1].obs),
-                                     dims.obs * 5,
+                                     config.obs * 5,
                                      depth=1,
                                      key=obs_dec_key)
-        if dims.leading_predictor == "monotonic":
-            self._f_lead_dec = MonotonicLeadingObsPredictor(dims, key=lead_key)
-        elif dims.leading_predictor == "sigmoid":
+        if config.leading_predictor == "monotonic":
+            self._f_lead_dec = MonotonicLeadingObsPredictor(config,
+                                                            key=lead_key)
+        elif config.leading_predictor == "sigmoid":
             self._f_lead_dec = SigmoidLeadingObsPredictor(
-                dims, leading_observable_config, key=lead_key)
+                config, leading_observable_config, key=lead_key)
         else:
             raise ValueError("Unknown leading predictor type")
 
-        dyn_state_size = dims.obs + dims.emb.dx + dims.mem
-        dyn_input_size = dyn_state_size + dims.emb.inp_proc_demo
+        dyn_state_size = config.obs + config.emb.dx + config.mem
+        dyn_input_size = dyn_state_size + config.emb.inp_proc_demo
 
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
                            out_size=dyn_state_size,
@@ -128,24 +129,24 @@ class InICENODE(InpatientModel):
                                         len(schemes[1].obs),
                                         key=update_key)
 
-        super().__init__(dims=dims, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
+        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @eqx.filter_jit
     def join_state(self, mem, obs, lead, dx):
         if mem is None:
-            mem = jnp.zeros((self.dims.mem, ))
+            mem = jnp.zeros((self.config.mem, ))
         if obs is None:
-            obs = jnp.zeros((self.dims.obs, ))
+            obs = jnp.zeros((self.config.obs, ))
         if lead is None:
-            lead = jnp.zeros((self.dims.lead, ))
+            lead = jnp.zeros((self.config.lead, ))
 
         return jnp.hstack((mem, obs, lead, dx))
 
     @eqx.filter_jit
     def split_state(self, state: jnp.ndarray):
-        s1 = self.dims.mem
-        s2 = self.dims.mem + self.dims.obs
-        s3 = self.dims.mem + self.dims.obs + self.dims.lead
+        s1 = self.config.mem
+        s2 = self.config.mem + self.config.obs
+        s3 = self.config.mem + self.config.obs + self.config.lead
         return jnp.hsplit(state, (s1, s2, s3))
 
     @eqx.filter_jit

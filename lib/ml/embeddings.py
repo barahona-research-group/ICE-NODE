@@ -9,10 +9,10 @@ import equinox as eqx
 from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
                    AggregateRepresentation, InpatientInput,
                    InpatientInterventions, DemographicVectorConfig)
-from ..base import AbstractConfig
+from ..base import Config, Data
 
 
-class EmbeddedAdmission(eqx.Module):
+class EmbeddedAdmission(Data):
     pass
 
 
@@ -26,16 +26,16 @@ class EmbeddedOutAdmission(EmbeddedAdmission):
     demo: Optional[jnp.ndarray]
 
 
-class PatientEmbeddingDimensions(AbstractConfig):
+class PatientEmbeddingConfig(Config):
     dx: int = 30
     demo: int = 5
 
 
-class OutpatientEmbeddingDimensions(PatientEmbeddingDimensions):
+class OutpatientEmbeddingConfig(PatientEmbeddingConfig):
     pass
 
 
-class InpatientEmbeddingDimensions(PatientEmbeddingDimensions):
+class InpatientEmbeddingConfig(PatientEmbeddingConfig):
     inp: int = 10
     proc: int = 10
     inp_proc_demo: int = 15
@@ -51,7 +51,7 @@ class PatientEmbedding(eqx.Module):
     _f_dx_emb: Callable
     _f_dem_emb: Callable
 
-    def __init__(self, dims: OutpatientEmbeddingDimensions,
+    def __init__(self, config: OutpatientEmbeddingConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
@@ -59,8 +59,8 @@ class PatientEmbedding(eqx.Module):
         (dx_emb_key, dem_emb_key) = jrandom.split(key, 2)
 
         self._f_dx_emb = eqx.nn.MLP(len(schemes[1].dx),
-                                    dims.dx,
-                                    width_size=dims.dx * 5,
+                                    config.dx,
+                                    width_size=config.dx * 5,
                                     depth=1,
                                     final_activation=jnp.tanh,
                                     key=dx_emb_key)
@@ -69,8 +69,8 @@ class PatientEmbedding(eqx.Module):
             demographic_vector_config)
         if demo_input_size > 0:
             self._f_dem_emb = eqx.nn.MLP(demo_input_size,
-                                         dims.demo,
-                                         dims.demo * 5,
+                                         config.demo,
+                                         config.demo * 5,
                                          depth=1,
                                          final_activation=jnp.tanh,
                                          key=dem_emb_key)
@@ -124,7 +124,7 @@ class InpatientEmbedding(PatientEmbedding):
     _f_proc_emb: Callable
     _f_int_emb: Callable
 
-    def __init__(self, dims: InpatientEmbeddingDimensions,
+    def __init__(self, config: InpatientEmbeddingConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
@@ -132,9 +132,9 @@ class InpatientEmbedding(PatientEmbedding):
          int_emb_key) = jrandom.split(key, 5)
 
         if schemes[1].demographic_vector_size(demographic_vector_config) == 0:
-            dims = eqx.tree_at(lambda d: d.demo, dims, 0)
+            config = eqx.tree_at(lambda d: d.demo, config, 0)
 
-        super().__init__(dims=dims,
+        super().__init__(config=config,
                          schemes=schemes,
                          demographic_vector_config=demographic_vector_config,
                          key=super_key)
@@ -142,20 +142,20 @@ class InpatientEmbedding(PatientEmbedding):
                                                   schemes[1].int_input,
                                                   inp_agg_key, 'jax')
         self._f_inp_emb = eqx.nn.MLP(len(schemes[1].int_input),
-                                     dims.inp,
-                                     dims.inp * 5,
+                                     config.inp,
+                                     config.inp * 5,
                                      final_activation=jnp.tanh,
                                      depth=1,
                                      key=inp_emb_key)
         self._f_proc_emb = eqx.nn.MLP(len(schemes[1].int_proc),
-                                      dims.proc,
-                                      dims.proc * 5,
+                                      config.proc,
+                                      config.proc * 5,
                                       final_activation=jnp.tanh,
                                       depth=1,
                                       key=proc_emb_key)
-        self._f_int_emb = eqx.nn.MLP(dims.inp + dims.proc + dims.demo,
-                                     dims.inp_proc_demo,
-                                     dims.inp_proc_demo * 5,
+        self._f_int_emb = eqx.nn.MLP(config.inp + config.proc + config.demo,
+                                     config.inp_proc_demo,
+                                     config.inp_proc_demo * 5,
                                      final_activation=jnp.tanh,
                                      depth=1,
                                      key=int_emb_key)

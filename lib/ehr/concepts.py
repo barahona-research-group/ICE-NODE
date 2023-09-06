@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import pandas as pd
 import equinox as eqx
-from ..base import AbstractConfig
+from ..base import Config, Data
 from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
                             CodesVector, scheme_from_classname)
 
@@ -65,7 +65,7 @@ def nan_agg_quantile(q):
     return _nan_agg_quantile
 
 
-class LeadingObservableConfig(AbstractConfig):
+class LeadingObservableConfig(Config):
     index: int
     leading_hours: List[float]
     window_aggregate: str
@@ -146,7 +146,7 @@ class LeadingObservableConfig(AbstractConfig):
         return InpatientObservables.empty(len(self.leading_hours))
 
 
-class InpatientObservables(eqx.Module):
+class InpatientObservables(Data):
     time: jnp.narray
     value: jnp.ndarray
     mask: jnp.ndarray
@@ -160,6 +160,18 @@ class InpatientObservables(eqx.Module):
 
     def __len__(self):
         return len(self.time)
+
+    def as_dataframe(self,
+                     scheme: AbstractScheme,
+                     filter_missing_columns=False):
+        cols = ['time'] + [scheme.index2desc[i] for i in range(len(scheme))]
+        value = jnp.where(self.mask, self.value, np.nan)
+        tuples = np.hstack([self.time.reshape(-1, 1), value]).tolist()
+        df = pd.DataFrame(tuples, columns=cols)
+        if filter_missing_columns:
+            return df.dropna(axis=1, how='all')
+        else:
+            return df
 
     def segment(self, t_sep: jnp.ndarray):
         if len(t_sep) == 0:
@@ -351,7 +363,7 @@ class AggregateRepresentation(eqx.Module):
             [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
-class InpatientInput(eqx.Module):
+class InpatientInput(Data):
     index: jnp.ndarray
     rate: jnp.ndarray
     starttime: jnp.ndarray
@@ -387,7 +399,7 @@ class InpatientInput(eqx.Module):
         return cls(zvec.astype(int), zvec, zvec, zvec, size)
 
 
-class InpatientInterventions(eqx.Module):
+class InpatientInterventions(Data):
     proc: Optional[InpatientInput]
     input_: Optional[InpatientInput]
 
@@ -535,7 +547,7 @@ class InpatientInterventions(eqx.Module):
         return update
 
 
-class Admission(eqx.Module):
+class Admission(Data):
     admission_id: int  # Unique ID for each admission
     admission_dates: Tuple[date, date]
     dx_codes: CodesVector
@@ -562,7 +574,7 @@ class Admission(eqx.Module):
         return d1, d2
 
 
-class DemographicVectorConfig(AbstractConfig):
+class DemographicVectorConfig(Config):
     gender: bool = False
     age: bool = False
     ethnicity: bool = False
@@ -572,7 +584,7 @@ class CPRDDemographicVectorConfig(DemographicVectorConfig):
     imd: bool = False
 
 
-class StaticInfo(eqx.Module):
+class StaticInfo(Data):
     demographic_vector_config: DemographicVectorConfig
     gender: Optional[CodesVector] = None
     ethnicity: Optional[CodesVector] = None
@@ -633,7 +645,7 @@ class CPRDStaticInfo(StaticInfo):
             self.constant_vec = np.hstack(attrs_vec)
 
 
-class Patient(eqx.Module):
+class Patient(Data):
     subject_id: int
     static_info: StaticInfo
     admissions: List[Admission]

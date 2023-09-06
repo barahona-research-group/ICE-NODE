@@ -1,34 +1,39 @@
 {
-    "path": "",
-    "scheme": {
-        "dx": "DxICD9",
-        "ethnicity": "MIMIC3Eth37",
-        "gender": "Gender"
-    },
-    "colname": {
-        "dx": {
-            "admission_id": "HADM_ID",
-            "code": "ICD9_CODE"
+    "config": {
+        "path": "",
+        "overlapping_admissions": "merge",
+        "scheme": {
+            "dx": "DxICD9",
+            "ethnicity": "MIMIC3Eth37",
+            "gender": "Gender",
+            "_type": "DatasetSchemeConfig"
         },
-        "adm": {
-            "admittime": "ADMITTIME",
-            "dischtime": "DISCHTIME",
-            "subject_id": "SUBJECT_ID",
-            "index": "HADM_ID"
+        "colname": {
+            "dx": {
+                "admission_id": "HADM_ID",
+                "code": "ICD9_CODE"
+            },
+            "adm": {
+                "admittime": "ADMITTIME",
+                "dischtime": "DISCHTIME",
+                "subject_id": "SUBJECT_ID",
+                "index": "HADM_ID"
+            },
+            "static": {
+                "index": "SUBJECT_ID",
+                "gender": "GENDER",
+                "ethnicity": "ETHNICITY",
+                "date_of_birth": "DOB"
+            }
         },
-        "static": {
-            "index": "SUBJECT_ID",
-            "gender": "GENDER",
-            "ethnicity": "ETHNICITY",
-            "date_of_birth": "DOB"
-        }
+        "files": {
+            "adm": "adm_df.csv.gz",
+            "dx": "dx_df.csv.gz",
+            "static": "static_df.csv.gz"
+        },
+        "scheme_classname": "DatasetScheme",
+        "tag": "M3",
+        "_type": "DatasetConfig"
     },
-    "files": {
-        "adm": "adm_df.csv.gz",
-        "dx": "dx_df.csv.gz",
-        "static": "static_df.csv.gz"
-    },
-    "scheme_classname": "DatasetScheme",
-    "tag": "M3",
-    "_type": "DatasetConfig"
+    "classname": "MIMIC3Dataset"
 }

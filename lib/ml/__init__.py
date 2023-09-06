@@ -1,22 +1,12 @@
-import inspect
-
-from .model import (AbstractModel, ModelDimensions)
+from .model import (AbstractModel, ModelConfig)
 from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
-                        ICENODEDimensions, GRUDimensions, RETAINDimensions)
-from .in_models import (InICENODE, InICENODEDimensions)
+                        ICENODEConfig, GRUConfig, RETAINConfig)
+from .in_models import (InICENODE, InICENODEConfig)
 
-from .embeddings import (InpatientEmbedding, InpatientEmbeddingDimensions,
+from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedAdmission, OutpatientEmbedding,
-                         OutpatientEmbeddingDimensions,
-                         PatientEmbeddingDimensions, PatientEmbedding)
+                         OutpatientEmbeddingConfig, PatientEmbeddingConfig,
+                         PatientEmbedding)
 from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
                       WarmupConfig, TrainerConfig, ReportingConfig)
 
-from . import model
-from . import dx_models
-from . import in_models
-
-for m in [model, dx_models, in_models]:
-    for name, model_class in inspect.getmembers(m, inspect.isclass):
-        if issubclass(model_class, AbstractModel):
-            model_class.register()

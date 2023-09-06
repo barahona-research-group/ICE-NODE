@@ -23,7 +23,7 @@ from ..ehr import Predictions, Patients
 from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
-from ..base import AbstractConfig
+from ..base import Config, Module
 from .model import AbstractModel
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
@@ -343,14 +343,14 @@ class OptunaReporter(AbstractReporter):
                 (trainer_signals.end_evaluation, self.report_evaluation)]
 
 
-class OptimizerConfig(AbstractConfig):
+class OptimizerConfig(Config):
     opt: str = 'adam'
     lr: LRType = 1e-3
     decay_rate: Optional[LRType] = None
     reverse_schedule: bool = False
 
 
-class Optimizer(eqx.Module):
+class Optimizer(Module):
     config: OptimizerConfig
     iters: int
     opt_update: Callable
@@ -362,7 +362,7 @@ class Optimizer(eqx.Module):
                  model=None,
                  iters=None,
                  optstate=None):
-        self.config = config
+        super().__init__(config=config)
         self.iters = iters
         lr = self.lr_schedule(config, iters)
 
@@ -374,6 +374,10 @@ class Optimizer(eqx.Module):
             self.optstate = optstate
         else:
             raise ValueError('Either optstate or model must be provided')
+
+    @classmethod
+    def external_argnames(cls):
+        return ['iters', 'optstate', 'model']
 
     def step(self, step, grads):
         grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
@@ -431,7 +435,7 @@ class MultiLearningRateOptimizer(Optimizer):
                  iters=None,
                  optstate=None,
                  grads_filter=None):
-        self.config = config
+        Module.__init__(self, config=config)
         self.iters = iters
         lr = self.lr_schedule(config, iters)
 
@@ -458,6 +462,10 @@ class MultiLearningRateOptimizer(Optimizer):
         else:
             raise ValueError(
                 'Either (optstate AND grads_filter) or model must be provided')
+
+    @classmethod
+    def external_argnames(cls):
+        return ['iters', 'optstate', 'model', 'grads_filter']
 
     def step(self, step, grads):
         grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
@@ -545,7 +553,7 @@ def make_optimizer(config: OptimizerConfig, *args, **kwargs):
         return Optimizer(config, *args, **kwargs)
 
 
-class ReportingConfig(AbstractConfig):
+class ReportingConfig(Config):
     output_dir: Optional[str] = None
     console: bool = True
     parameter_snapshots: bool = False
@@ -553,7 +561,7 @@ class ReportingConfig(AbstractConfig):
     model_stats: bool = False
 
 
-class TrainerReporting(eqx.Module):
+class TrainerReporting(Module):
     config: ReportingConfig
     _reporters: List[AbstractReporter]
     _metrics: MetricsCollection
@@ -565,8 +573,7 @@ class TrainerReporting(eqx.Module):
         # optuna_trial: Optional[optuna.Trial] = None,
         # optuna_objective: Optional[Callable] = None
     ):
-        super().__init__()
-        self.config = config
+        super().__init__(config=config)
 
         reporters = []
         if (config.config_json or metrics is not None
@@ -599,20 +606,9 @@ class TrainerReporting(eqx.Module):
         self._reporters = reporters
         self._metrics = MetricsCollection(metrics or [])
 
-    def export_config(self):
-        return {
-            'config': self.config.to_dict(),
-            'metrics': self._metrics.export_config(),
-        }
-
-    @staticmethod
-    def from_config(config, metrics=None, patients=None, train_split=None):
-        if metrics is None:
-            metrics = MetricsCollection.from_config(config['metrics'],
-                                                    patients=patients,
-                                                    train_split=train_split)
-        config = AbstractConfig.from_dict(config['config'])
-        return TrainerReporting(config, metrics=metrics)
+    @classmethod
+    def external_argnames(cls):
+        return ['metrics']
 
     def new_training_history(self):
         return TrainingHistory(self._metrics)
@@ -628,9 +624,9 @@ class TrainerReporting(eqx.Module):
         ]
 
 
-class WarmupConfig(AbstractConfig):
-    epochs: float
-    batch_size: int
+class WarmupConfig(Config):
+    epochs: float = 0.1
+    batch_size: int = 16
     optimizer: OptimizerConfig = OptimizerConfig(reverse_schedule=True)
 
     def __init__(self,
@@ -651,7 +647,7 @@ class WarmupConfig(AbstractConfig):
                                              reverse_schedule=True)
 
 
-class TrainerConfig(AbstractConfig):
+class TrainerConfig(Config):
     optimizer: OptimizerConfig = OptimizerConfig()
     epochs: int = 100
     batch_size: int = 32
@@ -660,31 +656,30 @@ class TrainerConfig(AbstractConfig):
     lead_loss: str = 'mse'
 
 
-class Trainer(eqx.Module):
+class Trainer(Module):
     config: TrainerConfig
-    reg_hyperparams: AbstractConfig
+    reg_hyperparams: Config
     _dx_loss: Callable
     _obs_loss: Callable
     _lead_loss: Callable
 
     def __init__(self,
                  config: TrainerConfig,
-                 reg_hyperparams: AbstractConfig = AbstractConfig()):
+                 reg_hyperparams: Config = Config()):
+        super().__init__(config=config)
         self.config = config
         self.reg_hyperparams = reg_hyperparams
         self._dx_loss = binary_loss[config.dx_loss]
         self._obs_loss = numeric_loss[config.obs_loss]
         self._lead_loss = numeric_loss[config.lead_loss]
 
-    def export_config(self):
-        return {
-            'config': self.config.to_dict(),
-            'reg_hyperparams': self.reg_hyperparams.to_dict()
-        }
+    @classmethod
+    def external_argnames(cls):
+        return ['reg_hyperparams']
 
     def export_expirement_config(self, interface, model, **run_kwargs):
         _run_kwargs = {
-            k: v if not isinstance(v, AbstractConfig) else v.to_dict()
+            k: v if not isinstance(v, Config) else v.to_dict()
             for k, v in run_kwargs.items()
         }
         return {

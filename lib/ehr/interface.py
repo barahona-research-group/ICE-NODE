@@ -11,7 +11,7 @@ import jax.tree_util as jtu
 import equinox as eqx
 import dask
 from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
-from ..base import AbstractConfig
+from ..base import Config, Data, Module
 from .dataset import Dataset, DatasetScheme, DatasetConfig
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig,
@@ -29,7 +29,7 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
     return first_occurrence
 
 
-class AdmissionPrediction(eqx.Module):
+class AdmissionPrediction(Data):
     admission: Admission
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
@@ -126,7 +126,7 @@ class Predictions(dict):
                                        adm.leading_observable):
                 for i in len(adm_lo.time):
                     m = adm_lo.mask[i]
-                    if m.sum() == 0:
+                    if m.sum() < len(m) // 2:
                         continue
                     y = adm_lo.value[i][m]
                     y_hat = pred_lo.value[i][m]
@@ -142,7 +142,7 @@ class Predictions(dict):
         return [first_occ_adm_id == a.admission_id for a in adms]
 
 
-class InterfaceConfig(AbstractConfig):
+class InterfaceConfig(Config):
     demographic_vector: DemographicVectorConfig
     leading_observable: Optional[LeadingObservableConfig]
     scheme: Dict[str, str]
@@ -166,7 +166,7 @@ class InterfaceConfig(AbstractConfig):
         self.cache = cache
 
 
-class Patients(eqx.Module):
+class Patients(Module):
     config: InterfaceConfig
     dataset: Dataset
     subjects: Dict[int, Patient]
@@ -176,8 +176,7 @@ class Patients(eqx.Module):
                  config: InterfaceConfig,
                  dataset: Dataset,
                  subjects: Dict[int, Patient] = {}):
-        super().__init__()
-        self.config = config
+        super().__init__(config=config)
         self.dataset = dataset
         self.subjects = subjects
         self._scheme = dataset.scheme.make_target_scheme(config.scheme)
@@ -186,12 +185,9 @@ class Patients(eqx.Module):
     def subject_ids(self):
         return sorted(self.subjects.keys())
 
-    def export_config(self):
-        return self.config.to_dict()
-
     @classmethod
-    def from_config(cls, config: Dict[str, Any], **init_kwargs):
-        return cls(AbstractConfig.from_dict(config), **init_kwargs)
+    def external_argnames(cls):
+        return ['dataset', 'subjects']
 
     @property
     def scheme(self):
@@ -227,7 +223,7 @@ class Patients(eqx.Module):
                      (subject_ids, cached_ids)]:
             if a is None:
                 continue
-            if issubclass(type(a), AbstractConfig):
+            if issubclass(type(a), Config):
                 a = a.to_dict()
             pairs.append((a, b))
 
@@ -256,9 +252,9 @@ class Patients(eqx.Module):
         with open(subj_path, 'wb') as file:
             pickle.dump(self.subjects, file)
 
-        write_config(self.dataset.export_config(),
+        write_config(self.dataset.config.to_dict(),
                      path.with_suffix('.dataset.config.json'))
-        write_config(self.export_config(), path.with_suffix('.config.json'))
+        write_config(self.config.to_dict(), path.with_suffix('.config.json'))
         write_config(self.subject_ids, path.with_suffix('.subject_ids.json'))
 
     @staticmethod
@@ -268,6 +264,7 @@ class Patients(eqx.Module):
             subjects = pickle.load(file)
         dataset = Dataset.load(path.with_suffix('.dataset'))
         config = load_config(path.with_suffix('.config.json'))
+        config = Config.from_dict(config)
         return Patients.from_config(config, dataset=dataset, subjects=subjects)
 
     @staticmethod
