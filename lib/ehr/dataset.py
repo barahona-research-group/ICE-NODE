@@ -203,8 +203,8 @@ class Dataset(Module):
                  config_path: str = None,
                  **kwargs):
         super().__init__(config=config, config_path=config_path, **kwargs)
-        self.scheme = DatasetScheme.from_config(self.config.scheme,
-                                                self.config.scheme_classname)
+        self.scheme = DatasetScheme.import_module(self.config.scheme,
+                                                  self.config.scheme_classname)
         self.colname = {
             f: ColumnNames.make(m)
             for f, m in self.config.colname.items()
@@ -244,6 +244,8 @@ class Dataset(Module):
         dtypes = {}
         for name, df in self.df.items():
             dtypes[name] = df.dtypes.to_dict()
+            dtypes[name][df.index.name] = df.index.dtype
+
         path = Path(path).with_suffix('.dtypes.pickle')
         if path.exists():
             if overwrite:
@@ -274,7 +276,6 @@ class Dataset(Module):
     def _load_dfs(path: Union[str, Path]):
         with open(Path(path).with_suffix('.dtypes.pickle'), 'rb') as file:
             dtypes = pickle.load(file)
-
         df = {}
         for name, dtype in dtypes.items():
             df_path = Path(path).with_suffix(f'.{name}.csv.gz')

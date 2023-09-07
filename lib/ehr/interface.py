@@ -20,8 +20,9 @@ from .coding_scheme import CodesVector
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
-    first_occurrence = np.empty_like(sorted_admissions[0].outcome.vec,
-                                     dtype=int)
+    first_occurrence = np.empty_like(
+        sorted_admissions[0].outcome.vec,
+        dtype=type[sorted_admissions[0].admission_id])
     first_occurrence[:] = -1
     for adm in sorted_admissions:
         update_mask = (first_occurrence < 0) & adm.outcome.vec
@@ -43,7 +44,7 @@ class AdmissionPrediction(Data):
 
 class Predictions(dict):
 
-    def add(self, subject_id: int, prediction: AdmissionPrediction):
+    def add(self, subject_id: str, prediction: AdmissionPrediction):
 
         if subject_id not in self:
             self[subject_id] = {}
@@ -54,7 +55,7 @@ class Predictions(dict):
     def subject_ids(self):
         return sorted(self.keys())
 
-    def get_predictions(self, subject_ids: Optional[List[int]] = None):
+    def get_predictions(self, subject_ids: Optional[List[str]] = None):
         if subject_ids is None:
             subject_ids = self.keys()
         return sum((list(self[sid].values()) for sid in subject_ids), [])
@@ -124,7 +125,7 @@ class Predictions(dict):
             adm = pred.admission
             for pred_lo, adm_lo in zip(pred.leading_observable,
                                        adm.leading_observable):
-                for i in len(adm_lo.time):
+                for i in range(len(adm_lo.time)):
                     m = adm_lo.mask[i]
                     if m.sum() < len(m) // 2:
                         continue
@@ -169,13 +170,13 @@ class InterfaceConfig(Config):
 class Patients(Module):
     config: InterfaceConfig
     dataset: Dataset
-    subjects: Dict[int, Patient]
+    subjects: Dict[str, Patient]
     _scheme: DatasetScheme
 
     def __init__(self,
                  config: InterfaceConfig,
                  dataset: Dataset,
-                 subjects: Dict[int, Patient] = {}):
+                 subjects: Dict[str, Patient] = {}):
         super().__init__(config=config)
         self.dataset = dataset
         self.subjects = subjects
@@ -265,13 +266,15 @@ class Patients(Module):
         dataset = Dataset.load(path.with_suffix('.dataset'))
         config = load_config(path.with_suffix('.config.json'))
         config = Config.from_dict(config)
-        return Patients.from_config(config, dataset=dataset, subjects=subjects)
+        return Patients.import_module(config,
+                                      dataset=dataset,
+                                      subjects=subjects)
 
     @staticmethod
     def try_load_cached(config: InterfaceConfig,
                         dataset_config: DatasetConfig,
                         dataset_generator: Callable[[DatasetConfig], Dataset],
-                        subject_subset: Optional[List[int]] = None,
+                        subject_subset: Optional[List[str]] = None,
                         num_workers: int = 8):
         if config.cache is None or not Patients.equal_config(
                 config.cache, config, dataset_config, subject_subset):
@@ -294,7 +297,7 @@ class Patients(Module):
             return Patients.load(config.cache)
 
     def load_subjects(self,
-                      subject_ids: Optional[List[int]] = None,
+                      subject_ids: Optional[List[str]] = None,
                       num_workers: int = 1):
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
@@ -311,13 +314,13 @@ class Patients(Module):
 
         return interface
 
-    def _subject_to_device(self, subject_id: int):
+    def _subject_to_device(self, subject_id: str):
         s = self.subjects[subject_id]
         arrs, others = eqx.partition(s, eqx.is_array)
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         return eqx.combine(arrs, others)
 
-    def device_batch(self, subject_ids: Optional[List[int]] = None):
+    def device_batch(self, subject_ids: Optional[List[str]] = None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -331,11 +334,11 @@ class Patients(Module):
         return eqx.tree_at(lambda x: x.subjects, self, subjects)
 
     def epoch_splits(self,
-                     subject_ids: Optional[List[int]],
+                     subject_ids: Optional[List[str]],
                      batch_n_admissions: int,
                      ignore_first_admission: bool = False):
         if subject_ids is None:
-            subject_ids = self.subjects.keys()
+            subject_ids = list(self.subjects.keys())
 
         n_splits = self.n_admissions(
             subject_ids, ignore_first_admission) // batch_n_admissions
@@ -343,7 +346,8 @@ class Patients(Module):
             n_splits = 1
         p_splits = np.linspace(0, 1, n_splits + 1)[1:-1]
 
-        subject_ids = np.array(subject_ids, np.int64)
+        subject_ids = np.array(subject_ids,
+                               dtype=type(list(self.subjects.keys())[0]))
 
         c_subject_id = self.dataset.colname['adm'].subject_id
         adm_df = self.dataset.df['adm']
@@ -460,7 +464,7 @@ class Patients(Module):
             lambda o: o.observables, inpatient_admission,
             self._unscaled_observation(inpatient_admission.observables))
 
-    def unscaled_subject(self, subject_id: int):
+    def unscaled_subject(self, subject_id: str):
         s = self.subjects[subject_id]
         adms = s.admissions
         adms = [self._unscaled_admission(a) for a in adms]
@@ -473,10 +477,10 @@ class Patients(Module):
             if m is not None else 0, self.subjects[subject_id], is_arr)
         return sum(jtu.tree_leaves(arr_size))
 
-    def outcome_frequency_vec(self, subjects: List[int]):
+    def outcome_frequency_vec(self, subjects: List[str]):
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
 
-    def outcome_frequency_partitions(self, n_partitions, subjects: List[int]):
+    def outcome_frequency_partitions(self, n_partitions, subjects: List[str]):
         frequency_vec = self.outcome_frequency_vec(subjects)
         frequency_vec = frequency_vec / frequency_vec.sum()
         sorted_codes = np.argsort(frequency_vec)

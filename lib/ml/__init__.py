@@ -10,3 +10,5 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
 from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
                       WarmupConfig, TrainerConfig, ReportingConfig)
 
+from .experiment import (Experiment, ExperimentConfig, SplitConfig,
+                         InpatientExperiment)

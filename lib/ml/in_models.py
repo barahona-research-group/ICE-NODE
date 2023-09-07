@@ -28,10 +28,12 @@ class InICENODEConfig(ModelConfig):
 class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
-    def __init__(self, config: InICENODEConfig, key: jax.random.PRNGKey):
-        self.config = config
+    def __init__(self, config: InICENODEConfig,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: jax.random.PRNGKey):
+        out_size = len(leading_observable_config.leading_hours) + 1
         self._mlp = eqx.nn.MLP(config.lead,
-                               config.lead + 1,
+                               out_size,
                                config.lead * 5,
                                depth=2,
                                key=key)
@@ -50,7 +52,6 @@ class SigmoidLeadingObsPredictor(eqx.Module):
     def __init__(self, config: InICENODEConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
-        self.config = config
         self._t = jnp.array(leading_observable_config.leading_hours)
         self._mlp = eqx.nn.MLP(config.lead,
                                4,
@@ -85,10 +86,9 @@ class InICENODE(InpatientModel):
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: "jax.random.PRNGKey"):
-        self.leading_observable_config = leading_observable_config
         self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
-         update_key) = jrandom.split(key, 5)
+         update_key) = jrandom.split(key, 6)
         f_emb = InpatientEmbedding(
             schemes=schemes,
             demographic_vector_config=demographic_vector_config,
@@ -105,16 +105,17 @@ class InICENODE(InpatientModel):
                                      config.obs * 5,
                                      depth=1,
                                      key=obs_dec_key)
-        if config.leading_predictor == "monotonic":
-            self._f_lead_dec = MonotonicLeadingObsPredictor(config,
-                                                            key=lead_key)
-        elif config.leading_predictor == "sigmoid":
+        if config.lead_predictor == "monotonic":
+            self._f_lead_dec = MonotonicLeadingObsPredictor(
+                config, leading_observable_config, key=lead_key)
+        elif config.lead_predictor == "sigmoid":
             self._f_lead_dec = SigmoidLeadingObsPredictor(
                 config, leading_observable_config, key=lead_key)
         else:
-            raise ValueError("Unknown leading predictor type")
+            raise ValueError(
+                f"Unknown leading predictor type: {config.lead_predictor}")
 
-        dyn_state_size = config.obs + config.emb.dx + config.mem
+        dyn_state_size = config.obs + config.emb.dx + config.mem + config.lead
         dyn_input_size = dyn_state_size + config.emb.inp_proc_demo
 
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
@@ -212,9 +213,13 @@ class InICENODE(InpatientModel):
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
 
-        pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[2]),
+        pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
                               admission.outcome.scheme)
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
                                    observables=pred_obs_l,
                                    leading_observable=pred_lead_l)
+
+    @property
+    def dyn_params_list(self):
+        return self.params_list(self._f_dyn)

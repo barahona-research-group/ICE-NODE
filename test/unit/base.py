@@ -1,4 +1,5 @@
 """."""
+from typing import Dict, List, Tuple
 import inspect
 import unittest
 import equinox as eqx
@@ -10,10 +11,35 @@ from lib.ehr.coding_scheme import MIMICObservables
 from lib.ehr import (load_dataset_config, load_dataset_scheme,
                      DemographicVectorConfig, CPRDDemographicVectorConfig,
                      InterfaceConfig, LeadingObservableConfig)
+from lib.ml import ExperimentConfig
 import lib.ehr as ehr
 import lib.ml as ml
 
 from lib.metric import stat
+
+
+class DummyConfig(Config):
+    x: int = 1
+    y: int = 2
+
+
+DummyConfig.register()
+
+
+class NestedConfig(Config):
+    a: Dict[str, DummyConfig]
+    b: DummyConfig
+    c: List[DummyConfig]
+
+
+NestedConfig.register()
+
+
+def gen_nested_configs():
+    a = {'a1': DummyConfig(3, 3), 'a2': DummyConfig(4, 4)}
+    b = DummyConfig(0, 1)
+    c = [DummyConfig(4, 1), DummyConfig(5, 6)]
+    return [b, *c, NestedConfig(a, b, c)]
 
 
 def gen_dataset_configs():
@@ -29,7 +55,7 @@ def gen_dataset_configs():
 def gen_ml_configs():
     ml_configs = []
     for name, conf_class in inspect.getmembers(ml, inspect.isclass):
-        if issubclass(conf_class, Config):
+        if issubclass(conf_class, Config) and conf_class != ExperimentConfig:
             ml_configs.append(conf_class())
     return ml_configs
 
@@ -79,7 +105,7 @@ class ConfigTest(unittest.TestCase):
         """."""
         cls.all_configs = gen_dataset_configs() + gen_ml_configs() + \
             gen_concept_configs() + [gen_interface_config()] + \
-            gen_stat_configs()
+            gen_stat_configs() + gen_nested_configs()
 
     def test_registration(self):
         """."""

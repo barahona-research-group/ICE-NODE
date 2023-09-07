@@ -143,15 +143,6 @@ class Metric(Module):
     def external_argnames(cls):
         return ['patients']
 
-    @staticmethod
-    def from_config(config: Dict[str, Any], patients: Patients, **kwargs):
-        argnames = config.get('metric_external_argnames', [])
-        kwargs = {k: kwargs[k] for k in argnames}
-        metric_class = metric_class_registry[config['metric_classname']]
-        return metric_class(patients=patients,
-                            **config['metric_config'],
-                            **kwargs)
-
 
 class VisitsAUC(Metric):
 
@@ -685,28 +676,35 @@ class AdmissionAUC(Metric):
         return self.from_df_functor(column, self.field_dir(field))
 
 
+class CodeGroupTopAlarmAccuracyConfig(Config):
+    top_k_list: List[int] = field(
+        default_factory=lambda: [1, 3, 5, 10, 15, 20])
+    n_partitions: int = 5
+
+
 class CodeGroupTopAlarmAccuracy(Metric):
     _code_groups: List[List[int]]
-    top_k_list: List[int]
-    n_partitions: int
+    config: CodeGroupTopAlarmAccuracyConfig
 
     def __init__(self,
                  patients: Patients,
-                 train_split: List[int] = [],
-                 n_partitions=5,
-                 top_k_list=[1, 3, 5, 10, 15, 20]):
-        super().__init__(patients=patients)
-        self.top_k_list = top_k_list
-        self.n_partitions = n_partitions
+                 train_split: List[int],
+                 config: MetricLevelsConfig = None,
+                 **kwargs):
+        if config is None:
+            config = CodeGroupTopAlarmAccuracyConfig()
+        config = config.update(**kwargs)
+        super().__init__(patients=patients, config=config)
 
         if len(train_split) == 0:
             train_split = patients.dataset.subject_ids
 
         self._code_groups = patients.outcome_frequency_partitions(
-            n_partitions, train_split)
+            config.n_partitions, train_split)
 
-    def external_argnames(self):
-        return ('train_split', )
+    @classmethod
+    def external_argnames(cls):
+        return ('train_split', 'patients')
 
     @staticmethod
     def fields():
@@ -720,7 +718,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return f'G{group_index}k{k}.{field}'
 
     def order(self):
-        for k in self.top_k_list:
+        for k in self.config.top_k_list:
             for gi in range(len(self._code_groups)):
                 for field in self.fields():
                     yield gi, k, field
@@ -729,7 +727,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
     def __call__(self, predictions: Predictions):
-        top_k_list = sorted(self.top_k_list)
+        top_k_list = sorted(self.config.top_k_list)
 
         ground_truth = []
         preds = []
@@ -766,7 +764,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def value_extractor(self, keys: Dict[str, str]):
         k = keys['k']
         gi = keys['group_index']
-        assert k in self.top_k_list, f"k={k} is not in {self.top_k_list}"
+        assert k in self.config.top_k_list, f"k={k} is not in {self.config.top_k_list}"
         assert gi < len(
             self._code_groups), f"group_index ({gi}) >= len(self.code_groups)"
         field = keys.get('field', self.fields()[0])

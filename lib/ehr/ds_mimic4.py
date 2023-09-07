@@ -304,8 +304,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
         eqx.Module.__init__(self)
         self.config = config
-        self.scheme = DatasetScheme.from_config(config.scheme,
-                                                config.scheme_classname)
+        self.scheme = DatasetScheme.import_module(config.scheme,
+                                                  config.scheme_classname)
         self.colname = {
             f: ColumnNames.make(m)
             for f, m in config.colname.items()

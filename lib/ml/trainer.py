@@ -667,6 +667,8 @@ class Trainer(Module):
                  config: TrainerConfig,
                  reg_hyperparams: Config = Config()):
         super().__init__(config=config)
+        if reg_hyperparams is None:
+            reg_hyperparams = Config()
         self.config = config
         self.reg_hyperparams = reg_hyperparams
         self._dx_loss = binary_loss[config.dx_loss]
@@ -676,18 +678,6 @@ class Trainer(Module):
     @classmethod
     def external_argnames(cls):
         return ['reg_hyperparams']
-
-    def export_expirement_config(self, interface, model, **run_kwargs):
-        _run_kwargs = {
-            k: v if not isinstance(v, Config) else v.to_dict()
-            for k, v in run_kwargs.items()
-        }
-        return {
-            'trainer': self.export_config(),
-            'model': model.export_config(),
-            'interface': interface.export_config(),
-            'run': _run_kwargs
-        }
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         predictions = model.batch_predict(patients, leave_pbar=False)
@@ -732,7 +722,8 @@ class Trainer(Module):
                  warmup_config: Optional[WarmupConfig] = None,
                  continue_training: bool = False,
                  prng_seed: int = 0,
-                 trial_terminate_time=datetime.max):
+                 trial_terminate_time=datetime.max,
+                 exported_config: Optional[Dict[str, Any]] = None):
         if continue_training:
             assert reporting.supports_continue_training, (
                 'TrainerReporting must support continue_training. '
@@ -751,14 +742,7 @@ class Trainer(Module):
                                  warmup_config=warmup_config)
             logging.info('[DONE] Warming up.')
 
-        exported_config = self.export_expirement_config(
-            interface=patients,
-            model=model,
-            n_evals=n_evals,
-            reporting=reporting.export_config(),
-            warmup_config=warmup_config,
-            continue_training=continue_training,
-            prng_seed=prng_seed)
+        exported_config = exported_config or {}
 
         with contextlib.ExitStack() as stack:
             signals = TrainerSignals()

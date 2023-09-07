@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from .dataset import Dataset, DatasetScheme
+from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
 from .ds_mimic3 import MIMIC3Dataset
 from .ds_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
 from .ds_cprd import CPRDDataset

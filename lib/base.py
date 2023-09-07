@@ -1,6 +1,10 @@
 from typing import Dict, Any, ClassVar, Union
+from collections.abc import Iterable
+from collections import namedtuple
 from abc import ABCMeta
 from copy import deepcopy
+import json
+import jax.tree_util as jtu
 import equinox as eqx
 
 from .utils import load_config
@@ -9,19 +13,57 @@ from .utils import load_config
 class Config(eqx.Module):
     _class_registry: ClassVar[Dict[str, 'Config']] = {}
 
+    @staticmethod
+    def _is_config(x):
+        return issubclass(x.__class__, Config)
+
+    @staticmethod
+    def _is_config_dict(x):
+        return isinstance(x, dict) and '_type' in x
+
+    @staticmethod
+    def _addiction(x):
+        if issubclass(x.__class__, Config):
+            return {
+                k: v
+                for k, v in x.__dict__.items() if not k.startswith('_')
+            }
+        else:
+            return x
+
+    @staticmethod
+    def _typed_addiction(x):
+        if issubclass(x.__class__, Config):
+            return {
+                k: v
+                for k, v in x.__dict__.items() if not k.startswith('_')
+            } | {
+                '_type': x.__class__.__name__
+            }
+        else:
+            return x
+
     def as_dict(self) -> Dict[str, Any]:
-        return {
-            k: v.as_dict() if issubclass(v.__class__, Config) else v
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        }
+
+        def _as_dict(x):
+            dicted = self._addiction(x)
+            if isinstance(dicted, Iterable) and not isinstance(dicted, str):
+                return jtu.tree_map(_as_dict, dicted, is_leaf=self._is_config)
+            else:
+                return dicted
+
+        return json.loads(json.dumps(_as_dict(self), default=vars))
 
     def to_dict(self):
-        return {
-            k: v.to_dict() if issubclass(v.__class__, Config) else v
-            for k, v in self.__dict__.items() if not k.startswith('_')
-        } | {
-            '_type': self.__class__.__name__
-        }
+
+        def _to_dict(x):
+            dicted = self._typed_addiction(x)
+            if isinstance(dicted, Iterable) and not isinstance(dicted, str):
+                return jtu.tree_map(_to_dict, dicted, is_leaf=self._is_config)
+            else:
+                return dicted
+
+        return json.loads(json.dumps(_to_dict(self), default=vars))
 
     def __len__(self):
         return len(self.as_dict())
@@ -31,11 +73,22 @@ class Config(eqx.Module):
                   config: Dict[str, Any],
                   config_class=None,
                   **kwargs) -> 'Config':
+
+        def _concretise(x):
+            if cls._is_config_dict(x):
+                return cls.from_dict(x, **kwargs)
+            elif isinstance(x, Iterable) and not isinstance(x, str):
+                return jtu.tree_map(_concretise,
+                                    x,
+                                    is_leaf=cls._is_config_dict)
+            else:
+                return x
+
         config_class = cls._class_registry.get(config.pop('_type'),
                                                config_class)
+        kwargs = {k: kwargs[k] for k in set(kwargs) & set(config)}
         return config_class(**({
-            k:
-            cls.from_dict(v) if isinstance(v, dict) and '_type' in v else v
+            k: _concretise(v)
             for k, v in config.items()
         } | kwargs))
 
@@ -57,7 +110,7 @@ class Config(eqx.Module):
             return updated
 
         updated = self.to_dict()
-        updated.update(kwargs)
+        updated.update({k: kwargs[k] for k in set(kwargs) & set(updated)})
         return Config.from_dict(updated, config_class=self.__class__)
 
 
@@ -72,7 +125,14 @@ class Module(eqx.Module, metaclass=ABCMeta):
         super().__init__()
         if config_path is not None:
             config = Config.from_dict(load_config(config_path))
-        self.config = config.update(**kwargs)
+        conf_kwargs = kwargs.copy()
+        conf_kwargs = {
+            k: conf_kwargs.pop(k)
+            for k in set(config.as_dict()) & set(kwargs)
+        }
+        self.config = config.update(**conf_kwargs)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     @classmethod
     def register(cls):
@@ -82,14 +142,19 @@ class Module(eqx.Module, metaclass=ABCMeta):
     def external_argnames(cls):
         return []
 
+    def export_config(self):
+        return self.config.to_dict()
+
     @classmethod
-    def from_config(cls,
-                    config: Union[Dict[str, Any], Config],
-                    classname=None,
-                    **kwargs):
+    def import_module(cls,
+                      config: Union[Dict[str, Any], Config],
+                      classname=None,
+                      **kwargs):
         if issubclass(type(config), Config):
+            config = config.copy()
             module_class = cls._class_registry[classname or cls.__name__]
             return module_class(config=config, **kwargs)
+        config = deepcopy(config)
 
         external_kwargs = {
             k: kwargs.pop(k)
@@ -97,21 +162,20 @@ class Module(eqx.Module, metaclass=ABCMeta):
             & set(kwargs.keys())
         }
         module_class = cls._class_registry[config.get('classname', classname)]
-        config = Config.from_dict(config['config']).update(**kwargs)
+        if isinstance(config['config'], dict):
+            config = Config.from_dict(config['config']).update(**kwargs)
+        else:
+            config = config['config'].update(**kwargs)
         return module_class(config=config, **external_kwargs)
 
-    def export_config(self):
-        conf = {
-            'config': self.config.to_dict(),
-            'classname': self.__class__.__name__
-        }
-        if len(self.external_argnames()) > 0:
-            conf['external_argnames'] = self.external_argnames()
+    def export_module(self):
+        return self.export_module_class(self.config)
 
-        for attr, attr_v in self.__dict__.items():
-            if issubclass(type(attr_v), Module):
-                conf[attr] = attr_v.export_config()
-
+    @classmethod
+    def export_module_class(cls, config: Config):
+        conf = {'config': config.to_dict(), 'classname': cls.__name__}
+        if len(cls.external_argnames()) > 0:
+            conf['external_argnames'] = cls.external_argnames()
         return conf
 
 
