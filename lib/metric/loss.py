@@ -195,27 +195,33 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
 @eqx.filter_jit
 def masked_mse(y: jnp.ndarray,
                y_hat: jnp.ndarray,
-               mask: jnp.ndarray,
+               mask: jnp.ndarray = None,
                axis=None):
     """Masked L2 loss."""
+    if mask is None:
+        mask = jnp.ones_like(y)
     return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask, axis=axis)
 
 
 @eqx.filter_jit
 def masked_mae(y: jnp.ndarray,
                y_hat: jnp.ndarray,
-               mask: jnp.ndarray,
+               mask: jnp.ndarray = None,
                axis=None):
     """Masked L1 loss."""
+    if mask is None:
+        mask = jnp.ones_like(y)
     return jnp.nanmean(jnp.abs(y - y_hat), where=mask, axis=axis)
 
 
 @eqx.filter_jit
 def masked_rms(y: jnp.ndarray,
                y_hat: jnp.ndarray,
-               mask: jnp.ndarray,
+               mask: jnp.ndarray = None,
                axis=None):
     """Masked root mean squared error."""
+    if mask is None:
+        mask = jnp.ones_like(y)
     return jnp.sqrt(masked_mse(y, y_hat, mask, axis=axis))
 
 
