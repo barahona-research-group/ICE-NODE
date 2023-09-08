@@ -139,3 +139,21 @@ class ConfigTest(unittest.TestCase):
             os.remove('test.unit.base.json')
             conf_ = Config.from_dict(conf_dict)
             self.assertEqual(conf_, conf)
+
+    def test_path_update(self):
+        c1 = DummyConfig(3, 6)
+        c1_updated = c1.path_update('x', 4)
+        self.assertEqual(c1_updated, DummyConfig(4, 6))
+
+        c2 = NestedConfig(a={'n': DummyConfig(3, 3)},
+                          b=DummyConfig(0, 10),
+                          c=[DummyConfig(4, 1),
+                             DummyConfig(5, 6)])
+
+        c3 = NestedConfig(a={'n': DummyConfig(3, 3)},
+                          b=DummyConfig(0, 20),
+                          c=[DummyConfig(4, 1),
+                             DummyConfig(5, 6)])
+
+        c2_updated = c2.path_update('b.y', 20)
+        self.assertEqual(c2_updated, c3)

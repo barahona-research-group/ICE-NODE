@@ -1,0 +1,166 @@
+{
+    "_type": "ExperimentConfig",
+    "continue_training": true,
+    "dataset": {
+        "_type": "DatasetConfig",
+        "colname": {
+            "adm": {
+                "admittime": "ADMITTIME",
+                "dischtime": "DISCHTIME",
+                "index": "HADM_ID",
+                "subject_id": "SUBJECT_ID"
+            },
+            "dx": {
+                "admission_id": "HADM_ID",
+                "code": "ICD9_CODE"
+            },
+            "static": {
+                "date_of_birth": "DOB",
+                "ethnicity": "ETHNICITY",
+                "gender": "GENDER",
+                "index": "SUBJECT_ID"
+            }
+        },
+        "files": {
+            "adm": "adm_df.csv.gz",
+            "dx": "dx_df.csv.gz",
+            "static": "static_df.csv.gz"
+        },
+        "meta_fpath": "",
+        "overlapping_admissions": "merge",
+        "path": "",
+        "sample": null,
+        "scheme": {
+            "_type": "DatasetSchemeConfig",
+            "dx": "DxICD9",
+            "ethnicity": "MIMIC3Eth37",
+            "gender": "Gender",
+            "outcome": null
+        },
+        "scheme_classname": "DatasetScheme",
+        "tag": "M3"
+    },
+    "interface": {
+        "_type": "InterfaceConfig",
+        "cache": "",
+        "demographic_vector": {
+            "_type": "DemographicVectorConfig",
+            "age": false,
+            "ethnicity": false,
+            "gender": false
+        },
+        "leading_observable": null,
+        "scheme": {
+            "_type": "DatasetSchemeConfig",
+            "dx": "DxICD9",
+            "ethnicity": "MIMIC3Eth7",
+            "gender": "Gender",
+            "outcome": "dx_icd9_filter_v3_groups"
+        }
+    },
+    "metrics": [
+        {
+            "classname": "CodeAUC",
+            "config": {
+                "_type": "CodeLevelMetricConfig",
+                "aggregate_level": true,
+                "code_level": true
+            },
+            "external_argnames": [
+                "patients"
+            ]
+        },
+        {
+            "classname": "AdmissionAUC",
+            "config": {
+                "_type": "MetricLevelsConfig",
+                "admission": false,
+                "aggregate": true,
+                "subject_aggregate": false
+            },
+            "external_argnames": [
+                "patients"
+            ]
+        },
+        {
+            "classname": "CodeGroupTopAlarmAccuracy",
+            "config": {
+                "_type": "CodeGroupTopAlarmAccuracyConfig",
+                "n_partitions": 5,
+                "top_k_list": [
+                    3,
+                    5,
+                    10,
+                    15,
+                    20
+                ]
+            },
+            "external_argnames": [
+                "train_split",
+                "patients"
+            ]
+        },
+        {
+            "classname": "LossMetric",
+            "config": {
+                "_type": "LossMetricConfig",
+                "dx_loss": [
+                    "softmax_bce",
+                    "balanced_focal_softmax_bce",
+                    "balanced_focal_bce",
+                    "allpairs_exp_rank",
+                    "allpairs_hard_rank",
+                    "allpairs_sigmoid_rank"
+                ],
+                "lead_loss": [],
+                "obs_loss": []
+            },
+            "external_argnames": [
+                "patients"
+            ]
+        }
+    ],
+    "model": {
+        "_type": "ICENODEConfig",
+        "emb": {
+            "_type": "OutpatientEmbeddingConfig",
+            "demo": 0,
+            "dx": 30
+        },
+        "mem": 15
+    },
+    "model_classname": "ICENODE",
+    "n_evals": 100,
+    "reg_hyperparams": null,
+    "reporting": {
+        "_type": "ReportingConfig",
+        "config_json": true,
+        "console": true,
+        "model_stats": false,
+        "output_dir": "icenode",
+        "parameter_snapshots": true
+    },
+    "split": {
+        "_type": "SplitConfig",
+        "balanced": "admissions",
+        "test": 0.1,
+        "train": 0.8,
+        "val": 0.1
+    },
+    "trainer": {
+        "_type": "TrainerConfig",
+        "batch_size": 128,
+        "dx_loss": "balanced_focal_bce",
+        "epochs": 80,
+        "lead_loss": "mse",
+        "obs_loss": "mse",
+        "optimizer": {
+            "_type": "OptimizerConfig",
+            "decay_rate": null,
+            "lr": 0.001,
+            "opt": "adam",
+            "reverse_schedule": false
+        }
+    },
+    "warmup": null
+}

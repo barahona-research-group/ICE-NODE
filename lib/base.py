@@ -99,6 +99,18 @@ class Config(eqx.Module):
     def copy(self) -> 'Config':
         return deepcopy(self)
 
+    def path_update(self, path, value):
+        nesting = path.split('.')
+
+        def _get(x):
+            for n in nesting:
+                x = getattr(x, n)
+            return x
+        _type = type(_get(self))
+
+        return eqx.tree_at(_get, self, _type(value))
+
+
     def update(self, other=None, **kwargs):
         if other is not None:
             updated = self

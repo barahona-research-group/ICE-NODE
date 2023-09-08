@@ -4,9 +4,8 @@ from ..ehr import (Predictions, Patients, load_dataset, load_dataset_scheme,
                    load_dataset_config, Dataset, DatasetConfig,
                    DemographicVectorConfig, LeadingObservableConfig,
                    InterfaceConfig)
-from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
-from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
-                     append_params_to_zip, zip_members, translate_path)
+from ..metric import (MetricsCollection, Metric)
+from ..utils import (translate_path, load_config)
 
 from ..base import Config, Module
 from .trainer import (Trainer, InTrainer, TrainerConfig, ReportingConfig,
@@ -147,3 +146,5 @@ class InpatientExperiment(Experiment):
     def load_trainer(self):
         return InTrainer(self.config.trainer,
                          reg_hyperparams=self.config.reg_hyperparams)
+
+

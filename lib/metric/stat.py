@@ -83,6 +83,13 @@ class Metric(Module):
     config: Config = Config()
     patients: Patients
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._post_init()
+
+    def _post_init(self):
+        pass
+
     @staticmethod
     def fields():
         return tuple()
@@ -199,26 +206,34 @@ class LossMetric(Metric):
             for name in config.lead_loss
         }
 
+    def dx_fields(self):
+        return [f'dx_{name}' for name in sorted(self.config.dx_loss)]
+
+    def obs_fields(self):
+        return [f'obs_{name}' for name in sorted(self.config.obs_loss)]
+
+    def lead_fields(self):
+        return [f'lead_{name}' for name in sorted(self.config.lead_loss)]
+
     def fields(self):
-        return sorted(self.config.dx_loss) + sorted(
-            self.config.obs_loss) + sorted(self.config.lead_loss)
+        return self.dx_fields() + self.obs_fields() + self.lead_fields()
 
     def dirs(self):
         return (0, ) * len(self)
 
     def __len__(self):
-        return len(self.config.dx_loss) + len(self.config.obs_loss) + len(
-            self.config.lead_loss)
+        return len(self.fields())
 
     def __call__(self, predictions: Predictions):
         return {
-            loss_key: predictions.prediction_dx_loss(dx_loss=loss_f)
+            f'dx_{loss_key}': predictions.prediction_dx_loss(dx_loss=loss_f)
             for loss_key, loss_f in self._dx_loss.items()
         } | {
-            loss_key: predictions.prediction_obs_loss(obs_loss=loss_f)
+            f'obs_{loss_key}': predictions.prediction_obs_loss(obs_loss=loss_f)
             for loss_key, loss_f in self._obs_loss.items()
         } | {
-            loss_key: predictions.prediction_lead_loss(lead_loss=loss_f)
+            f'lead_{loss_key}':
+            predictions.prediction_lead_loss(lead_loss=loss_f)
             for loss_key, loss_f in self._lead_loss.items()
         }
 
@@ -229,8 +244,8 @@ class CodeLevelMetricConfig(Config):
 
 
 class CodeLevelMetric(Metric):
-    _index2code: Dict[int, str] = field(init=False)
-    _code2index: Dict[str, int] = field(init=False)
+    _index2code: Dict[int, str]
+    _code2index: Dict[str, int]
 
     # Show estimates per code
     def __init__(self, patients, config=None, **kwargs):
@@ -239,7 +254,7 @@ class CodeLevelMetric(Metric):
         config = config.update(**kwargs)
         super().__init__(patients=patients, config=config)
 
-    def __post_init__(self):
+    def _post_init(self):
         index = self.patients.scheme.outcome.index
         self._code2index = index
         self._index2code = {i: c for c, i in index.items()}
@@ -319,7 +334,7 @@ class CodeLevelMetric(Metric):
 
 class ObsCodeLevelMetric(CodeLevelMetric):
 
-    def __post_init__(self):
+    def _post_init(self):
         index = self.patients.scheme.obs.index
         self._code2index = index
         self._index2code = {i: c for c, i in index.items()}
@@ -327,7 +342,7 @@ class ObsCodeLevelMetric(CodeLevelMetric):
 
 class LeadingObsMetric(CodeLevelMetric):
 
-    def __post_init__(self):
+    def _post_init(self):
         conf = self.patients.config.leading_observable
         self._code2index = conf.code2index
         self._index2code = conf.index2code
@@ -396,24 +411,24 @@ class ColwiseLossMetricConfig(Config):
 
 
 class CodeLevelLossMetric(CodeLevelMetric):
-    _loss_functions: Dict[str, Callable] = field(init=False)
+    _loss_functions: Dict[str, Callable]
 
-    def __post_init__(self):
-        CodeLevelMetric.__post_init__(self)
+    def _post_init(self):
+        CodeLevelMetric._post_init(self)
         self._loss_functions = {
             name: colwise_binary_loss[name]
             for name in self.config.loss
         }
 
     def fields(self):
-        return sorted(self.config.loss)
+        return list(map(lambda n: f'dx_{n}', sorted(self.config.loss)))
 
     def dirs(self):
-        return (0, ) * len(self.config.loss)
+        return (0, ) * len(self.fields())
 
     def __call__(self, predictions: Predictions):
         loss_vals = {
-            name: predictions.prediction_dx_loss(loss_f)
+            f'dx_{name}': predictions.prediction_dx_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {
@@ -424,18 +439,24 @@ class CodeLevelLossMetric(CodeLevelMetric):
 
 
 class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
-    _loss_functions: Dict[str, Callable] = field(init=False)
+    _loss_functions: Dict[str, Callable]
 
-    def __post_init__(self):
-        ObsCodeLevelMetric.__post_init__(self)
+    def _post_init(self):
+        ObsCodeLevelMetric._post_init(self)
         self._loss_functions = {
             name: colwise_numeric_loss[name]
             for name in self.config.loss
         }
 
+    def fields(self):
+        return list(map(lambda n: f'obs_{n}', sorted(self.config.loss)))
+
+    def dirs(self):
+        return (0, ) * len(self.fields())
+
     def __call__(self, predictions: Predictions):
         loss_vals = {
-            name: predictions.prediction_obs_loss(loss_f)
+            f'obs_{name}': predictions.prediction_obs_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {
@@ -446,18 +467,24 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
 
 
 class LeadingObsLossMetric(ObsCodeLevelLossMetric):
-    _loss_functions: Dict[str, Callable] = field(init=False)
+    _loss_functions: Dict[str, Callable]
 
-    def __post_init__(self):
-        LeadingObsLossMetric.__post_init__(self)
+    def _post_init(self):
+        LeadingObsMetric._post_init(self)
         self._loss_functions = {
             name: colwise_numeric_loss[name]
             for name in self.config.loss
         }
 
+    def fields(self):
+        return list(map(lambda n: f'lead_{n}', sorted(self.config.loss)))
+
+    def dirs(self):
+        return (0, ) * len(self.fields())
+
     def __call__(self, predictions: Predictions):
         loss_vals = {
-            name: predictions.prediction_lead_loss(loss_f)
+            f'lead_{name}': predictions.prediction_lead_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
         }
         loss_vals = {

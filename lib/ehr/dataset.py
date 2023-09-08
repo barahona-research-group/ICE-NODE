@@ -121,8 +121,9 @@ class DatasetScheme(Module):
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
-
-        for attr, att_s_scheme in source.scheme_dict:
+        attrs = source.scheme_dict
+        for attr in attrs:
+            att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
 
             assert att_s_scheme.mapper_to(

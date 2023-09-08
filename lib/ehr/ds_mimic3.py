@@ -105,10 +105,9 @@ class MIMIC3Dataset(Dataset):
         logging.debug("[DONE] Matching admission_id")
 
         df["adm"] = adm
-        self.df = df
 
         logging.debug("Dataframes validation and time conversion")
-        self.df = {k: try_compute(v) for k, v in self.df.items()}
+        self.df = {k: try_compute(v) for k, v in df.items()}
         self._dx_fix_icd_dots()
         self._dx_filter_unsupported_icd()
         self.colname = colname
