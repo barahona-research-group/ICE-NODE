@@ -5,71 +5,40 @@
         "_type": "DatasetConfig",
         "colname": {
             "adm": {
-                "admittime": "admittime",
-                "dischtime": "dischtime",
-                "index": "hadm_id",
-                "subject_id": "subject_id"
+                "admittime": "ADMITTIME",
+                "dischtime": "DISCHTIME",
+                "index": "HADM_ID",
+                "subject_id": "SUBJECT_ID"
             },
             "dx": {
-                "admission_id": "hadm_id",
-                "code": "icd_code",
-                "subject_id": "subject_id",
-                "version": "icd_version"
-            },
-            "int_input": {
-                "admission_id": "hadm_id",
-                "code": "label",
-                "end_time": "end_time",
-                "rate": "normalised_amount_per_hour",
-                "start_time": "start_time"
-            },
-            "int_proc": {
-                "admission_id": "hadm_id",
-                "code": "code",
-                "end_time": "end_time",
-                "start_time": "start_time"
-            },
-            "obs": {
-                "admission_id": "hadm_id",
-                "code": "code",
-                "timestamp": "time_bin",
-                "value": "value"
+                "admission_id": "HADM_ID",
+                "code": "ICD9_CODE"
             },
             "static": {
-                "anchor_age": "anchor_age",
-                "anchor_year": "anchor_year",
-                "ethnicity": "race",
-                "gender": "gender",
-                "index": "subject_id"
+                "date_of_birth": "DOB",
+                "ethnicity": "ETHNICITY",
+                "gender": "GENDER",
+                "index": "SUBJECT_ID"
             }
         },
         "files": {
-            "adm": "adm_df.csv",
-            "dx": "dx_df.csv",
-            "int_input": "int_input.csv",
-            "int_proc": "int_proc.csv",
-            "obs": "obs_df.csv",
-            "static": "static_df.csv"
+            "adm": "adm_df.csv.gz",
+            "dx": "dx_df.csv.gz",
+            "static": "static_df.csv.gz"
         },
         "meta_fpath": "",
         "overlapping_admissions": "merge",
         "path": "",
         "sample": null,
         "scheme": {
-            "_type": "MIMIC4ICUDatasetSchemeConfig",
-            "dx": {
-                "10": "DxICD10",
-                "9": "DxICD9"
-            },
-            "ethnicity": "MIMIC4Eth32",
+            "_type": "DatasetSchemeConfig",
+            "dx": "DxICD9",
+            "ethnicity": "MIMIC3Eth37",
             "gender": "Gender",
-            "int_input": "MIMICInput",
-            "int_proc": "MIMICProcedures",
-            "obs": "MIMICObservables",
-            "outcome": "dx_icd9_filter_v3_groups"
+            "outcome": null
         },
-        "scheme_classname": "MIMIC4ICUDatasetScheme",
-        "tag": "M4ICU"
+        "scheme_classname": "DatasetScheme",
+        "tag": "M3"
     },
     "interface": {
         "_type": "InterfaceConfig",
@@ -80,34 +49,12 @@
             "ethnicity": false,
             "gender": false
         },
-        "leading_observable": {
-            "_type": "LeadingObservableConfig",
-            "index": 42,
-            "leading_hours": [
-                6,
-                12,
-                18,
-                24,
-                30,
-                36,
-                42,
-                48,
-                54,
-                60,
-                66,
-                72
-            ],
-            "scheme": "MIMICObservables",
-            "window_aggregate": "max"
-        },
+        "leading_observable": null,
         "scheme": {
-            "_type": "MIMIC4ICUDatasetSchemeConfig",
+            "_type": "DatasetSchemeConfig",
             "dx": "DxICD9",
-            "ethnicity": "MIMIC4Eth5",
+            "ethnicity": "MIMIC3Eth7",
             "gender": "Gender",
-            "int_input": "MIMICInputGroups",
-            "int_proc": "MIMICProcedureGroups",
-            "obs": "MIMICObservables",
             "outcome": "dx_icd9_filter_v3_groups"
         }
     },
@@ -165,16 +112,8 @@
                     "allpairs_hard_rank",
                     "allpairs_sigmoid_rank"
                 ],
-                "lead_loss": [
-                    "mse",
-                    "mae",
-                    "rms"
-                ],
-                "obs_loss": [
-                    "mse",
-                    "mae",
-                    "rms"
-                ]
+                "lead_loss": [],
+                "obs_loss": []
             },
             "external_argnames": [
                 "patients"
@@ -182,21 +121,14 @@
         }
     ],
     "model": {
-        "_type": "InICENODEConfig",
+        "_type": "GRUConfig",
         "emb": {
-            "_type": "InpatientEmbeddingConfig",
+            "_type": "OutpatientEmbeddingConfig",
             "demo": 0,
-            "dx": 30,
-            "inp": 15,
-            "inp_proc_demo": 10,
-            "proc": 15
-        },
-        "lead": 5,
-        "lead_predictor": "monotonic",
-        "mem": 15,
-        "obs": 25
+            "dx": 30
+        }
     },
-    "model_classname": "InICENODE",
+    "model_classname": "GRU",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {

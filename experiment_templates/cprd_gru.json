@@ -5,57 +5,49 @@
         "_type": "DatasetConfig",
         "colname": {
             "adm": {
-                "admittime": "ADMITTIME",
-                "dischtime": "DISCHTIME",
-                "index": "HADM_ID",
-                "subject_id": "SUBJECT_ID"
-            },
-            "dx": {
-                "admission_id": "HADM_ID",
-                "code": "ICD9_CODE"
-            },
-            "static": {
-                "date_of_birth": "DOB",
-                "ethnicity": "ETHNICITY",
-                "gender": "GENDER",
-                "index": "SUBJECT_ID"
+                "age_at_dischtime": "age_list",
+                "code": "medcode_list",
+                "dischtime": "year_month_list",
+                "ethnicity": "ethnicity",
+                "gender": "gender",
+                "imd_decile": "imd_decile",
+                "subject_id": "patid"
             }
         },
-        "files": {
-            "adm": "adm_df.csv.gz",
-            "dx": "dx_df.csv.gz",
-            "static": "static_df.csv.gz"
-        },
+        "files": {},
         "meta_fpath": "",
         "overlapping_admissions": "merge",
         "path": "",
         "sample": null,
         "scheme": {
-            "_type": "DatasetSchemeConfig",
-            "dx": "DxICD9",
-            "ethnicity": "MIMIC3Eth37",
-            "gender": "Gender",
+            "_type": "CPRDDatasetSchemeConfig",
+            "dx": "DxLTC9809FlatMedcodes",
+            "ethnicity": "CPRDEthnicity16",
+            "gender": "CPRDGender",
+            "imd": "CPRDIMDCategorical",
             "outcome": null
         },
-        "scheme_classname": "DatasetScheme",
-        "tag": "M3"
+        "scheme_classname": "CPRDDatasetScheme",
+        "tag": "CPRD"
     },
     "interface": {
         "_type": "InterfaceConfig",
         "cache": "",
         "demographic_vector": {
-            "_type": "DemographicVectorConfig",
-            "age": false,
-            "ethnicity": false,
-            "gender": false
+            "_type": "CPRDDemographicVectorConfig",
+            "age": true,
+            "ethnicity": true,
+            "gender": true,
+            "imd": true
         },
         "leading_observable": null,
         "scheme": {
-            "_type": "DatasetSchemeConfig",
-            "dx": "DxICD9",
-            "ethnicity": "MIMIC3Eth7",
-            "gender": "Gender",
-            "outcome": "dx_icd9_filter_v3_groups"
+            "_type": "CPRDDatasetSchemeConfig",
+            "dx": "DxLTC9809FlatMedcodes",
+            "ethnicity": "CPRDEthnicity5",
+            "gender": "CPRDGender",
+            "imd": "CPRDIMDCategorical",
+            "outcome": "dx_cprd_ltc9809"
         }
     },
     "metrics": [
@@ -121,15 +113,14 @@
         }
     ],
     "model": {
-        "_type": "ICENODEConfig",
+        "_type": "GRUConfig",
         "emb": {
             "_type": "OutpatientEmbeddingConfig",
-            "demo": 0,
+            "demo": 15,
             "dx": 30
-        },
-        "mem": 15
+        }
     },
-    "model_classname": "ICENODE",
+    "model_classname": "GRU",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {

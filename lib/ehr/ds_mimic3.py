@@ -112,6 +112,7 @@ class MIMIC3Dataset(Dataset):
         self._dx_filter_unsupported_icd()
         self.colname = colname
         self._match_admissions_with_demographics(self.df, colname)
+        self.df = {k: try_compute(v) for k, v in df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
     def to_subjects(self, subject_ids: List[int], num_workers: int,
