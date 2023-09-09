@@ -117,7 +117,7 @@
         "emb": {
             "_type": "OutpatientEmbeddingConfig",
             "demo": 15,
-            "dx": 30
+            "dx": 50
         },
         "mem_a": 15,
         "mem_b": 15

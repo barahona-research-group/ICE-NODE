@@ -125,7 +125,7 @@
         "emb": {
             "_type": "OutpatientEmbeddingConfig",
             "demo": 0,
-            "dx": 30
+            "dx": 50
         }
     },
     "model_classname": "GRU",

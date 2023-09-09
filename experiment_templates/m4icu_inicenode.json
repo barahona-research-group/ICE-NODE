@@ -186,7 +186,7 @@
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 0,
-            "dx": 30,
+            "dx": 50,
             "inp": 15,
             "inp_proc_demo": 10,
             "proc": 15
