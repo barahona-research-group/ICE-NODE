@@ -112,10 +112,10 @@ class MIMIC3Dataset(Dataset):
         self._dx_filter_unsupported_icd()
         self.colname = colname
         self._match_admissions_with_demographics(self.df, colname)
-        self.df = {k: try_compute(v) for k, v in df.items()}
+        self.df = {k: try_compute(v) for k, v in self.df.items()}
         logging.debug("[DONE] Dataframes validation and time conversion")
 
-    def to_subjects(self, subject_ids: List[int], num_workers: int,
+    def to_subjects(self, subject_ids: List[str], num_workers: int,
                     demographic_vector_config: DemographicVectorConfig,
                     target_scheme: DatasetScheme, **kwargs):
 
@@ -198,7 +198,7 @@ class MIMIC3Dataset(Dataset):
 
     def random_splits(self,
                       splits: List[float],
-                      subject_ids: Optional[List[int]] = None,
+                      subject_ids: Optional[List[str]] = None,
                       random_seed: int = 42,
                       balanced: str = 'subjects',
                       ignore_first_admission: bool = False):

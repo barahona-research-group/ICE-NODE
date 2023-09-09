@@ -7,19 +7,34 @@ from ..base import Config
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, required=True)
+    parser.add_argument('--inpatient', type=bool, default=False)
     parser.add_argument('--config', type=str, required=True)
+    parser.add_argument('--dataset-path', type=str, required=False)
+    parser.add_argument('--cache-path', type=str, required=False)
+    parser.add_argument('--output-path', type=str, required=True)
     parser.add_argument('--override', type=str, required=False)
     args = parser.parse_args()
 
     config = load_config(translate_path(args.config))
     config = Config.from_dict(config)
+
+    config = config.path_update('reporting.output_dir',
+                                translate_path(args.output_path))
+
+    if args.dataset_path is not None:
+        config = config.path_update('dataset.path',
+                                    translate_path(args.dataset_path))
+
+    if args.cache_path is not None:
+        config = config.path_update('interface.cache',
+                                    translate_path(args.cache_path))
+
     if args.override is not None:
         for override in args.override.split(','):
             key, value = override.split('=')
             config = config.path_update(key, value)
 
-    if args.settings == 'inpatient':
+    if args.inpatient:
         experiment = InpatientExperiment(config)
     else:
         experiment = Experiment(config)
