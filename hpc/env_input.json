@@ -6,9 +6,9 @@
 		"examples": ["v0.2.25", "v0.8.01", "main"],
 		"type": "str"
 	},
-	"config":
+	"config_path":
 	{
-		"env": "CONFIG",
+		"env": "CONFIG_PATH",
 		"desc": "Path (absolute or relative) to JSON config file for the experiment settings.",
 		"examples": ["~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json"],
 		"type": "path"
