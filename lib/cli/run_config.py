@@ -21,15 +21,15 @@ if __name__ == '__main__':
     config = config.path_update('reporting.output_dir',
                                 translate_path(args.output_path))
 
-    if args.dataset_path is not None:
+    if args.dataset_path is not None and len(args.dataset_path) > 0:
         config = config.path_update('dataset.path',
                                     translate_path(args.dataset_path))
 
-    if args.cache_path is not None:
+    if args.cache_path is not None and len(args.cache_path) > 0:
         config = config.path_update('interface.cache',
                                     translate_path(args.cache_path))
 
-    if args.override is not None:
+    if args.override is not None and len(args.override) > 0:
         for override in args.override.split(','):
             key, value = override.split('=')
             config = config.path_update(key, value)

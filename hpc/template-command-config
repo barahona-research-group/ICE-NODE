@@ -1,7 +1,6 @@
-$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.train_app \
---config $env_config \
---study-tag $env_study_tag \
---config-tag $env_config_tag \
---output-dir $OUTPUT_DIR \
---dataset $env_data_tag \
---model $env_model
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
+--config $env_config_path \
+--output-path $env_output_path \
+--dataset-path $env_dataset_path \
+--cache-path $env_cache_path \
+--override $env_override

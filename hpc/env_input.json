@@ -6,13 +6,6 @@
 		"examples": ["v0.2.25", "v0.8.01", "main"],
 		"type": "str"
 	},
-	"data_tag":
-	{
-		"env": "DATA_TAG",
-		"desc": "Name of the data tag.",
-		"examples": ["M3", "M4"],
-		"type": "str"
-	},
 	"config":
 	{
 		"env": "CONFIG",
@@ -27,18 +20,32 @@
 		"examples": ["Cv0.2.25"],
 		"type": "str"
 	},
-	"model":
+	"cache_path":
 	{
-		"env": "MODEL",
-		"desc": "Model label to be used in the experiment.",
-		"examples": ["dx_icenode_2lr"],
-		"type": "str"
+		"env": "CACHE_PATH",
+		"desc": "Path (absolute or relative) to the cache directory.",
+		"examples": ["~/GP/ICE-NODE/cache"],
+		"type": "path"
 	},
-	"emb":
+	"output_path":
 	{
-		"env": "EMB",
-		"desc": "Embedding module label.",
-		"examples": ["gram", "matrix"],
+		"env": "OUTPUT_PATH",
+		"desc": "Path (absolute or relative) to the output directory.",
+		"examples": ["~/GP/ICE-NODE/output"],
+		"type": "path"
+	},
+	"dataset_path":
+	{
+		"env": "DATASET_PATH",
+		"desc": "Path (absolute or relative) to the dataset directory.",
+		"examples": ["~/GP/ehr-data/dataset"],
+		"type": "path"
+	},
+	"override":
+	{
+		"env": "OVERRIDE",
+		"desc": "Override existing configuration.",
+		"examples": ["model.emb.dx=10,model.mem=5", "train.batch_size=128"],
 		"type": "str"
 	}
 }

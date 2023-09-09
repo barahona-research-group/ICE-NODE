@@ -1,7 +1,1 @@
-export DATA_DIR="$HOME/GP/ehr-data"
-OUTPUT_DIR=""
-if [[ "$env_data_tag" == "M3" ]]; then
-  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m3-exp"
-else
-  OUTPUT_DIR="$HOME/GP/ehr-data/icenode-m4-exp"
-fi
+
