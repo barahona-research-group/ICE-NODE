@@ -29,7 +29,8 @@ if __name__ == '__main__':
         config = config.path_update('interface.cache',
                                     translate_path(args.cache_path))
 
-    if args.override is not None and len(args.override) > 0:
+    if args.override is not None and len(
+            args.override) > 0 and args.override != '0':
         for override in args.override.split(','):
             key, value = override.split('=')
             config = config.path_update(key, value)
