@@ -9,10 +9,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--inpatient', type=bool, default=False)
     parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('--dataset-path', type=str, required=False)
-    parser.add_argument('--cache-path', type=str, required=False)
+    parser.add_argument('--dataset-path', type=str, required=False, default="")
+    parser.add_argument('--cache-path', type=str, required=False, default="")
     parser.add_argument('--output-path', type=str, required=True)
-    parser.add_argument('--override', type=str, required=False)
+    parser.add_argument('--override', type=str, required=False, default="")
     args = parser.parse_args()
 
     config = load_config(translate_path(args.config))
