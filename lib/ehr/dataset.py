@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
 from collections import namedtuple
+from dataclasses import field
 import pickle
 from datetime import timedelta
 import random
@@ -186,7 +187,7 @@ class DatasetConfig(Config):
     scheme: DatasetSchemeConfig
     scheme_classname: str
     colname: Dict[str, Dict[str, str]]
-    files: Dict[str, str] = eqx.field(default_factory=dict)
+    files: Dict[str, str] = field(default_factory=dict)
     sample: Optional[int] = None
     meta_fpath: str = ''
     tag: str = ''
