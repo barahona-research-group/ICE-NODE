@@ -24,6 +24,12 @@ from .dataset import (DatasetScheme, ColumnNames, DatasetConfig,
                       DatasetSchemeConfig)
 from .ds_mimic3 import MIMIC3Dataset, try_compute
 
+import warnings
+
+warnings.filterwarnings('error',
+                        category=RuntimeWarning,
+                        message=r'overflow encountered in cast')
+
 
 class OutlierRemover(eqx.Module):
     c_value: str
