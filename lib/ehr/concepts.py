@@ -6,6 +6,7 @@ import inspect
 from datetime import date
 from typing import (List, Tuple, Optional, Union, Dict, ClassVar, Union, Any,
                     Callable)
+import warnings
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -41,26 +42,32 @@ def nan_concat_leading_windows(x):
     return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
 
 
+def safe_nan_agg(func, x, axis):
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=RuntimeWarning)
+        return func(x, axis)
+
+
 def nan_agg_min(x, axis):
-    return np.nanmin(x, axis=axis)
+    return safe_nan_agg(np.nanmin, x, axis)
 
 
 def nan_agg_max(x, axis):
-    return np.nanmax(x, axis=axis)
+    return safe_nan_agg(np.nanmax, x, axis)
 
 
 def nan_agg_mean(x, axis):
-    return np.nanmean(x, axis=axis)
+    return safe_nan_agg(np.nanmean, x, axis)
 
 
 def nan_agg_median(x, axis):
-    return np.nanmedian(x, axis=axis)
+    return safe_nan_agg(np.nanmedian, x, axis)
 
 
 def nan_agg_quantile(q):
 
     def _nan_agg_quantile(x, axis):
-        return np.nanquantile(x, q, axis=axis)
+        return safe_nan_agg(lambda x, ax: np.nanquantile(x, q, ax), x, axis)
 
     return _nan_agg_quantile
 

@@ -14,6 +14,7 @@ from scipy import stats
 import jax
 import jax.numpy as jnp
 from sklearn import metrics
+import warnings
 
 from ..ehr import Patients, Predictions
 from ..base import Module, Config
@@ -22,9 +23,39 @@ from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
                    colwise_numeric_loss)
 
 
+def safe_nan_func(func, x, axis):
+    """Apply `func` to `x` along `axis`, ignoring NaNs."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore",
+                                category=RuntimeWarning)
+        return func(x, axis=axis)
+
+
 def nanaverage(A, weights, axis):
-    return onp.nansum(A * weights, axis=axis) / (
-        (~onp.isnan(A)) * weights).sum(axis=axis)
+    return safe_nan_func(lambda x, ax: onp.nansum(x * weights, axis=ax) /
+                         ((~onp.isnan(x)) * weights).sum(axis=ax),
+                         A,
+                         axis=axis)
+
+
+def nanmean(A, axis=None):
+    return safe_nan_func(onp.nanmean, A, axis=axis)
+
+
+def nanmedian(A, axis=None):
+    return safe_nan_func(onp.nanmedian, A, axis=axis)
+
+
+def nanstd(A, axis=None):
+    return safe_nan_func(onp.nanstd, A, axis=axis)
+
+
+def nanmax(A, axis=None):
+    return safe_nan_func(onp.nanmax, A, axis=axis)
+
+
+def nanmin(A, axis=None):
+    return safe_nan_func(onp.nanmin, A, axis=axis)
 
 
 @jax.jit
@@ -176,7 +207,7 @@ class VisitsAUC(Metric):
             'macro_auc':
             compute_auc(gtruth_vec, preds_vec),
             'micro_auc':
-            onp.nanmean(onp.array(list(map(
+            nanmean(onp.array(list(map(
                 compute_auc,
                 gtruth,
                 preds,
@@ -262,9 +293,8 @@ class CodeLevelMetric(Metric):
 
     @staticmethod
     def agg_fields():
-        return (('mean', onp.nanmean), ('median', onp.nanmedian), ('max',
-                                                                   onp.nanmax),
-                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
+        return (('mean', nanmean), ('median', nanmedian), ('max', nanmax),
+                ('min', nanmin), ('std', nanstd), ('count', onp.size))
 
     def code_qualifier(self, code_index):
         return f'I{code_index}C{self._index2code[code_index]}'
@@ -357,9 +387,9 @@ class CodeAUC(CodeLevelMetric):
 
     @staticmethod
     def agg_fields():
-        return (('mean', onp.nanmean), ('weighted_mean', nanaverage),
-                ('median', onp.nanmedian), ('max', onp.nanmax),
-                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
+        return (('mean', nanmean), ('weighted_mean', nanaverage),
+                ('median', nanmedian), ('max', nanmax), ('min', nanmin),
+                ('std', nanstd), ('count', onp.size))
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
@@ -557,9 +587,9 @@ class LeadingObsTrends(LeadingObsMetric):
         trend = jnp.where(mask > 0, trend, jnp.nan)
         trend_hat = jnp.where(mask > 0, trend_hat, jnp.nan)
 
-        mae = onp.nanmean(onp.abs(trend - trend_hat), axis=0)
-        rms = onp.sqrt(onp.nanmean((trend - trend_hat)**2, axis=0))
-        mse = onp.nanmean((trend - trend_hat)**2, axis=0)
+        mae = nanmean(onp.abs(trend - trend_hat), axis=0)
+        rms = onp.sqrt(nanmean((trend - trend_hat)**2, axis=0))
+        mse = nanmean((trend - trend_hat)**2, axis=0)
         return mae, rms, mse
 
     def __call__(self, predictions: Predictions):
@@ -671,9 +701,8 @@ class AdmissionAUC(Metric):
 
     @staticmethod
     def agg_fields():
-        return (('mean', onp.nanmean), ('median', onp.nanmedian), ('max',
-                                                                   onp.nanmax),
-                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
+        return (('mean', nanmean), ('median', nanmedian), ('max', nanmax),
+                ('min', nanmin), ('std', nanstd), ('count', onp.size))
 
     @staticmethod
     def subject_qualifier(subject_id):
