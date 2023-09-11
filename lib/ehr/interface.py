@@ -136,6 +136,40 @@ class Predictions(dict):
         loss_v = jnp.nanmean(loss_v)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
+    def prediction_lead_data(self, obs_index):
+        preds = self.get_predictions()
+
+        y = []
+        y_hat = []
+        mask = []
+
+        obs = []
+        obs_mask = []
+        for pred in preds:
+            adm = pred.admission
+            for pred_lo, adm_lo, adm_obs in zip(pred.leading_observable,
+                                                adm.leading_observable,
+                                                adm.observables):
+                for i in range(len(adm_lo.time)):
+                    mask.append(adm_lo.mask[i])
+                    y.append(adm_lo.value[i])
+                    y_hat.append(pred_lo.value[i])
+                    obs.append(adm_obs.value[i][obs_index])
+                    obs_mask.append(adm_obs.mask[i][obs_index])
+
+        y = jnp.vstack(y)
+        y_hat = jnp.vstack(y_hat)
+        mask = jnp.vstack(mask)
+        obs = jnp.vstack(obs)
+        obs_mask = jnp.vstack(obs_mask)
+        return {
+            'y': y,
+            'y_hat': y_hat,
+            'mask': mask,
+            'obs': obs,
+            'obs_mask': obs_mask,
+        }
+
     def outcome_first_occurrence_masks(self, subject_id):
         preds = self[subject_id]
         adms = [preds[aid].admission for aid in sorted(preds.keys())]

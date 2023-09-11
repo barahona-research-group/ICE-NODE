@@ -54,7 +54,7 @@
         "meta_fpath": "",
         "overlapping_admissions": "merge",
         "path": "",
-        "sample": null,
+        "sample": 15000,
         "scheme": {
             "_type": "MIMIC4ICUDatasetSchemeConfig",
             "dx": {
@@ -168,13 +168,25 @@
                 "lead_loss": [
                     "mse",
                     "mae",
-                    "rms"
+                    "rms",
+                    "softdtw(0.1)"
                 ],
                 "obs_loss": [
                     "mse",
                     "mae",
                     "rms"
                 ]
+            },
+            "external_argnames": [
+                "patients"
+            ]
+        },
+        {
+            "classname": "LeadingObsTrends",
+            "config": {
+                "_type": "CodeLevelMetricConfig",
+                "aggregate_level": true,
+                "code_level": true
             },
             "external_argnames": [
                 "patients"

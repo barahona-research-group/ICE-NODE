@@ -10,6 +10,7 @@ from tqdm import tqdm
 from absl import logging
 import pandas as pd
 import numpy as onp
+from scipy import stats
 import jax
 import jax.numpy as jnp
 from sklearn import metrics
@@ -261,8 +262,9 @@ class CodeLevelMetric(Metric):
 
     @staticmethod
     def agg_fields():
-        return (('mean', onp.nanmean), ('median', onp.nanmedian),
-                ('max', onp.nanmax), ('min', onp.nanmin))
+        return (('mean', onp.nanmean), ('median', onp.nanmedian), ('max',
+                                                                   onp.nanmax),
+                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
 
     def code_qualifier(self, code_index):
         return f'I{code_index}C{self._index2code[code_index]}'
@@ -301,7 +303,10 @@ class CodeLevelMetric(Metric):
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
         for field in self.fields():
-            field_vals = onp.array(list(result[field].values()))
+            if isinstance(result[field], dict):
+                field_vals = onp.array(list(result[field].values()))
+            else:
+                field_vals = result[field]
             for _, agg_f in self.agg_fields():
                 row.append(agg_f(field_vals))
         return tuple(row)
@@ -353,8 +358,8 @@ class CodeAUC(CodeLevelMetric):
     @staticmethod
     def agg_fields():
         return (('mean', onp.nanmean), ('weighted_mean', nanaverage),
-                ('median', onp.nanmedian), ('max', onp.nanmax), ('min',
-                                                                 onp.nanmin))
+                ('median', onp.nanmedian), ('max', onp.nanmax),
+                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
@@ -494,6 +499,107 @@ class LeadingObsLossMetric(ObsCodeLevelLossMetric):
         return loss_vals
 
 
+class LeadingObsTrends(LeadingObsMetric):
+
+    def fields(self):
+        return ('tp', 'tn', 'fp', 'fn', 'n', 'pearson', 'spearman',
+                'tp_pearson', 'tp_spearman', 'tn_pearson', 'tn_spearman',
+                'mae', 'rms', 'mse')
+
+    def dirs(self):
+        return (1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0)
+
+    @classmethod
+    def _compute_tp(cls, trend, trend_hat, mask):
+        tp = (trend > 0) * (trend_hat > 0) * mask
+
+        trend = pd.DataFrame(jnp.where(tp > 0, trend, jnp.nan))
+        trend_hat = pd.DataFrame(jnp.where(tp > 0, trend_hat, jnp.nan))
+
+        tp_spearman = trend.corrwith(trend_hat, axis=0,
+                                     method='spearman').values
+        tp_pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
+        return tp.sum(axis=0) / mask.sum(axis=0), tp_pearson, tp_spearman
+
+    @classmethod
+    def _compute_tn(cls, trend, trend_hat, mask):
+        tn = (trend <= 0) * (trend_hat <= 0) * mask
+        trend = pd.DataFrame(jnp.where(tn > 0, trend, jnp.nan))
+        trend_hat = pd.DataFrame(jnp.where(tn > 0, trend_hat, jnp.nan))
+
+        tn_spearman = trend.corrwith(trend_hat, axis=0,
+                                     method='spearman').values
+        tn_pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
+
+        return tn.sum(axis=0) / mask.sum(axis=0), tn_pearson, tn_spearman
+
+    @classmethod
+    def _compute_fp(cls, trend, trend_hat, mask):
+        a = (trend <= 0) * (trend_hat > 0) * mask
+        return a.sum(axis=0) / mask.sum(axis=0)
+
+    @classmethod
+    def _compute_fn(cls, trend, trend_hat, mask):
+        a = (trend > 0) * (trend_hat <= 0) * mask
+        return a.sum(axis=0) / mask.sum(axis=0)
+
+    @classmethod
+    def _compute_corr(cls, trend, trend_hat, mask):
+        trend = pd.DataFrame(onp.where(mask > 0, trend, jnp.nan))
+        trend_hat = pd.DataFrame(onp.where(mask > 0, trend_hat, jnp.nan))
+
+        spearman = trend.corrwith(trend_hat, axis=0, method='spearman').values
+        pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
+        return pearson, spearman
+
+    @classmethod
+    def _compute_errors(cls, trend, trend_hat, mask):
+        trend = jnp.where(mask > 0, trend, jnp.nan)
+        trend_hat = jnp.where(mask > 0, trend_hat, jnp.nan)
+
+        mae = onp.nanmean(onp.abs(trend - trend_hat), axis=0)
+        rms = onp.sqrt(onp.nanmean((trend - trend_hat)**2, axis=0))
+        mse = onp.nanmean((trend - trend_hat)**2, axis=0)
+        return mae, rms, mse
+
+    def __call__(self, predictions: Predictions):
+        obs_index = self.patients.config.leading_observable.index
+        data = predictions.prediction_lead_data(obs_index)
+        y = onp.array(data['y'])
+        y_hat = onp.array(data['y_hat'])
+        mask = onp.array(data['mask'])
+        obs = onp.array(data['obs'])
+        obs_mask = onp.array(data['obs_mask'])
+
+        trend = y - obs
+        trend_hat = y_hat - obs
+        mask = mask * obs_mask
+
+        n = mask.sum(axis=0)
+        tp, tp_pearson, tp_spearman = self._compute_tp(trend, trend_hat, mask)
+        tn, tn_pearson, tn_spearman = self._compute_tn(trend, trend_hat, mask)
+        fp = self._compute_fp(trend, trend_hat, mask)
+        fn = self._compute_fn(trend, trend_hat, mask)
+        pearson, spearman = self._compute_corr(trend, trend_hat, mask)
+        mae, rms, mse = self._compute_errors(trend, trend_hat, mask)
+        return {
+            'tp': tp,
+            'tn': tn,
+            'fp': fp,
+            'fn': fn,
+            'n': n,
+            'pearson': pearson,
+            'spearman': spearman,
+            'tp_pearson': tp_pearson,
+            'tp_spearman': tp_spearman,
+            'tn_pearson': tn_pearson,
+            'tn_spearman': tn_spearman,
+            'mae': mae,
+            'rms': rms,
+            'mse': mse
+        }
+
+
 class UntilFirstCodeAUC(CodeAUC):
 
     def __call__(self, predictions: Predictions):
@@ -565,8 +671,9 @@ class AdmissionAUC(Metric):
 
     @staticmethod
     def agg_fields():
-        return (('mean', onp.nanmean), ('median', onp.nanmedian),
-                ('max', onp.nanmax), ('min', onp.nanmin))
+        return (('mean', onp.nanmean), ('median', onp.nanmedian), ('max',
+                                                                   onp.nanmax),
+                ('min', onp.nanmin), ('std', onp.nanstd), ('count', onp.size))
 
     @staticmethod
     def subject_qualifier(subject_id):
@@ -742,7 +849,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return (1, )
 
     def column(self, group_index, k, field):
-        return f'G{group_index}k{k}.{field}'
+        return f'{self.classname()}.G{group_index}k{k}.{field}'
 
     def order(self):
         for k in self.config.top_k_list:
