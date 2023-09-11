@@ -77,6 +77,11 @@ class PatientEmbedding(eqx.Module):
         else:
             self._f_dem_emb = lambda x: jnp.array([], dtype=jnp.float16)
 
+    @eqx.filter_jit
+    def dx_embdeddings(self):
+        in_size = self._f_dx_emb.in_size
+        return eqx.filter_vmap(self._f_dx_emb)(jnp.eye(in_size))
+
     @abstractmethod
     def embed_admission(self, static_info: StaticInfo,
                         admission: Admission) -> EmbeddedAdmission:

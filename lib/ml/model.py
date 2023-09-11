@@ -69,9 +69,10 @@ class AbstractModel(Module):
             f"({demo_vec_dim}) must both be zero or non-zero."
 
     @abstractmethod
-    def __call__(self, x: Union[Patient, Admission],
-                 embedded_x: Union[List[EmbeddedAdmission],
-                                   EmbeddedAdmission]):
+    def __call__(self,
+                 x: Union[Patient, Admission],
+                 embedded_x: Union[List[EmbeddedAdmission], EmbeddedAdmission],
+                 store_embeddings: bool = False):
         pass
 
     @abstractmethod
@@ -82,10 +83,6 @@ class AbstractModel(Module):
     @abstractmethod
     def counts_ignore_first_admission(self):
         pass
-
-    # def subject_embeddings(self, patients: Patients, batch: List[int]):
-    #     out = self(patients, batch, dict(return_embeddings=True))
-    #     return {i: out['predictions'].get_subject_embeddings(i) for i in batch}
 
     # @classmethod
     # def sample_reg_hyperparams(cls, trial: optuna.Trial):
@@ -186,7 +183,8 @@ class InpatientModel(AbstractModel):
 
     def batch_predict(self,
                       inpatients: Patients,
-                      leave_pbar: bool = False) -> Predictions:
+                      leave_pbar: bool = False,
+                      store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.interval_days()
 
         inpatients_emb = {
@@ -212,7 +210,10 @@ class InpatientModel(AbstractModel):
                 for adm, adm_e in zip(inpatient.admissions,
                                       embedded_admissions):
                     results.add(subject_id=subject_id,
-                                prediction=self(adm, adm_e))
+                                prediction=self(
+                                    adm,
+                                    adm_e,
+                                    store_embeddings=store_embeddings))
                     pbar.update(adm.interval_days)
             return results.filter_nans()
 
@@ -229,7 +230,8 @@ class OutpatientModel(AbstractModel):
 
     def batch_predict(self,
                       inpatients: Patients,
-                      leave_pbar: bool = False) -> Predictions:
+                      leave_pbar: bool = False,
+                      store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
         inpatients_emb = {
             i: self._f_emb(subject)
@@ -250,10 +252,15 @@ class OutpatientModel(AbstractModel):
                     f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
-                for pred in self(inpatient, embedded_admissions):
+                for pred in self(inpatient,
+                                 embedded_admissions,
+                                 store_embeddings=store_embeddings):
                     results.add(subject_id=subject_id, prediction=pred)
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
+
+    def patient_embeddings(self, patients: Patients):
+        pass
 
 
 #     @classmethod

@@ -30,11 +30,27 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
     return first_occurrence
 
 
+class PatientTrajectory(Data):
+    time: jnp.ndarray
+    state: jnp.ndarray
+
+    @staticmethod
+    def concat(trajectories: List[PatientTrajectory]):
+        if isinstance(trajectories[0], list):
+            trajectories = [
+                PatientTrajectory.concat(traj) for traj in trajectories
+            ]
+        return PatientTrajectory(
+            time=jnp.hstack([traj.time for traj in trajectories]),
+            state=jnp.vstack([traj.state for traj in trajectories]))
+
+
 class AdmissionPrediction(Data):
     admission: Admission
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
     leading_observable: Optional[List[InpatientObservables]] = None
+    trajectory: Optional[PatientTrajectory] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
@@ -59,6 +75,18 @@ class Predictions(dict):
         if subject_ids is None:
             subject_ids = self.keys()
         return sum((list(self[sid].values()) for sid in subject_ids), [])
+
+    def get_patient_trajectories(self,
+                                 subject_ids: Optional[List[str]] = None):
+        if subject_ids is None:
+            subject_ids = sorted(self.keys())
+
+        trajectories = {}
+        for sid in subject_ids:
+            adm_ids = sorted(self[sid].keys())
+            trajectories[sid] = PatientTrajectory.concat(
+                [self[sid][aid].trajectory for aid in adm_ids])
+        return trajectories
 
     def average_interval_hours(self):
         preds = self.get_predictions()

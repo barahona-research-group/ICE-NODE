@@ -49,6 +49,11 @@ class Experiment(Module):
             config = Config.from_dict(config)
         super().__init__(config=config, **kwargs)
 
+    @staticmethod
+    def inpatient(config):
+        model_class = Module._class_registry[config.model_classname]
+        return issubclass(model_class, InpatientModel)
+
     def load_splits(self, dataset):
         p_splits = [
             self.config.split.train,
@@ -146,5 +151,3 @@ class InpatientExperiment(Experiment):
     def load_trainer(self):
         return InTrainer(self.config.trainer,
                          reg_hyperparams=self.config.reg_hyperparams)
-
-

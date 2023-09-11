@@ -26,14 +26,13 @@ from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
 def safe_nan_func(func, x, axis):
     """Apply `func` to `x` along `axis`, ignoring NaNs."""
     with warnings.catch_warnings():
-        warnings.filterwarnings("ignore",
-                                category=RuntimeWarning)
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
         return func(x, axis=axis)
 
 
 def nanaverage(A, weights, axis):
-    return safe_nan_func(lambda x, ax: onp.nansum(x * weights, axis=ax) /
-                         ((~onp.isnan(x)) * weights).sum(axis=ax),
+    return safe_nan_func(lambda x, axis: onp.nansum(x * weights, axis=axis) /
+                         ((~onp.isnan(x)) * weights).sum(axis=axis),
                          A,
                          axis=axis)
 

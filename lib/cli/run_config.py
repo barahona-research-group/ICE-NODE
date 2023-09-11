@@ -7,7 +7,6 @@ from ..base import Config
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--inpatient', type=bool, default=False)
     parser.add_argument('--config', type=str, required=True)
     parser.add_argument('--dataset-path', type=str, required=False, default="")
     parser.add_argument('--cache-path', type=str, required=False, default="")
@@ -35,7 +34,7 @@ if __name__ == '__main__':
             key, value = override.split('=')
             config = config.path_update(key, value)
 
-    if args.inpatient:
+    if Experiment.inpatient(config):
         experiment = InpatientExperiment(config)
     else:
         experiment = Experiment(config)

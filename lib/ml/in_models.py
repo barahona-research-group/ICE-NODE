@@ -10,7 +10,7 @@ import equinox as eqx
 from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
                    DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableConfig)
+                   LeadingObservableConfig, PatientTrajectory)
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedInAdmission)
 
@@ -194,15 +194,16 @@ class InICENODE(InpatientModel):
                        InpatientObservables(lead.time, pred_lead_val,
                                             lead.mask))
 
-    def __call__(
-            self, admission: Admission,
-            embedded_admission: EmbeddedInAdmission) -> AdmissionPrediction:
+    def __call__(self, admission: Admission,
+                 embedded_admission: EmbeddedInAdmission,
+                 store_embeddings: bool) -> AdmissionPrediction:
         state = self.join_state(None, None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo
         obs = admission.observables
         lead = admission.leading_observable
         pred_obs_l = []
         pred_lead_l = []
+        trajectory_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
         for i in range(len(t0)):
@@ -212,13 +213,16 @@ class InICENODE(InpatientModel):
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
+            trajectory_l.append(PatientTrajectory(time=t1[i], state=state))
 
         pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
                               admission.outcome.scheme)
+
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
                                    observables=pred_obs_l,
-                                   leading_observable=pred_lead_l)
+                                   leading_observable=pred_lead_l,
+                                   trajectory=trajectory_l)
 
     @property
     def dyn_params_list(self):
