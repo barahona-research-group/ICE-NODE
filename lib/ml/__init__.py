@@ -1,7 +1,9 @@
-from .model import (AbstractModel, ModelConfig)
+from .model import (AbstractModel, ModelConfig, ModelRegularisation)
 from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
-                        ICENODEConfig, GRUConfig, RETAINConfig)
-from .in_models import (InICENODE, InICENODEConfig)
+                        ICENODEConfig, GRUConfig, RETAINConfig,
+                        ICENODERegularisation)
+
+from .in_models import (InICENODE, InICENODEConfig, InICENODERegularisation)
 
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedAdmission, OutpatientEmbedding,

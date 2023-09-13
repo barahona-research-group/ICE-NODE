@@ -24,7 +24,7 @@ from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 from ..base import Config, Module
-from .model import AbstractModel
+from .model import AbstractModel, ModelRegularisation
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
 
@@ -658,17 +658,17 @@ class TrainerConfig(Config):
 
 class Trainer(Module):
     config: TrainerConfig
-    reg_hyperparams: Config
+    reg_hyperparams: ModelRegularisation
     _dx_loss: Callable
     _obs_loss: Callable
     _lead_loss: Callable
 
     def __init__(self,
                  config: TrainerConfig,
-                 reg_hyperparams: Config = Config()):
+                 reg_hyperparams: ModelRegularisation = ModelRegularisation()):
         super().__init__(config=config)
         if reg_hyperparams is None:
-            reg_hyperparams = Config()
+            reg_hyperparams = ModelRegularisation()
         self.config = config
         self.reg_hyperparams = reg_hyperparams
         self._dx_loss = binary_loss[config.dx_loss]
@@ -684,22 +684,33 @@ class Trainer(Module):
         return predictions.prediction_dx_loss(dx_loss=self._dx_loss)
 
     def reg_loss(self, model: AbstractModel, patients: Patients):
-        predictions = model.batch_predict(patients, leave_pbar=False)
+        predictions = model.batch_predict(patients,
+                                          leave_pbar=False,
+                                          regularisation=self.reg_hyperparams)
         loss = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
         l1_loss = model.l1()
         l2_loss = model.l2()
-        l1_alpha = self.reg_hyperparams['L_l1']
-        l2_alpha = self.reg_hyperparams['L_l2']
+        l1_alpha = self.reg_hyperparams.L_l1
+        l2_alpha = self.reg_hyperparams.L_l2
+        assoc_reg = predictions.associative_regularisation(
+            self.reg_hyperparams)
+        print(assoc_reg)
 
-        loss = loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss)
+        loss = loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + assoc_reg
 
         return loss
 
+    @property
+    def regularisation_effect(self):
+        return self.reg_hyperparams is not None and len(
+            self.reg_hyperparams) > 0 and any(
+                v > 0 for v in self.reg_hyperparams.as_dict().values())
+
     def loss(self, model: AbstractModel, patients: Patients):
-        if len(self.reg_hyperparams) == 0:
-            return self.unreg_loss(model, patients)
-        else:
+        if self.regularisation_effect:
             return self.reg_loss(model, patients)
+        else:
+            return self.unreg_loss(model, patients)
 
     def _post_update_params(self, model: AbstractModel):
         return model
@@ -919,6 +930,23 @@ class LassoNetTrainer(Trainer):
 
 
 class InTrainer(Trainer):
+
+    def reg_loss(self, model: AbstractModel, patients: Patients):
+        preds = model.batch_predict(patients,
+                                    leave_pbar=False,
+                                    regularisation=self.reg_hyperparams)
+        dx_loss = preds.prediction_dx_loss(dx_loss=self._dx_loss)
+        obs_loss = preds.prediction_obs_loss(obs_loss=self._obs_loss)
+        lead_loss = preds.prediction_lead_loss(lead_loss=self._lead_loss)
+        loss = dx_loss + 5e0 * obs_loss + 5e0 * lead_loss
+
+        l1_loss = model.l1()
+        l2_loss = model.l2()
+        l1_alpha = self.reg_hyperparams.L_l1
+        l2_alpha = self.reg_hyperparams.L_l2
+        assoc_reg = preds.associative_regularisation(self.reg_hyperparams)
+
+        return loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + assoc_reg
 
     def unreg_loss(self, model: AbstractModel, patients: Patients):
         preds = model.batch_predict(patients, leave_pbar=False)

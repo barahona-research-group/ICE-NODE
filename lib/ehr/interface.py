@@ -51,6 +51,7 @@ class AdmissionPrediction(Data):
     observables: Optional[List[InpatientObservables]] = None
     leading_observable: Optional[List[InpatientObservables]] = None
     trajectory: Optional[PatientTrajectory] = None
+    associative_regularisation: Optional[Dict[str, jnp.ndarray]] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
@@ -75,6 +76,15 @@ class Predictions(dict):
         if subject_ids is None:
             subject_ids = self.keys()
         return sum((list(self[sid].values()) for sid in subject_ids), [])
+
+    def associative_regularisation(self, regularisation: Config):
+        preds = self.get_predictions()
+        reg = []
+        for p in preds:
+            if p.associative_regularisation is not None:
+                for k, term in p.associative_regularisation.items():
+                    reg.append(term * regularisation.get(k))
+        return sum(reg)
 
     def get_patient_trajectories(self,
                                  subject_ids: Optional[List[str]] = None):

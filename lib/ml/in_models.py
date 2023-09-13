@@ -14,7 +14,7 @@ from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedInAdmission)
 
-from .model import InpatientModel, ModelConfig
+from .model import InpatientModel, ModelConfig, ModelRegularisation
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 
 
@@ -24,6 +24,10 @@ class InICENODEConfig(ModelConfig):
     lead: int = 5
     lead_predictor: str = "monotonic"
 
+
+class InICENODERegularisation(ModelRegularisation):
+    L_taylor: float = 0.0
+    taylor_order: int = 0
 
 class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
@@ -196,6 +200,7 @@ class InICENODE(InpatientModel):
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
+                 regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         state = self.join_state(None, None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo

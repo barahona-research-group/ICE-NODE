@@ -25,6 +25,11 @@ class ModelConfig(Config):
     emb: PatientEmbeddingConfig = PatientEmbeddingConfig()
 
 
+class ModelRegularisation(Config):
+    L_l1: float = 0.0
+    L_l2: float = 0.0
+
+
 class AbstractModel(Module):
     _f_emb: PatientEmbedding
     _f_dx_dec: Callable
@@ -72,11 +77,16 @@ class AbstractModel(Module):
     def __call__(self,
                  x: Union[Patient, Admission],
                  embedded_x: Union[List[EmbeddedAdmission], EmbeddedAdmission],
+                 regularisation: Optional[ModelRegularisation] = None,
                  store_embeddings: bool = False):
         pass
 
     @abstractmethod
-    def batch_predict(self, patients: Patients, leave_pbar: bool = False):
+    def batch_predict(self,
+                      patients: Patients,
+                      leave_pbar: bool = False,
+                      regularisation: Optional[ModelRegularisation] = None,
+                      store_embeddings: bool = False) -> Predictions:
         pass
 
     @property
@@ -85,7 +95,7 @@ class AbstractModel(Module):
         pass
 
     # @classmethod
-    # def sample_reg_hyperparams(cls, trial: optuna.Trial):
+    # def sample_reg_regularisation(cls, trial: optuna.Trial):
     #     return {
     #         'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
     #         'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
@@ -96,11 +106,21 @@ class AbstractModel(Module):
         return {}
 
     def weights(self):
-        has_weight = lambda leaf: hasattr(leaf, 'weight')
+
+        def _weights(x):
+            w = []
+            if not hasattr(x, '__dict__'):
+                return w
+            for k, v in x.__dict__.items():
+                if 'weight' in k:
+                    w.append(v)
+            return tuple(w)
+
+        has_weight = lambda leaf: len(_weights(leaf)) > 0
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
-        return tuple(x.weight
-                     for x in jtu.tree_leaves(self, is_leaf=has_weight)
-                     if has_weight(x))
+        return sum((_weights(x)
+                    for x in jtu.tree_leaves(self, is_leaf=has_weight)
+                    if has_weight(x)), ())
 
     def l1(self):
         return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
@@ -177,13 +197,14 @@ class InpatientModel(AbstractModel):
     @classmethod
     def external_argnames(cls):
         return [
-            "schemes", "demographic_vector_config", "key",
-            "leading_observable_config"
+            "schemes", "demographic_vector_config",
+            "leading_observable_config", "key"
         ]
 
     def batch_predict(self,
                       inpatients: Patients,
                       leave_pbar: bool = False,
+                      regularisation: Optional[ModelRegularisation] = None,
                       store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.interval_days()
 
@@ -213,6 +234,7 @@ class InpatientModel(AbstractModel):
                                 prediction=self(
                                     adm,
                                     adm_e,
+                                    regularisation=regularisation,
                                     store_embeddings=store_embeddings))
                     pbar.update(adm.interval_days)
             return results.filter_nans()
@@ -231,6 +253,7 @@ class OutpatientModel(AbstractModel):
     def batch_predict(self,
                       inpatients: Patients,
                       leave_pbar: bool = False,
+                      regularisation: Optional[ModelRegularisation] = None,
                       store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
         inpatients_emb = {
@@ -254,6 +277,7 @@ class OutpatientModel(AbstractModel):
                 embedded_admissions = inpatients_emb[subject_id]
                 for pred in self(inpatient,
                                  embedded_admissions,
+                                 regularisation=regularisation,
                                  store_embeddings=store_embeddings):
                     results.add(subject_id=subject_id, prediction=pred)
                 pbar.update(inpatient.d2d_interval_days)

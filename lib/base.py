@@ -125,6 +125,12 @@ class Config(eqx.Module):
         updated.update({k: kwargs[k] for k in set(kwargs) & set(updated)})
         return Config.from_dict(updated, config_class=self.__class__)
 
+    def get(self, path, default=None):
+        x = self
+        for n in path.split('.'):
+            x = getattr(x, n, default)
+        return x
+
 
 class Module(eqx.Module, metaclass=ABCMeta):
     config: Config

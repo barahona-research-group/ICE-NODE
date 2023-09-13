@@ -1,6 +1,6 @@
 """."""
 from __future__ import annotations
-from typing import List, Callable, Tuple
+from typing import List, Callable, Tuple, Optional
 
 from absl import logging
 import jax
@@ -11,15 +11,20 @@ import equinox as eqx
 
 from ..utils import model_params_scaler
 from ..ehr import (Patient, AdmissionPrediction, DemographicVectorConfig,
-                   DatasetScheme, CodesVector, PatientTrajectory)
+                   DatasetScheme, CodesVector, PatientTrajectory, Predictions)
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import OutpatientModel, ModelConfig
+from .model import OutpatientModel, ModelConfig, ModelRegularisation
 
 
 class ICENODEConfig(ModelConfig):
     mem: int = 15
+
+
+class ICENODERegularisation(ModelRegularisation):
+    L_taylor: float = 0.0
+    taylor_order: int = 0
 
 
 #     @classmethod
@@ -86,6 +91,16 @@ class ICENODE(OutpatientModel):
         return self._f_dyn(delta, state, args=dict(control=ctrl))[-1]
 
     @eqx.filter_jit
+    def _integrate_reg(self, state, delta, ctrl, taylor_order):
+        second = jnp.array(1 / (3600.0 * 24.0))
+        delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
+        state_v, reg_v = self._f_dyn(delta,
+                                     state,
+                                     args=dict(control=ctrl,
+                                               tay_reg=taylor_order))
+        return state_v[-1], reg_v[-1]
+
+    @eqx.filter_jit
     def _update(self, *args):
         return self._f_update(*args)
 
@@ -102,8 +117,13 @@ class ICENODE(OutpatientModel):
         """
         return t1 - t2
 
+    @staticmethod
+    def regularisation_effect(reg: ICENODERegularisation):
+        return reg is not None and reg.L_taylor > 0.0 and reg.taylor_order > 0
+
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
+                 regularisation: Optional[ICENODERegularisation],
                  store_embeddings: bool):
         adms = patient.admissions
         state = self.join_state_emb(None, embedded_admissions[0].dx)
@@ -121,7 +141,15 @@ class ICENODE(OutpatientModel):
             delta_disch2disch = jnp.array(dt)
 
             demo_e = embedded_admissions[i - 1].demo
-            state = self._integrate(state, delta_disch2disch, demo_e)
+            if self.regularisation_effect(regularisation):
+                state, reg = self._integrate_reg(state, delta_disch2disch,
+                                                 demo_e,
+                                                 regularisation.taylor_order)
+                reg = {'L_taylor': reg / delta_disch2disch}
+            else:
+                state = self._integrate(state, delta_disch2disch, demo_e)
+                reg = None
+
             mem, dx_e_hat = self.split_state_emb(state)
 
             # Predict
@@ -137,10 +165,13 @@ class ICENODE(OutpatientModel):
                 preds.append(
                     AdmissionPrediction(admission=adm,
                                         outcome=dx_hat,
-                                        trajectory=trajectory))
+                                        trajectory=trajectory,
+                                        associative_regularisation=reg))
             else:
-                preds.append(AdmissionPrediction(admission=adm,
-                                                 outcome=dx_hat))
+                preds.append(
+                    AdmissionPrediction(admission=adm,
+                                        outcome=dx_hat,
+                                        associative_regularisation=reg))
         return preds
 
 
@@ -193,9 +224,6 @@ class GRU(OutpatientModel):
     def dyn_params_list(self):
         return self.params_list(self._f_update)
 
-    def weights(self):
-        return [self._f_update.weight_hh, self._f_update.weight_ih]
-
     @eqx.filter_jit
     def _update(self, mem: jnp.ndarray, dx_e_prev: jnp.ndarray,
                 demo: jnp.ndarray):
@@ -208,7 +236,7 @@ class GRU(OutpatientModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 store_embeddings: bool):
+                 regularisation: ModelRegularisation, store_embeddings: bool):
         adms = patient.admissions
         state = jnp.zeros((self.config.emb.dx, ))
         preds = []
@@ -288,13 +316,6 @@ class RETAIN(OutpatientModel):
 
         super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
-    def weights(self):
-        return [
-            self._f_gru_a.weight_hh, self._f_gru_a.weight_ih,
-            self._f_gru_b.weight_hh, self._f_gru_b.weight_ih,
-            self._f_att_a.weight, self._f_att_b.weight
-        ]
-
     @property
     def dyn_params_list(self):
         return self.params_list(
@@ -322,7 +343,7 @@ class RETAIN(OutpatientModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 store_embeddings: bool):
+                 regularisation: ModelRegularisation, store_embeddings: bool):
         adms = patient.admissions
         state_a0 = jnp.zeros(self.config.mem_a)
         state_b0 = jnp.zeros(self.config.mem_b)
