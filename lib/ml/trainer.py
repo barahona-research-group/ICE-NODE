@@ -694,7 +694,6 @@ class Trainer(Module):
         l2_alpha = self.reg_hyperparams.L_l2
         assoc_reg = predictions.associative_regularisation(
             self.reg_hyperparams)
-        print(assoc_reg)
 
         loss = loss + (l1_alpha * l1_loss) + (l2_alpha * l2_loss) + assoc_reg
 
