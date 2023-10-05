@@ -1,4 +1,4 @@
-<mxfile host="Electron" modified="2023-09-22T17:19:52.422Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/21.7.5 Chrome/114.0.5735.289 Electron/25.8.1 Safari/537.36" etag="rpABOpqB8qbCRRtbkzin" version="21.7.5" type="device" pages="10">
+<mxfile host="Electron" modified="2023-09-22T17:20:21.120Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/21.7.5 Chrome/114.0.5735.289 Electron/25.8.1 Safari/537.36" etag="2LNFbl6mj8l4y9yGBQIt" version="21.7.5" type="device" pages="10">
   <diagram name="data_pipeline" id="9KaeDP_dIOGYorwBRbs_">
     <mxGraphModel dx="3284" dy="1923" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
@@ -2582,7 +2582,7 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="NpBYpxOrs5x-L0JhDStW-50" value="" style="group" vertex="1" connectable="0" parent="1">
-          <mxGeometry x="-1" y="588" width="990" height="229" as="geometry" />
+          <mxGeometry y="582" width="990" height="229" as="geometry" />
         </mxCell>
         <mxCell id="OZYA9jn88u9N7FwrBHO3-1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f9f7ed;strokeColor=#36393d;dashed=1;strokeWidth=2;arcSize=16;fontSize=14;" vertex="1" parent="NpBYpxOrs5x-L0JhDStW-50">
           <mxGeometry width="990.0000000000001" height="229" as="geometry" />
