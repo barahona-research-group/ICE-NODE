@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from sklearn import metrics
 import warnings
 
-from ..ehr import Patients, Predictions
+from ..ehr import Patients, Predictions, AdmissionPrediction
 from ..base import Module, Config
 from .delong import FastDeLongTest
 from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
@@ -269,6 +269,25 @@ class LossMetric(Metric):
         }
 
 
+class AKISegmentedAdmission(Metric):
+    def _segment_prediction(self, prediction: AdmissionPrediction):
+        leading_observable_config = self.patients.config.leading_observable
+        obs_index  = leading_observable_config.index
+        adm_id = prediction.admission.adm_id
+
+
+
+
+
+    def _segment_predictions(self, predictions: Predictions):
+        pass
+
+
+    def __call__(self, predictions: Predictions):
+
+        return predictions.aki_segmented_admission()
+
+
 class CodeLevelMetricConfig(Config):
     code_level: bool = True
     aggregate_level: bool = True
@@ -438,7 +457,6 @@ class CodeAUC(CodeLevelMetric):
             else:
                 vals['auc'][code_index] = onp.nan
         return vals
-
 
 class ColwiseLossMetricConfig(Config):
     loss: List[str] = field(default_factory=list)
