@@ -5,6 +5,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field, dataclass
 import sys
 import inspect
+from collections import defaultdict
 
 from tqdm import tqdm
 from absl import logging
@@ -16,7 +17,8 @@ import jax.numpy as jnp
 from sklearn import metrics
 import warnings
 
-from ..ehr import Patients, Predictions, AdmissionPrediction
+from ..ehr import (Patients, Predictions, AdmissionPrediction,
+                   InpatientObservables)
 from ..base import Module, Config
 from .delong import FastDeLongTest
 from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
@@ -108,6 +110,15 @@ def compute_auc(v_truth, v_preds):
                                     v_preds.flatten(),
                                     pos_label=1)
     return metrics.auc(fpr, tpr)
+
+
+def nan_compute_auc(v_truth, v_preds):
+    isnan = onp.isnan(v_truth) | onp.isnan(v_preds)
+    v_truth = v_truth[~isnan]
+    v_preds = v_preds[~isnan]
+    npos = v_truth.sum()
+    nneg = onp.size(v_truth) - npos
+    return (npos, nneg), compute_auc(v_truth, v_preds)
 
 
 class Metric(Module):
@@ -269,23 +280,308 @@ class LossMetric(Metric):
         }
 
 
-class AKISegmentedAdmission(Metric):
-    def _segment_prediction(self, prediction: AdmissionPrediction):
+class AKISegmentedAdmissionConfig(Config):
+    stable_window: int = 12
+
+
+def nan_concat_lagging_windows(x):
+    n = len(x)
+    add_arr = onp.full(n - 1, onp.nan)
+    x_ext = onp.concatenate((add_arr, x))
+    strided = onp.lib.stride_tricks.as_strided
+    nrows = len(x_ext) - n + 1
+    s = x_ext.strides[0]
+    return strided(x_ext, shape=(nrows, n), strides=(s, s))[:, :]
+
+
+class AKISegmentedAdmissionMetric(Metric):
+
+    def _label_aki_timestamps(self, prediction: AdmissionPrediction):
+        """
+        Label the observation timestamps into AKI and non-AKI.
+        The label at a timestamp is:
+            1. '1.0' (i.e. an AKI) if the patient has a nonzero AKI index at \
+                that timestamp or within the preceding 'stable_window' hours.
+            2. '0.0' (stable) if the patient has a zero AKI index at that \
+                timestamp and within the preceding 'stable_window' hours.
+            3. 'NaN' if there is no valid AKI index at that timestamp and \
+                within the preceding 'stable_window' hours.
+
+        Returns:
+            a vector of length len(observation_timestamps) with 1 for AKI and 0
+            for non-AKI.
+        """
+
         leading_observable_config = self.patients.config.leading_observable
-        obs_index  = leading_observable_config.index
-        adm_id = prediction.admission.adm_id
+        aki_index = leading_observable_config.index
+        observables = prediction.admission.observables
+        time = onp.array(observables.time)
+        mask = onp.array(observables.mask[:, aki_index])
+        aki = onp.array(observables.value[:, aki_index])
+        aki = onp.where(mask, aki, onp.nan)
 
+        t_preced = nan_concat_lagging_windows(time)
+        aki_preced = nan_concat_lagging_windows(aki)
+        t_diff = t_preced[:, -1, None] - t_preced
+        mask = t_diff <= self.config.stable_window
 
+        aki_preced = onp.where(mask, (aki_preced > 0) * 1.0, onp.nan)
 
+        aki_max = nanmax(aki_preced, axis=1)
+        return aki_max
 
+    def _segment_aki_labels(self, prediction: AdmissionPrediction):
+        """
+        Segment the AKI labels into periods of constant AKI or \
+            constant non-AKI.
 
-    def _segment_predictions(self, predictions: Predictions):
-        pass
+        Returns:
+            a list of tuples (time, aki) where time is a vector of timestamps \
+                and aki is the AKI label (1 for AKI, 0 for non-AKI, NaN for \
+                unknown).
+        """
+        aki_labels = self._label_aki_timestamps(prediction)
+        aki_labels = onp.nan_to_num(aki_labels, nan=-1)
+        aki_jumps = onp.hstack((0, aki_labels[1:] - aki_labels[:-1]))
+        aki_jumps_idx = onp.argwhere(aki_jumps != 0).flatten().tolist()
+        segments = []
+        for index in [0] + aki_jumps_idx:
+            aki = aki_labels[index]
+            if aki == -1:
+                aki = onp.nan
+            segments.append((index, aki))
 
+        return segments
+
+    def _classify_aki_segments(self, segmented_AKI: list):
+        """
+        Classify the AKI segments into:
+            'stable': if consists of one segment with zero AKI.
+            'AKI_all', if consists of one segment with nonzero AKI.
+            'AKI_emergence': if consists of more than one segment with \
+                with at least one zero segment followed by a nonzero segment.
+            'AKI_recovery': if consists of two segments where the first \
+                segment is nonzero and the second segment is zero.
+            'unknown': if there are no valid AKI labels.
+        """
+        aki_vals = onp.array([aki for _, aki in segmented_AKI])
+        if len(aki_vals) == 0 or onp.all(onp.isnan(aki_vals)):
+            return 'other'
+        if onp.all((aki_vals == 0) | (onp.isnan(aki_vals))):
+            return 'stable'
+        if onp.all((aki_vals == 1) | (onp.isnan(aki_vals))):
+            return 'AKI_all'
+
+        aki_pairs = [(aki1, aki2)
+                     for aki1, aki2 in zip(aki_vals[:-1], aki_vals[1:])]
+        if any(aki1 == 0 and aki2 == 1 for aki1, aki2 in aki_pairs):
+            return 'AKI_emergence'
+        if any(aki1 == 1 and aki2 == 0 for aki1, aki2 in aki_pairs):
+            return 'AKI_recovery'
+        return 'other'
+
+    def _segment_classify_predictions(self, predictions: Predictions):
+        """
+        Segment admission intervals and classify the admissions into \
+            'stable', 'AKI_all', 'AKI_emergence', 'AKI_recovery', or 'other'.
+        """
+        segmented_AKI = {}
+        aki_trend_class = {}
+        for sid in predictions:
+            for aid in predictions[sid]:
+                prediction = predictions[sid][aid]
+                _segmented_AKI = self._segment_aki_labels(prediction)
+                segmented_AKI[aid] = _segmented_AKI
+                aki_trend_class[aid] = self._classify_aki_segments(
+                    _segmented_AKI)
+        return segmented_AKI, aki_trend_class
+
+    def _extract_stable_vs_emergence_preds(self, predictions, segmented_AKI,
+                                           aki_trend_class):
+        """
+        Compute the statistics for stable vs. AKI emergence.
+        """
+        stable = []
+
+        emergence_timestamps = []
+        emergence_last_timestamp = []
+        emergence_aid = []
+        emergence = []
+        for sid in predictions:
+            for aid in predictions[sid]:
+                prediction = predictions[sid][aid]
+                leading_observable = prediction.leading_observable
+                leading_aki = nanmax(leading_observable.value, axis=1)
+                if aki_trend_class[aid] == 'stable':
+                    stable.append(leading_aki)
+                elif aki_trend_class[aid] == 'AKI_emergence':
+                    _segmented_aki = segmented_AKI[aid]
+                    time = leading_observable.time
+                    for (i1, v1), (i2, v2) in zip(_segmented_aki[:-1],
+                                                  _segmented_aki[1:]):
+                        if v1 == 0 and v2 == 1:
+                            emergence_timestamps.append(time[i1:i2])
+                            emergence_last_timestamp.append(time[i2])
+                            emergence.append(leading_aki[i1:i2])
+                            emergence_aid.append(aid)
+        return {
+            'stable': stable,
+            'emergence_timestamps': emergence_timestamps,
+            'emergence_last_timestamp': emergence_last_timestamp,
+            'emergence_admission_id': emergence_aid,
+            'emergence': emergence
+        }
+
+    def _filter_empty_observables(self, predictions):
+        """
+        Filter out admissions with empty observables.
+        """
+        filtered_predictions = {}
+        for sid in predictions:
+            filtered_predictions[sid] = {}
+            for aid in predictions[sid]:
+                prediction = predictions[sid][aid]
+                if onp.size(prediction.observables.time) > 0:
+                    filtered_predictions[sid][aid] = prediction
+        return filtered_predictions
+
+    def tabular_preds(self, predictions: Predictions):
+        predictions = predictions.defragment_observables()
+        predictions = self._filter_empty_observables(predictions)
+
+        lead_obs_conf = self.patients.config.leading_observable
+        aki_index = lead_obs_conf.index
+        time_window = lead_obs_conf.leading_hours
+        segmented_AKI, trend_AKI = self._segment_classify_predictions(
+            predictions)
+        adm_df = {
+            'admission_id': [],
+            'subject_id': [],
+            'aki_trend': [],
+            'age': [],
+            'gender': [],
+            'max_AKI': [],
+            'min_AKI': []
+        }
+        for sid in predictions:
+            for aid in predictions[sid]:
+                admission_date = predictions[sid][
+                    aid].admission.admission_dates[0]
+                adm_df['admission_id'].append(aid)
+                adm_df['subject_id'].append(sid)
+                adm_df['aki_trend'].append(trend_AKI[aid])
+                static = self.patients.subjects[sid].static_info
+                adm_df['age'].append(static.age(admission_date))
+                (gender, ) = static.gender.to_codeset()
+                adm_df['gender'].append(gender)
+                obs = predictions[sid][aid].observables
+                adm_df['max_AKI'].append(nanmax(obs.value[:, aki_index]))
+                adm_df['min_AKI'].append(nanmin(obs.value[:, aki_index]))
+        adm_df = pd.DataFrame(adm_df)
+
+        stable_vs_emergence = self._extract_stable_vs_emergence_preds(
+            predictions, segmented_AKI, trend_AKI)
+        emergence_timestamps = stable_vs_emergence['emergence_timestamps']
+        emergence_last_timestamp = stable_vs_emergence[
+            'emergence_last_timestamp']
+        emergence_aid = stable_vs_emergence['emergence_admission_id']
+        emergence = stable_vs_emergence['emergence']
+
+        emergence_df = {
+            'admission_id': [],
+            'interval_start': [],
+            'emergence_time': [],
+            'AKI_max_pred': [],
+            'AKI_min_pred': [],
+            'AKI_mean_pred': [],
+            'AKI_median_pred': []
+        }
+        for aid, timestamps, last_timestamp, aki in zip(
+                emergence_aid, emergence_timestamps, emergence_last_timestamp,
+                emergence):
+            emergence_df['admission_id'].append(aid)
+            emergence_df['interval_start'].append(timestamps[0])
+            emergence_df['emergence_time'].append(last_timestamp)
+            emergence_df['AKI_max_pred'].append(nanmax(aki))
+            emergence_df['AKI_min_pred'].append(nanmin(aki))
+            emergence_df['AKI_mean_pred'].append(nanmean(aki))
+            emergence_df['AKI_median_pred'].append(nanmedian(aki))
+
+        emergence_df = pd.DataFrame(emergence_df)
+        return adm_df, emergence_df
 
     def __call__(self, predictions: Predictions):
+        logging.debug("Preprocessing predictions...")
 
-        return predictions.aki_segmented_admission()
+        some_obs = list(next(iter(
+            predictions.values())).values())[0].observables
+        if not isinstance(some_obs, InpatientObservables):
+            predictions = predictions.defragment_observables()
+        some_obs = list(next(iter(
+            predictions.values())).values())[0].observables
+        assert isinstance(some_obs, InpatientObservables), \
+            "Observables must be InpatientObservables."
+
+        predictions = self._filter_empty_observables(predictions)
+
+        lead_obs_conf = self.patients.config.leading_observable
+        time_window = lead_obs_conf.leading_hours
+        logging.debug("Segmenting and classifying predictions...")
+        segmented_AKI, trend_AKI = self._segment_classify_predictions(
+            predictions)
+
+        logging.debug("Extracting stable vs. AKI emergence predictions...")
+        stable_vs_emergence = self._extract_stable_vs_emergence_preds(
+            predictions, segmented_AKI, trend_AKI)
+        stable = stable_vs_emergence['stable']
+        emergence_timestamps = stable_vs_emergence['emergence_timestamps']
+        emergence_last_timestamp = stable_vs_emergence[
+            'emergence_last_timestamp']
+        emergence = stable_vs_emergence['emergence']
+
+        logging.debug("[DONE] Preprocessing predictions.")
+
+        n_adm_trends = defaultdict(int)
+        for trend in trend_AKI.values():
+            n_adm_trends[trend] += 1
+
+        # Compute the statistics for stable vs. AKI emergence.
+        logging.debug(
+            "Computing statistics for all before {time_win[0]} hours...")
+
+        all_preds = onp.hstack(stable + emergence)
+        all_labels = onp.hstack([onp.zeros(len(s)) for s in stable] +
+                                [onp.ones(len(e)) for e in emergence])
+        (n_emerge_all,
+         n_stable), all_auc = nan_compute_auc(all_labels, all_preds)
+
+        result = {
+            'n_stable': n_stable,
+            'n_emerg': n_emerge_all,
+            'auc': all_auc,
+        } | {
+            f'n_adm_{trend}': n
+            for trend, n in n_adm_trends.items()
+        }
+
+        for time_win in time_window[:-1]:
+            logging.debug(
+                f"Computing statistics for {time_win}-{time_window[-1]}...")
+            filtered_preds = []
+            for ts, last_ts, pred in zip(emergence_timestamps,
+                                         emergence_last_timestamp, emergence):
+                mask = (last_ts - ts <= time_window[-1]) & (last_ts - ts
+                                                            >= time_win)
+                filtered_preds.append(pred[mask])
+            preds = onp.hstack(stable + filtered_preds)
+            labels = onp.hstack([onp.zeros(len(s)) for s in stable] +
+                                [onp.ones(len(f)) for f in filtered_preds])
+            (n_emerge, _), auc = nan_compute_auc(labels, preds)
+
+            result[f'n_emerg_{time_win}-{time_window[-1]}'] = n_emerge
+            result[f'auc_{time_win}-{time_window[-1]}'] = auc
+        logging.debug("[DONE] Computing statistics.")
+        return result, segmented_AKI, trend_AKI
 
 
 class CodeLevelMetricConfig(Config):
@@ -457,6 +753,7 @@ class CodeAUC(CodeLevelMetric):
             else:
                 vals['auc'][code_index] = onp.nan
         return vals
+
 
 class ColwiseLossMetricConfig(Config):
     loss: List[str] = field(default_factory=list)
@@ -1157,12 +1454,12 @@ class DeLongTest(CodeLevelMetric):
 
         def masks(subj_id):
             adms = self.patients.subjects[subj_id].admissions
-            if self.masking == 'all':
+            if self.config.masking == 'all':
                 return self.patients.outcome_all_masks(subj_id)
-            elif self.masking == 'first':
+            elif self.config.masking == 'first':
                 return self.patients.outcome_first_occurrence_masks(subj_id)
             else:
-                raise ValueError(f"Unknown masking type {self.masking}")
+                raise ValueError(f"Unknown masking type {self.config.masking}")
 
         subjects = self._extract_subjects(predictions)
         true_mat = {}

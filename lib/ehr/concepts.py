@@ -154,9 +154,9 @@ class LeadingObservableConfig(Config):
 
 
 class InpatientObservables(Data):
-    time: jnp.narray
-    value: jnp.ndarray
-    mask: jnp.ndarray
+    time: jnp.narray # (time,)
+    value: jnp.ndarray # (time, size)
+    mask: jnp.ndarray # (time, size)
 
     @staticmethod
     def empty(size: int):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional, Dict, Union, Any, Callable
+from copy import deepcopy
 import logging
 import pickle
 from pathlib import Path
@@ -58,8 +59,36 @@ class AdmissionPrediction(Data):
         return tree_hasnan((self.outcome, self.observables, self.other,
                             self.leading_observable))
 
+    def defragment_observables(self):
+        updated = self
+        updated = eqx.tree_at(lambda x: x.observables, updated,
+                              InpatientObservables.concat(updated.observables))
+        updated = eqx.tree_at(
+            lambda x: x.leading_observable, updated,
+            InpatientObservables.concat(updated.leading_observable))
+        updated = eqx.tree_at(
+            lambda x: x.admission.observables, updated,
+            InpatientObservables.concat(updated.admission.observables))
+        updated = eqx.tree_at(
+            lambda x: x.admission.leading_observable, updated,
+            InpatientObservables.concat(updated.admission.leading_observable))
+        return updated
+
 
 class Predictions(dict):
+
+    def save(self, path: Union[str, Path]):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path = path.with_suffix('.pickle')
+        with open(path, 'wb') as file:
+            pickle.dump(self, file)
+
+    @staticmethod
+    def load(path: Union[str, Path]) -> jtu.pytree:
+        path = Path(path)
+        with open(path.with_suffix('.pickle'), 'rb') as file:
+            return pickle.load(file)
 
     def add(self, subject_id: str, prediction: AdmissionPrediction):
 
@@ -67,6 +96,23 @@ class Predictions(dict):
             self[subject_id] = {}
 
         self[subject_id][prediction.admission.admission_id] = prediction
+
+    def defragment_observables(self):
+        preds = deepcopy(self)
+        for sid in preds.keys():
+            for aid in preds[sid].keys():
+                assert isinstance(preds[sid][aid].observables, list), \
+                    'Observables must be a list'
+                assert isinstance(preds[sid][aid].leading_observable, list), \
+                    'Leading observables must be a list'
+                preds[sid][aid] = self[sid][aid].defragment_observables()
+
+        return preds
+
+    def _defragment_observables(self):
+        for sid in tqdm_constructor(self.keys()):
+            for aid in self[sid].keys():
+                self[sid][aid] = self[sid][aid].defragment_observables()
 
     @property
     def subject_ids(self):
