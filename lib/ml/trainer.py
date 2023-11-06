@@ -937,7 +937,7 @@ class InTrainer(Trainer):
         dx_loss = preds.prediction_dx_loss(dx_loss=self._dx_loss)
         obs_loss = preds.prediction_obs_loss(obs_loss=self._obs_loss)
         lead_loss = preds.prediction_lead_loss(lead_loss=self._lead_loss)
-        loss = dx_loss + 5e0 * obs_loss + 5e0 * lead_loss
+        loss = dx_loss + obs_loss + lead_loss
 
         l1_loss = model.l1()
         l2_loss = model.l2()
@@ -952,5 +952,5 @@ class InTrainer(Trainer):
         dx_loss = preds.prediction_dx_loss(dx_loss=self._dx_loss)
         obs_loss = preds.prediction_obs_loss(obs_loss=self._obs_loss)
         lead_loss = preds.prediction_lead_loss(lead_loss=self._lead_loss)
-        loss = dx_loss + 5e0 * obs_loss + 5e0 * lead_loss
+        loss = dx_loss + obs_loss + lead_loss
         return loss

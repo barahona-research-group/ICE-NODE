@@ -29,6 +29,7 @@ class InICENODERegularisation(ModelRegularisation):
     L_taylor: float = 0.0
     taylor_order: int = 0
 
+
 class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
@@ -66,6 +67,22 @@ class SigmoidLeadingObsPredictor(eqx.Module):
     def __call__(self, lead):
         [vscale, hscale, vshift, hshift] = self._mlp(lead)
         return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
+
+
+class MLPLeadingObsPredictor(eqx.Module):
+    _mlp: eqx.nn.MLP
+
+    def __init__(self, config: InICENODEConfig,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: jax.random.PRNGKey):
+        self._mlp = eqx.nn.MLP(config.lead,
+                               len(leading_observable_config.leading_hours),
+                               config.lead * 5,
+                               depth=3,
+                               key=key)
+
+    def __call__(self, lead):
+        return self._mlp(lead)
 
 
 class InICENODE(InpatientModel):
@@ -114,6 +131,9 @@ class InICENODE(InpatientModel):
                 config, leading_observable_config, key=lead_key)
         elif config.lead_predictor == "sigmoid":
             self._f_lead_dec = SigmoidLeadingObsPredictor(
+                config, leading_observable_config, key=lead_key)
+        elif config.lead_predictor == "mlp":
+            self._f_lead_dec = MLPLeadingObsPredictor(
                 config, leading_observable_config, key=lead_key)
         else:
             raise ValueError(
@@ -177,7 +197,8 @@ class InICENODE(InpatientModel):
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
             # if time-diff is more than 1 seconds, we integrate.
             state = self._safe_integrate(t_obs - t, state, int_e)
-            _, obs_e, lead_e, _ = self.split_state(state)
+            state_components = self.split_state(state)
+            obs_e, lead_e = state_components[1], state_components[2]
             pred_obs = self._f_obs_dec(obs_e)
             pred_lead = self._f_lead_dec(lead_e)
             state = self._f_update(state, pred_obs, val, mask)
@@ -232,3 +253,100 @@ class InICENODE(InpatientModel):
     @property
     def dyn_params_list(self):
         return self.params_list(self._f_dyn)
+
+
+class InICENODELite(InICENODE):
+    """
+    The InICENODE model. It is composed of the following components:
+        - f_emb: Embedding function.
+        - f_obs_dec: Observation decoder.
+        - f_dyn: Dynamics function.
+        - f_update: Update function.
+    """
+    _f_emb: Callable[[Admission], EmbeddedInAdmission]
+    _f_obs_dec: Callable
+    _f_lead_dec: Callable
+    _f_init: Callable
+    _f_dyn: Callable
+    _f_update: Callable
+
+    config: InICENODEConfig = eqx.static_field()
+
+    def __init__(self, config: InICENODEConfig, schemes: Tuple[DatasetScheme],
+                 demographic_vector_config: DemographicVectorConfig,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: "jax.random.PRNGKey"):
+        super_key, init_key, dyn_key, update_key = jrandom.split(key, 4)
+        super().__init__(config, schemes, demographic_vector_config,
+                         leading_observable_config, super_key)
+
+        self._f_dx_dec = None
+
+        init_input_size = config.emb.inp_proc_demo + config.emb.dx
+        state_size = config.mem + config.obs + config.lead
+        dyn_input_size = state_size + config.emb.inp_proc_demo
+
+        f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
+                           out_size=state_size,
+                           activation=jnn.tanh,
+                           depth=2,
+                           width_size=state_size * 5,
+                           key=dyn_key)
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        self._f_dyn = NeuralODE_JAX(f_dyn, timescale=1.0)
+        self._f_init = eqx.nn.MLP(init_input_size,
+                                  state_size,
+                                  config.emb.dx * 5,
+                                  depth=2,
+                                  key=init_key)
+        self._f_update = ObsStateUpdate(state_size,
+                                        len(schemes[1].obs),
+                                        key=update_key)
+
+    @eqx.filter_jit
+    def join_state(self, mem, obs, lead, int_demo_emb=None, dx0=None):
+        if mem is None or obs is None or lead is None:
+            return self._f_init(jnp.hstack((int_demo_emb, dx0)))
+
+        return jnp.hstack((mem, obs, lead))
+
+    @eqx.filter_jit
+    def split_state(self, state: jnp.ndarray):
+        s1 = self.config.mem
+        s2 = self.config.mem + self.config.obs
+        return jnp.hsplit(state, (s1, s2))
+
+    def __call__(self, admission: Admission,
+                 embedded_admission: EmbeddedInAdmission,
+                 regularisation: InICENODERegularisation,
+                 store_embeddings: bool) -> AdmissionPrediction:
+        int_e = embedded_admission.inp_proc_demo
+
+        state = self.join_state(None,
+                                None,
+                                None,
+                                int_demo_emb=int_e[0],
+                                dx0=embedded_admission.dx0)
+
+        obs = admission.observables
+        lead = admission.leading_observable
+        pred_obs_l = []
+        pred_lead_l = []
+        # trajectory_l = []
+        t0 = admission.interventions.t0
+        t1 = admission.interventions.t1
+        for i in range(len(t0)):
+            state, (pred_obs,
+                    pred_lead) = self.step_segment(state, int_e[i], obs[i],
+                                                   lead[i], t0[i], t1[i])
+
+            pred_obs_l.append(pred_obs)
+            pred_lead_l.append(pred_lead)
+            # trajectory_l.append(PatientTrajectory(time=t1[i], state=state))
+
+        return AdmissionPrediction(admission=admission,
+                                   outcome=None,
+                                   observables=pred_obs_l,
+                                   leading_observable=pred_lead_l,
+                                   trajectory=None)
+        # trajectory=trajectory_l)

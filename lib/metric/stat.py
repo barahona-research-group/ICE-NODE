@@ -459,43 +459,6 @@ class AKISegmentedAdmissionMetric(Metric):
                     filtered_predictions[sid][aid] = prediction
         return filtered_predictions
 
-    # def tabular_preds(self, predictions: Predictions):
-    #     predictions = predictions.defragment_observables()
-    #     predictions = self._filter_empty_observables(predictions)
-
-    #     lead_obs_conf = self.patients.config.leading_observable
-    #     segmented_AKI = self._segment_classify_predictions(predictions)
-    #     adm_df = {
-    #         'admission_id': [],
-    #         'subject_id': [],
-    #         'age': [],
-    #         'gender': [],
-    #         'start': [],
-    #         'end': [],
-    #         'interval_class': [],
-    #     }
-    #     for sid in predictions:
-    #         for aid in predictions[sid]:
-    #             segmented = segmented_AKI[aid]
-    #             admission = predictions[sid][aid].admission
-    #             admission_date = admission.admission_dates[0]
-    #             static = self.patients.subjects[sid].static_info
-    #             age = static.age(admission_date)
-    #             (gender, ) = static.gender.to_codeset()
-
-    #             for i in range(len(segmented)):
-    #                 segmented_class = segmented[i]['class']
-    #                 start = segmented[i]['time'][0]
-    #                 end = segmented[i]['time'][-1]
-
-    #                 adm_df['gender'].append(gender)
-    #                 adm_df['age'].append(age)
-    #                 adm_df['admission_id'].append(aid)
-    #                 adm_df['subject_id'].append(sid)
-    #                 adm_df['interval_class'].append(segmented_class)
-    #                 adm_df['start'].append(start)
-    #                 adm_df['end'].append(end)
-
     def _apply(self, predictions: Predictions):
         some_obs = list(next(iter(
             predictions.values())).values())[0].observables

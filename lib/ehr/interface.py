@@ -177,7 +177,15 @@ class Predictions(dict):
 
         return cleaned
 
+    @property
+    def has_dx_predictions(self):
+        preds = self.get_predictions()
+        return all([p.outcome is not None for p in preds])
+
     def prediction_dx_loss(self, dx_loss):
+        if not self.has_dx_predictions:
+            return 0.
+
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
         l_outcome = [a.outcome.vec for a in adms]

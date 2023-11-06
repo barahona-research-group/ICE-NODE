@@ -189,6 +189,7 @@ class DatasetConfig(Config):
     colname: Dict[str, Dict[str, str]]
     files: Dict[str, str] = field(default_factory=dict)
     sample: Optional[int] = None
+    offset: Optional[int] = 0
     meta_fpath: str = ''
     tag: str = ''
     overlapping_admissions: str = 'merge'

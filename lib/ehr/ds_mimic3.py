@@ -29,12 +29,14 @@ class MIMIC3Dataset(Dataset):
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
     @classmethod
-    def sample_n_subjects(cls, df, c_subject_id, n, seed=None):
+    def sample_n_subjects(cls, df, c_subject_id, n, seed=None, offset=0):
         if seed is not None:
             rng = random.Random(seed)
 
         subjects = df[c_subject_id].unique().compute()
-        subjects = rng.sample(subjects.tolist(), n)
+        subjects = subjects.tolist()
+        rng.shuffle(subjects)
+        subjects = subjects[offset:offset + n]
         return df[df[c_subject_id].isin(subjects)]
 
     @classmethod
