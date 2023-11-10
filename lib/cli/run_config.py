@@ -32,7 +32,14 @@ if __name__ == '__main__':
 
     if args.override is not None and len(
             args.override) > 0 and args.override != '0':
-        for override in args.override.split(','):
+        if ',' in args.override:
+            splitter = ','
+        elif ';' in args.override:
+            splitter = ';'
+        elif '&' in args.override:
+            splitter = '&'
+
+        for override in args.override.split(splitter):
             key, value = override.split('=')
             config = config.path_update(key, value)
 
