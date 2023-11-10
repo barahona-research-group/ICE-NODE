@@ -17,7 +17,7 @@ if __name__ == '__main__':
     config = load_config(translate_path(args.config))
     config = Config.from_dict(config)
 
-    print(args)
+    logging.warning(args)
 
     config = config.path_update('reporting.output_dir',
                                 translate_path(args.output_path))
