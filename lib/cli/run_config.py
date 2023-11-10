@@ -17,6 +17,8 @@ if __name__ == '__main__':
     config = load_config(translate_path(args.config))
     config = Config.from_dict(config)
 
+    print(args)
+
     config = config.path_update('reporting.output_dir',
                                 translate_path(args.output_path))
 
@@ -30,7 +32,6 @@ if __name__ == '__main__':
 
     if args.override is not None and len(
             args.override) > 0 and args.override != '0':
-        print(args.override)
         for override in args.override.split(','):
             key, value = override.split('=')
             config = config.path_update(key, value)
