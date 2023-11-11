@@ -191,6 +191,16 @@
             "external_argnames": [
                 "patients"
             ]
+        },
+        {
+            "classname": "AKISegmentedAdmissionMetric",
+            "config": {
+                "_type": "AKISegmentedAdmissionConfig",
+                "stable_window": 24
+            },
+            "external_argnames": [
+                "patients"
+            ]
         }
     ],
     "model": {
