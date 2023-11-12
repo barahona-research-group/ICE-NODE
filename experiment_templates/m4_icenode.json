@@ -29,6 +29,7 @@
             "static": "static_df.csv.gz"
         },
         "meta_fpath": "",
+        "offset": 0,
         "overlapping_admissions": "merge",
         "path": "",
         "sample": null,

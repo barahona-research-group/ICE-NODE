@@ -52,6 +52,7 @@
             "static": "static_df.csv"
         },
         "meta_fpath": "",
+        "offset": 0,
         "overlapping_admissions": "merge",
         "path": "",
         "sample": 15000,
