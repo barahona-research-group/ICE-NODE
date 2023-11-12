@@ -459,6 +459,32 @@ class AKISegmentedAdmissionMetric(Metric):
                     filtered_predictions[sid][aid] = prediction
         return filtered_predictions
 
+    @property
+    def time_window(self):
+        return [1, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+
+    def fields(self):
+        segmented_classes = [
+            'stable', 'AKI', 'unknown', 'first_AKI_pre_emergence',
+            'AKI_pre_emergence', 'AKI_recovery'
+        ]
+
+        fields = [f'n_{c}' for c in segmented_classes]
+        fields += [f'm_{c}' for c in segmented_classes]
+        time_window = self.time_window
+        for time_win in time_window[:-1]:
+            fields.append(f'n_emergence_{time_win}-{time_window[-1]}')
+            fields.append(f'emergence_auc_{time_win}-{time_window[-1]}')
+            fields.append(f'n_first_emergence_{time_win}-{time_window[-1]}')
+            fields.append(f'first_emergence_auc_{time_win}-{time_window[-1]}')
+            fields.append(f'n_all_emergence_{time_win}-{time_window[-1]}')
+            fields.append(f'all_emergence_auc_{time_win}-{time_window[-1]}')
+
+        return fields
+
+    def dirs(self):
+        return (1, ) * len(self.fields())
+
     def _apply(self, predictions: Predictions):
         some_obs = list(next(iter(
             predictions.values())).values())[0].observables
@@ -470,7 +496,7 @@ class AKISegmentedAdmissionMetric(Metric):
             "Observables must be InpatientObservables."
         predictions = self._filter_empty_observables(predictions)
 
-        time_window = [1, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
+        time_window = self.time_window
         segmented_AKI = self._segment_classify_predictions(predictions)
         segmented_AKI_byclass = self._segmented_AKI_byclass(segmented_AKI)
 
