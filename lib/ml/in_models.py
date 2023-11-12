@@ -78,6 +78,7 @@ class MLPLeadingObsPredictor(eqx.Module):
         self._mlp = eqx.nn.MLP(config.lead,
                                len(leading_observable_config.leading_hours),
                                config.lead * 5,
+                               final_activation=jnn.sigmoid,
                                depth=3,
                                key=key)
 
