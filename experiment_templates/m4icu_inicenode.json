@@ -77,9 +77,9 @@
         "cache": "",
         "demographic_vector": {
             "_type": "DemographicVectorConfig",
-            "age": false,
-            "ethnicity": false,
-            "gender": false
+            "age": true,
+            "ethnicity": true,
+            "gender": true
         },
         "leading_observable": {
             "_type": "LeadingObservableConfig",
