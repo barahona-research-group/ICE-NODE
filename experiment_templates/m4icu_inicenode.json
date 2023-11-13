@@ -201,7 +201,7 @@
         "_type": "InICENODEConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
-            "demo": 0,
+            "demo": 5,
             "dx": 50,
             "inp": 15,
             "inp_proc_demo": 10,
