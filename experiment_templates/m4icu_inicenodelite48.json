@@ -110,8 +110,7 @@
                 "lead_loss": [
                     "mse",
                     "mae",
-                    "rms",
-                    "softdtw(0.1)"
+                    "rms"
                 ],
                 "obs_loss": [
                     "mse",
