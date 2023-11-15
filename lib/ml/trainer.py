@@ -75,24 +75,27 @@ class TrainingHistory:
             return pd.concat([df, row], axis=0)
 
     def append_train_preds(self, step: int, res: Predictions,
-                           elapsed_time: float):
+                           elapsed_time: float, eval_time: float):
         row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
+        row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
         self._train_df = self._concat(self._train_df, row_df)
 
     def append_val_preds(self, step: int, res: Predictions,
-                         elapsed_time: float):
+                         elapsed_time: float, eval_time: float):
         row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
+        row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
         self._val_df = self._concat(self._val_df, row_df)
 
     def append_test_preds(self, step: int, res: Predictions,
-                          elapsed_time: float):
+                          elapsed_time: float, eval_time: float):
         row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
+        row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
         self._test_df = self._concat(self._test_df, row_df)
 
     def append_stats(self, step: int, model: AbstractModel, loss):
@@ -893,17 +896,20 @@ class Trainer(Module):
                     continue
 
                 elapsed_time = (datetime.now() - timenow).total_seconds()
+                timenow = datetime.now()
 
                 split_gen.set_description('Evaluating (Train) (A)...')
                 preds = model.batch_predict(batch, leave_pbar=False)
                 split_gen.set_description('Evaluating (Train) (B)...')
-                history.append_train_preds(step, preds, elapsed_time)
+                history.append_train_preds(step, preds, elapsed_time, timenow)
 
                 if len(valid_ids) > 0:
+                    timenow = datetime.now()
                     split_gen.set_description('Evaluating (Val) (A)...')
                     preds = model.batch_predict(val_batch, leave_pbar=False)
                     split_gen.set_description('Evaluating (Val) (B)...')
-                    history.append_val_preds(step, preds, elapsed_time)
+                    history.append_val_preds(step, preds, elapsed_time,
+                                             timenow)
                 signals.end_evaluation.send(self,
                                             step=step,
                                             model=model,
@@ -913,8 +919,9 @@ class Trainer(Module):
 
         if len(test_ids) > 0 and first_step < step:
             test_batch = patients.device_batch(test_ids)
+            timenow = datetime.now()
             preds = model.batch_predict(test_batch, leave_pbar=False)
-            history.append_test_preds(step, preds, 0.0)
+            history.append_test_preds(step, preds, 0.0, timenow)
             signals.end_evaluation.send(self,
                                         step=step,
                                         model=model,
