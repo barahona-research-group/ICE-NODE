@@ -859,9 +859,10 @@ class Trainer(Module):
             split_gen = tqdm_constructor(epoch_splits,
                                          leave=False,
                                          unit='Batch')
+
+            timenow = datetime.now()
             for batch_split in split_gen:
-                timenow = datetime.now()
-                if timenow > trial_terminate_time:
+                if datetime.now() > trial_terminate_time:
                     signals.timeout.send(self)
                     signals.exit_training.send(self)
                     return model
@@ -915,6 +916,7 @@ class Trainer(Module):
                                             model=model,
                                             optimizer=optimizer,
                                             history=history)
+                timenow = datetime.now()
             split_gen.close()
 
         if len(test_ids) > 0 and first_step < step:
