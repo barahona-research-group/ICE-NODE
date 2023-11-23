@@ -170,14 +170,16 @@ class EvaluationDiskWriter(AbstractReporter):
 
             fname = f'{name}_evals.csv.gz'
             fpath = os.path.join(self.output_dir, fname)
+            header_changed = False
             if os.path.exists(fpath):
                 old_df = pd.read_csv(fpath, index_col=0)
                 df = df.loc[~df.index.isin(old_df.index)]
+                header_changed = not old_df.columns.equals(df.columns)
 
             df.to_csv(fpath,
                       compression="gzip",
                       mode='a',
-                      header=not os.path.exists(fpath))
+                      header=header_changed or not os.path.exists(fpath))
 
     def clear_files(self, sender):
         for name in ('train', 'val', 'tst'):

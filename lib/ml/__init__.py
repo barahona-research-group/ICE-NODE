@@ -4,12 +4,14 @@ from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
                         ICENODERegularisation)
 
 from .in_models import (InICENODE, InICENODEConfig, InICENODERegularisation,
-                        InICENODELite)
+                        InICENODELite, InICENODELiteConfig, InGRU, InGRUJump)
 
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedAdmission, OutpatientEmbedding,
                          OutpatientEmbeddingConfig, PatientEmbeddingConfig,
-                         PatientEmbedding)
+                         PatientEmbedding, DeepMindPatientEmbeddingConfig,
+                         InpatientLiteEmbedding, InpatientLiteEmbeddingConfig)
+
 from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
                       WarmupConfig, TrainerConfig, ReportingConfig)
 

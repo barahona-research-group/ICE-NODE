@@ -154,9 +154,9 @@ class LeadingObservableConfig(Config):
 
 
 class InpatientObservables(Data):
-    time: jnp.narray # (time,)
-    value: jnp.ndarray # (time, size)
-    mask: jnp.ndarray # (time, size)
+    time: jnp.narray  # (time,)
+    value: jnp.ndarray  # (time, size)
+    mask: jnp.ndarray  # (time, size)
 
     @staticmethod
     def empty(size: int):
@@ -243,6 +243,30 @@ class InpatientObservables(Data):
         values = np.stack(values, axis=1)
         masks = np.stack(masks, axis=1)
         return InpatientObservables(time=time, value=values, mask=masks)
+
+    def time_binning(self, hours: int):
+        if len(self) == 0:
+            return self
+
+        obs_value = np.where(self.mask, self.value, np.nan)
+        last_ts = int(np.ceil(self.time[-1] / hours)) * hours
+        new_time = np.arange(0, last_ts + hours, hours) * 1.0
+        values = []
+        masks = []
+        for ti, tf in zip(new_time[:-1], new_time[1:]):
+            mask = (ti <= self.time) & (self.time < tf)
+            value = obs_value[mask]
+            value = np.nanmean(value, axis=0)
+            mask = np.where(np.isnan(value), False, True)
+            values.append(value)
+            masks.append(mask)
+
+        values = np.vstack(values)
+        masks = np.vstack(masks)
+        values = np.where(masks, values, 0.0)
+        return InpatientObservables(time=new_time[1:],
+                                    value=values,
+                                    mask=masks)
 
 
 class MaskedAggregator(eqx.Module):

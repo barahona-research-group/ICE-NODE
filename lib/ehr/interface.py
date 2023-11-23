@@ -195,28 +195,95 @@ class Predictions(dict):
         loss_v = jnp.nanmean(loss_v)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
-    def _numeric_loss(self, loss_fn, attr: str):
+    @property
+    def predicted_observables_list(self):
         preds = self.get_predictions()
-        adms = [r.admission for r in preds]
-        l_true = [o.value for a in adms for o in getattr(a, attr)]
-        l_mask = [o.mask for a in adms for o in getattr(a, attr)]
-        l_pred = [o.value for p in preds for o in getattr(p, attr)]
+        obs_l = []
+
+        for sid in sorted(self.keys()):
+            for aid in sorted(self[sid].keys()):
+                obs = self[sid][aid].observables
+                if isinstance(obs, list):
+                    obs_l.extend(obs)
+                else:
+                    obs_l.append(obs)
+
+        return obs_l
+
+    @property
+    def predicted_leading_observables_list(self):
+        preds = self.get_predictions()
+        obs_l = []
+
+        for sid in sorted(self.keys()):
+            for aid in sorted(self[sid].keys()):
+                obs = self[sid][aid].leading_observable
+                if isinstance(obs, list):
+                    obs_l.extend(obs)
+                else:
+                    obs_l.append(obs)
+
+        return obs_l
+
+    @property
+    def observables_list(self):
+        preds = self.get_predictions()
+        obs_l = []
+
+        for sid in sorted(self.keys()):
+            for aid in sorted(self[sid].keys()):
+                obs = self[sid][aid].admission.observables
+                if isinstance(obs, list):
+                    obs_l.extend(obs)
+                else:
+                    obs_l.append(obs)
+
+        return obs_l
+
+    @property
+    def leading_observables_list(self):
+        preds = self.get_predictions()
+        obs_l = []
+
+        for sid in sorted(self.keys()):
+            for aid in sorted(self[sid].keys()):
+                obs = self[sid][aid].admission.leading_observable
+                if isinstance(obs, list):
+                    obs_l.extend(obs)
+                else:
+                    obs_l.append(obs)
+
+        return obs_l
+
+    def prediction_obs_loss(self, obs_loss):
+        l_true = [obs.value for obs in self.observables_list]
+        l_mask = [obs.mask for obs in self.observables_list]
+        l_pred = [obs.value for obs in self.predicted_observables_list]
+
         true = jnp.vstack(l_true)
         mask = jnp.vstack(l_mask)
         pred = jnp.vstack(l_pred)
-        loss_v = loss_fn(true, pred, mask)
+        loss_v = obs_loss(true, pred, mask)
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
-
-    def prediction_obs_loss(self, obs_loss):
-        return self._numeric_loss(obs_loss, 'observables')
 
     def prediction_lead_loss(self, lead_loss):
         preds = self.get_predictions()
         loss_v = []
         for pred in preds:
             adm = pred.admission
-            for pred_lo, adm_lo in zip(pred.leading_observable,
-                                       adm.leading_observable):
+            if isinstance(pred.leading_observable, list):
+                pred_l = pred.leading_observable
+            else:
+                pred_l = [pred.leading_observable]
+
+            if isinstance(adm.leading_observable, list):
+                adm_l = adm.leading_observable
+            else:
+                adm_l = [adm.leading_observable]
+
+            assert len(pred_l) == len(adm_l)
+
+            for pred_lo, adm_lo in zip(pred_l, adm_l):
                 for i in range(len(adm_lo.time)):
                     m = adm_lo.mask[i]
                     if m.sum() < len(m) // 2:
@@ -239,9 +306,24 @@ class Predictions(dict):
         obs_mask = []
         for pred in preds:
             adm = pred.admission
-            for pred_lo, adm_lo, adm_obs in zip(pred.leading_observable,
-                                                adm.leading_observable,
-                                                adm.observables):
+            if isinstance(pred.leading_observable, list):
+                pred_leading_observable = pred.leading_observable
+            else:
+                pred_leading_observable = [pred.leading_observable]
+
+            if isinstance(adm.leading_observable, list):
+                adm_leading_observable = adm.leading_observable
+            else:
+                adm_leading_observable = [adm.leading_observable]
+
+            if isinstance(adm.observables, list):
+                adm_observables = adm.observables
+            else:
+                adm_observables = [adm.observables]
+
+            for pred_lo, adm_lo, adm_obs in zip(pred_leading_observable,
+                                                adm_leading_observable,
+                                                adm_observables):
                 for i in range(len(adm_lo.time)):
                     mask.append(adm_lo.mask[i])
                     y.append(adm_lo.value[i])
@@ -274,6 +356,7 @@ class InterfaceConfig(Config):
     leading_observable: Optional[LeadingObservableConfig]
     scheme: Dict[str, str]
     cache: Optional[str]
+    time_binning: Optional[int] = None
 
     def __init__(self,
                  demographic_vector: DemographicVectorConfig,
@@ -281,10 +364,12 @@ class InterfaceConfig(Config):
                  dataset_scheme: Optional[DatasetScheme] = None,
                  scheme: Optional[Dict[str, str]] = None,
                  cache: Optional[str] = None,
+                 time_binning: Optional[int] = None,
                  **interface_scheme_kwargs):
         super().__init__()
         self.demographic_vector = demographic_vector
         self.leading_observable = leading_observable
+        self.time_binning = time_binning
         if scheme is None:
             self.scheme = dataset_scheme.make_target_scheme_config(**scheme)
         else:
@@ -433,9 +518,11 @@ class Patients(Module):
             num_workers=num_workers,
             demographic_vector_config=self.config.demographic_vector,
             leading_observable_config=self.config.leading_observable,
-            target_scheme=self._scheme)
+            target_scheme=self._scheme,
+            time_binning=self.config.time_binning)
 
         subjects = {s.subject_id: s for s in subjects}
+
         interface = eqx.tree_at(lambda x: x.subjects, self, subjects)
 
         return interface

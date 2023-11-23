@@ -150,7 +150,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODEConfig",
+        "_type": "InICENODELiteConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 5,

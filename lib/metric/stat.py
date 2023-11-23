@@ -6,6 +6,7 @@ from dataclasses import field, dataclass
 import sys
 import inspect
 from collections import defaultdict
+from datetime import datetime
 
 from tqdm import tqdm
 from absl import logging
@@ -165,7 +166,11 @@ class Metric(Module):
         return dict(zip(self.columns(), self.row(result)))
 
     def to_df(self, index: int, predictions: Predictions):
-        return pd.DataFrame(self.to_dict(predictions), index=[index])
+        timenow = datetime.now()
+        data = self.to_dict(predictions)
+        eval_time = (datetime.now() - timenow).total_seconds()
+        data.update({f'{self.classname()}.eval_time': eval_time})
+        return pd.DataFrame(data, index=[index])
 
     def value_extractor(self, keys: Dict[str, str]):
         field_name = keys.get('field', self.fields()[0])

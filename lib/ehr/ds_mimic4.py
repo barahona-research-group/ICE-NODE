@@ -568,10 +568,14 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         self.colname = colname
         logging.debug("[DONE] Dataframes validation and time conversion")
 
-    def to_subjects(self, subject_ids: List[int], num_workers: int,
+    def to_subjects(self,
+                    subject_ids: List[int],
+                    num_workers: int,
                     demographic_vector_config: DemographicVectorConfig,
                     leading_observable_config: LeadingObservableConfig,
-                    target_scheme: MIMIC4ICUDatasetScheme, **kwargs):
+                    target_scheme: MIMIC4ICUDatasetScheme,
+                    time_binning: Optional[int] = None,
+                    **kwargs):
 
         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
             subject_ids, target_scheme)
@@ -597,6 +601,11 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug('Extracting observables...')
         observables = dict(
             self.observables_extractor(adm_ids_list, num_workers))
+
+        if time_binning is not None:
+            observables = dict((k, v.time_binning(time_binning))
+                               for k, v in observables.items())
+
         logging.debug('[DONE] Extracting observables')
 
         logging.debug('Compiling admissions...')
@@ -615,12 +624,16 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                 proc=procedures[i],
                 input_=inputs[i],
                 adm_interval=adm_interval[i])
-            interventions = interventions.segment_proc(proc_repr)
-            interventions = interventions.segment_input()
+
             obs = observables[i]
             lead_obs = obs.make_leading_observable(leading_observable_config)
-            lead_obs = lead_obs.segment(interventions.t_sep)
-            obs = obs.segment(interventions.t_sep)
+
+            if time_binning is None:
+                interventions = interventions.segment_proc(proc_repr)
+                interventions = interventions.segment_input()
+                lead_obs = lead_obs.segment(interventions.t_sep)
+                obs = obs.segment(interventions.t_sep)
+
             return Admission(admission_id=i,
                              admission_dates=adm_dates[i],
                              dx_codes=dx_codes[i],
