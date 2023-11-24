@@ -249,7 +249,7 @@ class InpatientObservables(Data):
             return self
 
         obs_value = np.where(self.mask, self.value, np.nan)
-        last_ts = int(np.ceil(self.time[-1] / hours)) * hours
+        last_ts = (int(self.time[-1] / hours) + 1) * hours
         new_time = np.arange(0, last_ts + hours, hours) * 1.0
         values = []
         masks = []
