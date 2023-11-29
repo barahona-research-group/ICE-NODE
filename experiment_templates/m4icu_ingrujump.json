@@ -153,14 +153,14 @@
     "model": {
         "_type": "InICENODELiteConfig",
         "emb": {
-            "_type": "InpatientLiteEmbeddingConfig",
+            "_type": "DeepMindPatientEmbeddingConfig",
             "demo": 5,
-            "dx": 30
+            "dx": 30,
+            "obs": 20,
+            "sequence": 50
         },
-        "lead": 5,
         "lead_predictor": "mlp",
-        "mem": 15,
-        "obs": 25
+        "state": 50
     },
     "model_classname": "InGRUJump",
     "n_evals": 100,

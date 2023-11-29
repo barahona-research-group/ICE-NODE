@@ -4,7 +4,8 @@ from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
                         ICENODERegularisation)
 
 from .in_models import (InICENODE, InICENODEConfig, InICENODERegularisation,
-                        InICENODELite, InICENODELiteConfig, InGRU, InGRUJump)
+                        InICENODELite, InICENODELiteConfig, InGRU, InGRUJump,
+                        InRETAIN, InRETAINConfig)
 
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedAdmission, OutpatientEmbedding,

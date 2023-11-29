@@ -159,10 +159,8 @@
             "inp_proc_demo": 10,
             "proc": 15
         },
-        "lead": 5,
         "lead_predictor": "mlp",
-        "mem": 15,
-        "obs": 25
+        "state": 50
     },
     "model_classname": "InICENODELite",
     "n_evals": 100,

@@ -293,7 +293,6 @@ class DeepMindPatientEmbedding(PatientEmbedding):
         """Embeds the demographics into a fixed vector."""
         return self._f_dem_emb(demo)
 
-    @eqx.filter_jit
     def _embed_admission(
             self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
             observables: jnp.ndarray) -> DeepMindEmbeddedAdmission:
@@ -306,7 +305,7 @@ class DeepMindPatientEmbedding(PatientEmbedding):
         def _embed_sequence_features(obs_e_i):
             return self._f_sequence_emb(jnp.hstack((dx_emb, demo_e, obs_e_i)))
 
-        sequence_e = eqx.filter_vmap(_embed_sequence_features)(obs_e)
+        sequence_e = [_embed_sequence_features(obs_e_i) for obs_e_i in obs_e]
         return DeepMindEmbeddedAdmission(dx0=dx_emb,
                                          sequence=sequence_e,
                                          demo=demo_e)

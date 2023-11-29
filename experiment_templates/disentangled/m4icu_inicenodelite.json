@@ -55,7 +55,7 @@
         "offset": 0,
         "overlapping_admissions": "merge",
         "path": "",
-        "sample": 15000,
+        "sample": 20000,
         "scheme": {
             "_type": "MIMIC4ICUDatasetSchemeConfig",
             "dx": {
@@ -107,58 +107,10 @@
     },
     "metrics": [
         {
-            "classname": "CodeAUC",
-            "config": {
-                "_type": "CodeLevelMetricConfig",
-                "aggregate_level": true,
-                "code_level": true
-            },
-            "external_argnames": [
-                "patients"
-            ]
-        },
-        {
-            "classname": "AdmissionAUC",
-            "config": {
-                "_type": "MetricLevelsConfig",
-                "admission": false,
-                "aggregate": true,
-                "subject_aggregate": false
-            },
-            "external_argnames": [
-                "patients"
-            ]
-        },
-        {
-            "classname": "CodeGroupTopAlarmAccuracy",
-            "config": {
-                "_type": "CodeGroupTopAlarmAccuracyConfig",
-                "n_partitions": 5,
-                "top_k_list": [
-                    3,
-                    5,
-                    10,
-                    15,
-                    20
-                ]
-            },
-            "external_argnames": [
-                "train_split",
-                "patients"
-            ]
-        },
-        {
             "classname": "LossMetric",
             "config": {
                 "_type": "LossMetricConfig",
-                "dx_loss": [
-                    "softmax_bce",
-                    "balanced_focal_softmax_bce",
-                    "balanced_focal_bce",
-                    "allpairs_exp_rank",
-                    "allpairs_hard_rank",
-                    "allpairs_sigmoid_rank"
-                ],
+                "dx_loss": [],
                 "lead_loss": [
                     "mse",
                     "mae",
@@ -198,7 +150,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODEConfig",
+        "_type": "InICENODELiteConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 5,
@@ -207,10 +159,12 @@
             "inp_proc_demo": 10,
             "proc": 15
         },
+        "lead": 5,
         "lead_predictor": "mlp",
-        "state": 50
+        "mem": 15,
+        "obs": 25
     },
-    "model_classname": "InICENODE",
+    "model_classname": "InICENODELite",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {
@@ -230,7 +184,7 @@
     },
     "trainer": {
         "_type": "TrainerConfig",
-        "batch_size": 128,
+        "batch_size": 32,
         "dx_loss": "balanced_focal_bce",
         "epochs": 80,
         "lead_loss": "mse",

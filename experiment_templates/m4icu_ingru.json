@@ -159,10 +159,8 @@
             "obs": 20,
             "sequence": 50
         },
-        "lead": 5,
         "lead_predictor": "mlp",
-        "mem": 15,
-        "obs": 25
+        "state": 50
     },
     "model_classname": "InGRU",
     "n_evals": 100,

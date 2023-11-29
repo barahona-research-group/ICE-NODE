@@ -23,8 +23,21 @@ from ..base import Data, Config
 
 
 class InICENODEConfig(ModelConfig):
-    state: int = 50
+    mem: int = 15
+    obs: int = 25
+    lead: int = 5
     lead_predictor: str = "monotonic"
+
+    @property
+    def state_size(self):
+        return self.mem + self.obs + self.lead + self.emb.dx
+
+    @property
+    def state_splitter(self):
+        s1 = self.mem
+        s2 = s1 + self.obs
+        s3 = s2 + self.lead
+        return (s1, s2, s3)
 
 
 class InICENODERegularisation(ModelRegularisation):
@@ -35,13 +48,13 @@ class InICENODERegularisation(ModelRegularisation):
 class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
-    def __init__(self, input_size: int,
+    def __init__(self, config: InICENODEConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
         out_size = len(leading_observable_config.leading_hours) + 1
-        self._mlp = eqx.nn.MLP(input_size,
+        self._mlp = eqx.nn.MLP(config.lead,
                                out_size,
-                               out_size * 5,
+                               config.lead * 5,
                                depth=2,
                                key=key)
 
@@ -56,13 +69,13 @@ class SigmoidLeadingObsPredictor(eqx.Module):
     _t: jnp.ndarray = eqx.static_field()
     _mlp: eqx.nn.MLP
 
-    def __init__(self, input_size: int,
+    def __init__(self, config: InICENODEConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
         self._t = jnp.array(leading_observable_config.leading_hours)
-        self._mlp = eqx.nn.MLP(input_size,
+        self._mlp = eqx.nn.MLP(config.lead,
                                4,
-                               len(self._t) * 5,
+                               config.lead * 5,
                                depth=3,
                                key=key)
 
@@ -74,13 +87,12 @@ class SigmoidLeadingObsPredictor(eqx.Module):
 class MLPLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
-    def __init__(self, input_size: int,
+    def __init__(self, config: InICENODEConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
-        self._mlp = eqx.nn.MLP(input_size,
+        self._mlp = eqx.nn.MLP(config.lead,
                                len(leading_observable_config.leading_hours),
-                               len(leading_observable_config.leading_hours) *
-                               5,
+                               config.lead * 5,
                                final_activation=jnn.sigmoid,
                                depth=3,
                                key=key)
@@ -128,7 +140,6 @@ class InICENODE(InpatientModel):
                                              key=obs_dec_key)
         self._f_lead_dec = self._make_lead_dec(
             config=config,
-            input_size=config.state,
             leading_observable_config=leading_observable_config,
             key=lead_key)
         self._f_dyn = self._make_dyn(config=config, key=dyn_key)
@@ -139,17 +150,17 @@ class InICENODE(InpatientModel):
         super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @staticmethod
-    def _make_lead_dec(config, input_size, leading_observable_config, key):
+    def _make_lead_dec(config, leading_observable_config, key):
         if config.lead_predictor == "monotonic":
-            return MonotonicLeadingObsPredictor(input_size,
+            return MonotonicLeadingObsPredictor(config,
                                                 leading_observable_config,
                                                 key=key)
         elif config.lead_predictor == "sigmoid":
-            return SigmoidLeadingObsPredictor(input_size,
+            return SigmoidLeadingObsPredictor(config,
                                               leading_observable_config,
                                               key=key)
         elif config.lead_predictor == "mlp":
-            return MLPLeadingObsPredictor(input_size,
+            return MLPLeadingObsPredictor(config,
                                           leading_observable_config,
                                           key=key)
         else:
@@ -158,33 +169,33 @@ class InICENODE(InpatientModel):
 
     @staticmethod
     def _make_dyn(config, key):
-        dyn_input_size = config.state + config.emb.inp_proc_demo
+        dyn_input_size = config.state_size + config.emb.inp_proc_demo
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
-                           out_size=config.state,
+                           out_size=config.state_size,
                            activation=jnn.tanh,
                            depth=2,
-                           width_size=config.state * 5,
+                           width_size=config.state_size * 5,
                            key=key)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODE_JAX(f_dyn, timescale=1.0)
 
     @staticmethod
     def _make_update(config, obs_size, key):
-        return ObsStateUpdate(config.state, obs_size, key=key)
+        return ObsStateUpdate(config.state_size, obs_size, key=key)
 
     @staticmethod
     def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.state,
+        return eqx.nn.MLP(config.emb.dx,
                           dx_size,
-                          config.state * 5,
+                          config.emb.dx * 5,
                           depth=1,
                           key=key)
 
     @staticmethod
     def _make_obs_dec(config, obs_size, key):
-        return eqx.nn.MLP(config.state,
+        return eqx.nn.MLP(config.obs,
                           obs_size,
-                          obs_size * 5,
+                          config.obs * 5,
                           depth=1,
                           key=key)
 
@@ -197,8 +208,19 @@ class InICENODE(InpatientModel):
             key=key)
 
     @eqx.filter_jit
-    def _init_state(self, dx):
-        return jnp.hstack((jnp.zeros((self.config.state - len(dx), )), dx))
+    def join_state(self, mem, obs, lead, dx):
+        if mem is None:
+            mem = jnp.zeros((self.config.mem, ))
+        if obs is None:
+            obs = jnp.zeros((self.config.obs, ))
+        if lead is None:
+            lead = jnp.zeros((self.config.lead, ))
+
+        return jnp.hstack((mem, obs, lead, dx))
+
+    @eqx.filter_jit
+    def split_state(self, state: jnp.ndarray):
+        return jnp.hsplit(state, self.config.state_splitter)
 
     @eqx.filter_jit
     def _safe_integrate(self, delta, state, int_e):
@@ -223,8 +245,10 @@ class InICENODE(InpatientModel):
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
             # if time-diff is more than 1 seconds, we integrate.
             state = self._safe_integrate(t_obs - t, state, int_e)
-            pred_obs = self._f_obs_dec(state)
-            pred_lead = self._f_lead_dec(state)
+            state_components = self.split_state(state)
+            obs_e, lead_e = state_components[1], state_components[2]
+            pred_obs = self._f_obs_dec(obs_e)
+            pred_lead = self._f_lead_dec(lead_e)
             state = self._f_update(state, pred_obs, val, mask)
             t = t_obs
             preds.append(pred_obs)
@@ -247,7 +271,7 @@ class InICENODE(InpatientModel):
                  embedded_admission: EmbeddedInAdmission,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
-        state = self._init_state(embedded_admission.dx0)
+        state = self.join_state(None, None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo
         obs = admission.observables
         lead = admission.leading_observable
@@ -265,7 +289,8 @@ class InICENODE(InpatientModel):
             pred_lead_l.append(pred_lead)
             trajectory_l.append(PatientTrajectory(time=t1[i], state=state))
 
-        pred_dx = CodesVector(self._f_dx_dec(state), admission.outcome.scheme)
+        pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
+                              admission.outcome.scheme)
 
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
@@ -279,7 +304,16 @@ class InICENODE(InpatientModel):
 
 
 class InICENODELiteConfig(InICENODEConfig):
-    pass
+
+    @property
+    def state_size(self):
+        return self.mem + self.obs + self.lead
+
+    @property
+    def state_splitter(self):
+        s1 = self.mem
+        s2 = s1 + self.obs
+        return (s1, s2)
 
 
 class InICENODELite(InICENODE):
@@ -317,14 +351,17 @@ class InICENODELite(InICENODE):
     def _make_init(config, key):
         init_input_size = config.emb.inp_proc_demo + config.emb.dx
         return eqx.nn.MLP(init_input_size,
-                          config.state,
+                          config.state_size,
                           config.emb.dx * 5,
                           depth=2,
                           key=key)
 
     @eqx.filter_jit
-    def _init_state(self, int_demo_emb, dx0):
-        return self._f_init(jnp.hstack((int_demo_emb, dx0)))
+    def join_state(self, mem, obs, lead, int_demo_emb=None, dx0=None):
+        if mem is None or obs is None or lead is None:
+            return self._f_init(jnp.hstack((int_demo_emb, dx0)))
+
+        return jnp.hstack((mem, obs, lead))
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
@@ -332,8 +369,11 @@ class InICENODELite(InICENODE):
                  store_embeddings: bool) -> AdmissionPrediction:
         int_e = embedded_admission.inp_proc_demo
 
-        state = self._init_state(int_demo_emb=int_e[0],
-                                 dx0=embedded_admission.dx0)
+        state = self.join_state(None,
+                                None,
+                                None,
+                                int_demo_emb=int_e[0],
+                                dx0=embedded_admission.dx0)
 
         obs = admission.observables
         lead = admission.leading_observable
@@ -382,56 +422,60 @@ class InGRUJump(InICENODELite):
     @staticmethod
     def _make_dyn(config, key):
         return eqx.nn.GRUCell(input_size=config.emb.demo,
-                              hidden_size=config.state,
+                              hidden_size=config.state_size,
                               key=key)
 
     @staticmethod
     def _make_init(config, key):
         init_input_size = config.emb.demo + config.emb.dx
         return eqx.nn.MLP(init_input_size,
-                          config.state,
+                          config.state_size,
                           config.emb.dx * 5,
                           depth=2,
                           key=key)
 
     @eqx.filter_jit
-    def _init_state(self, demo_emb, dx0):
-        return self._f_init(jnp.hstack((demo_emb, dx0)))
+    def join_state(self, mem, obs, lead, demo_emb=None, dx0=None):
+        if mem is None or obs is None or lead is None:
+            return self._f_init(jnp.hstack((demo_emb, dx0)))
+
+        return jnp.hstack((mem, obs, lead))
 
     def __call__(self, admission: Admission,
                  embedded_admission: LiteEmbeddedInAdmission,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
-        obs = admission.observables
-        lead = admission.leading_observable
-        if len(obs) == 0:
-            pred_obs = InpatientObservables.empty(obs.value.shape[1])
-            pred_lead = InpatientObservables.empty(lead.value.shape[1])
-            return AdmissionPrediction(admission=admission,
-                                       outcome=None,
-                                       observables=pred_obs,
-                                       leading_observable=pred_lead,
-                                       trajectory=None)
-
         demo_e = embedded_admission.demo
 
-        state = self._init_state(demo_emb=embedded_admission.demo,
-                                 dx0=embedded_admission.dx0)
+        state = self.join_state(None,
+                                None,
+                                None,
+                                demo_emb=embedded_admission.demo,
+                                dx0=embedded_admission.dx0)
 
+        obs = admission.observables
+        lead = admission.leading_observable
         pred_obs_l = []
         pred_lead_l = []
         for i in range(len(obs.time)):
             state = self._f_dyn(demo_e, state)
-            pred_obs = self._f_obs_dec(state)
-            pred_lead = self._f_lead_dec(state)
+            state_components = self.split_state(state)
+            obs_e, lead_e = state_components[1], state_components[2]
+            pred_obs = self._f_obs_dec(obs_e)
+            pred_lead = self._f_lead_dec(lead_e)
             state = self._f_update(state, pred_obs, obs.value[i], obs.mask[i])
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
 
-        pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
-                                        obs.mask)
-        pred_lead = InpatientObservables(lead.time, jnp.vstack(pred_lead_l),
-                                         lead.mask)
+        if len(obs) == 0:
+            pred_obs = InpatientObservables.empty(obs.value.shape[1])
+            pred_lead = InpatientObservables.empty(lead.value.shape[1])
+        else:
+            pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
+                                            obs.mask)
+            pred_lead = InpatientObservables(lead.time,
+                                             jnp.vstack(pred_lead_l),
+                                             lead.mask)
 
         return AdmissionPrediction(admission=admission,
                                    outcome=None,
@@ -453,263 +497,44 @@ class InGRU(InGRUJump):
     @staticmethod
     def _make_dyn(config, key):
         return eqx.nn.GRUCell(input_size=config.emb.sequence,
-                              hidden_size=config.state,
+                              hidden_size=config.state_size,
                               key=key)
 
     def __call__(self, admission: Admission,
                  embedded_admission: DeepMindEmbeddedAdmission,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
-        obs = admission.observables
-        lead = admission.leading_observable
-        if len(obs) == 0:
-            pred_obs = InpatientObservables.empty(obs.value.shape[1])
-            pred_lead = InpatientObservables.empty(lead.value.shape[1])
-            return AdmissionPrediction(admission=admission,
-                                       outcome=None,
-                                       observables=pred_obs,
-                                       leading_observable=pred_lead,
-                                       trajectory=None)
-
-        state = self._init_state(demo_emb=embedded_admission.demo,
-                                 dx0=embedded_admission.dx0)
+        state = self.join_state(None,
+                                None,
+                                None,
+                                demo_emb=embedded_admission.demo,
+                                dx0=embedded_admission.dx0)
         sequence_e = embedded_admission.sequence
         pred_obs_l = []
         pred_lead_l = []
         for seq_e in sequence_e:
-            pred_obs = self._f_obs_dec(state)
-            pred_lead = self._f_lead_dec(state)
+            state_components = self.split_state(state)
+            obs_e, lead_e = state_components[1], state_components[2]
+            pred_obs = self._f_obs_dec(obs_e)
+            pred_lead = self._f_lead_dec(lead_e)
             state = self._f_dyn(seq_e, state)
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
 
-        pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
-                                        obs.mask)
-        pred_lead = InpatientObservables(lead.time, jnp.vstack(pred_lead_l),
-                                         lead.mask)
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs,
-                                   leading_observable=pred_lead,
-                                   trajectory=None)
-
-
-class InRETAINConfig(ModelConfig):
-    mem_a: int = eqx.static_field(default=45)
-    mem_b: int = eqx.static_field(default=45)
-    lead_predictor: str = "monotonic"
-
-
-class InRETAIN(InpatientModel):
-
-    _f_gru_a: Callable
-    _f_gru_b: Callable
-    _f_att_a: Callable
-    _f_att_b: Callable
-    _f_lead_dec: Callable
-    _f_obs_dec: Callable
-    _f_dx_dec: Callable
-    _f_init: Callable
-    config: InRETAINConfig = eqx.static_field()
-
-    def __init__(self, config: InRETAINConfig, schemes: Tuple[DatasetScheme],
-                 demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
-                 key: "jax.random.PRNGKey"):
-        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
-        keys = jrandom.split(key, 9)
-
-        f_emb = self._make_embedding(
-            config=config,
-            schemes=schemes,
-            demographic_vector_config=demographic_vector_config,
-            key=keys[0])
-        f_dx_dec = self._make_dx_dec(config=config,
-                                     dx_size=len(schemes[1].outcome),
-                                     key=keys[1])
-
-        self._f_lead_dec = InICENODE._make_lead_dec(
-            config=config,
-            input_size=config.emb.sequence,
-            leading_observable_config=leading_observable_config,
-            key=keys[2])
-        self._f_obs_dec = self._make_obs_dec(config=config,
-                                             obs_size=len(schemes[1].obs),
-                                             key=keys[3])
-
-        self._f_gru_a = eqx.nn.GRUCell(config.emb.sequence,
-                                       config.mem_a,
-                                       use_bias=True,
-                                       key=keys[4])
-        self._f_gru_b = eqx.nn.GRUCell(config.emb.sequence,
-                                       config.mem_b,
-                                       use_bias=True,
-                                       key=keys[5])
-
-        self._f_att_a = eqx.nn.Linear(config.mem_a,
-                                      1,
-                                      use_bias=True,
-                                      key=keys[6])
-        self._f_att_b = eqx.nn.Linear(config.mem_b,
-                                      config.emb.sequence,
-                                      use_bias=True,
-                                      key=keys[7])
-
-        self._f_init = self._make_init(config=config, key=keys[8])
-
-        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
-
-    @staticmethod
-    def _make_init(config, key):
-        init_input_size = config.emb.demo + config.emb.dx
-        return eqx.nn.MLP(init_input_size,
-                          config.mem_a + config.mem_b + config.emb.sequence,
-                          (config.mem_a + config.mem_b) * 3,
-                          depth=2,
-                          key=key)
-
-    @staticmethod
-    def _make_embedding(config, demographic_vector_config, schemes, key):
-        return DeepMindPatientEmbedding(
-            schemes=schemes,
-            demographic_vector_config=demographic_vector_config,
-            config=config.emb,
-            key=key)
-
-    @staticmethod
-    def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.emb.sequence,
-                          dx_size,
-                          config.emb.dx * 5,
-                          depth=1,
-                          key=key)
-
-    @staticmethod
-    def _make_obs_dec(config, obs_size, key):
-        return eqx.nn.MLP(config.emb.sequence,
-                          obs_size,
-                          obs_size * 5,
-                          depth=1,
-                          key=key)
-
-    @property
-    def dyn_params_list(self):
-        return self.params_list(
-            (self._f_gru_a, self._f_gru_b, self._f_att_a, self._f_att_b))
-
-    @eqx.filter_jit
-    def _gru_a(self, x, state):
-        return self._f_gru_a(x, state)
-
-    @eqx.filter_jit
-    def _gru_b(self, x, state):
-        return self._f_gru_b(x, state)
-
-    @eqx.filter_jit
-    def _att_a(self, x):
-        return self._f_att_a(x)
-
-    @eqx.filter_jit
-    def _att_b(self, x):
-        return self._f_att_b(x)
-
-    @eqx.filter_jit
-    def _dx_dec(self, x):
-        return self._f_dx_dec(x)
-
-    @eqx.filter_jit
-    def _lead_dec(self, x):
-        return self._f_lead_dec(x)
-
-    @eqx.filter_jit
-    def _obs_dec(self, x):
-        return self._f_obs_dec(x)
-
-    @eqx.filter_jit
-    def _init_state(self, demo_emb, dx0):
-        state = self._f_init(jnp.hstack((demo_emb, dx0)))
-        splitter = (self.config.mem_a, self.config.mem_a + self.config.mem_b)
-        state_a, state_b, context = jnp.hsplit(state, splitter)
-        return state_a, state_b, jnp.tanh(self._att_b(state_b)) * context
-
-    def __call__(self, admission: Admission,
-                 embedded_admission: DeepMindEmbeddedAdmission,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
-
         obs = admission.observables
         lead = admission.leading_observable
-
         if len(obs) == 0:
             pred_obs = InpatientObservables.empty(obs.value.shape[1])
             pred_lead = InpatientObservables.empty(lead.value.shape[1])
-            pred_dx = CodesVector.empty(admission.outcome.scheme)
-            return AdmissionPrediction(admission=admission,
-                                       outcome=pred_dx,
-                                       observables=pred_obs,
-                                       leading_observable=pred_lead,
-                                       trajectory=None)
+        else:
+            pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
+                                            obs.mask)
+            pred_lead = InpatientObservables(lead.time,
+                                             jnp.vstack(pred_lead_l),
+                                             lead.mask)
 
-        state_a0, state_b0, context = self._init_state(embedded_admission.demo,
-                                                       embedded_admission.dx0)
-
-        # step 1 @RETAIN paper
-
-        # v1, v2, ..., vT
-        # Merge controls with embeddings
-        cv_seq = embedded_admission.sequence
-
-        pred_obs_l = [self._obs_dec(context)]
-        pred_lead_l = [self._lead_dec(context)]
-
-        for i in range(1, len(cv_seq)):
-            # e: i, ..., 1
-            e_seq = []
-
-            # beta: i, ..., 1
-            b_seq = []
-
-            state_a = state_a0
-            state_b = state_b0
-            for j in reversed(range(i)):
-                # step 2 @RETAIN paper
-                state_a = self._gru_a(cv_seq[j], state_a)
-                e_j = self._att_a(state_a)
-                # After the for-loop apply softmax on e_seq to get
-                # alpha_seq
-
-                e_seq.append(e_j)
-
-                # step 3 @RETAIN paper
-                h_j = state_b = self._gru_b(cv_seq[j], state_b)
-                b_j = self._att_b(h_j)
-
-                b_seq.append(jnp.tanh(b_j))
-
-            # alpha: i, ..., 1
-            a_seq = jax.nn.softmax(jnp.hstack(e_seq))
-
-            # step 4 @RETAIN paper
-
-            # v_i, ..., v_1
-            context = cv_seq[:i][::-1]
-            context = sum(a * (b * v)
-                          for a, b, v in zip(a_seq, b_seq, context))
-
-            # step 5 @RETAIN paper
-            pred_obs_l.append(self._obs_dec(context))
-            pred_lead_l.append(self._lead_dec(context))
-
-        pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
-                                        obs.mask)
-        pred_lead = InpatientObservables(lead.time, jnp.vstack(pred_lead_l),
-                                         lead.mask)
-
-        pred_dx = CodesVector(self._f_dx_dec(context),
-                              admission.outcome.scheme)
         return AdmissionPrediction(admission=admission,
-                                   outcome=pred_dx,
+                                   outcome=None,
                                    observables=pred_obs,
                                    leading_observable=pred_lead,
                                    trajectory=None)
