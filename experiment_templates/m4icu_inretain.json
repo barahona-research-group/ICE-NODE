@@ -163,7 +163,7 @@
         "mem_a": 50,
         "mem_b": 50
     },
-    "model_classname": "InGRU",
+    "model_classname": "InRETAIN",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {
