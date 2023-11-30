@@ -644,7 +644,8 @@ class InRETAIN(InpatientModel):
         if len(obs) == 0:
             pred_obs = InpatientObservables.empty(obs.value.shape[1])
             pred_lead = InpatientObservables.empty(lead.value.shape[1])
-            pred_dx = CodesVector.empty(admission.outcome.scheme)
+            pred_dx = CodesVector(jnp.zeros(len(admission.outcome.scheme)),
+                                  admission.outcome.scheme)
             return AdmissionPrediction(admission=admission,
                                        outcome=pred_dx,
                                        observables=pred_obs,
