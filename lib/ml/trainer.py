@@ -873,10 +873,15 @@ class Trainer(Module):
                 if step <= first_step:
                     continue
                 try:
+                    next_eval_step = min(s for s in eval_steps if s > step)
+                    steps_until_eval = next_eval_step - step
+
                     batch = patients.device_batch(batch_split)
                     optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
-                    split_gen.set_description(f'Loss: {loss_val:.4E}')
+                    split_gen.set_description(
+                        f'Loss: {loss_val:.4E}. {steps_until_eval} steps until eval.'
+                    )
                     signals.model_updated.send(self,
                                                model=model,
                                                history=history,
