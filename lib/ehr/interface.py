@@ -267,10 +267,9 @@ class Predictions(dict):
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def prediction_lead_loss(self, lead_loss):
-        preds = self.get_predictions()
         loss_v = []
         weight_v = []
-        for pred in preds:
+        for pred in self.get_predictions():
             adm = pred.admission
             if isinstance(pred.leading_observable, list):
                 pred_l = pred.leading_observable
@@ -286,19 +285,17 @@ class Predictions(dict):
 
             for pred_lo, adm_lo in zip(pred_l, adm_l):
                 for i in range(len(adm_lo.time)):
-                    m = adm_lo.mask[i]
                     y = adm_lo.value[i]
                     y_hat = pred_lo.value[i]
                     loss_v.append(lead_loss(y, y_hat))
-                    weight_v.append(m.sum())
+                    weight_v.append(adm_lo.mask[i].sum())
 
         loss_v = jnp.array(loss_v)
         weight_v = jnp.where(jnp.isnan(loss_v), 0.0, jnp.array(weight_v))
 
         if weight_v.sum() == 0:
             return 0.
-        loss_v = jnp.sum(loss_v * weight_v / weight_v.sum())
-        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
+        return jnp.nansum(loss_v * weight_v) / weight_v.sum()
 
     def prediction_lead_data(self, obs_index):
         preds = self.get_predictions()
