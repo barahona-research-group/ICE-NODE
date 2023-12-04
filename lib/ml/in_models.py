@@ -264,7 +264,6 @@ class InICENODE(InpatientModel):
         lead = admission.leading_observable
         pred_obs_l = []
         pred_lead_l = []
-        trajectory_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
         for i in range(len(t0)):
@@ -274,15 +273,13 @@ class InICENODE(InpatientModel):
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
-            trajectory_l.append(PatientTrajectory(time=t1[i], state=state))
 
         pred_dx = CodesVector(self._f_dx_dec(state), admission.outcome.scheme)
 
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
                                    observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory_l)
+                                   leading_observable=pred_lead_l)
 
     @property
     def dyn_params_list(self):
@@ -350,7 +347,6 @@ class InICENODELite(InICENODE):
         lead = admission.leading_observable
         pred_obs_l = []
         pred_lead_l = []
-        # trajectory_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
         for i in range(len(t0)):
@@ -360,7 +356,6 @@ class InICENODELite(InICENODE):
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
-            # trajectory_l.append(PatientTrajectory(time=t1[i], state=state))
 
         return AdmissionPrediction(admission=admission,
                                    outcome=None,
