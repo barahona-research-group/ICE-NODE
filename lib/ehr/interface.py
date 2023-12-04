@@ -295,6 +295,8 @@ class Predictions(dict):
         loss_v = jnp.array(loss_v)
         weight_v = jnp.where(jnp.isnan(loss_v), 0.0, jnp.array(weight_v))
 
+        if weight_v.sum() == 0:
+            return 0.
         loss_v = jnp.sum(loss_v * weight_v / weight_v.sum())
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
