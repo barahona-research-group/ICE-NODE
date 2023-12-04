@@ -150,7 +150,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODELiteConfig",
+        "_type": "InModularICENODELiteConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 5,
@@ -164,7 +164,7 @@
         "mem": 15,
         "obs": 25
     },
-    "model_classname": "InICENODELite",
+    "model_classname": "InModularICENODELite",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {

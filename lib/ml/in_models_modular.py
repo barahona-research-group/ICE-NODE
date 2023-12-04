@@ -18,11 +18,12 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          DeepMindEmbeddedAdmission)
 
 from .model import InpatientModel, ModelConfig, ModelRegularisation
+from .in_models import InICENODE, InICENODERegularisation
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 from ..base import Data, Config
 
 
-class InICENODEConfig(ModelConfig):
+class InModularICENODEConfig(ModelConfig):
     mem: int = 15
     obs: int = 25
     lead: int = 5
@@ -40,68 +41,7 @@ class InICENODEConfig(ModelConfig):
         return (s1, s2, s3)
 
 
-class InICENODERegularisation(ModelRegularisation):
-    L_taylor: float = 0.0
-    taylor_order: int = 0
-
-
-class MonotonicLeadingObsPredictor(eqx.Module):
-    _mlp: eqx.nn.MLP
-
-    def __init__(self, config: InICENODEConfig,
-                 leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
-        out_size = len(leading_observable_config.leading_hours) + 1
-        self._mlp = eqx.nn.MLP(config.lead,
-                               out_size,
-                               config.lead * 5,
-                               depth=2,
-                               key=key)
-
-    def __call__(self, lead):
-        y = self._mlp(lead)
-        risk = y[-1]
-        p = jnp.cumsum(jnn.softmax(y[:-1]))
-        return risk * p
-
-
-class SigmoidLeadingObsPredictor(eqx.Module):
-    _t: jnp.ndarray = eqx.static_field()
-    _mlp: eqx.nn.MLP
-
-    def __init__(self, config: InICENODEConfig,
-                 leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
-        self._t = jnp.array(leading_observable_config.leading_hours)
-        self._mlp = eqx.nn.MLP(config.lead,
-                               4,
-                               config.lead * 5,
-                               depth=3,
-                               key=key)
-
-    def __call__(self, lead):
-        [vscale, hscale, vshift, hshift] = self._mlp(lead)
-        return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
-
-
-class MLPLeadingObsPredictor(eqx.Module):
-    _mlp: eqx.nn.MLP
-
-    def __init__(self, config: InICENODEConfig,
-                 leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
-        self._mlp = eqx.nn.MLP(config.lead,
-                               len(leading_observable_config.leading_hours),
-                               config.lead * 5,
-                               final_activation=jnn.sigmoid,
-                               depth=3,
-                               key=key)
-
-    def __call__(self, lead):
-        return self._mlp(lead)
-
-
-class InICENODE(InpatientModel):
+class InModularICENODE(InICENODE):
     """
     The InICENODE model. It is composed of the following components:
         - f_emb: Embedding function.
@@ -117,9 +57,10 @@ class InICENODE(InpatientModel):
     _f_dyn: Callable
     _f_update: Callable
 
-    config: InICENODEConfig = eqx.static_field()
+    config: InModularICENODEConfig = eqx.static_field()
 
-    def __init__(self, config: InICENODEConfig, schemes: Tuple[DatasetScheme],
+    def __init__(self, config: InModularICENODEConfig,
+                 schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: "jax.random.PRNGKey"):
@@ -140,6 +81,7 @@ class InICENODE(InpatientModel):
                                              key=obs_dec_key)
         self._f_lead_dec = self._make_lead_dec(
             config=config,
+            input_size=config.lead,
             leading_observable_config=leading_observable_config,
             key=lead_key)
         self._f_dyn = self._make_dyn(config=config, key=dyn_key)
@@ -147,25 +89,10 @@ class InICENODE(InpatientModel):
                                            obs_size=len(schemes[1].obs),
                                            key=update_key)
 
-        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
-
-    @staticmethod
-    def _make_lead_dec(config, leading_observable_config, key):
-        if config.lead_predictor == "monotonic":
-            return MonotonicLeadingObsPredictor(config,
-                                                leading_observable_config,
-                                                key=key)
-        elif config.lead_predictor == "sigmoid":
-            return SigmoidLeadingObsPredictor(config,
-                                              leading_observable_config,
-                                              key=key)
-        elif config.lead_predictor == "mlp":
-            return MLPLeadingObsPredictor(config,
-                                          leading_observable_config,
-                                          key=key)
-        else:
-            raise ValueError(
-                f"Unknown leading predictor type: {config.lead_predictor}")
+        InpatientModel.__init__(self,
+                                config=config,
+                                _f_emb=f_emb,
+                                _f_dx_dec=f_dx_dec)
 
     @staticmethod
     def _make_dyn(config, key):
@@ -184,28 +111,12 @@ class InICENODE(InpatientModel):
         return ObsStateUpdate(config.state_size, obs_size, key=key)
 
     @staticmethod
-    def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.emb.dx,
-                          dx_size,
-                          config.emb.dx * 5,
-                          depth=1,
-                          key=key)
-
-    @staticmethod
     def _make_obs_dec(config, obs_size, key):
         return eqx.nn.MLP(config.obs,
                           obs_size,
                           config.obs * 5,
                           depth=1,
                           key=key)
-
-    @staticmethod
-    def _make_embedding(config, demographic_vector_config, schemes, key):
-        return InpatientEmbedding(
-            schemes=schemes,
-            demographic_vector_config=demographic_vector_config,
-            config=config.emb,
-            key=key)
 
     @eqx.filter_jit
     def join_state(self, mem, obs, lead, dx):
@@ -221,20 +132,6 @@ class InICENODE(InpatientModel):
     @eqx.filter_jit
     def split_state(self, state: jnp.ndarray):
         return jnp.hsplit(state, self.config.state_splitter)
-
-    @eqx.filter_jit
-    def _safe_integrate(self, delta, state, int_e):
-        # dt = float(jax.block_until_ready(delta))
-        # if dt < 0.0:
-        # logging.error(f"Time diff is {dt}!")
-        # return state
-        # if dt < 1 / 3600.0:
-        # logging.debug(f"Time diff is less than 1 second: {dt}")
-        # return state
-        # else:
-        second = jnp.array(1 / 3600.0)
-        delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
-        return self._f_dyn(delta, state, args=dict(control=int_e))[-1]
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
@@ -298,12 +195,8 @@ class InICENODE(InpatientModel):
                                    leading_observable=pred_lead_l,
                                    trajectory=trajectory_l)
 
-    @property
-    def dyn_params_list(self):
-        return self.params_list(self._f_dyn)
 
-
-class InICENODELiteConfig(InICENODEConfig):
+class InModularICENODELiteConfig(InModularICENODEConfig):
 
     @property
     def state_size(self):
@@ -316,7 +209,7 @@ class InICENODELiteConfig(InICENODEConfig):
         return (s1, s2)
 
 
-class InICENODELite(InICENODE):
+class InModularICENODELite(InModularICENODE):
     """
     The InICENODE model. It is composed of the following components:
         - f_emb: Embedding function.
@@ -331,9 +224,9 @@ class InICENODELite(InICENODE):
     _f_dyn: Callable
     _f_update: Callable
 
-    config: InICENODELiteConfig = eqx.static_field()
+    config: InModularICENODELiteConfig = eqx.static_field()
 
-    def __init__(self, config: InICENODELiteConfig,
+    def __init__(self, config: InModularICENODELiteConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableConfig,
@@ -398,7 +291,10 @@ class InICENODELite(InICENODE):
                                    trajectory=None)
 
 
-class InGRUJump(InICENODELite):
+class InModularGRUConfig(InModularICENODELiteConfig):
+    pass
+
+class InModularGRUJump(InModularICENODELite):
     # TODO: as for the original paper, use multi-layer embeddings with skip
     # connections.
     _f_emb: Callable[[Admission], EmbeddedInAdmission]
@@ -409,7 +305,7 @@ class InGRUJump(InICENODELite):
     _f_update: Callable
     _f_dyn: Callable
 
-    config: InICENODELiteConfig = eqx.static_field()
+    config: InModularGRUConfig = eqx.static_field()
 
     @staticmethod
     def _make_embedding(config, demographic_vector_config, schemes, key):
@@ -484,7 +380,7 @@ class InGRUJump(InICENODELite):
                                    trajectory=None)
 
 
-class InGRU(InGRUJump):
+class InModularGRU(InModularGRUJump):
 
     @staticmethod
     def _make_embedding(config, demographic_vector_config, schemes, key):

@@ -5,7 +5,12 @@ from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
 
 from .in_models import (InICENODE, InICENODEConfig, InICENODERegularisation,
                         InICENODELite, InICENODELiteConfig, InGRU, InGRUJump,
-                        InRETAIN, InRETAINConfig)
+                        InGRUConfig, InRETAIN, InRETAINConfig)
+
+from .in_models_modular import (InModularICENODE, InModularICENODEConfig,
+                                InModularICENODELite,
+                                InModularICENODELiteConfig, InModularGRU,
+                                InModularGRUJump, InModularGRUConfig)
 
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedAdmission, OutpatientEmbedding,

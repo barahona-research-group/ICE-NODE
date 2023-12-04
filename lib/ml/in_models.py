@@ -38,6 +38,7 @@ class MonotonicLeadingObsPredictor(eqx.Module):
     def __init__(self, input_size: int,
                  leading_observable_config: LeadingObservableConfig,
                  key: jax.random.PRNGKey):
+        super().__init__()
         out_size = len(leading_observable_config.leading_hours) + 1
         self._mlp = eqx.nn.MLP(input_size,
                                out_size,
@@ -358,6 +359,9 @@ class InICENODELite(InICENODE):
                                    trajectory=None)
 
 
+class InGRUConfig(InICENODELiteConfig):
+    pass
+
 class InGRUJump(InICENODELite):
     # TODO: as for the original paper, use multi-layer embeddings with skip
     # connections.
@@ -369,7 +373,7 @@ class InGRUJump(InICENODELite):
     _f_update: Callable
     _f_dyn: Callable
 
-    config: InICENODELiteConfig = eqx.static_field()
+    config: InGRUConfig = eqx.static_field()
 
     @staticmethod
     def _make_embedding(config, demographic_vector_config, schemes, key):

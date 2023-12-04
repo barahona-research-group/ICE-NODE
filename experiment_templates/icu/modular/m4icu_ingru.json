@@ -151,7 +151,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODELiteConfig",
+        "_type": "InModularGRUConfig",
         "emb": {
             "_type": "DeepMindPatientEmbeddingConfig",
             "demo": 5,
@@ -164,7 +164,7 @@
         "mem": 15,
         "obs": 25
     },
-    "model_classname": "InGRU",
+    "model_classname": "InModularGRU",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {

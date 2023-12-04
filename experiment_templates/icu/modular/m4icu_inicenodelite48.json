@@ -85,11 +85,7 @@
             "_type": "LeadingObservableConfig",
             "index": 42,
             "leading_hours": [
-                6,
-                12,
-                24,
-                48,
-                72
+                48
             ],
             "scheme": "MIMICObservables",
             "window_aggregate": "max"
@@ -103,8 +99,7 @@
             "int_proc": "MIMICProcedureGroups",
             "obs": "MIMICObservables",
             "outcome": "dx_icd9_filter_v3_groups"
-        },
-        "time_binning": 6
+        }
     },
     "metrics": [
         {
@@ -115,8 +110,7 @@
                 "lead_loss": [
                     "mse",
                     "mae",
-                    "rms",
-                    "softdtw(0.1)"
+                    "rms"
                 ],
                 "obs_loss": [
                     "mse",
@@ -151,18 +145,21 @@
         }
     ],
     "model": {
-        "_type": "InICENODELiteConfig",
+        "_type": "InModularICENODELiteConfig",
         "emb": {
-            "_type": "InpatientLiteEmbeddingConfig",
+            "_type": "InpatientEmbeddingConfig",
             "demo": 5,
-            "dx": 30
+            "dx": 30,
+            "inp": 15,
+            "inp_proc_demo": 10,
+            "proc": 15
         },
         "lead": 5,
         "lead_predictor": "mlp",
         "mem": 15,
         "obs": 25
     },
-    "model_classname": "InGRUJump",
+    "model_classname": "InModularICENODELite",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {

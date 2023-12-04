@@ -198,7 +198,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODEConfig",
+        "_type": "InModularICENODEConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 5,
@@ -212,7 +212,7 @@
         "mem": 15,
         "obs": 25
     },
-    "model_classname": "InICENODE",
+    "model_classname": "InModularICENODE",
     "n_evals": 100,
     "reg_hyperparams": null,
     "reporting": {
