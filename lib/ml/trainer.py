@@ -880,7 +880,7 @@ class Trainer(Module):
                     optimizer, model, loss_val = self.step_optimizer(
                         step, optimizer, model, batch)
                     split_gen.set_description(
-                        f'Loss: {loss_val:.4E}. {steps_until_eval} steps until eval.'
+                        f'Loss: {loss_val:.4E} | {steps_until_eval} steps until eval.'
                     )
                     signals.model_updated.send(self,
                                                model=model,
