@@ -82,6 +82,7 @@ class InModularICENODE(InICENODE):
         self._f_lead_dec = self._make_lead_dec(
             config=config,
             input_size=config.lead,
+            width_size=config.lead * 5,
             leading_observable_config=leading_observable_config,
             key=lead_key)
         self._f_dyn = self._make_dyn(config=config, key=dyn_key)

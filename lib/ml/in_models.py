@@ -37,12 +37,13 @@ class MonotonicLeadingObsPredictor(eqx.Module):
 
     def __init__(self, input_size: int,
                  leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
+                 key: jax.random.PRNGKey, **mlp_kwargs):
         super().__init__()
         out_size = len(leading_observable_config.leading_hours) + 1
+        width = mlp_kwargs.get("width_size", out_size * 5)
         self._mlp = eqx.nn.MLP(input_size,
                                out_size,
-                               out_size * 5,
+                               width_size=width,
                                depth=2,
                                key=key)
 
@@ -59,11 +60,13 @@ class SigmoidLeadingObsPredictor(eqx.Module):
 
     def __init__(self, input_size: int,
                  leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
+                 key: jax.random.PRNGKey, **mlp_kwargs):
+        super().__init__()
         self._t = jnp.array(leading_observable_config.leading_hours)
+        width = mlp_kwargs.get("width_size", len(self._t) * 5)
         self._mlp = eqx.nn.MLP(input_size,
                                4,
-                               len(self._t) * 5,
+                               width_size=width,
                                depth=3,
                                key=key)
 
@@ -77,11 +80,14 @@ class MLPLeadingObsPredictor(eqx.Module):
 
     def __init__(self, input_size: int,
                  leading_observable_config: LeadingObservableConfig,
-                 key: jax.random.PRNGKey):
+                 key: jax.random.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        width = mlp_kwargs.get(
+            "width_size",
+            len(leading_observable_config.leading_hours) * 5)
         self._mlp = eqx.nn.MLP(input_size,
                                len(leading_observable_config.leading_hours),
-                               len(leading_observable_config.leading_hours) *
-                               5,
+                               width_size=width,
                                final_activation=jnn.sigmoid,
                                depth=3,
                                key=key)
@@ -140,19 +146,23 @@ class InICENODE(InpatientModel):
         super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
 
     @staticmethod
-    def _make_lead_dec(config, input_size, leading_observable_config, key):
+    def _make_lead_dec(config, input_size, leading_observable_config, key,
+                       **kwargs):
         if config.lead_predictor == "monotonic":
             return MonotonicLeadingObsPredictor(input_size,
                                                 leading_observable_config,
-                                                key=key)
+                                                key=key,
+                                                **kwargs)
         elif config.lead_predictor == "sigmoid":
             return SigmoidLeadingObsPredictor(input_size,
                                               leading_observable_config,
-                                              key=key)
+                                              key=key,
+                                              **kwargs)
         elif config.lead_predictor == "mlp":
             return MLPLeadingObsPredictor(input_size,
                                           leading_observable_config,
-                                          key=key)
+                                          key=key,
+                                          **kwargs)
         else:
             raise ValueError(
                 f"Unknown leading predictor type: {config.lead_predictor}")
@@ -361,6 +371,7 @@ class InICENODELite(InICENODE):
 
 class InGRUConfig(InICENODELiteConfig):
     pass
+
 
 class InGRUJump(InICENODELite):
     # TODO: as for the original paper, use multi-layer embeddings with skip
