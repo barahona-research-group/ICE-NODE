@@ -225,6 +225,22 @@ def masked_rms(y: jnp.ndarray,
     return jnp.sqrt(masked_mse(y, y_hat, mask, axis=axis))
 
 
+_softdtw_0_1 = SoftDTW(gamma=0.1)
+
+
+@eqx.filter_jit
+def masked_softdtw(y: jnp.ndarray,
+                   y_hat: jnp.ndarray,
+                   mask: jnp.ndarray = None,
+                   axis=None):
+    """Masked root mean squared error."""
+    if mask is None:
+        mask = jnp.ones_like(y)
+
+    valid = mask.sum() > 2
+    return jnp.where(valid, _softdtw_0_1(y, y_hat), jnp.nan)
+
+
 # @eqx.filter_jit
 # def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
 #                   logvar: jnp.ndarray) -> jnp.ndarray:
@@ -258,26 +274,9 @@ def masked_rms(y: jnp.ndarray,
 #     return (gaussian_KL(mu_1=mean_predicted,
 #                         mu_2=mean_true,
 #                         sigma_1=std,
-#                         sigma_2=obs_noise_std) * mask).sum() / (jnp.sum(mask) +
+#                         sigma_2=obs_noise_std) * mask).sum() /
+#                                                   (jnp.sum(mask) +
 #                                                                 1e-10)
-
-
-class SoftDTWDict(dict):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._keys = set()
-
-    def __setitem__(self, key, value):
-        self._keys.add(key)
-        super().__setitem__(key, value)
-
-    def __getitem__(self, key):
-        if key not in self._keys and key.startswith('softdtw'):
-            gamma = float(key.split('(')[1].split(')')[0])
-            self.__setitem__(key, SoftDTW(gamma=gamma))
-        return super().__getitem__(key)
-
 
 binary_loss = {
     'softmax_bce': softmax_bce,
@@ -288,12 +287,12 @@ binary_loss = {
     'allpairs_sigmoid_rank': allpairs_sigmoid_rank
 }
 
-numeric_loss = SoftDTWDict({
+numeric_loss = {
     'mse': masked_mse,
     'mae': masked_mae,
     'rms': masked_rms,
-    'softdtw(0.1)': SoftDTW(gamma=0.1),  # And so any other gamma!
-})
+    'softdtw(0.1)': masked_softdtw
+}
 
 colwise_binary_loss = {
     'softmax_bce':

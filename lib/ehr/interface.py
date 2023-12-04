@@ -295,7 +295,7 @@ class Predictions(dict):
         loss_v = jnp.array(loss_v)
         weight_v = jnp.where(jnp.isnan(loss_v), 0.0, jnp.array(weight_v))
 
-        loss_v = jnp.nanmean(loss_v * weight_v / weight_v.sum())
+        loss_v = jnp.sum(loss_v * weight_v / weight_v.sum())
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def prediction_lead_data(self, obs_index):
