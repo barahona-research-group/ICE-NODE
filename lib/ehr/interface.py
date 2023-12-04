@@ -287,10 +287,8 @@ class Predictions(dict):
             for pred_lo, adm_lo in zip(pred_l, adm_l):
                 for i in range(len(adm_lo.time)):
                     m = adm_lo.mask[i]
-                    if m.sum() < len(m) // 2:
-                        continue
-                    y = adm_lo.value[i][m]
-                    y_hat = pred_lo.value[i][m]
+                    y = adm_lo.value[i]
+                    y_hat = pred_lo.value[i]
                     loss_v.append(lead_loss(y, y_hat))
                     weight_v.append(m.sum())
 
