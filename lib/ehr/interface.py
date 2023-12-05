@@ -264,9 +264,11 @@ class Predictions(dict):
         mask = jnp.vstack(l_mask)
         pred = jnp.vstack(l_pred)
         loss_v = obs_loss(true, pred, mask)
+        if jnp.isnan(loss_v):
+            return logging.warning('NaN obs loss detected')
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
-    def prediction_lead_loss2(self, lead_loss):
+    def prediction_lead_loss(self, lead_loss):
         loss_v = []
         weight_v = []
         for pred in self.get_predictions():
@@ -287,8 +289,9 @@ class Predictions(dict):
                 for i in range(len(adm_lo.time)):
                     y = adm_lo.value[i]
                     y_hat = pred_lo.value[i]
-                    loss_v.append(lead_loss(y, y_hat))
-                    weight_v.append(adm_lo.mask[i].sum())
+                    mask = adm_lo.mask[i]
+                    loss_v.append(lead_loss(y, y_hat, mask))
+                    weight_v.append(mask.sum())
 
         loss_v = jnp.array(loss_v)
         weight_v = jnp.array(weight_v)
@@ -298,35 +301,6 @@ class Predictions(dict):
 
         weight_v = weight_v / weight_v.sum()
         return jnp.nansum(loss_v * weight_v)
-
-    def prediction_lead_loss(self, lead_loss):
-        preds = self.get_predictions()
-        loss_v = []
-        for pred in preds:
-            adm = pred.admission
-            if isinstance(pred.leading_observable, list):
-                pred_l = pred.leading_observable
-            else:
-                pred_l = [pred.leading_observable]
-
-            if isinstance(adm.leading_observable, list):
-                adm_l = adm.leading_observable
-            else:
-                adm_l = [adm.leading_observable]
-
-            assert len(pred_l) == len(adm_l)
-
-            for pred_lo, adm_lo in zip(pred_l, adm_l):
-                for i in range(len(adm_lo.time)):
-                    m = adm_lo.mask[i]
-                    if m.sum() < len(m) // 2:
-                        continue
-                    y = adm_lo.value[i][m]
-                    y_hat = pred_lo.value[i][m]
-                    loss_v.append(lead_loss(y, y_hat) / m.sum())
-        loss_v = jnp.array(loss_v)
-        loss_v = jnp.nanmean(loss_v)
-        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def prediction_lead_data(self, obs_index):
         preds = self.get_predictions()

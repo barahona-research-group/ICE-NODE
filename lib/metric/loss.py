@@ -192,91 +192,73 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
     return jnp.nanmean(loss_array, where=(mask & (y_diff != 0)), axis=axis)
 
 
-@eqx.filter_jit
-def masked_mse(y: jnp.ndarray,
-               y_hat: jnp.ndarray,
-               mask: jnp.ndarray = None,
-               axis=None):
-    """Masked L2 loss."""
-    if mask is None:
-        mask = jnp.ones_like(y)
-    return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask, axis=axis)
+# @eqx.filter_jit
+# def masked_mse(y: jnp.ndarray,
+#                y_hat: jnp.ndarray,
+#                mask: jnp.ndarray = None,
+#                axis=None):
+#     """Masked L2 loss."""
+#     if mask is None:
+#         mask = jnp.ones_like(y)
+#     return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask, axis=axis)
+
+
+def masked_op(op):
+
+    def masked_op_fn(y: jnp.ndarray,
+                     y_hat: jnp.ndarray,
+                     mask: jnp.ndarray = None,
+                     axis=None):
+        """Masked L2 loss."""
+        if mask is None:
+            return op(y, y_hat, axis=axis)
+        else:
+            return op(y[mask], y_hat[mask], axis=axis)
+
+    return masked_op_fn
+
+
+def mse_terms(y: jnp.ndarray, y_hat: jnp.ndarray):
+    """L2 loss terms."""
+    return jnp.power(y - y_hat, 2)
 
 
 @eqx.filter_jit
-def masked_mae(y: jnp.ndarray,
-               y_hat: jnp.ndarray,
-               mask: jnp.ndarray = None,
-               axis=None):
-    """Masked L1 loss."""
-    if mask is None:
-        mask = jnp.ones_like(y)
-    return jnp.nanmean(jnp.abs(y - y_hat), where=mask, axis=axis)
+def mse(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+    """L2 loss."""
+    return jnp.mean(mse_terms(y, y_hat), axis=axis)
+
+
+def mae_terms(y: jnp.ndarray, y_hat: jnp.ndarray):
+    """L1 loss terms."""
+    return jnp.abs(y - y_hat)
 
 
 @eqx.filter_jit
-def masked_rms(y: jnp.ndarray,
-               y_hat: jnp.ndarray,
-               mask: jnp.ndarray = None,
-               axis=None):
-    """Masked root mean squared error."""
-    if mask is None:
-        mask = jnp.ones_like(y)
-    return jnp.sqrt(masked_mse(y, y_hat, mask, axis=axis))
+def mae(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+    """L1 loss."""
+    return jnp.mean(mae_terms(y, y_hat), axis=axis)
+
+
+@eqx.filter_jit
+def rms(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+    """Root mean squared error."""
+    return jnp.sqrt(mse(y, y_hat, axis=axis))
 
 
 _softdtw_0_1 = SoftDTW(gamma=0.1)
 
 
 @eqx.filter_jit
-def masked_softdtw(y: jnp.ndarray,
-                   y_hat: jnp.ndarray,
-                   mask: jnp.ndarray = None,
-                   axis=None):
-    """Masked root mean squared error."""
-    if mask is None:
-        mask = jnp.ones_like(y)
-
-    valid = mask.sum() > 2
-    return jnp.where(valid, _softdtw_0_1(y, y_hat), jnp.nan)
+def softdtw(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+    """Soft-DTW loss."""
+    return _softdtw_0_1(y, y_hat)
 
 
-# @eqx.filter_jit
-# def numeric_error(mean_true: jnp.ndarray, mean_predicted: jnp.ndarray,
-#                   logvar: jnp.ndarray) -> jnp.ndarray:
-#     """Return the exponent of the normal-distribution liklihood function."""
-#     sigma = jnp.exp(0.5 * logvar)
-#     return (mean_true - mean_predicted) / sigma
-
-# @eqx.filter_jit
-# def lognormal_loss(mask: jnp.ndarray, error: jnp.ndarray,
-#                    logvar: jnp.ndarray) -> float:
-#     """Return the negative log-liklihood, masked and vectorized."""
-#     log_lik_c = jnp.log(jnp.sqrt(2 * jnp.pi))
-#     return 0.5 * ((jnp.power(error, 2) + logvar + 2 * log_lik_c) *
-#                   mask).sum() / (mask.sum() + 1e-10)
-
-# def gaussian_KL(mu_1: jnp.ndarray, mu_2: jnp.ndarray, sigma_1: jnp.ndarray,
-#                 sigma_2: float) -> jnp.ndarray:
-#     """Return the Guassian Kullback-Leibler."""
-#     return (jnp.log(sigma_2) - jnp.log(sigma_1) +
-#             (jnp.power(sigma_1, 2) + jnp.power(
-#                 (mu_1 - mu_2), 2)) / (2 * sigma_2**2) - 0.5)
-
-# @eqx.filter_jit
-# def compute_KL_loss(mean_true: jnp.ndarray,
-#                     mask: jnp.ndarray,
-#                     mean_predicted: jnp.ndarray,
-#                     logvar_predicted: jnp.ndarray,
-#                     obs_noise_std: float = 1e-1) -> float:
-#     """Return the Gaussian Kullback-Leibler divergence, masked."""
-#     std = jnp.exp(0.5 * logvar_predicted)
-#     return (gaussian_KL(mu_1=mean_predicted,
-#                         mu_2=mean_true,
-#                         sigma_1=std,
-#                         sigma_2=obs_noise_std) * mask).sum() /
-#                                                   (jnp.sum(mask) +
-#                                                                 1e-10)
+masked_mse = masked_op(mse)
+masked_mae = masked_op(mae)
+masked_rms = masked_op(rms)
+masked_softdtw = masked_op(softdtw)
 
 binary_loss = {
     'softmax_bce': softmax_bce,

@@ -105,6 +105,9 @@ class DTW(eqx.Module):
             y = jnp.expand_dims(y, axis=1)
             y_hat = jnp.expand_dims(y_hat, axis=1)
 
+        if jnp.size(y) == 0 or jnp.size(y_hat) == 0:
+            return 0.
+
         D = self._f_pairwise_distance(y, y_hat)
 
         # wlog: H >= W
