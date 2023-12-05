@@ -96,6 +96,14 @@ class InModularICENODE(InICENODE):
                                 _f_dx_dec=f_dx_dec)
 
     @staticmethod
+    def _make_dx_dec(config, dx_size, key):
+        return eqx.nn.MLP(config.state_size,
+                          dx_size,
+                          config.state * 5,
+                          depth=1,
+                          key=key)
+
+    @staticmethod
     def _make_dyn(config, key):
         dyn_input_size = config.state_size + config.emb.inp_proc_demo
         f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
@@ -289,6 +297,7 @@ class InModularICENODELite(InModularICENODE):
 
 class InModularGRUConfig(InModularICENODELiteConfig):
     pass
+
 
 class InModularGRUJump(InModularICENODELite):
     # TODO: as for the original paper, use multi-layer embeddings with skip
