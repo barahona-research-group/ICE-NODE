@@ -97,9 +97,9 @@ class InModularICENODE(InICENODE):
 
     @staticmethod
     def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.state_size,
+        return eqx.nn.MLP(config.emb.dx,
                           dx_size,
-                          config.state_size * 5,
+                          config.emb.dx * 5,
                           depth=1,
                           key=key)
 
