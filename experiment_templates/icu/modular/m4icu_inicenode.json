@@ -245,5 +245,6 @@
             "reverse_schedule": false
         }
     },
+    "trainer_classname": "InTrainer",
     "warmup": null
 }

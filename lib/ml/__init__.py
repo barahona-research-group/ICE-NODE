@@ -5,7 +5,8 @@ from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
 
 from .in_models import (InICENODE, InICENODEConfig, InICENODERegularisation,
                         InICENODELite, InICENODELiteConfig, InGRU, InGRUJump,
-                        InGRUConfig, InRETAIN, InRETAINConfig)
+                        InGRUConfig, InRETAIN, InRETAINConfig, InSKELKoopman,
+                        InSKELKoopmanConfig, InSKELKoopmanRegularisation)
 
 from .in_models_modular import (InModularICENODE, InModularICENODEConfig,
                                 InModularICENODELite,
@@ -19,7 +20,8 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          InpatientLiteEmbedding, InpatientLiteEmbeddingConfig)
 
 from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
-                      WarmupConfig, TrainerConfig, ReportingConfig)
+                      WarmupConfig, TrainerConfig, ReportingConfig,
+                      InSKELKoopmanTrainer)
 
 from .experiment import (Experiment, ExperimentConfig, SplitConfig,
                          InpatientExperiment)

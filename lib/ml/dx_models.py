@@ -15,7 +15,8 @@ from ..ehr import (Patient, AdmissionPrediction, DemographicVectorConfig,
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import OutpatientModel, ModelConfig, ModelRegularisation
+from .model import (OutpatientModel, ModelConfig, ModelRegularisation,
+                    Precomputes)
 
 
 class ICENODEConfig(ModelConfig):
@@ -123,6 +124,7 @@ class ICENODE(OutpatientModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
+                 precomputes: Precomputes,
                  regularisation: Optional[ICENODERegularisation],
                  store_embeddings: bool):
         adms = patient.admissions
@@ -236,7 +238,8 @@ class GRU(OutpatientModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 regularisation: ModelRegularisation, store_embeddings: bool):
+                 precomputes: Precomputes, regularisation: ModelRegularisation,
+                 store_embeddings: bool):
         adms = patient.admissions
         state = jnp.zeros((self.config.emb.dx, ))
         preds = []
@@ -343,7 +346,8 @@ class RETAIN(OutpatientModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 regularisation: ModelRegularisation, store_embeddings: bool):
+                 precomputes: Precomputes, regularisation: ModelRegularisation,
+                 store_embeddings: bool):
         adms = patient.admissions
         state_a0 = jnp.zeros(self.config.mem_a)
         state_b0 = jnp.zeros(self.config.mem_b)

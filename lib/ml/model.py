@@ -12,7 +12,7 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission)
-from ..base import Config, Module
+from ..base import Config, Module, Data
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
                          EmbeddedAdmission)
@@ -28,6 +28,10 @@ class ModelConfig(Config):
 class ModelRegularisation(Config):
     L_l1: float = 0.0
     L_l2: float = 0.0
+
+
+class Precomputes(Data):
+    pass
 
 
 class AbstractModel(Module):
@@ -73,10 +77,14 @@ class AbstractModel(Module):
             f"({config.emb.demo}) and input demographic vector size "\
             f"({demo_vec_dim}) must both be zero or non-zero."
 
+    def precomputes(self, inpatients: Patients):
+        return Precomputes()
+
     @abstractmethod
     def __call__(self,
                  x: Union[Patient, Admission],
                  embedded_x: Union[List[EmbeddedAdmission], EmbeddedAdmission],
+                 precomputes: Precomputes,
                  regularisation: Optional[ModelRegularisation] = None,
                  store_embeddings: bool = False):
         pass
@@ -207,7 +215,7 @@ class InpatientModel(AbstractModel):
                       regularisation: Optional[ModelRegularisation] = None,
                       store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.interval_days()
-
+        precomputes = self.precomputes(inpatients)
         inpatients_emb = {
             i: self._f_emb(subject)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
@@ -235,7 +243,8 @@ class InpatientModel(AbstractModel):
                                     adm,
                                     adm_e,
                                     regularisation=regularisation,
-                                    store_embeddings=store_embeddings))
+                                    store_embeddings=store_embeddings,
+                                    precomputes=precomputes))
                     pbar.update(adm.interval_days)
             return results.filter_nans()
 
@@ -256,6 +265,7 @@ class OutpatientModel(AbstractModel):
                       regularisation: Optional[ModelRegularisation] = None,
                       store_embeddings: bool = False) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
+        precomputes = self.precomputes(inpatients)
         inpatients_emb = {
             i: self._f_emb(subject)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
@@ -277,6 +287,7 @@ class OutpatientModel(AbstractModel):
                 embedded_admissions = inpatients_emb[subject_id]
                 for pred in self(inpatient,
                                  embedded_admissions,
+                                 precomputes=precomputes,
                                  regularisation=regularisation,
                                  store_embeddings=store_embeddings):
                     results.add(subject_id=subject_id, prediction=pred)

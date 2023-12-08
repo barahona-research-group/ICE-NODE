@@ -26,6 +26,7 @@ class ExperimentConfig(Config):
     interface: InterfaceConfig
     split: SplitConfig
     trainer: TrainerConfig
+    trainer_classname: str
     model: ModelConfig
     model_classname: str
     metrics: List[Dict[str, Any]]
@@ -81,10 +82,6 @@ class Experiment(Module):
             demographic_vector_config=self.config.interface.demographic_vector,
             key=key)
 
-    def load_trainer(self):
-        return Trainer(self.config.trainer,
-                       reg_hyperparams=self.config.reg_hyperparams)
-
     def load_metrics(self, interface, splits):
         external_kwargs = {'patients': interface, 'train_split': splits[0]}
 
@@ -94,6 +91,11 @@ class Experiment(Module):
                 Module.import_module(config=config, **external_kwargs))
 
         return metrics
+
+    def load_trainer(self):
+        trainer_class = Module._class_registry[self.config.trainer_classname]
+        return trainer_class(self.config.trainer,
+                             reg_hyperparams=self.config.reg_hyperparams)
 
     def load_reporting(self, interface, splits):
         metrics = self.load_metrics(interface, splits)
@@ -147,7 +149,3 @@ class InpatientExperiment(Experiment):
             demographic_vector_config=self.config.interface.demographic_vector,
             leading_observable_config=self.config.interface.leading_observable,
             key=key)
-
-    def load_trainer(self):
-        return InTrainer(self.config.trainer,
-                         reg_hyperparams=self.config.reg_hyperparams)

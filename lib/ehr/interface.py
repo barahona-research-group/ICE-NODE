@@ -53,6 +53,7 @@ class AdmissionPrediction(Data):
     leading_observable: Optional[List[InpatientObservables]] = None
     trajectory: Optional[PatientTrajectory] = None
     associative_regularisation: Optional[Dict[str, jnp.ndarray]] = None
+    auxiliary_loss: Optional[Dict[str, jnp.ndarray]] = None
     other: Optional[Dict[str, jnp.ndarray]] = None
 
     def has_nans(self):
@@ -181,6 +182,11 @@ class Predictions(dict):
     def has_dx_predictions(self):
         preds = self.get_predictions()
         return all([p.outcome is not None for p in preds])
+
+    @property
+    def has_auxiliary_loss(self):
+        preds = self.get_predictions()
+        return all([p.auxiliary_loss is not None for p in preds])
 
     def prediction_dx_loss(self, dx_loss):
         if not self.has_dx_predictions:

@@ -17,8 +17,10 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          DeepMindPatientEmbeddingConfig,
                          DeepMindEmbeddedAdmission)
 
-from .model import InpatientModel, ModelConfig, ModelRegularisation
+from .model import (InpatientModel, ModelConfig, ModelRegularisation,
+                    Precomputes)
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
+from .base_models_koopman import SKELKoopmanOperator
 from ..base import Data, Config
 
 
@@ -212,7 +214,7 @@ class InICENODE(InpatientModel):
         return jnp.hstack((jnp.zeros((self.config.state - len(dx), )), dx))
 
     @eqx.filter_jit
-    def _safe_integrate(self, delta, state, int_e):
+    def _safe_integrate(self, delta, state, int_e, precomputes):
         # dt = float(jax.block_until_ready(delta))
         # if dt < 0.0:
         # logging.error(f"Time diff is {dt}!")
@@ -227,13 +229,13 @@ class InICENODE(InpatientModel):
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
-                     t0: float, t1: float):
+                     t0: float, t1: float, precomputes):
         preds = []
         lead_preds = []
         t = t0
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
             # if time-diff is more than 1 seconds, we integrate.
-            state = self._safe_integrate(t_obs - t, state, int_e)
+            state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
             pred_obs = self._f_obs_dec(state)
             pred_lead = self._f_lead_dec(state)
             state = self._f_update(state, pred_obs, val, mask)
@@ -241,7 +243,7 @@ class InICENODE(InpatientModel):
             preds.append(pred_obs)
             lead_preds.append(pred_lead)
 
-        state = self._safe_integrate(t1 - t, state, int_e)
+        state = self._safe_integrate(t1 - t, state, int_e, precomputes)
 
         if len(preds) > 0:
             pred_obs_val = jnp.vstack(preds)
@@ -256,6 +258,7 @@ class InICENODE(InpatientModel):
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         state = self._init_state(embedded_admission.dx0)
@@ -269,7 +272,8 @@ class InICENODE(InpatientModel):
         for i in range(len(t0)):
             state, (pred_obs,
                     pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i])
+                                                   lead[i], t0[i], t1[i],
+                                                   precomputes)
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
@@ -336,6 +340,7 @@ class InICENODELite(InICENODE):
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         int_e = embedded_admission.inp_proc_demo
@@ -352,7 +357,8 @@ class InICENODELite(InICENODE):
         for i in range(len(t0)):
             state, (pred_obs,
                     pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i])
+                                                   lead[i], t0[i], t1[i],
+                                                   precomputes)
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
@@ -410,7 +416,7 @@ class InGRUJump(InICENODELite):
 
     def __call__(self, admission: Admission,
                  embedded_admission: LiteEmbeddedInAdmission,
-                 regularisation: InICENODERegularisation,
+                 precomputes: Precomputes, regularisation: ModelRegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         obs = admission.observables
         lead = admission.leading_observable
@@ -468,7 +474,7 @@ class InGRU(InGRUJump):
 
     def __call__(self, admission: Admission,
                  embedded_admission: DeepMindEmbeddedAdmission,
-                 regularisation: InICENODERegularisation,
+                 precomputes: Precomputes, regularisation: ModelRegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         obs = admission.observables
         lead = admission.leading_observable
@@ -645,7 +651,7 @@ class InRETAIN(InpatientModel):
 
     def __call__(self, admission: Admission,
                  embedded_admission: DeepMindEmbeddedAdmission,
-                 regularisation: InICENODERegularisation,
+                 precomputes: Precomputes, regularisation: ModelRegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
 
         obs = admission.observables
@@ -724,3 +730,97 @@ class InRETAIN(InpatientModel):
                                    observables=pred_obs,
                                    leading_observable=pred_lead,
                                    trajectory=None)
+
+
+class InSKELKoopmanConfig(InICENODELiteConfig):
+    pass
+
+
+class InSKELKoopmanRegularisation(ModelRegularisation):
+    L_rec: float = 1.0
+
+
+class InSKELKoopmanPrecomputes(Precomputes):
+    A: jnp.ndarray
+
+
+class InSKELKoopman(InICENODELite):
+
+    @staticmethod
+    def _make_dyn(config, key):
+        return SKELKoopmanOperator(input_size=config.state,
+                                   control_size=config.emb.inp_proc_demo,
+                                   koopman_size=config.state * 10,
+                                   key=key)
+
+    @eqx.filter_jit
+    def _safe_integrate(self, delta, state, int_e, precomputes):
+        second = jnp.array(1 / 3600.0)
+        delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
+        return self._f_dyn(x=state, t=delta, u=int_e, A=precomputes.A)
+
+    def precomputes(self, *args, **kwargs):
+        return InSKELKoopmanPrecomputes(A=self._f_dyn.compute_A())
+
+    def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
+                     obs: InpatientObservables, lead: InpatientObservables,
+                     t0: float, t1: float, precomputes):
+        preds = []
+        lead_preds = []
+        rec_loss = []
+        t = t0
+        for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
+            # if time-diff is more than 1 seconds, we integrate.
+            rec_loss.append(self._f_dyn.compute_phi_loss(x=state, u=int_e))
+            state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
+            pred_obs = self._f_obs_dec(state)
+            pred_lead = self._f_lead_dec(state)
+            state = self._f_update(state, pred_obs, val, mask)
+            t = t_obs
+            preds.append(pred_obs)
+            lead_preds.append(pred_lead)
+
+        rec_loss.append(self._f_dyn.compute_phi_loss(x=state, u=int_e))
+        state = self._safe_integrate(t1 - t, state, int_e, precomputes)
+
+        if len(preds) > 0:
+            pred_obs_val = jnp.vstack(preds)
+            pred_lead_val = jnp.vstack(lead_preds)
+        else:
+            pred_obs_val = jnp.empty_like(obs.value)
+            pred_lead_val = jnp.empty_like(lead.value)
+
+        return state, (InpatientObservables(obs.time, pred_obs_val, obs.mask),
+                       InpatientObservables(lead.time, pred_lead_val,
+                                            lead.mask)), rec_loss
+
+    def __call__(self, admission: Admission,
+                 embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
+                 regularisation: InSKELKoopmanRegularisation,
+                 store_embeddings: bool) -> AdmissionPrediction:
+        int_e = embedded_admission.inp_proc_demo
+
+        state = self._init_state(int_demo_emb=int_e[0],
+                                 dx0=embedded_admission.dx0)
+
+        obs = admission.observables
+        lead = admission.leading_observable
+        pred_obs_l = []
+        pred_lead_l = []
+        rec_loss = []
+        t0 = admission.interventions.t0
+        t1 = admission.interventions.t1
+        for i in range(len(t0)):
+            state, (pred_obs, pred_lead), rloss = self.step_segment(
+                state, int_e[i], obs[i], lead[i], t0[i], t1[i], precomputes)
+            rec_loss.extend(rloss)
+            pred_obs_l.append(pred_obs)
+            pred_lead_l.append(pred_lead)
+
+        return AdmissionPrediction(admission=admission,
+                                   outcome=None,
+                                   observables=pred_obs_l,
+                                   leading_observable=pred_lead_l,
+                                   trajectory=None,
+                                   auxiliary_loss={'L_rec': rec_loss})

@@ -103,8 +103,7 @@
             "int_proc": "MIMICProcedureGroups",
             "obs": "MIMICObservables",
             "outcome": "dx_icd9_filter_v3_groups"
-        },
-        "time_binning": 6
+        }
     },
     "metrics": [
         {
@@ -151,20 +150,26 @@
         }
     ],
     "model": {
-        "_type": "InICENODELiteConfig",
+        "_type": "InSKELKoopmanConfig",
         "emb": {
-            "_type": "DeepMindPatientEmbeddingConfig",
+            "_type": "InpatientEmbeddingConfig",
             "demo": 5,
             "dx": 30,
-            "obs": 20,
-            "sequence": 50
+            "inp": 15,
+            "inp_proc_demo": 10,
+            "proc": 15
         },
         "lead_predictor": "mlp",
         "state": 50
     },
-    "model_classname": "InGRUJump",
+    "model_classname": "InSKELKoopman",
     "n_evals": 100,
-    "reg_hyperparams": null,
+    "reg_hyperparams": {
+        "L_l1": 0.0,
+        "L_l2": 0.0,
+        "L_rec": 1.0,
+        "_type": "InSKELKoopmanRegularisation"
+    },
     "reporting": {
         "_type": "ReportingConfig",
         "config_json": true,
@@ -182,10 +187,10 @@
     },
     "trainer": {
         "_type": "TrainerConfig",
-        "batch_size": 32,
+        "batch_size": 64,
         "dx_loss": "balanced_focal_bce",
-        "epochs": 80,
-        "lead_loss": "mse",
+        "epochs": 3,
+        "lead_loss": "softdtw(0.1)",
         "obs_loss": "mse",
         "optimizer": {
             "_type": "OptimizerConfig",
@@ -195,6 +200,6 @@
             "reverse_schedule": false
         }
     },
-    "trainer_classname": "InTrainer",
+    "trainer_classname": "InSKELKoopmanTrainer",
     "warmup": null
 }
