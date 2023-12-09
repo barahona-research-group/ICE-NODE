@@ -750,7 +750,7 @@ class InSKELKoopman(InICENODELite):
     def _make_dyn(config, key):
         return SKELKoopmanOperator(input_size=config.state,
                                    control_size=config.emb.inp_proc_demo,
-                                   koopman_size=config.state * 10,
+                                   koopman_size=config.state * 5,
                                    key=key)
 
     @eqx.filter_jit
