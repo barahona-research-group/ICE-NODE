@@ -9,6 +9,17 @@
 		"n_trials": 30,
 		"training_time_limit" : 48
 	},
+	"medium72b":
+	{
+		"spec": "#PBS -lselect=1:ncpus=60:mem=240gb",
+		"array": 5,
+		"parallel": 30,
+		"hours": "72:0",
+		"platform": "cpu",
+		"n_trials": 30,
+		"training_time_limit" : 48
+	},
+
 	"general72":
 	{
 		"spec": "#PBS -lselect=1:ncpus=32:mem=124gb",

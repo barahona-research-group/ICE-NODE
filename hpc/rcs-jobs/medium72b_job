@@ -1,0 +1,45 @@
+#PBS -lselect=1:ncpus=60:mem=240gb
+
+#PBS -lwalltime=72:0:0
+
+#PBS -J 1-5
+
+# Setup environement using .bashrc
+source $HOME/.stores.sh
+
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+
+# Clone repository and checkout to the given tag name.
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
+
+cd $TMPDIR/ICE-NODE
+
+# Load modules
+
+
+# Input data and output configuration
+
+
+
+# Run program
+
+export JAX_PLATFORM_NAME="cpu"
+
+$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
+--output-dir $OUTPUT_DIR \
+--dataset $env_data_tag \
+--study-tag $STUDY_TAG \
+--emb $env_emb \
+--model $MODEL \
+--optuna-store $OPTUNA_STORE \
+--mlflow-store $MLFLOW_STORE \
+--trials-time-limit 72 \
+--num-processes 30 \
+--num-trials 30 \
+--training-time-limit 48 \
+--job-id "$PBS_JOBID $PBS_ARRAY_INDEX"
+
+
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID
