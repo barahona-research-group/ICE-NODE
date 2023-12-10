@@ -127,6 +127,7 @@ class TrainerSignals:
     timeout = signal('timeout')
     nan_detected = signal('nan_detected')
     model_updated = signal('model_updated')
+    model_snapshot = signal('model_snapshot')
 
     def disconnect_all_receivers(self):
         for sig in self.__dict__.values():
@@ -279,6 +280,7 @@ class ParamsDiskWriter(AbstractReporter):
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         return [(trainer_signals.end_evaluation, self.report_params_optimizer),
+                (trainer_signals.model_snapshot, self.report_params_optimizer),
                 (trainer_signals.continue_training, self.continue_training),
                 (trainer_signals.new_training, self.clear_files)]
 
@@ -731,6 +733,7 @@ class Trainer(Module):
                  model: AbstractModel,
                  patients: Patients,
                  splits: Tuple[List[int], ...],
+                 model_snapshot_frequency: int = 0,
                  n_evals=100,
                  reporting: TrainerReporting = TrainerReporting(),
                  warmup_config: Optional[WarmupConfig] = None,
@@ -766,16 +769,18 @@ class Trainer(Module):
             for c in reporting.connections(signals):
                 stack.enter_context(c)
 
-            return self._train(model=model,
-                               patients=patients,
-                               splits=splits,
-                               n_evals=n_evals,
-                               continue_training=continue_training,
-                               prng_seed=prng_seed,
-                               trial_terminate_time=trial_terminate_time,
-                               history=reporting.new_training_history(),
-                               signals=signals,
-                               exported_config=exported_config)
+            return self._train(
+                model=model,
+                patients=patients,
+                splits=splits,
+                model_snapshot_frequency=model_snapshot_frequency,
+                n_evals=n_evals,
+                continue_training=continue_training,
+                prng_seed=prng_seed,
+                trial_terminate_time=trial_terminate_time,
+                history=reporting.new_training_history(),
+                signals=signals,
+                exported_config=exported_config)
 
     def _warmup(self, model: AbstractModel, patients: Patients,
                 splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
@@ -798,7 +803,8 @@ class Trainer(Module):
                model: AbstractModel,
                patients: Patients,
                splits: Tuple[List[int], ...],
-               n_evals,
+               model_snapshot_frequency: int,
+               n_evals: int,
                continue_training: bool,
                prng_seed,
                trial_terminate_time,
@@ -826,6 +832,15 @@ class Trainer(Module):
         pyrng = random.Random(prng_seed)
         eval_steps = sorted(set(
             np.linspace(0, iters - 1, n_evals).astype(int)))
+
+        if model_snapshot_frequency > 0:
+            snapshot_steps = sorted(
+                set(
+                    np.arange(0, iters -
+                              1, model_snapshot_frequency).astype(int)) -
+                set(eval_steps))
+        else:
+            snapshot_steps = []
 
         first_step = 0
         if continue_training:
@@ -892,6 +907,12 @@ class Trainer(Module):
                                               msg='NaN detected in model')
                     signals.exit_training.send(self, history=history)
                     return model
+
+                if step in snapshot_steps:
+                    signals.model_snapshot.send(self,
+                                                step=step,
+                                                model=model,
+                                                optimizer=optimizer)
 
                 if step not in eval_steps:
                     continue
