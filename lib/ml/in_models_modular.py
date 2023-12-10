@@ -17,7 +17,8 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          DeepMindPatientEmbeddingConfig,
                          DeepMindEmbeddedAdmission)
 
-from .model import InpatientModel, ModelConfig, ModelRegularisation
+from .model import (InpatientModel, ModelConfig, ModelRegularisation,
+                    Precomputes)
 from .in_models import InICENODE, InICENODERegularisation
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 from ..base import Data, Config
@@ -144,13 +145,13 @@ class InModularICENODE(InICENODE):
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
-                     t0: float, t1: float):
+                     t0: float, t1: float, precomputes: Precomputes):
         preds = []
         lead_preds = []
         t = t0
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
             # if time-diff is more than 1 seconds, we integrate.
-            state = self._safe_integrate(t_obs - t, state, int_e)
+            state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
             state_components = self.split_state(state)
             obs_e, lead_e = state_components[1], state_components[2]
             pred_obs = self._f_obs_dec(obs_e)
@@ -160,7 +161,7 @@ class InModularICENODE(InICENODE):
             preds.append(pred_obs)
             lead_preds.append(pred_lead)
 
-        state = self._safe_integrate(t1 - t, state, int_e)
+        state = self._safe_integrate(t1 - t, state, int_e, precomputes)
 
         if len(preds) > 0:
             pred_obs_val = jnp.vstack(preds)
@@ -175,6 +176,7 @@ class InModularICENODE(InICENODE):
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         state = self.join_state(None, None, None, embedded_admission.dx0)
@@ -188,7 +190,8 @@ class InModularICENODE(InICENODE):
         for i in range(len(t0)):
             state, (pred_obs,
                     pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i])
+                                                   lead[i], t0[i], t1[i],
+                                                   precomputes)
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
@@ -264,6 +267,7 @@ class InModularICENODELite(InModularICENODE):
 
     def __call__(self, admission: Admission,
                  embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         int_e = embedded_admission.inp_proc_demo
@@ -283,7 +287,8 @@ class InModularICENODELite(InModularICENODE):
         for i in range(len(t0)):
             state, (pred_obs,
                     pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i])
+                                                   lead[i], t0[i], t1[i],
+                                                   precomputes)
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
@@ -344,6 +349,7 @@ class InModularGRUJump(InModularICENODELite):
 
     def __call__(self, admission: Admission,
                  embedded_admission: LiteEmbeddedInAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         demo_e = embedded_admission.demo
@@ -403,6 +409,7 @@ class InModularGRU(InModularGRUJump):
 
     def __call__(self, admission: Admission,
                  embedded_admission: DeepMindEmbeddedAdmission,
+                 precomputes: Precomputes,
                  regularisation: InICENODERegularisation,
                  store_embeddings: bool) -> AdmissionPrediction:
         state = self.join_state(None,
