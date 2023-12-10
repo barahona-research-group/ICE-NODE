@@ -190,7 +190,7 @@
         "_type": "TrainerConfig",
         "batch_size": 64,
         "dx_loss": "balanced_focal_bce",
-        "epochs": 3,
+        "epochs": 80,
         "lead_loss": "softdtw(0.1)",
         "obs_loss": "mse",
         "optimizer": {
