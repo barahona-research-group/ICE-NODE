@@ -836,7 +836,7 @@ class Trainer(Module):
         if model_snapshot_frequency > 0:
             snapshot_steps = sorted(
                 set(
-                    np.arange(0, iters -
+                    np.arange(model_snapshot_frequency, iters -
                               1, model_snapshot_frequency).astype(int)) -
                 set(eval_steps))
         else:
