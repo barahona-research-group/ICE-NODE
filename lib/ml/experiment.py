@@ -31,6 +31,7 @@ class ExperimentConfig(Config):
     metrics: List[Dict[str, Any]]
     reporting: ReportingConfig
     n_evals: int
+    model_snapshot_frequency: int
     continue_training: bool
     warmup: Optional[TrainerConfig] = None
     reg_hyperparams: Optional[Config] = None
