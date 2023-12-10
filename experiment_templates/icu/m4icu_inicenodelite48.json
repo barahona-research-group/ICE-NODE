@@ -159,6 +159,7 @@
     },
     "model_classname": "InICENODELite",
     "n_evals": 100,
+    "model_snapshot_frequency": 0,
     "reg_hyperparams": null,
     "reporting": {
         "_type": "ReportingConfig",

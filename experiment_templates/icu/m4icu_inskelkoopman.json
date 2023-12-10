@@ -164,6 +164,7 @@
     },
     "model_classname": "InSKELKoopman",
     "n_evals": 100,
+    "model_snapshot_frequency": 0,
     "reg_hyperparams": {
         "L_l1": 0.0,
         "L_l2": 0.0,

@@ -55,7 +55,7 @@
         "offset": 0,
         "overlapping_admissions": "merge",
         "path": "",
-        "sample": 15000,
+        "sample": 20000,
         "scheme": {
             "_type": "MIMIC4ICUDatasetSchemeConfig",
             "dx": {
@@ -85,11 +85,7 @@
             "_type": "LeadingObservableConfig",
             "index": 42,
             "leading_hours": [
-                6,
-                12,
-                24,
-                48,
-                72
+                48
             ],
             "scheme": "MIMICObservables",
             "window_aggregate": "max"
@@ -107,63 +103,14 @@
     },
     "metrics": [
         {
-            "classname": "CodeAUC",
-            "config": {
-                "_type": "CodeLevelMetricConfig",
-                "aggregate_level": true,
-                "code_level": true
-            },
-            "external_argnames": [
-                "patients"
-            ]
-        },
-        {
-            "classname": "AdmissionAUC",
-            "config": {
-                "_type": "MetricLevelsConfig",
-                "admission": false,
-                "aggregate": true,
-                "subject_aggregate": false
-            },
-            "external_argnames": [
-                "patients"
-            ]
-        },
-        {
-            "classname": "CodeGroupTopAlarmAccuracy",
-            "config": {
-                "_type": "CodeGroupTopAlarmAccuracyConfig",
-                "n_partitions": 5,
-                "top_k_list": [
-                    3,
-                    5,
-                    10,
-                    15,
-                    20
-                ]
-            },
-            "external_argnames": [
-                "train_split",
-                "patients"
-            ]
-        },
-        {
             "classname": "LossMetric",
             "config": {
                 "_type": "LossMetricConfig",
-                "dx_loss": [
-                    "softmax_bce",
-                    "balanced_focal_softmax_bce",
-                    "balanced_focal_bce",
-                    "allpairs_exp_rank",
-                    "allpairs_hard_rank",
-                    "allpairs_sigmoid_rank"
-                ],
+                "dx_loss": [],
                 "lead_loss": [
                     "mse",
                     "mae",
-                    "rms",
-                    "softdtw(0.1)"
+                    "rms"
                 ],
                 "obs_loss": [
                     "mse",
@@ -198,7 +145,7 @@
         }
     ],
     "model": {
-        "_type": "InICENODEConfig",
+        "_type": "InSKELKoopmanConfig",
         "emb": {
             "_type": "InpatientEmbeddingConfig",
             "demo": 5,
@@ -210,10 +157,15 @@
         "lead_predictor": "mlp",
         "state": 50
     },
-    "model_classname": "InICENODE",
+    "model_classname": "InSKELKoopman",
     "n_evals": 100,
     "model_snapshot_frequency": 0,
-    "reg_hyperparams": null,
+    "reg_hyperparams": {
+        "L_l1": 0.0,
+        "L_l2": 0.0,
+        "L_rec": 1.0,
+        "_type": "InSKELKoopmanRegularisation"
+    },
     "reporting": {
         "_type": "ReportingConfig",
         "config_json": true,
@@ -231,10 +183,10 @@
     },
     "trainer": {
         "_type": "TrainerConfig",
-        "batch_size": 128,
+        "batch_size": 64,
         "dx_loss": "balanced_focal_bce",
-        "epochs": 80,
-        "lead_loss": "mse",
+        "epochs": 3,
+        "lead_loss": "softdtw(0.1)",
         "obs_loss": "mse",
         "optimizer": {
             "_type": "OptimizerConfig",
@@ -244,6 +196,6 @@
             "reverse_schedule": false
         }
     },
-    "trainer_classname": "InTrainer",
+    "trainer_classname": "InSKELKoopmanTrainer",
     "warmup": null
 }

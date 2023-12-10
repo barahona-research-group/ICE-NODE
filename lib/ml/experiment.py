@@ -116,14 +116,16 @@ class Experiment(Module):
 
         reporting = self.load_reporting(interface, splits)
 
-        return trainer(model=model,
-                       patients=interface,
-                       splits=splits,
-                       reporting=reporting,
-                       n_evals=self.config.n_evals,
-                       continue_training=self.config.continue_training,
-                       exported_config=self.config.to_dict(),
-                       prng_seed=self.prng_seed)
+        return trainer(
+            model=model,
+            patients=interface,
+            splits=splits,
+            reporting=reporting,
+            n_evals=self.config.n_evals,
+            model_snapshot_frequency=self.config.model_snapshot_frequency,
+            continue_training=self.config.continue_training,
+            exported_config=self.config.to_dict(),
+            prng_seed=self.prng_seed)
 
 
 class InpatientExperiment(Experiment):

@@ -890,6 +890,7 @@ class Trainer(Module):
                     split_gen.set_description(
                         f'Loss: {loss_val:.4E} | {steps_until_eval} steps until eval.'
                     )
+
                     signals.model_updated.send(self,
                                                model=model,
                                                history=history,
@@ -909,10 +910,14 @@ class Trainer(Module):
                     return model
 
                 if step in snapshot_steps:
+
+                    old_desc = split_gen.desc
+                    split_gen.set_description('Saving model...')
                     signals.model_snapshot.send(self,
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
+                    split_gen.set_description_str(old_desc)
 
                 if step not in eval_steps:
                     continue
