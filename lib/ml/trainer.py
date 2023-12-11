@@ -840,7 +840,6 @@ class Trainer(Module):
                     np.arange(model_snapshot_frequency, iters -
                               1, model_snapshot_frequency).astype(int)) -
                 set(eval_steps))
-            logging.info(f'Saving model snapshots at steps {snapshot_steps}')
         else:
             snapshot_steps = []
 
