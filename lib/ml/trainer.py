@@ -793,6 +793,7 @@ class Trainer(Module):
                               patients=patients,
                               splits=(splits[0], [], []),
                               n_evals=0,
+                              model_snapshot_frequency=0,
                               continue_training=False,
                               prng_seed=prng_seed,
                               trial_terminate_time=trial_terminate_time,
