@@ -20,7 +20,7 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
                     Precomputes)
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
-from .base_models_koopman import SKELKoopmanOperator
+from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
 from ..base import Data, Config
 
 
@@ -737,7 +737,7 @@ class InSKELKoopmanConfig(InICENODELiteConfig):
 
 
 class InSKELKoopmanRegularisation(ModelRegularisation):
-    L_rec: float = 1.0
+    L_rec: float = 5.0
 
 
 class InSKELKoopmanPrecomputes(Precomputes):
@@ -750,7 +750,7 @@ class InSKELKoopman(InICENODELite):
     def _make_dyn(config, key):
         return SKELKoopmanOperator(input_size=config.state,
                                    control_size=config.emb.inp_proc_demo,
-                                   koopman_size=config.state * 5,
+                                   koopman_size=config.state * 3,
                                    key=key)
 
     @eqx.filter_jit
@@ -824,3 +824,25 @@ class InSKELKoopman(InICENODELite):
                                    leading_observable=pred_lead_l,
                                    trajectory=None,
                                    auxiliary_loss={'L_rec': rec_loss})
+
+
+class InVanillaKoopmanConfig(InSKELKoopmanConfig):
+    pass
+
+
+class InVanillaKoopmanRegularisation(InSKELKoopmanRegularisation):
+    pass
+
+
+class InVanillaKoopmanPrecomputes(InSKELKoopmanPrecomputes):
+    pass
+
+
+class InVanillaKoopman(InSKELKoopman):
+
+    @staticmethod
+    def _make_dyn(config, key):
+        return VanillaKoopmanOperator(input_size=config.state,
+                                      control_size=config.emb.inp_proc_demo,
+                                      koopman_size=config.state * 2,
+                                      key=key)

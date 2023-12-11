@@ -19,8 +19,11 @@ from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
 
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
                     Precomputes)
-from .in_models import InICENODE, InICENODERegularisation
+from .in_models import (InICENODE, InICENODERegularisation,
+                        InSKELKoopmanRegularisation, InSKELKoopmanPrecomputes,
+                        InSKELKoopman)
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
+from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
 from ..base import Data, Config
 
 
@@ -298,6 +301,108 @@ class InModularICENODELite(InModularICENODE):
                                    observables=pred_obs_l,
                                    leading_observable=pred_lead_l,
                                    trajectory=None)
+
+
+class InModularSKELKoopmanConfig(InModularICENODELiteConfig):
+    pass
+
+
+class InModularSKELKoopman(InModularICENODELite):
+    _f_emb: Callable[[Admission], EmbeddedInAdmission]
+    _f_obs_dec: Callable
+    _f_lead_dec: Callable
+    _f_init: Callable
+    _f_dyn: Callable
+    _f_update: Callable
+
+    config: InModularSKELKoopmanConfig = eqx.static_field()
+
+    def __init__(self, config: InModularSKELKoopmanConfig,
+                 schemes: Tuple[DatasetScheme],
+                 demographic_vector_config: DemographicVectorConfig,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: "jax.random.PRNGKey"):
+        super_key, init_key = jrandom.split(key, 2)
+        super().__init__(config, schemes, demographic_vector_config,
+                         leading_observable_config, super_key)
+        self._f_init = self._make_init(config=config, key=init_key)
+
+    @staticmethod
+    def _make_dyn(config: InModularSKELKoopmanConfig,
+                  key: "jax.random.PRNGKey"):
+        return SKELKoopmanOperator(input_size=config.state_size,
+                                   control_size=config.emb.inp_proc_demo,
+                                   koopman_size=config.state_size * 3,
+                                   key=key)
+
+    @staticmethod
+    def _make_dx_dec(config, dx_size, key):
+        return None
+
+    @staticmethod
+    def _make_init(config, key):
+        init_input_size = config.emb.inp_proc_demo + config.emb.dx
+        return eqx.nn.MLP(init_input_size,
+                          config.state_size,
+                          config.emb.dx * 5,
+                          depth=2,
+                          key=key)
+
+    @eqx.filter_jit
+    def join_state(self, mem, obs, lead, int_demo_emb=None, dx0=None):
+        if mem is None or obs is None or lead is None:
+            return self._f_init(jnp.hstack((int_demo_emb, dx0)))
+
+        return jnp.hstack((mem, obs, lead))
+
+    def __call__(self, admission: Admission,
+                 embedded_admission: EmbeddedInAdmission,
+                 precomputes: Precomputes,
+                 regularisation: InICENODERegularisation,
+                 store_embeddings: bool) -> AdmissionPrediction:
+        int_e = embedded_admission.inp_proc_demo
+
+        state = self.join_state(None,
+                                None,
+                                None,
+                                int_demo_emb=int_e[0],
+                                dx0=embedded_admission.dx0)
+
+        obs = admission.observables
+        lead = admission.leading_observable
+        pred_obs_l = []
+        pred_lead_l = []
+        rec_loss = []
+        t0 = admission.interventions.t0
+        t1 = admission.interventions.t1
+        for i in range(len(t0)):
+            state, (pred_obs, pred_lead), rloss = self.step_segment(
+                state, int_e[i], obs[i], lead[i], t0[i], t1[i], precomputes)
+            rec_loss.extend(rloss)
+            pred_obs_l.append(pred_obs)
+            pred_lead_l.append(pred_lead)
+
+        return AdmissionPrediction(admission=admission,
+                                   outcome=None,
+                                   observables=pred_obs_l,
+                                   leading_observable=pred_lead_l,
+                                   trajectory=None,
+                                   auxiliary_loss={'L_rec': rec_loss})
+
+
+class InModularVanillaKoopmanConfig(InModularICENODELiteConfig):
+    pass
+
+
+class InModularVanillaKoopman(InModularICENODELite):
+
+    @staticmethod
+    def _make_dyn(config: InModularVanillaKoopmanConfig,
+                  key: "jax.random.PRNGKey"):
+        return VanillaKoopmanOperator(input_size=config.state_size,
+                                      control_size=config.emb.inp_proc_demo,
+                                      koopman_size=config.state_size * 3,
+                                      key=key)
 
 
 class InModularGRUConfig(InModularICENODELiteConfig):

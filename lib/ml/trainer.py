@@ -882,7 +882,8 @@ class Trainer(Module):
                 if step <= first_step:
                     continue
                 try:
-                    next_eval_step = min(s for s in eval_steps if s > step)
+                    next_eval_step = min((s for s in eval_steps if s > step),
+                                         default=0)
                     steps_until_eval = next_eval_step - step
 
                     batch = patients.device_batch(batch_split)
@@ -911,14 +912,10 @@ class Trainer(Module):
                     return model
 
                 if step in snapshot_steps:
-
-                    old_desc = split_gen.desc
-                    split_gen.set_description('Saving model...')
                     signals.model_snapshot.send(self,
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
-                    split_gen.set_description_str(old_desc)
 
                 if step not in eval_steps:
                     continue
