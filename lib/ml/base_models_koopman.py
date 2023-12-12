@@ -109,7 +109,7 @@ class VanillaKoopmanOperator(eqx.Module):
     @eqx.filter_jit
     def __call__(self, t, x, u=None, A=None):
         z = self.phi(x, u=u)
-        K = self.compute_K(t, A=A)
+        K = self.compute_K(t / 24.0, A=A)
         z = K @ z
         return self.phi_inv(z)
 
