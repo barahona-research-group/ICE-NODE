@@ -12,6 +12,8 @@ from ..metric.loss import mse
 
 from ._eig_ad import eig
 
+_flag_gpu_device = jax.devices("gpu")[0].platform == "gpu"
+
 
 class SKELPhi(eqx.Module):
     """Koopman embeddings for continuous-time systems."""
@@ -65,7 +67,7 @@ class VanillaKoopmanOperator(eqx.Module):
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
                  phi_depth: int = 1,
-                 eigen_decomposition: bool = True):
+                 eigen_decomposition: bool = not _flag_gpu_device):
         super().__init__()
         self.input_size = input_size
         self.koopman_size = koopman_size
@@ -130,7 +132,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
                  phi_depth: int = 1,
-                 eigen_decomposition: bool = True):
+                 eigen_decomposition: bool = not _flag_gpu_device):
         superkey, key = jrandom.split(key, 2)
         super().__init__(input_size=input_size,
                          koopman_size=koopman_size,
