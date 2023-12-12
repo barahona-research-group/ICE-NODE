@@ -100,14 +100,14 @@ class VanillaKoopmanOperator(eqx.Module):
             A = self.compute_A()
         if self.eigen_decomposition:
             _, (lam, V) = A
-            return V @ jnp.diag(jnp.exp(lam * t)) @ jnp.linalg.inv(V)
+            return (V @ jnp.diag(jnp.exp(lam * t)) @ jnp.linalg.inv(V)).real
         else:
             return jscipy.linalg.expm(A * t, max_squarings=16)
 
     @eqx.filter_jit
     def __call__(self, t, x, u=None, A=None):
         z = self.phi(x, u=u)
-        K = self.compute_K(t, A=A).real  # complex.
+        K = self.compute_K(t, A=A)
         z = K @ z
         return self.phi_inv(z)
 
@@ -160,7 +160,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
         F = skew - Q @ Q.T - self.epsI
         E = N @ N.T + self.epsI
 
-        A = jnp.linalg.solve(E, F) * 1e-3
+        A = jnp.linalg.solve(E, F)
 
         if self.eigen_decomposition:
             lam, V = eig(A)

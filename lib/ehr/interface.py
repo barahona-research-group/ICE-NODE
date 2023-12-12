@@ -271,7 +271,7 @@ class Predictions(dict):
         pred = jnp.vstack(l_pred)
         loss_v = obs_loss(true, pred, mask)
         if jnp.isnan(loss_v):
-            return logging.warning('NaN obs loss detected')
+            logging.warning('NaN obs loss detected')
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def prediction_lead_loss(self, lead_loss):
