@@ -762,6 +762,10 @@ class InSKELKoopman(InICENODELite):
     def precomputes(self, *args, **kwargs):
         return InSKELKoopmanPrecomputes(A=self._f_dyn.compute_A())
 
+    @property
+    def dyn_params_list(self):
+        return self.params_list((self._f_dyn.R, self._f_dyn.Q, self._f_dyn.N))
+
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
                      t0: float, t1: float, precomputes):
