@@ -104,7 +104,7 @@ class VanillaKoopmanOperator(eqx.Module):
             _, (lam, V) = A
             return (V @ jnp.diag(jnp.exp(lam * t)) @ jnp.linalg.inv(V)).real
         else:
-            return jscipy.linalg.expm(A * t, max_squarings=16)
+            return jscipy.linalg.expm(A * t, max_squarings=20)
 
     @eqx.filter_jit
     def __call__(self, t, x, u=None, A=None):
