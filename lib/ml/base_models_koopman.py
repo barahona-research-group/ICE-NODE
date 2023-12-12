@@ -64,7 +64,7 @@ class VanillaKoopmanOperator(eqx.Module):
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 3,
+                 phi_depth: int = 1,
                  eigen_decomposition: bool = True):
         super().__init__()
         self.input_size = input_size
@@ -129,7 +129,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 3,
+                 phi_depth: int = 1,
                  eigen_decomposition: bool = True):
         superkey, key = jrandom.split(key, 2)
         super().__init__(input_size=input_size,
