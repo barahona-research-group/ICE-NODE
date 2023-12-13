@@ -916,31 +916,30 @@ class Trainer(Module):
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
-
-                if step not in eval_steps:
-                    continue
-
-                elapsed_time = (datetime.now() - timenow).total_seconds()
-                timenow = datetime.now()
-
-                split_gen.set_description('Evaluating (Train) (A)...')
-                preds = model.batch_predict(batch, leave_pbar=False)
-                split_gen.set_description('Evaluating (Train) (B)...')
-                history.append_train_preds(step, preds, elapsed_time, timenow)
-
-                if len(valid_ids) > 0:
+                if step in eval_steps:
+                    elapsed_time = (datetime.now() - timenow).total_seconds()
                     timenow = datetime.now()
-                    split_gen.set_description('Evaluating (Val) (A)...')
-                    preds = model.batch_predict(val_batch, leave_pbar=False)
-                    split_gen.set_description('Evaluating (Val) (B)...')
-                    history.append_val_preds(step, preds, elapsed_time,
-                                             timenow)
-                signals.end_evaluation.send(self,
-                                            step=step,
-                                            model=model,
-                                            optimizer=optimizer,
-                                            history=history)
-                timenow = datetime.now()
+
+                    split_gen.set_description('Evaluating (Train) (A)...')
+                    preds = model.batch_predict(batch, leave_pbar=False)
+                    split_gen.set_description('Evaluating (Train) (B)...')
+                    history.append_train_preds(step, preds, elapsed_time,
+                                               timenow)
+
+                    if len(valid_ids) > 0:
+                        timenow = datetime.now()
+                        split_gen.set_description('Evaluating (Val) (A)...')
+                        preds = model.batch_predict(val_batch,
+                                                    leave_pbar=False)
+                        split_gen.set_description('Evaluating (Val) (B)...')
+                        history.append_val_preds(step, preds, elapsed_time,
+                                                 timenow)
+                    signals.end_evaluation.send(self,
+                                                step=step,
+                                                model=model,
+                                                optimizer=optimizer,
+                                                history=history)
+                    timenow = datetime.now()
             split_gen.close()
 
         if len(test_ids) > 0 and first_step < step:
