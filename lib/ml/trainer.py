@@ -205,7 +205,6 @@ class ModelStatsDiskWriter(AbstractReporter):
         loss = kwargs['loss_val']
         h = kwargs['history']
         h.append_stats(step, model, loss)
-        self.report_stats(sender, **kwargs)
 
     def report_stats(self, sender, **kwargs):
         h = kwargs['history']
@@ -221,7 +220,7 @@ class ModelStatsDiskWriter(AbstractReporter):
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
         return [(trainer_signals.model_updated, self.record_stats),
-                (trainer_signals.exit_training, self.report_stats),
+                (trainer_signals.model_snapshot, self.report_stats),
                 (trainer_signals.new_training, self.clear_files)]
 
 
