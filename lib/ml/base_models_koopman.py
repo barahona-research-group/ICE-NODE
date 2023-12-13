@@ -12,7 +12,10 @@ from ..metric.loss import mse
 
 from ._eig_ad import eig
 
-_flag_gpu_device = jax.devices("gpu")[0].platform == "gpu"
+if len(jax.devices()) > 0:
+    _flag_gpu_device = jax.devices()[0].platform == "gpu"
+else:
+    _flag_gpu_device = False
 
 
 class SKELPhi(eqx.Module):
