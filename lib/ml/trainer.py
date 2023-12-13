@@ -205,6 +205,7 @@ class ModelStatsDiskWriter(AbstractReporter):
         loss = kwargs['loss_val']
         h = kwargs['history']
         h.append_stats(step, model, loss)
+        self.report_stats(sender, **kwargs)
 
     def report_stats(self, sender, **kwargs):
         h = kwargs['history']
