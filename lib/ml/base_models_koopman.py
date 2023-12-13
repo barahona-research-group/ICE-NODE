@@ -121,6 +121,14 @@ class VanillaKoopmanOperator(eqx.Module):
         z = self.phi(x, u=u)
         return mse(x, self.phi_inv(z))
 
+    def compute_A_spectrum(self):
+        if self.eigen_decomposition:
+            _, (lam, _) = self.compute_A()
+        else:
+            lam, _ = jnp.linalg.eig(self.compute_A())
+
+        return lam.real, lam.imag
+
 
 class SKELKoopmanOperator(VanillaKoopmanOperator):
     """Koopman operator for continuous-time systems."""

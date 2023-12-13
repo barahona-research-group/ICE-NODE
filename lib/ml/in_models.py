@@ -829,6 +829,32 @@ class InSKELKoopman(InICENODELite):
                                    trajectory=None,
                                    auxiliary_loss={'L_rec': rec_loss})
 
+    @eqx.filter_jit
+    def pathwise_params_stats(self):
+        stats = super().pathwise_params_stats()
+        real_eig_A, imag_eig_A = self._f_dyn.compute_A_spectrum()
+        desc = [f'_f_dyn.A.lam_{i}' for i in range(real_eig_A.shape[0])]
+        stats.update({
+            k: {
+                'real': lamr,
+                'imag': lami
+            }
+            for k, lamr, lami in zip(desc, real_eig_A, imag_eig_A)
+        })
+        for component, v in (('real', real_eig_A), ('imag', imag_eig_A)):
+            stats.update({
+                f'_f_dyn.A.{component}_lam': {
+                    'mean': jnp.nanmean(v),
+                    'std': jnp.nanstd(v),
+                    'min': jnp.nanmin(v),
+                    'max': jnp.nanmax(v),
+                    'l1': jnp.abs(v).sum(),
+                    'l2': jnp.square(v).sum(),
+                    'nans': jnp.isnan(v).sum(),
+                }
+            })
+        return stats
+
 
 class InVanillaKoopmanConfig(InSKELKoopmanConfig):
     pass
