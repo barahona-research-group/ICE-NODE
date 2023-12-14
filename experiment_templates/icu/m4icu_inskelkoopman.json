@@ -175,7 +175,7 @@
         "_type": "ReportingConfig",
         "config_json": true,
         "console": true,
-        "model_stats": false,
+        "model_stats": true,
         "output_dir": "",
         "parameter_snapshots": true
     },
@@ -192,11 +192,11 @@
         "dx_loss": "balanced_focal_bce",
         "epochs": 80,
         "lead_loss": "softdtw(0.1)",
-        "obs_loss": "mse",
+        "obs_loss": "mae",
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
-            "lr": {"dyn": 0.0001, "rest": 0.0002},
+            "lr": {"dyn": 0.0005, "rest": 0.0005},
             "opt": "adam",
             "reverse_schedule": false
         }

@@ -205,12 +205,24 @@ class ModelStatsDiskWriter(AbstractReporter):
         loss = kwargs['loss_val']
         h = kwargs['history']
         h.append_stats(step, model, loss)
+        self.report_stats(sender, **kwargs)
 
     def report_stats(self, sender, **kwargs):
         h = kwargs['history']
         fname = 'stats.csv.gz'
         fpath = os.path.join(self.output_dir, fname)
-        h.stats_df.to_csv(fpath, compression="gzip")
+        df = h.stats_df.copy()
+
+        header_changed = False
+        if os.path.exists(fpath):
+            old_df = pd.read_csv(fpath, index_col=0)
+            df = df.loc[~df.index.isin(old_df.index)]
+            header_changed = not old_df.columns.equals(df.columns)
+
+        df.to_csv(fpath,
+                  compression="gzip",
+                  mode='a',
+                  header=header_changed or not os.path.exists(fpath))
 
     def clear_files(self, sender):
         fname = 'stats.csv.gz'
