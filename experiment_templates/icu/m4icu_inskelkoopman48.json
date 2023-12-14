@@ -191,7 +191,7 @@
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
-            "lr": 0.00005,
+            "lr": 0.001,
             "opt": "adam",
             "reverse_schedule": false
         }
