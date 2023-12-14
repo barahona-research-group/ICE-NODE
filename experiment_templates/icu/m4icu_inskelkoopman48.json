@@ -155,7 +155,7 @@
             "proc": 15
         },
         "lead_predictor": "mlp",
-        "state": 50
+        "state": 30
     },
     "model_classname": "InSKELKoopman",
     "n_evals": 100,
