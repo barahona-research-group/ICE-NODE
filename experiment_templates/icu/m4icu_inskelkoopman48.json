@@ -186,8 +186,8 @@
         "batch_size": 16,
         "dx_loss": "balanced_focal_bce",
         "epochs": 80,
-        "lead_loss": "mae",
-        "obs_loss": "mae",
+        "lead_loss": "mse",
+        "obs_loss": "mse",
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,

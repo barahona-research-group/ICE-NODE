@@ -192,7 +192,7 @@
         "dx_loss": "balanced_focal_bce",
         "epochs": 80,
         "lead_loss": "softdtw(0.1)",
-        "obs_loss": "mae",
+        "obs_loss": "mse",
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
