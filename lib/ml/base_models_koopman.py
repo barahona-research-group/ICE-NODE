@@ -160,8 +160,8 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
         self.Q = jrandom.normal(keys[1], (koopman_size, koopman_size),
                                 dtype=jnp.float64)
         self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
-                                dtype=jnp.float64)
-        self.epsI = 1e-8 * jnp.eye(koopman_size)
+                                dtype=jnp.float64) * 1e1
+        self.epsI = 1e-6 * jnp.eye(koopman_size)
 
     @eqx.filter_jit
     def compute_A(self):
