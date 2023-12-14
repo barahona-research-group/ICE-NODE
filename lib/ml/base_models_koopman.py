@@ -96,7 +96,8 @@ class VanillaKoopmanOperator(eqx.Module):
     def compute_A(self):
         if self.eigen_decomposition:
             lam, V = eig(self.A)
-            return self.A, (lam, V, jnp.linalg.inv(V))
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
+            return self.A, (lam, V, V_inv)
 
         return self.A
 
@@ -161,7 +162,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                                 dtype=jnp.float64)
         self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
                                 dtype=jnp.float64) * 1e1
-        self.epsI = 1e-6 * jnp.eye(koopman_size)
+        self.epsI = 1e-9 * jnp.eye(koopman_size)
 
     @eqx.filter_jit
     def compute_A(self):
@@ -177,6 +178,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
 
         if self.eigen_decomposition:
             lam, V = eig(A)
-            return A, (lam, V, jnp.linalg.inv(V))
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
+            return A, (lam, V, V_inv)
 
         return A
