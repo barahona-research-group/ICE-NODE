@@ -96,7 +96,7 @@ class VanillaKoopmanOperator(eqx.Module):
     def compute_A(self):
         if self.eigen_decomposition:
             lam, V = eig(self.A)
-            return self.A, (lam, V)
+            return self.A, (lam, V, jnp.linalg.inv(V))
 
         return self.A
 
@@ -104,8 +104,8 @@ class VanillaKoopmanOperator(eqx.Module):
         if A is None:
             A = self.compute_A()
         if self.eigen_decomposition:
-            _, (lam, V) = A
-            return (V @ jnp.diag(jnp.exp(lam * t)) @ jnp.linalg.inv(V)).real
+            _, (lam, V, V_inv) = A
+            return (V @ jnp.diag(jnp.exp(lam * t)) @ V_inv).real
         else:
             return jscipy.linalg.expm(A * t, max_squarings=20)
 
@@ -123,7 +123,7 @@ class VanillaKoopmanOperator(eqx.Module):
 
     def compute_A_spectrum(self):
         if self.eigen_decomposition:
-            _, (lam, _) = self.compute_A()
+            _, (lam, _, _) = self.compute_A()
         else:
             lam, _ = jnp.linalg.eig(self.compute_A())
 
@@ -177,6 +177,6 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
 
         if self.eigen_decomposition:
             lam, V = eig(A)
-            return A, (lam, V)
+            return A, (lam, V, jnp.linalg.inv(V))
 
         return A
