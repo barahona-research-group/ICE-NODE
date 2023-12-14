@@ -142,7 +142,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 1,
+                 phi_depth: int = 3,
                  eigen_decomposition: bool = not _flag_gpu_device):
         superkey, key = jrandom.split(key, 2)
         super().__init__(input_size=input_size,

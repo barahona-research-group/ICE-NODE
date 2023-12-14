@@ -155,7 +155,7 @@
             "proc": 15
         },
         "lead_predictor": "mlp",
-        "state": 30
+        "state": 50
     },
     "model_classname": "InSKELKoopman",
     "n_evals": 100,
@@ -191,7 +191,7 @@
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
-            "lr": 0.0001,
+            "lr": 0.00005,
             "opt": "adam",
             "reverse_schedule": false
         }
