@@ -168,7 +168,7 @@
     "reg_hyperparams": {
         "L_l1": 0.0,
         "L_l2": 0.0,
-        "L_rec": 5.0,
+        "L_rec": 1.0,
         "_type": "InSKELKoopmanRegularisation"
     },
     "reporting": {
