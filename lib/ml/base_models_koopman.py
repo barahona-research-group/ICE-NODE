@@ -17,6 +17,8 @@ if len(jax.devices()) > 0:
 else:
     _flag_gpu_device = False
 
+jax.config.update("jax_enable_x64", not _flag_gpu_device)
+
 
 class SKELPhi(eqx.Module):
     """Koopman embeddings for continuous-time systems."""
@@ -96,7 +98,8 @@ class VanillaKoopmanOperator(eqx.Module):
     def compute_A(self):
         if self.eigen_decomposition:
             lam, V = eig(self.A)
-            return self.A, (lam, V)
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
+            return self.A, (lam, V, V_inv)
 
         return self.A
 
@@ -104,8 +107,8 @@ class VanillaKoopmanOperator(eqx.Module):
         if A is None:
             A = self.compute_A()
         if self.eigen_decomposition:
-            _, (lam, V) = A
-            return (V @ jnp.diag(jnp.exp(lam * t)) @ jnp.linalg.inv(V)).real
+            _, (lam, V, V_inv) = A
+            return (V @ jnp.diag(jnp.exp(lam * t)) @ V_inv).real
         else:
             return jscipy.linalg.expm(A * t, max_squarings=20)
 
@@ -123,7 +126,7 @@ class VanillaKoopmanOperator(eqx.Module):
 
     def compute_A_spectrum(self):
         if self.eigen_decomposition:
-            _, (lam, _) = self.compute_A()
+            _, (lam, _, _) = self.compute_A()
         else:
             lam, _ = jnp.linalg.eig(self.compute_A())
 
@@ -142,7 +145,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 1,
+                 phi_depth: int = 3,
                  eigen_decomposition: bool = not _flag_gpu_device):
         superkey, key = jrandom.split(key, 2)
         super().__init__(input_size=input_size,
@@ -160,8 +163,8 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
         self.Q = jrandom.normal(keys[1], (koopman_size, koopman_size),
                                 dtype=jnp.float64)
         self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
-                                dtype=jnp.float64) * 1e1
-        self.epsI = 1e-6 * jnp.eye(koopman_size)
+                                dtype=jnp.float64)
+        self.epsI = 1e-9 * jnp.eye(koopman_size)
 
     @eqx.filter_jit
     def compute_A(self):
@@ -177,6 +180,7 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
 
         if self.eigen_decomposition:
             lam, V = eig(A)
-            return A, (lam, V)
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
+            return A, (lam, V, V_inv)
 
         return A

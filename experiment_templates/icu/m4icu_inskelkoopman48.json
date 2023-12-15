@@ -170,7 +170,7 @@
         "_type": "ReportingConfig",
         "config_json": true,
         "console": true,
-        "model_stats": false,
+        "model_stats": true,
         "output_dir": "",
         "parameter_snapshots": true
     },
@@ -191,7 +191,7 @@
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
-            "lr": {"dyn": 0.0005, "rest": 0.0005},
+            "lr": 0.001,
             "opt": "adam",
             "reverse_schedule": false
         }

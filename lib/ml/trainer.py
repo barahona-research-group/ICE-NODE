@@ -220,9 +220,11 @@ class ModelStatsDiskWriter(AbstractReporter):
             os.remove(fpath)
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
-        return [(trainer_signals.model_updated, self.record_stats),
-                (trainer_signals.model_snapshot, self.report_stats),
-                (trainer_signals.new_training, self.clear_files)]
+        return [
+            (trainer_signals.model_updated, self.record_stats),
+            # (trainer_signals.model_snapshot, self.report_stats),
+            (trainer_signals.new_training, self.clear_files)
+        ]
 
 
 class ParamsDiskWriter(AbstractReporter):
