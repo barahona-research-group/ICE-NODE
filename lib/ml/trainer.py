@@ -211,16 +211,7 @@ class ModelStatsDiskWriter(AbstractReporter):
         h = kwargs['history']
         fname = 'stats.csv.gz'
         fpath = os.path.join(self.output_dir, fname)
-        df = h.stats_df.copy()
-
-        if os.path.exists(fpath):
-            old_df = pd.read_csv(fpath, index_col=0)
-            df = df.loc[~df.index.isin(old_df.index)]
-
-        df.to_csv(fpath,
-                  compression="gzip",
-                  mode='a',
-                  header=not os.path.exists(fpath))
+        h.stats_df.to_csv(fpath, compression="gzip")
 
     def clear_files(self, sender):
         fname = 'stats.csv.gz'
