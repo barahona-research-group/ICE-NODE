@@ -323,6 +323,7 @@ class InModularSKELKoopman(InModularICENODELite):
                  leading_observable_config: LeadingObservableConfig,
                  key: "jax.random.PRNGKey"):
         super_key, init_key = jrandom.split(key, 2)
+        jax.config.update("jax_enable_x64", True)
         super().__init__(config, schemes, demographic_vector_config,
                          leading_observable_config, super_key)
         self._f_init = self._make_init(config=config, key=init_key)

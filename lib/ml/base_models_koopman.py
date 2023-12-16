@@ -17,7 +17,7 @@ if len(jax.devices()) > 0:
 else:
     _flag_gpu_device = False
 
-jax.config.update("jax_enable_x64", not _flag_gpu_device)
+# jax.config.update("jax_enable_x64", not _flag_gpu_device)
 
 
 class SKELPhi(eqx.Module):

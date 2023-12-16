@@ -457,7 +457,6 @@ class InGRUJump(InICENODELite):
 
 
 class InGRU(InGRUJump):
-
     @staticmethod
     def _make_embedding(config, demographic_vector_config, schemes, key):
         return DeepMindPatientEmbedding(
@@ -745,6 +744,17 @@ class InSKELKoopmanPrecomputes(Precomputes):
 
 
 class InSKELKoopman(InICENODELite):
+    def __init__(self, config: InSKELKoopmanConfig,
+                 schemes: Tuple[DatasetScheme],
+                 demographic_vector_config: DemographicVectorConfig,
+                 leading_observable_config: LeadingObservableConfig,
+                 key: "jax.random.PRNGKey"):
+        jax.config.update('jax_enable_x64', True)
+        super().__init__(config=config,
+                         schemes=schemes,
+                         demographic_vector_config=demographic_vector_config,
+                         leading_observable_config=leading_observable_config,
+                         key=key)
 
     @staticmethod
     def _make_dyn(config, key):
@@ -869,7 +879,6 @@ class InVanillaKoopmanPrecomputes(InSKELKoopmanPrecomputes):
 
 
 class InVanillaKoopman(InSKELKoopman):
-
     @staticmethod
     def _make_dyn(config, key):
         return VanillaKoopmanOperator(input_size=config.state,
