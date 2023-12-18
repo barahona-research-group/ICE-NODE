@@ -749,7 +749,6 @@ class InSKELKoopman(InICENODELite):
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableConfig,
                  key: "jax.random.PRNGKey"):
-        jax.config.update('jax_enable_x64', True)
         super().__init__(config=config,
                          schemes=schemes,
                          demographic_vector_config=demographic_vector_config,

@@ -17,8 +17,6 @@ if len(jax.devices()) > 0:
 else:
     _flag_gpu_device = False
 
-# jax.config.update("jax_enable_x64", not _flag_gpu_device)
-
 
 class SKELPhi(eqx.Module):
     """Koopman embeddings for continuous-time systems."""
@@ -164,7 +162,10 @@ class SKELKoopmanOperator(VanillaKoopmanOperator):
                                 dtype=jnp.float64)
         self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
                                 dtype=jnp.float64)
-        self.epsI = 1e-9 * jnp.eye(koopman_size)
+        self.epsI = 1e-9 * jnp.eye(koopman_size, dtype=jnp.float64)
+
+        assert all(a.dtype == jnp.float64 for a in (self.R, self.Q, self.N)), \
+            "SKELKoopmanOperator requires float64 precision"
 
     @eqx.filter_jit
     def compute_A(self):
