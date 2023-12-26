@@ -180,6 +180,24 @@ class InpatientObservables(Data):
         else:
             return df
 
+    def group_by_code(self, scheme: AbstractScheme):
+        assert len(scheme) == self.value.shape[1]
+        dic = {}
+        time = np.array(self.time)
+        value = np.array(self.value)
+        mask = np.array(self.mask)
+
+        for i in range(len(scheme)):
+            code = scheme.index2code[i]
+            mask_i = mask[:, i]
+            value_i = value[:, i][mask_i]
+            time_i = time[mask_i]
+            dic[code] = InpatientObservables(time=time_i,
+                                             value=value_i,
+                                             mask=np.ones_like(value_i,
+                                                               dtype=bool))
+        return dic
+
     def segment(self, t_sep: jnp.ndarray):
         if len(t_sep) == 0:
             return [self]

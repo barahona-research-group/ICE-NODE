@@ -11,7 +11,9 @@ import equinox as eqx
 
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
-                   Predictions, Admission)
+                   Predictions, Admission, TrajectoryConfig, PatientTrajectory,
+                   AdmissionVisualisables, InpatientInput,
+                   InpatientObservables, AdmissionPrediction)
 from ..base import Config, Module, Data
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
@@ -86,15 +88,17 @@ class AbstractModel(Module):
                  embedded_x: Union[List[EmbeddedAdmission], EmbeddedAdmission],
                  precomputes: Precomputes,
                  regularisation: Optional[ModelRegularisation] = None,
-                 store_embeddings: bool = False):
+                 store_embeddings: Optional[TrajectoryConfig] = None):
         pass
 
     @abstractmethod
-    def batch_predict(self,
-                      patients: Patients,
-                      leave_pbar: bool = False,
-                      regularisation: Optional[ModelRegularisation] = None,
-                      store_embeddings: bool = False) -> Predictions:
+    def batch_predict(
+            self,
+            patients: Patients,
+            leave_pbar: bool = False,
+            regularisation: Optional[ModelRegularisation] = None,
+            store_embeddings: Optional[TrajectoryConfig] = None
+    ) -> Predictions:
         pass
 
     @property
@@ -209,11 +213,81 @@ class InpatientModel(AbstractModel):
             "leading_observable_config", "key"
         ]
 
-    def batch_predict(self,
-                      inpatients: Patients,
-                      leave_pbar: bool = False,
-                      regularisation: Optional[ModelRegularisation] = None,
-                      store_embeddings: bool = False) -> Predictions:
+    def decode_lead_trajectory(
+            self, trajectory: PatientTrajectory) -> PatientTrajectory:
+        raise NotImplementedError
+
+    def decode_obs_trajectory(
+            self, trajectories: PatientTrajectory) -> PatientTrajectory:
+        raise NotImplementedError
+
+    def leading_observable_trajectory(self, predictions: Predictions):
+        dic = {}
+        for sid, spreds in predictions.items():
+            dic[sid] = {}
+            for aid, apreds in spreds.items():
+                assert apreds.trajectory is not None
+                trajectory = apreds.trajectory
+                lead_trajectory = self.decode_lead_trajectory(trajectory)
+                dic[sid][aid] = lead_trajectory.to_cpu()
+        return dic
+
+    def observables_trajectory(self, predictions: Predictions):
+        dic = {}
+        for sid, spreds in predictions.items():
+            dic[sid] = {}
+            for aid, apreds in spreds.items():
+                assert apreds.trajectory is not None
+                trajectory = apreds.trajectory
+                obs_trajectory = self.decode_obs_trajectory(trajectory)
+                dic[sid][aid] = obs_trajectory.to_cpu()
+        return dic
+
+    def predict_visualisables(self,
+                              inpatients: Patients,
+                              store_embeddings: TrajectoryConfig,
+                              leave_pbar: bool = False):
+        assert store_embeddings is not None
+        predictions = self.batch_predict(inpatients,
+                                         leave_pbar=leave_pbar,
+                                         regularisation=None,
+                                         store_embeddings=store_embeddings)
+        lead_trajectories = self.leading_observable_trajectory(predictions)
+        obs_trajectories = self.observables_trajectory(predictions)
+
+        predictions = predictions.to_cpu()
+        predictions = predictions.defragment_observables()
+
+        scaled_visualisables = {}
+        unscaled_visualisables = {}
+        for sid, spreds in predictions.items():
+            scaled_visualisables[sid] = {}
+            unscaled_visualisables[sid] = {}
+            for aid, apreds in spreds.items():
+                obs = apreds.admission.observables
+                state_adjustment_time = obs.time
+                vis = AdmissionVisualisables(
+                    obs_pred_trajectory=obs_trajectories[sid][aid],
+                    lead_pred_trajectory=lead_trajectories[sid][aid],
+                    obs=apreds.admission.observables,
+                    lead=apreds.admission.leading_observable,
+                    interventions=apreds.admission.interventions,
+                    state_adjustment_time=state_adjustment_time)
+                vis_unscaled = vis.unscaled(inpatients)
+
+                vis = vis.group_by_code().listify_interventions()
+                vis_unscaled = vis_unscaled.group_by_code().listify_interventions()
+
+                scaled_visualisables[sid][aid] = vis
+                unscaled_visualisables[sid][aid] = vis_unscaled
+
+    def batch_predict(
+            self,
+            inpatients: Patients,
+            leave_pbar: bool = False,
+            regularisation: Optional[ModelRegularisation] = None,
+            store_embeddings: Optional[TrajectoryConfig] = None
+    ) -> Predictions:
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {
@@ -259,11 +333,13 @@ class OutpatientModel(AbstractModel):
     def external_argnames(cls):
         return ["schemes", "demographic_vector_config", "key"]
 
-    def batch_predict(self,
-                      inpatients: Patients,
-                      leave_pbar: bool = False,
-                      regularisation: Optional[ModelRegularisation] = None,
-                      store_embeddings: bool = False) -> Predictions:
+    def batch_predict(
+            self,
+            inpatients: Patients,
+            leave_pbar: bool = False,
+            regularisation: Optional[ModelRegularisation] = None,
+            store_embeddings: Optional[TrajectoryConfig] = None
+    ) -> Predictions:
         total_int_days = inpatients.d2d_interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {

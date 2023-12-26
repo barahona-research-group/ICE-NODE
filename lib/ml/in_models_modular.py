@@ -1,6 +1,6 @@
 """."""
 from __future__ import annotations
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 import jax
 import jax.numpy as jnp
 import jax.nn as jnn
@@ -10,7 +10,8 @@ import equinox as eqx
 from ..utils import model_params_scaler
 from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
                    DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableConfig, PatientTrajectory)
+                   LeadingObservableConfig, PatientTrajectory,
+                   TrajectoryConfig)
 from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
                          EmbeddedInAdmission, InpatientLiteEmbedding,
                          LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
@@ -146,13 +147,30 @@ class InModularICENODE(InICENODE):
     def split_state(self, state: jnp.ndarray):
         return jnp.hsplit(state, self.config.state_splitter)
 
+    def decode_obs_trajectory(
+            self, trajectory: PatientTrajectory) -> PatientTrajectory:
+        state_components = eqx.filter_vmap(self.split_state, trajectory.value)
+        obs = eqx.filter_vmap(self._f_obs_dec, state_components[1])
+        return PatientTrajectory(time=trajectory.time, value=obs)
+
+    def decode_lead_trajectory(
+            self, trajectory: PatientTrajectory) -> PatientTrajectory:
+        state_components = eqx.filter_vmap(self.split_state, trajectory.value)
+        lead = eqx.filter_vmap(self._f_lead_dec, state_components[2])
+        return PatientTrajectory(time=trajectory.time, value=lead)
+
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
-                     t0: float, t1: float, precomputes: Precomputes):
+                     t0: float, t1: float, sampling_time: Optional[float],
+                     precomputes: Precomputes):
         preds = []
         lead_preds = []
         t = t0
+        trajectory = []
         for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
+            trajectory.extend(
+                self.sample_state_trajectory(state, int_e, t, t_obs,
+                                             sampling_time, precomputes))
             # if time-diff is more than 1 seconds, we integrate.
             state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
             state_components = self.split_state(state)
@@ -164,6 +182,9 @@ class InModularICENODE(InICENODE):
             preds.append(pred_obs)
             lead_preds.append(pred_lead)
 
+        trajectory.extend(
+            self.sample_state_trajectory(state, int_e, t, t1, sampling_time,
+                                         precomputes))
         state = self._safe_integrate(t1 - t, state, int_e, precomputes)
 
         if len(preds) > 0:
@@ -175,13 +196,14 @@ class InModularICENODE(InICENODE):
 
         return state, (InpatientObservables(obs.time, pred_obs_val, obs.mask),
                        InpatientObservables(lead.time, pred_lead_val,
-                                            lead.mask))
+                                            lead.mask)), trajectory
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: EmbeddedInAdmission,
-                 precomputes: Precomputes,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: EmbeddedInAdmission, precomputes: Precomputes,
+            regularisation: InICENODERegularisation,
+            store_embeddings: Optional[TrajectoryConfig]
+    ) -> AdmissionPrediction:
         state = self.join_state(None, None, None, embedded_admission.dx0)
         int_e = embedded_admission.inp_proc_demo
         obs = admission.observables
@@ -190,14 +212,27 @@ class InModularICENODE(InICENODE):
         pred_lead_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
+        trajectory = []
+        if store_embeddings is not None:
+            dt = store_embeddings.sampling_rate
+            sampling_time = jnp.arange(0.0, t1[-1], dt)
+        else:
+            sampling_time = None
         for i in range(len(t0)):
-            state, (pred_obs,
-                    pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i],
-                                                   precomputes)
+            state, pred, traj = self.step_segment(state, int_e[i], obs[i],
+                                                  lead[i], t0[i], t1[i],
+                                                  sampling_time, precomputes)
+            pred_obs, pred_lead = pred
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
+            trajectory.extend(traj)
+
+        if len(trajectory) > 0:
+            trajectory = PatientTrajectory(time=sampling_time,
+                                           value=jnp.vstack(trajectory))
+        else:
+            trajectory = None
 
         pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
                               admission.outcome.scheme)
@@ -205,7 +240,8 @@ class InModularICENODE(InICENODE):
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
                                    observables=pred_obs_l,
-                                   leading_observable=pred_lead_l)
+                                   leading_observable=pred_lead_l,
+                                   trajectory=trajectory)
 
 
 class InModularICENODELiteConfig(InModularICENODEConfig):
@@ -268,11 +304,12 @@ class InModularICENODELite(InModularICENODE):
 
         return jnp.hstack((mem, obs, lead))
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: EmbeddedInAdmission,
-                 precomputes: Precomputes,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: EmbeddedInAdmission, precomputes: Precomputes,
+            regularisation: InICENODERegularisation,
+            store_embeddings: Optional[TrajectoryConfig]
+    ) -> AdmissionPrediction:
         int_e = embedded_admission.inp_proc_demo
 
         state = self.join_state(None,
@@ -287,20 +324,33 @@ class InModularICENODELite(InModularICENODE):
         pred_lead_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
+        trajectory = []
+        if store_embeddings is not None:
+            dt = store_embeddings.sampling_rate
+            sampling_time = jnp.arange(0.0, t1[-1], dt)
+        else:
+            sampling_time = None
         for i in range(len(t0)):
-            state, (pred_obs,
-                    pred_lead) = self.step_segment(state, int_e[i], obs[i],
-                                                   lead[i], t0[i], t1[i],
-                                                   precomputes)
+            state, pred, traj = self.step_segment(state, int_e[i], obs[i],
+                                                  lead[i], t0[i], t1[i],
+                                                  sampling_time, precomputes)
+            pred_obs, pred_lead = pred
 
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
+            trajectory.extend(traj)
+
+        if len(trajectory) > 0:
+            trajectory = PatientTrajectory(time=sampling_time,
+                                           value=jnp.vstack(trajectory))
+        else:
+            trajectory = None
 
         return AdmissionPrediction(admission=admission,
                                    outcome=None,
                                    observables=pred_obs_l,
                                    leading_observable=pred_lead_l,
-                                   trajectory=None)
+                                   trajectory=trajectory)
 
 
 class InModularSKELKoopmanConfig(InModularICENODELiteConfig):
@@ -356,11 +406,12 @@ class InModularSKELKoopman(InModularICENODELite):
 
         return jnp.hstack((mem, obs, lead))
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: EmbeddedInAdmission,
-                 precomputes: Precomputes,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: EmbeddedInAdmission, precomputes: Precomputes,
+            regularisation: InICENODERegularisation,
+            store_embeddings: Optional[TrajectoryConfig]
+    ) -> AdmissionPrediction:
         int_e = embedded_admission.inp_proc_demo
 
         state = self.join_state(None,
@@ -376,12 +427,34 @@ class InModularSKELKoopman(InModularICENODELite):
         rec_loss = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
+        trajectory = []
+        if store_embeddings is not None:
+            dt = store_embeddings.sampling_rate
+            sampling_time = jnp.arange(0.0, t1[-1], dt)
+        else:
+            sampling_time = None
         for i in range(len(t0)):
-            state, (pred_obs, pred_lead), rloss = self.step_segment(
-                state, int_e[i], obs[i], lead[i], t0[i], t1[i], precomputes)
+            state, pred, rloss, traj = self.step_segment(
+                state, int_e[i], obs[i], lead[i], t0[i], t1[i], sampling_time,
+                precomputes)
+            pred_obs, pred_lead = pred
             rec_loss.extend(rloss)
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
+            trajectory.extend(traj)
+
+        if len(trajectory) > 0:
+            trajectory = PatientTrajectory(time=sampling_time,
+                                           value=jnp.vstack(trajectory))
+        else:
+            trajectory = None
+
+        return AdmissionPrediction(admission=admission,
+                                   outcome=None,
+                                   observables=pred_obs_l,
+                                   leading_observable=pred_lead_l,
+                                   trajectory=trajectory,
+                                   auxiliary_loss={'L_rec': rec_loss})
 
         return AdmissionPrediction(admission=admission,
                                    outcome=None,
@@ -453,11 +526,12 @@ class InModularGRUJump(InModularICENODELite):
 
         return jnp.hstack((mem, obs, lead))
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: LiteEmbeddedInAdmission,
-                 precomputes: Precomputes,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: LiteEmbeddedInAdmission,
+            precomputes: Precomputes, regularisation: InICENODERegularisation,
+            store_embeddings: Optional[TrajectoryConfig]
+    ) -> AdmissionPrediction:
         demo_e = embedded_admission.demo
 
         state = self.join_state(None,
@@ -513,11 +587,12 @@ class InModularGRU(InModularGRUJump):
                               hidden_size=config.state_size,
                               key=key)
 
-    def __call__(self, admission: Admission,
-                 embedded_admission: DeepMindEmbeddedAdmission,
-                 precomputes: Precomputes,
-                 regularisation: InICENODERegularisation,
-                 store_embeddings: bool) -> AdmissionPrediction:
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: DeepMindEmbeddedAdmission,
+            precomputes: Precomputes, regularisation: InICENODERegularisation,
+            store_embeddings: Optional[TrajectoryConfig]
+    ) -> AdmissionPrediction:
         state = self.join_state(None,
                                 None,
                                 None,

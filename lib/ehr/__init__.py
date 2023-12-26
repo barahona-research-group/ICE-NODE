@@ -13,7 +13,8 @@ from .concepts import (Admission, Patient, InpatientObservables,
                        DemographicVectorConfig, LeadingObservableConfig,
                        CPRDDemographicVectorConfig)
 from .interface import (AdmissionPrediction, Predictions, Patients,
-                        InterfaceConfig, PatientTrajectory)
+                        InterfaceConfig, PatientTrajectory,
+                        TrajectoryConfig, AdmissionVisualisables)
 from ..utils import load_config
 from ..base import Config, Module
 
