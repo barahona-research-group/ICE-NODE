@@ -141,6 +141,9 @@ class LeadingObservableConfig(Config):
                 [f'{desc}_next_{h}hrs' for h in self.leading_hours]))
         self._code2index = {v: k for k, v in self._index2code.items()}
 
+    def __len__(self):
+        return len(self.leading_hours)
+
     @property
     def index2code(self):
         return self._index2code
@@ -180,8 +183,9 @@ class InpatientObservables(Data):
         else:
             return df
 
-    def group_by_code(self, scheme: AbstractScheme):
-        assert len(scheme) == self.value.shape[1]
+    def groupby_code(self, scheme: AbstractScheme):
+        assert len(scheme) == self.value.shape[1], \
+            f'Expected {len(scheme)} columns, got {self.value.shape[1]}'
         dic = {}
         time = np.array(self.time)
         value = np.array(self.value)
@@ -594,6 +598,37 @@ class InpatientInterventions(Data):
                              is_leaf=lambda x: x is None)
         update = eqx.tree_at(lambda x: x.input_, update, None)
         return update
+
+    def listify_segmented_input(self, scheme):
+        assert self.segmented_input is not None
+        assert len(scheme) == self.segmented_input.shape[1], \
+            f"Scheme length {len(scheme)} does not match input length {self.segmented_input.shape[1]}"
+        listified = []
+        for (t0, t1, inp) in zip(self.t0, self.t1, self.segmented_input):
+            nonzero_input = np.argwhere(inp != 0).flatten()
+            if len(nonzero_input) == 0:
+                continue
+            input_list = []
+            for i in nonzero_input:
+                input_list.append((scheme.index2code[i], inp[i]))
+            listified.append((t0, t1, input_list))
+        return listified
+
+    def listify_segmented_proc(self, scheme):
+        assert self.segmented_proc is not None
+        assert len(scheme) == self.segmented_proc.shape[1], \
+            f"Scheme length {len(scheme)} does not match proc length {self.segmented_proc.shape[1]}"
+
+        listified = []
+        for (t0, t1, proc) in zip(self.t0, self.t1, self.segmented_proc):
+            nonzero_proc = np.argwhere(proc != 0).flatten()
+            if len(nonzero_proc) == 0:
+                continue
+            proc_list = []
+            for i in nonzero_proc:
+                proc_list.append((scheme.index2code[i], proc[i]))
+            listified.append((t0, t1, proc_list))
+        return listified
 
 
 class Admission(Data):

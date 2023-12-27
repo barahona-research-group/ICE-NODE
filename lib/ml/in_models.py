@@ -249,12 +249,12 @@ class InICENODE(InpatientModel):
 
     def decode_obs_trajectory(
             self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        obs = eqx.filter_vmap(self._f_obs_dec, trajectory.value)
+        obs = eqx.filter_vmap(self._f_obs_dec)(trajectory.value)
         return PatientTrajectory(time=trajectory.time, value=obs)
 
     def decode_lead_trajectory(
             self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        lead = eqx.filter_vmap(self._f_lead_dec, trajectory.value)
+        lead = eqx.filter_vmap(self._f_lead_dec)(trajectory.value)
         return PatientTrajectory(time=trajectory.time, value=lead)
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,

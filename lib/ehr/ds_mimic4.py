@@ -61,7 +61,7 @@ class ZScoreScaler(eqx.Module):
 
     def unscale(self, array):
         index = np.arange(array.shape[-1])
-        return array * self.std.loc[index] + self.mean.loc[index]
+        return array * self.std.loc[index].values + self.mean.loc[index].values
 
     def unscale_code(self, array, code_index):
         return array * self.std.loc[code_index] + self.mean.loc[code_index]
@@ -81,8 +81,16 @@ class MaxScaler(eqx.Module):
         return df
 
     def unscale(self, array):
-        index = np.arange(array.shape[-1])
-        return array * self.max_val.loc[index]
+        if array.shape[-1] == len(self.max_val):
+            index = np.arange(array.shape[-1])
+            return array * self.max_val.loc[index].values
+        index = self.max_val.index.values
+        array = array.copy()
+        if array.ndim == 1:
+            array[index] *= self.max_val.values
+        else:
+            array[:, index] *= self.max_val.values
+        return array
 
     def unscale_code(self, array, code_index):
         return array * self.max_val.loc[code_index]
@@ -114,10 +122,10 @@ class AdaptiveScaler(eqx.Module):
 
     def unscale(self, array):
         index = np.arange(array.shape[-1])
-        mu = self.mean.loc[index]
-        sigma = self.std.loc[index]
-        min_val = self.min_val.loc[index]
-        max_val = self.max_val.loc[index]
+        mu = self.mean.loc[index].values
+        sigma = self.std.loc[index].values
+        min_val = self.min_val.loc[index].values
+        max_val = self.max_val.loc[index].values
         z_unscaled = array * sigma + mu
         minmax_unscaled = array * max_val + min_val
         return np.where(min_val >= 0.0, minmax_unscaled, z_unscaled)

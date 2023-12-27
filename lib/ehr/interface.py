@@ -17,7 +17,7 @@ from .dataset import Dataset, DatasetScheme, DatasetConfig
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig,
                        LeadingObservableConfig)
-from .coding_scheme import CodesVector
+from .coding_scheme import CodesVector, AbstractScheme
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
@@ -63,9 +63,13 @@ class AdmissionVisualisables(Data):
     lead_pred_trajectory: PatientTrajectory
     interventions: InpatientInterventions
     state_adjustment_time: Optional[List[float]] = None
+    int_input_list: Optional[List[Any]] = None
+    int_proc_list: Optional[List[Any]] = None
+    int_input_scheme: Optional[AbstractScheme] = None
+    int_proc_scheme: Optional[AbstractScheme] = None
 
     def _unscaled_observations(self, patients: Patients):
-        obs_scaler = patients.dataset.preprocessing_history[0]['obs']['scaler']
+        obs_scaler = patients.dataset.scalers_history['obs']
         obs_value = self.obs.value.astype(np.float32)
         updated = eqx.tree_at(lambda o: o.obs.value, self,
                               obs_scaler.unscale(obs_value))
@@ -75,11 +79,10 @@ class AdmissionVisualisables(Data):
         return updated
 
     def _unscaled_leading_observable(self, patients: Patients):
-        lead_scaler = patients.dataset.preprocessing_history[0]['obs'][
-            'scaler']
+        lead_scaler = patients.dataset.scalers_history['obs']
         obs_index = patients.config.leading_observable.index
         lead_value = self.lead.value.astype(np.float32)
-        updated = eqx.tree_at(lambda o: o.value, self,
+        updated = eqx.tree_at(lambda o: o.lead.value, self,
                               lead_scaler.unscale_code(lead_value, obs_index))
         updated = eqx.tree_at(
             lambda o: o.lead_pred_trajectory.value, updated,
@@ -89,14 +92,10 @@ class AdmissionVisualisables(Data):
 
     def _unscaled_input(self, patients: Patients):
         # (T, D)
-        scaled_rate = self.interventions.segmented_input
-        input_scaler = patients.dataset.preprocessing_history[0]['input'][
-            'scaler']
-        unscaled_rate = [
-            input_scaler.unscale(r.astype(np.float32)) for r in scaled_rate
-        ]
+        scaled_rate = self.interventions.segmented_input.astype(np.float32)
+        input_scaler = patients.dataset.scalers_history['int_input']
         return eqx.tree_at(lambda o: o.interventions.segmented_input, self,
-                           unscaled_rate)
+                           input_scaler.unscale(scaled_rate))
 
     def unscaled(self, patients: Patients):
         updated = self._unscaled_observations(patients)
@@ -104,18 +103,44 @@ class AdmissionVisualisables(Data):
         updated = updated._unscaled_input(patients)
         return updated
 
-    def group_by_code(self, patients: Patients):
-        lead_scheme = patients.config.leading_observable._scheme
+    def groupby_code(self, patients: Patients):
+        lead_scheme = patients.config.leading_observable
         obs_scheme = patients._scheme.obs
         updated = self
         updated = eqx.tree_at(lambda o: o.obs, updated,
-                              updated.obs.group_by_code(obs_scheme))
+                              updated.obs.groupby_code(obs_scheme))
         updated = eqx.tree_at(lambda o: o.lead, updated,
-                              updated.lead.group_by_code(lead_scheme))
+                              updated.lead.groupby_code(lead_scheme))
         return updated
 
-    def listify_interventions(self):
-        raise NotImplementedError
+    def listify_interventions(self, patients: Patients):
+        s_scheme, t_scheme = patients.schemes
+        # In MIMI4ICUDataset, procedures are aggregated while inputs
+        # are not, but deferred to the embedding phase.
+        input_scheme = s_scheme.int_input
+        proc_scheme = t_scheme.int_proc
+        input_list = self.interventions.listify_segmented_input(input_scheme)
+        proc_list = self.interventions.listify_segmented_proc(proc_scheme)
+
+        updated = self
+        updated = eqx.tree_at(lambda o: o.interventions, updated, None)
+        updated = eqx.tree_at(lambda o: o.int_input_scheme,
+                              updated,
+                              input_scheme,
+                              is_leaf=lambda x: x is None)
+        updated = eqx.tree_at(lambda o: o.int_proc_scheme,
+                              updated,
+                              proc_scheme,
+                              is_leaf=lambda x: x is None)
+        updated = eqx.tree_at(lambda o: o.int_input_list,
+                              updated,
+                              input_list,
+                              is_leaf=lambda x: x is None)
+        updated = eqx.tree_at(lambda o: o.int_proc_list,
+                              updated,
+                              proc_list,
+                              is_leaf=lambda x: x is None)
+        return updated
 
 
 class AdmissionPrediction(Data):
@@ -435,10 +460,16 @@ class Predictions(dict):
         first_occ_adm_id = outcome_first_occurrence(adms)
         return [first_occ_adm_id == a.admission_id for a in adms]
 
-    def to_cpu(self):
-        arrs, others = eqx.partition(self, eqx.is_array)
+    def _subject_preds_to_cpu(self, subject_id: str):
+        s = self[subject_id]
+        arrs, others = eqx.partition(s, eqx.is_array)
         arrs = jtu.tree_map(lambda a: np.array(a), arrs)
         return eqx.combine(arrs, others)
+
+    def to_cpu(self):
+        return Predictions(
+            {i: self._subject_preds_to_cpu(i)
+             for i in self.keys()})
 
 
 class InterfaceConfig(Config):
@@ -748,7 +779,7 @@ class Patients(Module):
         return sum(jtu.tree_leaves(arr_size))
 
     def _unscaled_observation(self, obs_l: List[InpatientObservables]):
-        obs_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
+        obs_scaler = self.dataset.scalers_history['obs']
         if not isinstance(obs_l, list):
             obs_l = [obs_l]
         unscaled_obs = []
@@ -758,7 +789,7 @@ class Patients(Module):
         return unscaled_obs
 
     def _unscaled_leading_observable(self, lead_l: List[InpatientObservables]):
-        lead_scaler = self.dataset.preprocessing_history[0]['obs']['scaler']
+        lead_scaler = self.dataset.scalers_history['obs']
         obs_index = self.config.leading_observable.index
         if not isinstance(lead_l, list):
             lead_l = [lead_l]
@@ -771,7 +802,7 @@ class Patients(Module):
     def _unscaled_input(self, input_: InpatientInterventions):
         # (T, D)
         scaled_rate = input_.segmented_input
-        input_scaler = self.dataset.preprocessing_history[0]['input']['scaler']
+        input_scaler = self.dataset.scalers_history['int_input']
         unscaled_rate = [input_scaler.unscale(r) for r in scaled_rate]
         return eqx.tree_at(lambda o: o.segmented_input, input_, unscaled_rate)
 

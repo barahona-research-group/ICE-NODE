@@ -255,8 +255,7 @@ class InpatientModel(AbstractModel):
         lead_trajectories = self.leading_observable_trajectory(predictions)
         obs_trajectories = self.observables_trajectory(predictions)
 
-        predictions = predictions.to_cpu()
-        predictions = predictions.defragment_observables()
+        predictions = predictions.to_cpu().defragment_observables()
 
         scaled_visualisables = {}
         unscaled_visualisables = {}
@@ -275,11 +274,15 @@ class InpatientModel(AbstractModel):
                     state_adjustment_time=state_adjustment_time)
                 vis_unscaled = vis.unscaled(inpatients)
 
-                vis = vis.group_by_code().listify_interventions()
-                vis_unscaled = vis_unscaled.group_by_code().listify_interventions()
+                vis = vis.groupby_code(inpatients)
+                vis = vis.listify_interventions(inpatients)
+                vis_unscaled = vis_unscaled.groupby_code(inpatients)
+                vis_unscaled = vis_unscaled.listify_interventions(inpatients)
 
                 scaled_visualisables[sid][aid] = vis
                 unscaled_visualisables[sid][aid] = vis_unscaled
+
+        return scaled_visualisables, unscaled_visualisables
 
     def batch_predict(
             self,
