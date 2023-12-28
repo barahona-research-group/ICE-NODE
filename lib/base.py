@@ -4,6 +4,8 @@ from collections import namedtuple
 from abc import ABCMeta
 from copy import deepcopy
 import json
+import numpy as np
+import jax.numpy as jnp
 import jax.tree_util as jtu
 import equinox as eqx
 
@@ -106,10 +108,10 @@ class Config(eqx.Module):
             for n in nesting:
                 x = getattr(x, n)
             return x
+
         _type = type(_get(self))
 
         return eqx.tree_at(_get, self, _type(value))
-
 
     def update(self, other=None, **kwargs):
         if other is not None:
@@ -198,7 +200,16 @@ class Module(eqx.Module, metaclass=ABCMeta):
 
 
 class Data(eqx.Module):
-    pass
+
+    def to_cpu(self):
+        arrs, others = eqx.partition(self, eqx.is_array)
+        arrs = jtu.tree_map(lambda a: np.array(a), arrs)
+        return eqx.combine(arrs, others)
+
+    def to_device(self):
+        arrs, others = eqx.partition(self, eqx.is_array)
+        arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
+        return eqx.combine(arrs, others)
 
 
 Config.register()

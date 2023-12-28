@@ -1,4 +1,5 @@
-from .model import (AbstractModel, ModelConfig, ModelRegularisation)
+from .model import (AbstractModel, ModelConfig, ModelRegularisation,
+                    InpatientModel)
 from .dx_models import (ICENODE, ICENODE_UNIFORM, ICENODE_ZERO, GRU, RETAIN,
                         ICENODEConfig, GRUConfig, RETAINConfig,
                         ICENODERegularisation)

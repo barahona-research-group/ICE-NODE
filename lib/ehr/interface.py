@@ -35,13 +35,19 @@ class TrajectoryConfig(Config):
     sampling_rate: float = 0.5  # 0.5 means every 30 minutes.
 
 
-class PatientTrajectory(Data):
+class PatientTrajectory(InpatientObservables):
     time: jnp.ndarray
     value: jnp.ndarray
 
-    def to_cpu(self):
-        return PatientTrajectory(time=np.array(self.time),
-                                 value=np.array(self.value))
+    def __init__(self, time: jnp.ndarray, value: jnp.ndarray):
+        if isinstance(time, jnp.ndarray):
+            _np = jnp
+        else:
+            _np = np
+
+        self.time = time
+        self.value = value
+        self.mask = _np.ones_like(value, dtype=bool)
 
     @staticmethod
     def concat(trajectories: List[PatientTrajectory]):
@@ -51,96 +57,7 @@ class PatientTrajectory(Data):
             ]
         return PatientTrajectory(
             time=jnp.hstack([traj.time for traj in trajectories]),
-            state=jnp.vstack([traj.state for traj in trajectories]))
-
-
-class AdmissionVisualisables(Data):
-
-    # The processed dataset has scaled observables and leading observables.
-    obs: Union[Dict[InpatientObservables], InpatientObservables]
-    lead: Union[Dict[InpatientObservables], InpatientObservables]
-    obs_pred_trajectory: PatientTrajectory
-    lead_pred_trajectory: PatientTrajectory
-    interventions: InpatientInterventions
-    state_adjustment_time: Optional[List[float]] = None
-    int_input_list: Optional[List[Any]] = None
-    int_proc_list: Optional[List[Any]] = None
-    int_input_scheme: Optional[AbstractScheme] = None
-    int_proc_scheme: Optional[AbstractScheme] = None
-
-    def _unscaled_observations(self, patients: Patients):
-        obs_scaler = patients.dataset.scalers_history['obs']
-        obs_value = self.obs.value.astype(np.float32)
-        updated = eqx.tree_at(lambda o: o.obs.value, self,
-                              obs_scaler.unscale(obs_value))
-        updated = eqx.tree_at(
-            lambda o: o.obs_pred_trajectory.value, updated,
-            obs_scaler.unscale(self.obs_pred_trajectory.value))
-        return updated
-
-    def _unscaled_leading_observable(self, patients: Patients):
-        lead_scaler = patients.dataset.scalers_history['obs']
-        obs_index = patients.config.leading_observable.index
-        lead_value = self.lead.value.astype(np.float32)
-        updated = eqx.tree_at(lambda o: o.lead.value, self,
-                              lead_scaler.unscale_code(lead_value, obs_index))
-        updated = eqx.tree_at(
-            lambda o: o.lead_pred_trajectory.value, updated,
-            lead_scaler.unscale_code(self.lead_pred_trajectory.value,
-                                     obs_index))
-        return updated
-
-    def _unscaled_input(self, patients: Patients):
-        # (T, D)
-        scaled_rate = self.interventions.segmented_input.astype(np.float32)
-        input_scaler = patients.dataset.scalers_history['int_input']
-        return eqx.tree_at(lambda o: o.interventions.segmented_input, self,
-                           input_scaler.unscale(scaled_rate))
-
-    def unscaled(self, patients: Patients):
-        updated = self._unscaled_observations(patients)
-        updated = updated._unscaled_leading_observable(patients)
-        updated = updated._unscaled_input(patients)
-        return updated
-
-    def groupby_code(self, patients: Patients):
-        lead_scheme = patients.config.leading_observable
-        obs_scheme = patients._scheme.obs
-        updated = self
-        updated = eqx.tree_at(lambda o: o.obs, updated,
-                              updated.obs.groupby_code(obs_scheme))
-        updated = eqx.tree_at(lambda o: o.lead, updated,
-                              updated.lead.groupby_code(lead_scheme))
-        return updated
-
-    def listify_interventions(self, patients: Patients):
-        s_scheme, t_scheme = patients.schemes
-        # In MIMI4ICUDataset, procedures are aggregated while inputs
-        # are not, but deferred to the embedding phase.
-        input_scheme = s_scheme.int_input
-        proc_scheme = t_scheme.int_proc
-        input_list = self.interventions.listify_segmented_input(input_scheme)
-        proc_list = self.interventions.listify_segmented_proc(proc_scheme)
-
-        updated = self
-        updated = eqx.tree_at(lambda o: o.interventions, updated, None)
-        updated = eqx.tree_at(lambda o: o.int_input_scheme,
-                              updated,
-                              input_scheme,
-                              is_leaf=lambda x: x is None)
-        updated = eqx.tree_at(lambda o: o.int_proc_scheme,
-                              updated,
-                              proc_scheme,
-                              is_leaf=lambda x: x is None)
-        updated = eqx.tree_at(lambda o: o.int_input_list,
-                              updated,
-                              input_list,
-                              is_leaf=lambda x: x is None)
-        updated = eqx.tree_at(lambda o: o.int_proc_list,
-                              updated,
-                              proc_list,
-                              is_leaf=lambda x: x is None)
-        return updated
+            value=jnp.vstack([traj.state for traj in trajectories]))
 
 
 class AdmissionPrediction(Data):
@@ -460,17 +377,6 @@ class Predictions(dict):
         first_occ_adm_id = outcome_first_occurrence(adms)
         return [first_occ_adm_id == a.admission_id for a in adms]
 
-    def _subject_preds_to_cpu(self, subject_id: str):
-        s = self[subject_id]
-        arrs, others = eqx.partition(s, eqx.is_array)
-        arrs = jtu.tree_map(lambda a: np.array(a), arrs)
-        return eqx.combine(arrs, others)
-
-    def to_cpu(self):
-        return Predictions(
-            {i: self._subject_preds_to_cpu(i)
-             for i in self.keys()})
-
 
 class InterfaceConfig(Config):
     demographic_vector: DemographicVectorConfig
@@ -648,18 +554,12 @@ class Patients(Module):
 
         return interface
 
-    def _subject_to_device(self, subject_id: str):
-        s = self.subjects[subject_id]
-        arrs, others = eqx.partition(s, eqx.is_array)
-        arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
-        return eqx.combine(arrs, others)
-
     def device_batch(self, subject_ids: Optional[List[str]] = None):
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
         subjects = {
-            i: self._subject_to_device(i)
+            i: self.subjects[i].to_device()
             for i in tqdm_constructor(subject_ids,
                                       desc="Loading to device",
                                       unit='subject',

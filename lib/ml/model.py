@@ -12,8 +12,7 @@ import equinox as eqx
 from ..utils import tqdm_constructor, translate_path
 from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
                    Predictions, Admission, TrajectoryConfig, PatientTrajectory,
-                   AdmissionVisualisables, InpatientInput,
-                   InpatientObservables, AdmissionPrediction)
+                   InpatientInput, InpatientObservables, AdmissionPrediction)
 from ..base import Config, Module, Data
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
@@ -221,69 +220,6 @@ class InpatientModel(AbstractModel):
             self, trajectories: PatientTrajectory) -> PatientTrajectory:
         raise NotImplementedError
 
-    def leading_observable_trajectory(self, predictions: Predictions):
-        dic = {}
-        for sid, spreds in predictions.items():
-            dic[sid] = {}
-            for aid, apreds in spreds.items():
-                assert apreds.trajectory is not None
-                trajectory = apreds.trajectory
-                lead_trajectory = self.decode_lead_trajectory(trajectory)
-                dic[sid][aid] = lead_trajectory.to_cpu()
-        return dic
-
-    def observables_trajectory(self, predictions: Predictions):
-        dic = {}
-        for sid, spreds in predictions.items():
-            dic[sid] = {}
-            for aid, apreds in spreds.items():
-                assert apreds.trajectory is not None
-                trajectory = apreds.trajectory
-                obs_trajectory = self.decode_obs_trajectory(trajectory)
-                dic[sid][aid] = obs_trajectory.to_cpu()
-        return dic
-
-    def predict_visualisables(self,
-                              inpatients: Patients,
-                              store_embeddings: TrajectoryConfig,
-                              leave_pbar: bool = False):
-        assert store_embeddings is not None
-        predictions = self.batch_predict(inpatients,
-                                         leave_pbar=leave_pbar,
-                                         regularisation=None,
-                                         store_embeddings=store_embeddings)
-        lead_trajectories = self.leading_observable_trajectory(predictions)
-        obs_trajectories = self.observables_trajectory(predictions)
-
-        predictions = predictions.to_cpu().defragment_observables()
-
-        scaled_visualisables = {}
-        unscaled_visualisables = {}
-        for sid, spreds in predictions.items():
-            scaled_visualisables[sid] = {}
-            unscaled_visualisables[sid] = {}
-            for aid, apreds in spreds.items():
-                obs = apreds.admission.observables
-                state_adjustment_time = obs.time
-                vis = AdmissionVisualisables(
-                    obs_pred_trajectory=obs_trajectories[sid][aid],
-                    lead_pred_trajectory=lead_trajectories[sid][aid],
-                    obs=apreds.admission.observables,
-                    lead=apreds.admission.leading_observable,
-                    interventions=apreds.admission.interventions,
-                    state_adjustment_time=state_adjustment_time)
-                vis_unscaled = vis.unscaled(inpatients)
-
-                vis = vis.groupby_code(inpatients)
-                vis = vis.listify_interventions(inpatients)
-                vis_unscaled = vis_unscaled.groupby_code(inpatients)
-                vis_unscaled = vis_unscaled.listify_interventions(inpatients)
-
-                scaled_visualisables[sid][aid] = vis
-                unscaled_visualisables[sid][aid] = vis_unscaled
-
-        return scaled_visualisables, unscaled_visualisables
-
     def batch_predict(
             self,
             inpatients: Patients,
@@ -376,16 +312,3 @@ class OutpatientModel(AbstractModel):
     def patient_embeddings(self, patients: Patients):
         pass
 
-
-#     @classmethod
-#     def from_config(cls, conf: Dict[str, Any], patients: Patients,
-#                     train_split: List[int], key: "jax.random.PRNGKey"):
-#         decoder_input_size = cls.decoder_input_size(conf)
-#         emb_models = embeddings_from_conf(conf["emb"], patients, train_split,
-#                                           decoder_input_size)
-#         control_size = patients.control_dim
-#         return cls(**emb_models,
-#                    **conf["model"],
-#                    outcome=patients.outcome_extractor,
-#                    control_size=control_size,
-#                    key=key)

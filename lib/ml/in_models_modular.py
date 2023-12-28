@@ -212,7 +212,7 @@ class InModularICENODE(InICENODE):
         pred_lead_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)
@@ -324,7 +324,7 @@ class InModularICENODELite(InModularICENODE):
         pred_lead_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)
@@ -427,7 +427,7 @@ class InModularSKELKoopman(InModularICENODELite):
         rec_loss = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)

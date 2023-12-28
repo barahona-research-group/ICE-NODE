@@ -234,7 +234,7 @@ class InICENODE(InpatientModel):
                                 precomputes: Precomputes) -> List[jnp.ndarray]:
         if sampling_time is None:
             return []
-        mask = (sampling_time >= t0) & (sampling_time <= t1)
+        mask = (sampling_time > t0) & (sampling_time <= t1)
         if jnp.sum(mask) == 0:
             return []
         sampling_time = sampling_time[mask]
@@ -310,7 +310,7 @@ class InICENODE(InpatientModel):
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
 
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)
@@ -410,7 +410,7 @@ class InICENODELite(InICENODE):
         pred_lead_l = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)
@@ -912,7 +912,7 @@ class InSKELKoopman(InICENODELite):
         rec_loss = []
         t0 = admission.interventions.t0
         t1 = admission.interventions.t1
-        trajectory = []
+        trajectory = [state]
         if store_embeddings is not None:
             dt = store_embeddings.sampling_rate
             sampling_time = jnp.arange(0.0, t1[-1], dt)

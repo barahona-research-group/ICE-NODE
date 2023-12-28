@@ -149,6 +149,10 @@ class LeadingObservableConfig(Config):
         return self._index2code
 
     @property
+    def index2desc(self):
+        return self.index2code
+
+    @property
     def code2index(self):
         return self._code2index
 
@@ -183,23 +187,30 @@ class InpatientObservables(Data):
         else:
             return df
 
-    def groupby_code(self, scheme: AbstractScheme):
-        assert len(scheme) == self.value.shape[1], \
-            f'Expected {len(scheme)} columns, got {self.value.shape[1]}'
-        dic = {}
-        time = np.array(self.time)
-        value = np.array(self.value)
-        mask = np.array(self.mask)
+    def groupby_code(self, index2code: Dict[int, str]):
+        assert len(index2code) == self.value.shape[1], \
+            f'Expected {len(index2code)} columns, got {self.value.shape[1]}'
+        if isinstance(self.time, jnp.ndarray):
+            _np = jnp
+        else:
+            _np = np
 
-        for i in range(len(scheme)):
-            code = scheme.index2code[i]
+        dic = {}
+        time = _np.array(self.time)
+        value = _np.array(self.value)
+        mask = _np.array(self.mask)
+
+        for i, code in index2code.items():
             mask_i = mask[:, i]
+            if not _np.any(mask_i):
+                continue
+
             value_i = value[:, i][mask_i]
             time_i = time[mask_i]
             dic[code] = InpatientObservables(time=time_i,
                                              value=value_i,
-                                             mask=np.ones_like(value_i,
-                                                               dtype=bool))
+                                             mask=_np.ones_like(value_i,
+                                                                dtype=bool))
         return dic
 
     def segment(self, t_sep: jnp.ndarray):
@@ -598,37 +609,6 @@ class InpatientInterventions(Data):
                              is_leaf=lambda x: x is None)
         update = eqx.tree_at(lambda x: x.input_, update, None)
         return update
-
-    def listify_segmented_input(self, scheme):
-        assert self.segmented_input is not None
-        assert len(scheme) == self.segmented_input.shape[1], \
-            f"Scheme length {len(scheme)} does not match input length {self.segmented_input.shape[1]}"
-        listified = []
-        for (t0, t1, inp) in zip(self.t0, self.t1, self.segmented_input):
-            nonzero_input = np.argwhere(inp != 0).flatten()
-            if len(nonzero_input) == 0:
-                continue
-            input_list = []
-            for i in nonzero_input:
-                input_list.append((scheme.index2code[i], inp[i]))
-            listified.append((t0, t1, input_list))
-        return listified
-
-    def listify_segmented_proc(self, scheme):
-        assert self.segmented_proc is not None
-        assert len(scheme) == self.segmented_proc.shape[1], \
-            f"Scheme length {len(scheme)} does not match proc length {self.segmented_proc.shape[1]}"
-
-        listified = []
-        for (t0, t1, proc) in zip(self.t0, self.t1, self.segmented_proc):
-            nonzero_proc = np.argwhere(proc != 0).flatten()
-            if len(nonzero_proc) == 0:
-                continue
-            proc_list = []
-            for i in nonzero_proc:
-                proc_list.append((scheme.index2code[i], proc[i]))
-            listified.append((t0, t1, proc_list))
-        return listified
 
 
 class Admission(Data):

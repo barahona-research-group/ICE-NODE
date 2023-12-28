@@ -51,6 +51,10 @@ class ZScoreScaler(eqx.Module):
     std: pd.Series
     use_float16: bool = True
 
+    @property
+    def original_dtype(self):
+        return self.mean.dtype
+
     def __call__(self, df):
         mean = df[self.c_code_index].map(self.mean)
         std = df[self.c_code_index].map(self.std)
@@ -60,10 +64,12 @@ class ZScoreScaler(eqx.Module):
         return df
 
     def unscale(self, array):
+        array = array.astype(self.original_dtype)
         index = np.arange(array.shape[-1])
         return array * self.std.loc[index].values + self.mean.loc[index].values
 
     def unscale_code(self, array, code_index):
+        array = array.astype(self.original_dtype)
         return array * self.std.loc[code_index] + self.mean.loc[code_index]
 
 
@@ -73,6 +79,10 @@ class MaxScaler(eqx.Module):
     max_val: pd.Series
     use_float16: bool = True
 
+    @property
+    def original_dtype(self):
+        return self.max_val.dtype
+
     def __call__(self, df):
         max_val = df[self.c_code_index].map(self.max_val)
         df.loc[:, self.c_value] = (df[self.c_value] / max_val)
@@ -81,6 +91,7 @@ class MaxScaler(eqx.Module):
         return df
 
     def unscale(self, array):
+        array = array.astype(self.original_dtype)
         if array.shape[-1] == len(self.max_val):
             index = np.arange(array.shape[-1])
             return array * self.max_val.loc[index].values
@@ -93,6 +104,7 @@ class MaxScaler(eqx.Module):
         return array
 
     def unscale_code(self, array, code_index):
+        array = array.astype(self.original_dtype)
         return array * self.max_val.loc[code_index]
 
 
@@ -104,6 +116,10 @@ class AdaptiveScaler(eqx.Module):
     mean: pd.Series
     std: pd.Series
     use_float16: bool = True
+
+    @property
+    def original_dtype(self):
+        return self.max_val.dtype
 
     def __call__(self, df):
         min_val = df[self.c_code_index].map(self.min_val)
@@ -121,6 +137,7 @@ class AdaptiveScaler(eqx.Module):
         return df
 
     def unscale(self, array):
+        array = array.astype(self.original_dtype)
         index = np.arange(array.shape[-1])
         mu = self.mean.loc[index].values
         sigma = self.std.loc[index].values
@@ -131,6 +148,7 @@ class AdaptiveScaler(eqx.Module):
         return np.where(min_val >= 0.0, minmax_unscaled, z_unscaled)
 
     def unscale_code(self, array, code_index):
+        array = array.astype(self.original_dtype)
         index = np.arange(array.shape[-1])
         mu = self.mean.loc[code_index]
         sigma = self.std.loc[code_index]
