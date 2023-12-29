@@ -228,7 +228,11 @@ class InpatientObservables(Data):
         ]
 
     @staticmethod
-    def concat(observables: List[InpatientObservables]):
+    def concat(observables: Union[InpatientObservables,
+                                  List[InpatientObservables]]):
+        if isinstance(observables, InpatientObservables):
+            return observables
+
         if len(observables) == 0:
             return InpatientObservables.empty(0)
         if isinstance(observables[0].time, jnp.ndarray):

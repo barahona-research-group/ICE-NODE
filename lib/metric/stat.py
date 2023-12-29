@@ -289,6 +289,177 @@ class AKISegmentedAdmissionConfig(Config):
     stable_window: int = 12
 
 
+class LeadingPredictionAccuracyConfig(Config):
+    lookahead_hours: Tuple[int] = (1, 6, 12, 18, 24, 30, 36, 48, 60, 72)
+    recovery_neglect_window: int = 12
+    entry_neglect_window: int = 3
+    minimum_acquisitions: int = 1
+
+
+# TODO: adapt to other interesting obs than AKI.
+
+
+class LeadingPredictionAccuracy(Metric):
+
+    @property
+    def lead_config(self):
+        return self.patients.config.leading_observable
+
+    @property
+    def lead_times(self):
+        return self.lead_config.leading_hours
+
+    @property
+    def lead_index2label(self):
+        index = list(range(len(self.lead_times)))
+        return dict(zip(index, self.lead_times))
+
+    def _annotate_lead_predictions(self, prediction: pd.DataFrame,
+                                   ground_truth: pd.DataFrame):
+
+        def _last_recovery_time(p):
+            if ground_truth['value'].max() == 0:
+                return -onp.inf
+            t = p.time
+            scope = ground_truth[(ground_truth.time <= t)]
+
+            # no occurrence, no recovery
+            if scope['value'].max() == 0:
+                return -onp.inf
+
+            # no recovery happened yet
+            if scope['value'].iloc[-1] > 0:
+                return onp.inf
+
+            recovery = ((scope['value'].iloc[:-1].values > 0) &
+                        (scope['value'].iloc[1:].values == 0))
+            scope = scope.iloc[1:]
+            return scope[recovery]['time'].max()
+
+        def _next_occurrence_time(p):
+            t = p.time
+            scope = ground_truth[(ground_truth.time > t)
+                                 & (ground_truth.value > 0)]
+            if len(scope) == 0:
+                return onp.inf
+
+            return scope['time'].min()
+
+        def _next_occurrence_value(t):
+            if t == onp.inf:
+                return onp.nan
+            return ground_truth[ground_truth.time == t]['value'].values[0]
+
+        prediction['last_recovery_time'] = prediction.apply(
+            _last_recovery_time, axis=1)
+        prediction['next_occurrence_time'] = prediction.apply(
+            _next_occurrence_time, axis=1)
+        prediction['next_occurrence_value'] = prediction[
+            'next_occurrence_time'].apply(_next_occurrence_value)
+
+        return prediction
+
+    def _lead_dataframe(self, prediction: AdmissionPrediction):
+        """Returns a dataframe of leading predictions after filtering out
+        non potential (non-useful) cases:
+            (1) timestamps after recovery within
+                self.config.recovery_neglect_window hours.
+            (2) timestamps within self.config.entry_neglect_window
+                hours of admission.
+            (3) timestamps where the most recent AKI measurement is actually
+                recorded positive and no recovery since then, so no point to
+                early predict here.
+            (4) timestamps before which no sufficient acquisitions
+                (self.config.minimum_acquisitions) are made before.
+            (5) entire admission where no valid AKI measured after
+                self.config.entry_neglect_window.
+        Columns are:
+            - time: timestamp of the leading maximal prediction.
+            - prediction: maximal prediction value.
+            - last_recovery_time: timestamp of the last recovery.
+            - next_occurrence_time: timestamp of the next occurrence of the
+            AKI.
+            - next_occurrence_value: value of the next occurrence of the AKI.
+        """
+
+        lead_prediction = [p.to_cpu() for p in prediction.leading_observable]
+        lead_prediction = InpatientObservables.concat(lead_prediction)
+
+        # criterion (4) - minimum acquisitions, early skip function.
+        if len(lead_prediction) < self.config.minimum_acquisitions:
+            return None
+
+        # criterion (4) - minimum acquisitions
+        lead_time = lead_prediction.time[self.config.minimum_acquisitions:]
+        lead_critical_val = onp.nanmax(
+            lead_prediction.value, axis=1)[self.config.minimum_acquisitions:]
+
+        # criterion (2) - entry neglect window, early skip function.
+        entry_neglect_mask = (lead_time > self.config.entry_neglect_window)
+        if entry_neglect_mask.sum() == 0:
+            return None
+        else:
+            lead_time = lead_time[entry_neglect_mask]
+            lead_critical_val = lead_critical_val[entry_neglect_mask]
+
+        obs_ground_truth = [
+            o.to_cpu() for o in prediction.admission.observables
+        ]
+        obs_ground_truth = InpatientObservables.concat(obs_ground_truth)
+        obs_index = self.lead_config.index
+        mask = obs_ground_truth.mask[:, obs_index]
+        # criterion (5) - no valid AKI measured, early skip function.
+        if mask.sum() == 0:
+            return None
+
+        ground_truth_val = obs_ground_truth.value[mask, obs_index]
+        ground_truth_time = obs_ground_truth.time[mask]
+
+        # criterion (5) - no valid AKI measured after entry neglect window.
+        if ground_truth_time.max() < self.config.entry_neglect_window:
+            return None
+
+        prediction_df = pd.DataFrame({
+            'time': lead_time,
+            'value': lead_critical_val
+        })
+        ground_truth_df = pd.DataFrame({
+            'time': ground_truth_time,
+            'value': ground_truth_val
+        })
+
+        # criterion (3)
+        pos_ground_truth_df = ground_truth_df[ground_truth_df['value'] > 0]
+        prediction_df = prediction_df[~prediction_df['time'].
+                                      isin(pos_ground_truth_df['time'])]
+
+        if len(prediction_df) == 0:
+            return None
+
+        prediction_df = self._annotate_lead_predictions(
+            prediction_df, ground_truth_df)
+
+        # criterion (1) & (3)- recovery neglect window and no recovery since
+        # last occurrence.
+        prediction_df = prediction_df[(
+            prediction_df['time'] > (prediction_df['last_recovery_time'] +
+                                     self.config.recovery_neglect_window))]
+
+        if len(prediction_df) == 0:
+            return None
+
+        return prediction_df
+
+    def _lead_dataframes(self, predictions: Predictions):
+        dataframes = []
+        for patient_predictions in predictions.values():
+            for prediction in patient_predictions.values():
+                df = self._lead_dataframe(prediction)
+                if df is not None:
+                    dataframes.append(self._lead_dataframe(prediction))
+        return dataframes
+
+
 def nan_concat_lagging_windows(x):
     n = len(x)
     add_arr = onp.full(n - 1, onp.nan)
