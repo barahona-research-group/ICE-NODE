@@ -290,13 +290,14 @@ class AKISegmentedAdmissionConfig(Config):
 
 
 class LeadingPredictionAccuracyConfig(Config):
-    lookahead_hours: Tuple[int] = (1, 6, 12, 18, 24, 30, 36, 48, 60, 72)
-    recovery_neglect_window: int = 12
+    lookahead_hours: Tuple[int] = (1, 6, 12, 24, 36, 48, 60, 72)
+    recovery_window: int = 12
     entry_neglect_window: int = 3
     minimum_acquisitions: int = 1
 
 
 # TODO: adapt to other interesting obs than AKI.
+# TODO: adapt to trajectory prediction.
 
 
 class LeadingPredictionAccuracy(Metric):
@@ -316,6 +317,7 @@ class LeadingPredictionAccuracy(Metric):
 
     def _annotate_lead_predictions(self, prediction: pd.DataFrame,
                                    ground_truth: pd.DataFrame):
+        assert len(ground_truth) > 0, 'no ground truth'
 
         def _last_recovery_time(p):
             if ground_truth['value'].max() == 0:
@@ -324,7 +326,7 @@ class LeadingPredictionAccuracy(Metric):
             scope = ground_truth[(ground_truth.time <= t)]
 
             # no occurrence, no recovery
-            if scope['value'].max() == 0:
+            if len(scope) == 0 or scope['value'].max() == 0:
                 return -onp.inf
 
             # no recovery happened yet
@@ -362,17 +364,18 @@ class LeadingPredictionAccuracy(Metric):
     def _lead_dataframe(self, prediction: AdmissionPrediction):
         """Returns a dataframe of leading predictions after filtering out
         non potential (non-useful) cases:
-            (1) timestamps after recovery within
-                self.config.recovery_neglect_window hours.
+            (1) timestamps before sufficient acquisitions
+                (self.config.minimum_acquisitions) are made.
             (2) timestamps within self.config.entry_neglect_window
                 hours of admission.
-            (3) timestamps where the most recent AKI measurement is actually
+            (3) entire admission where no valid AKI measured after
+                self.config.entry_neglect_window.
+            (4) timestamps where the most recent AKI measurement is actually
                 recorded positive and no recovery since then, so no point to
                 early predict here.
-            (4) timestamps before which no sufficient acquisitions
-                (self.config.minimum_acquisitions) are made before.
-            (5) entire admission where no valid AKI measured after
-                self.config.entry_neglect_window.
+            (5) timestamps after recovery within
+                self.config.recovery_window hours.
+
         Columns are:
             - time: timestamp of the leading maximal prediction.
             - prediction: maximal prediction value.
@@ -385,11 +388,11 @@ class LeadingPredictionAccuracy(Metric):
         lead_prediction = [p.to_cpu() for p in prediction.leading_observable]
         lead_prediction = InpatientObservables.concat(lead_prediction)
 
-        # criterion (4) - minimum acquisitions, early skip function.
-        if len(lead_prediction) < self.config.minimum_acquisitions:
+        # criterion (1) - minimum acquisitions, early skip function.
+        if len(lead_prediction) <= self.config.minimum_acquisitions:
             return None
 
-        # criterion (4) - minimum acquisitions
+        # criterion (1) - minimum acquisitions
         lead_time = lead_prediction.time[self.config.minimum_acquisitions:]
         lead_critical_val = onp.nanmax(
             lead_prediction.value, axis=1)[self.config.minimum_acquisitions:]
@@ -408,18 +411,19 @@ class LeadingPredictionAccuracy(Metric):
         obs_ground_truth = InpatientObservables.concat(obs_ground_truth)
         obs_index = self.lead_config.index
         mask = obs_ground_truth.mask[:, obs_index]
-        # criterion (5) - no valid AKI measured, early skip function.
+        # criterion (3) - no valid AKI measured, early skip function.
         if mask.sum() == 0:
             return None
 
         ground_truth_val = obs_ground_truth.value[mask, obs_index]
         ground_truth_time = obs_ground_truth.time[mask]
 
-        # criterion (5) - no valid AKI measured after entry neglect window.
+        # criterion (3) - no valid AKI measured after entry neglect window.
         if ground_truth_time.max() < self.config.entry_neglect_window:
             return None
 
         prediction_df = pd.DataFrame({
+            'admission_id': prediction.admission.admission_id,
             'time': lead_time,
             'value': lead_critical_val
         })
@@ -428,7 +432,7 @@ class LeadingPredictionAccuracy(Metric):
             'value': ground_truth_val
         })
 
-        # criterion (3)
+        # criterion (4) - no recovery since last (current) occurrence.
         pos_ground_truth_df = ground_truth_df[ground_truth_df['value'] > 0]
         prediction_df = prediction_df[~prediction_df['time'].
                                       isin(pos_ground_truth_df['time'])]
@@ -439,11 +443,11 @@ class LeadingPredictionAccuracy(Metric):
         prediction_df = self._annotate_lead_predictions(
             prediction_df, ground_truth_df)
 
-        # criterion (1) & (3)- recovery neglect window and no recovery since
+        # criterion (4) & (5)- recovery neglect window and no recovery since
         # last occurrence.
-        prediction_df = prediction_df[(
-            prediction_df['time'] > (prediction_df['last_recovery_time'] +
-                                     self.config.recovery_neglect_window))]
+        prediction_df = prediction_df[(prediction_df['time']
+                                       > (prediction_df['last_recovery_time'] +
+                                          self.config.recovery_window))]
 
         if len(prediction_df) == 0:
             return None
@@ -457,7 +461,116 @@ class LeadingPredictionAccuracy(Metric):
                 df = self._lead_dataframe(prediction)
                 if df is not None:
                     dataframes.append(self._lead_dataframe(prediction))
-        return dataframes
+        return pd.concat(dataframes)
+
+    def _classify_timestamps(self, prediction_df: pd.DataFrame):
+        """Classifies the timestamps in the dataframe into the following
+        classes:
+            - negative: no AKI measured.
+            - first_pre_emergence: no past AKI, but in development.
+            - later_pre_emergence: recovered from AKI, but new AKI in
+            - recovery_window: recovered from AKI, within
+                self.config.recovery_window hours.
+            - recovered: recovered from AKI, after self.config.recovery_window
+                hours.
+            development.
+
+        Returns a dataframe with the following columns:
+            - time: timestamp of the leading maximal prediction.
+            - prediction: maximal prediction value.
+            - last_recovery_time: timestamp of the last recovery.
+            - next_occurrence_time: timestamp of the next occurrence of the
+            AKI.
+            - next_occurrence_value: value of the next occurrence of the AKI.
+            - class: class of the timestamp.
+        """
+        df = prediction_df
+
+        df['class'] = 'unknown'
+        df.loc[(df['last_recovery_time'] == -onp.inf) &
+               (df['next_occurrence_time'] == onp.inf), 'class'] = 'negative'
+        df.loc[(df['last_recovery_time'] == -onp.inf) &
+               (df['next_occurrence_time'] != onp.inf),
+               'class'] = 'first_pre_emergence'
+        df.loc[(df['last_recovery_time'] != -onp.inf) &
+               (df['last_recovery_time'] +
+                self.config.recovery_window < df['time']) &
+               (df['next_occurrence_time'] != onp.inf),
+               'class'] = 'later_pre_emergence'
+        df.loc[(df['last_recovery_time'] != -onp.inf) &
+               (df['last_recovery_time'] +
+                self.config.recovery_window >= df['time']),
+               'class'] = 'recovery_window'
+        df.loc[(df['last_recovery_time'] != -onp.inf) &
+               (df['last_recovery_time'] +
+                self.config.recovery_window < df['time']) &
+               (df['next_occurrence_time'] == onp.inf), 'class'] = 'recovered'
+        return prediction_df
+
+    def fields(self):
+        timestamp_class = [
+            'negative', 'unknown', 'first_pre_emergence',
+            'later_pre_emergence', 'recovery_window'
+        ]
+
+        fields = [f'n_timestamps_{c}' for c in timestamp_class]
+        fields += [f'n_admissions_{c}' for c in timestamp_class]
+        time_window = self.config.lookahead_hours
+        t1 = time_window[-1]
+        pre_emergence_types = [
+            'first_pre_emergence', 'later_pre_emergence'
+            'pre_emergence'
+        ]
+        for t0 in time_window[:-1]:
+            for c in pre_emergence_types:
+                fields.append(f'n_timestamps_{c}_{t0}-{t1}')
+                fields.append(f'AUC_{c}_{t0}-{t1}')
+        return fields
+
+    def __call__(self, predictions: Predictions):
+        df = self._lead_dataframes(predictions)
+        df = self._classify_timestamps(df)
+        df_grouped = df.groupby('class')
+        res = {}
+        n_timestamps = df_grouped['time'].count().to_dict()
+        n_admissions = df_grouped['admission_id'].nunique().to_dict()
+        for c in n_timestamps.keys():
+            res[f'n_timestamps_{c}'] = n_timestamps[c]
+            res[f'n_admissions_{c}'] = n_admissions[c]
+        df_grouped = {k: v for k, v in df_grouped}
+        df_negative = df_grouped.get('negative', df.iloc[:0])
+        df_recovered = df_grouped.get('recovered', df.iloc[:0])
+        df_first_pre_emergence = df_grouped.get('first_pre_emergence',
+                                                df.iloc[:0])
+        df_later_pre_emergence = df_grouped.get('later_pre_emergence',
+                                                df.iloc[:0])
+
+        pre_emergence_df = {
+            'first_pre_emergence':
+            df_first_pre_emergence,
+            'later_pre_emergence':
+            df_later_pre_emergence,
+            'pre_emergence':
+            pd.concat([df_first_pre_emergence, df_later_pre_emergence])
+        }
+
+        neg_values = onp.concatenate(
+            (df_negative['value'].values, df_recovered['value'].values))
+        neg_labels = onp.zeros(len(neg_values))
+        time_window = self.config.lookahead_hours
+        t1 = time_window[-1]
+        for t0 in time_window[:-1]:
+            for c, df in pre_emergence_df.items():
+                df_t = df[(df['time'] >= t0) & (df['time'] <= t1)]
+                if len(df_t) == 0:
+                    continue
+                pos_values = df_t['value'].values
+                pos_labels = onp.ones(len(pos_values))
+                values = onp.concatenate((neg_values, pos_values))
+                labels = onp.concatenate((neg_labels, pos_labels))
+                res[f'AUC_{c}_{t0}-{t1}'] = compute_auc(labels, values)
+                res[f'n_timestamps_{c}_{t0}-{t1}'] = len(df_t)
+        return res
 
 
 def nan_concat_lagging_windows(x):
