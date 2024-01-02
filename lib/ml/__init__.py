@@ -29,3 +29,5 @@ from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,
 
 from .experiment import (Experiment, ExperimentConfig, SplitConfig,
                          InpatientExperiment)
+
+from .evaluation import (Evaluation, EvaluationConfig)
