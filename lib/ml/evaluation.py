@@ -163,7 +163,7 @@ class Evaluation(Module):
 
         experiment = InpatientExperiment(config=self.experiment_config[exp])
         interface = experiment.load_interface()
-        splits = interface.load_splits(interface.dataset)
+        splits = experiment.load_splits(interface.dataset)
         metrics = self.load_metrics(interface, splits)
         model = experiment.load_model(interface)
         model = model.load_params_from_archive(
