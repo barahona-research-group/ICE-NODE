@@ -33,7 +33,7 @@ export JAX_PLATFORM_NAME="gpu"
 
 $HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
 --config $CONFIG_PATH \
---experiment-dir $EXPERIMENTS_DIR \
+--experiments-dir $EXPERIMENTS_DIR \
 --db $DB \
 --override $OVERRIDE
 
