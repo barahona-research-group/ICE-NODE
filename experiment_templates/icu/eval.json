@@ -2,7 +2,7 @@
     "_type": "EvaluationConfig",
     "db": "",
     "experiments_dir": "",
-    "frequency": 2,
+    "frequency": 100,
     "max_duration": 72,
     "metrics": [
         {
