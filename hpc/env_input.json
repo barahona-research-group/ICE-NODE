@@ -34,6 +34,20 @@
 		"examples": ["~/GP/ICE-NODE/output"],
 		"type": "path"
 	},
+	"experiments_dir":
+	{
+		"env": "EXPERIMENTS_DIR",
+		"desc": "Path (absolute or relative) to the experiments directory.",
+		"examples": ["~/GP/ICE-NODE/experiments"],
+		"type": "path"
+	},
+	"db":
+	{
+		"env": "DB",
+		"desc": "Name of the database to use.",
+		"examples": ["sqlite:///icenode.sqlite"],
+		"type": "str"
+	},
 	"dataset_path":
 	{
 		"env": "DATASET_PATH",

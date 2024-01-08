@@ -129,27 +129,27 @@
             ]
         },
         {
-            "classname": "LeadingObsTrends",
+            "classname": "LeadingPredictionAccuracy",
             "config": {
-                "_type": "CodeLevelMetricConfig",
-                "aggregate_level": true,
-                "code_level": true
-            },
-            "external_argnames": [
-                "patients"
-            ]
-        },
-        {
-            "classname": "AKISegmentedAdmissionMetric",
-            "config": {
-                "_type": "AKISegmentedAdmissionConfig",
-                "stable_window": 24
+                "_type": "LeadingPredictionAccuracyConfig",
+                "entry_neglect_window": 3,
+                "lookahead_hours": [
+                    1,
+                    6,
+                    12,
+                    24,
+                    36,
+                    48,
+                    72
+                ],
+                "minimum_acquisitions": 1,
+                "recovery_window": 12
             },
             "external_argnames": [
                 "patients"
             ]
         }
-    ],
+    ],    
     "model": {
         "_type": "InICENODELiteConfig",
         "emb": {

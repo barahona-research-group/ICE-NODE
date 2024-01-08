@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 import re
 import logging
+from datetime import datetime
 import time
 
 from sqlalchemy import create_engine
@@ -26,9 +27,11 @@ from .experiment import InpatientExperiment
 
 
 class EvaluationConfig(Config):
-    experiments_dir: str
-    frequency: int
-    db: str
+    metrics: List[Dict[str, Any]] = tuple()
+    experiments_dir: str = 'experiments'
+    frequency: int = 100
+    db: str = 'sqlite:///evaluation.db'
+    max_duration: int = 24 * 3  # in hours
 
 
 class Evaluation(Module):
@@ -37,6 +40,16 @@ class Evaluation(Module):
         if isinstance(config, dict):
             config = Config.from_dict(config)
         super().__init__(config=config, **kwargs)
+
+    def load_metrics(self, interface, splits):
+        external_kwargs = {'patients': interface, 'train_split': splits[0]}
+
+        metrics = []
+        for config in self.config.metrics:
+            metrics.append(
+                Module.import_module(config=config, **external_kwargs))
+
+        return MetricsCollection(metrics)
 
     def filter_params(self, params_list: List[str]) -> List[str]:
         numbers = {}
@@ -128,32 +141,40 @@ class Evaluation(Module):
                                            EvaluationStatusModel,
                                            name='RUNNING')
             experiment = get_or_create(engine, ExperimentModel, name=exp)
-            new_eval = EvaluationRunModel(experiment=experiment,
-                                          snapshot=snapshot,
-                                          status=running_status)
-            session.add(new_eval)
 
-        # experiment = InpatientExperiment(config=self.experiment_config[exp])
-        # interface = experiment.load_interface()
-        # splits = interface.load_splits(interface.dataset)
-        # _, val_split, test_split = splits
-        # metrics = experiment.load_metrics(interface, splits)
-        # model = experiment.load_model(interface)
-        # model = model.load_params_from_archive(
-        #     os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
+            running_eval = session.query(EvaluationRunModel).filter(
+                EvaluationRunModel.experiment.has(name=exp),
+                EvaluationRunModel.snapshot == snapshot,
+                EvaluationRunModel.status.has(name='RUNNING')).one_or_none()
+            running_hours = lambda: (datetime.now() - running_eval.created_at
+                                     ).total_seconds() / 3600
+            if running_eval is not None and running_hours(
+            ) > self.config.max_duration:
+                running_hours = (datetime.now() - running_eval.created_at
+                                 ).total_seconds() / 3600
+                if running_hours > self.config.max_duration:
+                    logging.info(
+                        f'Evaluation {exp} {snapshot} took too long. Restart.')
+            else:
+                new_eval = EvaluationRunModel(experiment=experiment,
+                                              snapshot=snapshot,
+                                              status=running_status)
+                session.add(new_eval)
 
-        # metrics = MetricsCollection(metrics)
-        # for split_name, split in zip(['val', 'test'], [val_split, test_split]):
-        #     predictions = model.batch_predict(interface.device_batch(split))
-        #     results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
-        #     results = {f'{split_name}_{k}': v for k, v in results.items()}
-        #     self.save_metrics(engine, results, new_eval)
+        experiment = InpatientExperiment(config=self.experiment_config[exp])
+        interface = experiment.load_interface()
+        splits = interface.load_splits(interface.dataset)
+        metrics = self.load_metrics(interface, splits)
+        model = experiment.load_model(interface)
+        model = model.load_params_from_archive(
+            os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
 
-        self.save_metrics(engine, exp, snapshot, {
-            'test_acc': 0.5,
-            'val_acc': 0.5
-        })
-        time.sleep(5)
+        metrics = MetricsCollection(metrics)
+
+        _, val_split, _ = splits
+        predictions = model.batch_predict(interface.device_batch(val_split))
+        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
+        self.save_metrics(engine, exp, snapshot, results)
 
         with Session(engine) as session, session.begin():
             finished_status = get_or_create(engine,

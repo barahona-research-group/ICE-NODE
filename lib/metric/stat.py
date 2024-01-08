@@ -290,7 +290,7 @@ class AKISegmentedAdmissionConfig(Config):
 
 
 class LeadingPredictionAccuracyConfig(Config):
-    lookahead_hours: Tuple[int] = (1, 6, 12, 24, 36, 48, 60, 72)
+    lookahead_hours: Tuple[int] = (1, 6, 12, 24, 36, 48, 72)
     recovery_window: int = 12
     entry_neglect_window: int = 3
     minimum_acquisitions: int = 1

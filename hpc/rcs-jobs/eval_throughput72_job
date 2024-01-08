@@ -1,0 +1,40 @@
+#PBS -lselect=1:ncpus=8:mem=100gb
+
+#PBS -lwalltime=72:0:0
+
+#PBS -J 1-10
+
+# Setup environement using .bashrc
+source $HOME/.stores.sh
+
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+# $CONFIG_PATH: Path (absolute or relative) to JSON config file for the experiment settings. Example: ~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json
+# $DB: Name of the database to use. Example: sqlite:///icenode.sqlite
+# $OVERRIDE: Override existing configuration. Example: model.emb.dx=10,model.mem=5
+
+# Clone repository and checkout to the given tag name.
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
+
+cd $TMPDIR/ICE-NODE
+
+# Load modules
+
+
+# Input data and output configuration
+
+
+
+# Run program
+
+export JAX_PLATFORM_NAME="cpu"
+
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
+--config $CONFIG_PATH \
+--experiment-dir $env_experiment_dir \
+--db $DB \
+--override $OVERRIDE
+
+
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID

@@ -20,12 +20,14 @@ def load_file(temp_file):
 IO_DIRS = load_file('template-io-dirs')
 CMD_TEMPLATE_CONF = load_file('template-command-config')
 CMD_TEMPLATE_OPTUNA = Template(load_file('template-command-optuna'))
+CMD_TEMPLATE_EVAL = load_file('template-command-eval')
 
 RCS_TEMPLATE = Template(load_file('rcs-template'))
 DOC_TEMPLATE = Template(load_file('doc-template'))
 LOCAL_TEMPLATE = Template(load_file('local-template'))
 
 ENV_HOLDERS = load_config('env_input.json')
+
 
 def replace_env_holders(txt):
     mapping = {}
@@ -34,11 +36,12 @@ def replace_env_holders(txt):
         holder_txt = '_'.join(('env', holder))
         if holder_txt in txt:
             mapping[holder_txt] = f"${data['env']}"
-            help_lines.append(f"${data['env']}: {data['desc']} Example: {data['examples'][0]}")
+            help_lines.append(
+                f"${data['env']}: {data['desc']} Example: {data['examples'][0]}"
+            )
 
     mapping['temp_doc'] = '\n'.join(map(lambda l: f'# {l}', help_lines))
     return Template(txt).safe_substitute(**mapping)
-
 
 
 def gen_local_cmd_optuna():
@@ -163,9 +166,46 @@ def gen_rcs_job(job_class, config, wconfig):
         job_file.write(replace_env_holders(job_file_text))
 
 
+def gen_rcs_eval_job(job_class, config):
+    cls_config = config[job_class]
+
+    if 'array' in cls_config and cls_config['array'] is not None \
+            and cls_config['array'] > 1:
+        job_array_head = f"#PBS -J 1-{cls_config['array']}"
+    else:
+        job_array_head = ""
+
+    modules = cls_config.get('load_modules', [])
+    module_lines = "\n".join(
+        map(lambda module: f'module load {module}', modules))
+
+    hours_mins = cls_config['hours']
+
+    plat = cls_config['platform']
+    mapping = {
+        'temp_spec': cls_config['spec'],
+        'temp_hours_mins': hours_mins,
+        'temp_array_place': job_array_head,
+        'temp_modules_place': module_lines,
+        'temp_io_dirs': IO_DIRS,
+        'temp_command': CMD_TEMPLATE_EVAL,
+        'temp_platform': f'"{plat}"'
+    }
+
+    job_file_text = RCS_TEMPLATE.safe_substitute(**mapping)
+
+    Path('rcs-jobs').mkdir(parents=True, exist_ok=True)
+
+    filename = f'rcs-jobs/eval_{job_class}_job'
+
+    with open(filename, "w", encoding="utf-8") as job_file:
+        job_file.write(replace_env_holders(job_file_text))
+
+
 def gen_rcs_jobs():
     config = load_config('rcs_config.json')
     for job_class in config:
+        gen_rcs_eval_job(job_class, config)
         for wconf in [True, False]:
             gen_rcs_job(job_class, config, wconf)
 

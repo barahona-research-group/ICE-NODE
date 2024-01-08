@@ -9,6 +9,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, required=True)
     parser.add_argument('--override', type=str, required=False, default="")
+    parser.add_argument('--experiments-dir', type=str, required=True)
+    parser.add_argument('--db', type=str, required=True)
+
     args = parser.parse_args()
 
     config = load_config(translate_path(args.config))
@@ -16,16 +19,9 @@ if __name__ == '__main__':
 
     logging.warning(args)
 
-    config = config.path_update('reporting.output_dir',
-                                translate_path(args.output_path))
-
-    if args.dataset_path is not None and len(args.dataset_path) > 0:
-        config = config.path_update('dataset.path',
-                                    translate_path(args.dataset_path))
-
-    if args.cache_path is not None and len(args.cache_path) > 0:
-        config = config.path_update('interface.cache',
-                                    translate_path(args.cache_path))
+    config = config.path_update('experiments_dir',
+                                translate_path(args.experiments_dir))
+    config = config.path_update('db', translate_path(args.db))
 
     if args.override is not None and len(
             args.override) > 0 and args.override != '0':
@@ -40,8 +36,4 @@ if __name__ == '__main__':
             key, value = override.split('=')
             config = config.path_update(key, value)
 
-    if Experiment.inpatient(config):
-        experiment = InpatientExperiment(config)
-    else:
-        experiment = Experiment(config)
-    experiment.run()
+    Evaluation(config).start()
