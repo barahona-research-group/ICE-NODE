@@ -1,5 +1,5 @@
 $HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
 --config $env_config_path \
---experiment-dir $env_experiment_dir \
+--experiment-dir $env_experiments_dir \
 --db $env_db \
 --override $env_override
