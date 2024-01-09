@@ -193,7 +193,7 @@ class Evaluation(Module):
         # _, val_split, _ = splits
         # predictions = model.batch_predict(interface.device_batch(val_split))
         # results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
-        results = {k: 0.0 for k in metrics.columns()}
+        results = {k: jnp.nan for k in metrics.columns()}
         self.save_metrics(engine, exp, snapshot, results)
 
         with Session(engine) as session, session.begin():
