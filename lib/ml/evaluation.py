@@ -210,6 +210,7 @@ class Evaluation(Module):
             new_eval.status = finished_status
 
     def start(self):
+        logging.info('Database URL: %s', self.db_url)
         engine = create_engine(self.db_url)
         create_tables(engine)
         for exp, snapshot in self.generate_experiment_params_pairs():
