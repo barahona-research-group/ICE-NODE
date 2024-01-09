@@ -190,10 +190,9 @@ class Evaluation(Module):
         model = model.load_params_from_archive(
             os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
 
-        # _, val_split, _ = splits
-        # predictions = model.batch_predict(interface.device_batch(val_split))
-        # results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
-        results = {k: jnp.nan for k in metrics.columns()}
+        _, val_split, _ = splits
+        predictions = model.batch_predict(interface.device_batch(val_split))
+        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
         self.save_metrics(engine, exp, snapshot, results)
 
         with Session(engine) as session, session.begin():
