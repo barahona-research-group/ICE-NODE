@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
     config = config.path_update('experiments_dir',
                                 translate_path(args.experiments_dir))
-    config = config.path_update('db', translate_path(args.db))
+    config = config.path_update('db', args.db)
 
     if args.override is not None and len(
             args.override) > 0 and args.override != '0':
