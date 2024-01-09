@@ -215,6 +215,7 @@ class Evaluation(Module):
         create_tables(engine)
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
+                logging.info(f'Running {exp}, {snapshot}')
                 self.run_evaluation(engine, exp=exp, snapshot=snapshot)
             except IntegrityError as e:
 
