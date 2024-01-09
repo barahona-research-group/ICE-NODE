@@ -5,8 +5,9 @@ from pathlib import Path
 import re
 import logging
 from datetime import datetime
-import time
 
+import jax.random as jrandom
+import jax.numpy as jnp
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -24,6 +25,11 @@ from ..db.models import (Base, Experiment as ExperimentModel, EvaluationRun as
 from .trainer import (Trainer, InTrainer, TrainerConfig, ReportingConfig,
                       TrainerReporting, WarmupConfig)
 from .experiment import InpatientExperiment
+
+
+def is_x64_enabled():
+    x = jrandom.normal(jrandom.PRNGKey(0), (20, ), dtype=jnp.float64)
+    return x.dtype == jnp.float64
 
 
 class EvaluationConfig(Config):
@@ -86,7 +92,22 @@ class Evaluation(Module):
             and os.path.exists(
                 os.path.join(self.config.experiments_dir, d, 'config.json'))
         ]
-        return {os.path.basename(d): d for d in l}
+
+        d = {os.path.basename(d): d for d in l}
+
+        # Filter out based on the current precision supported.
+        # Koopman's code only supports float64.
+        if not is_x64_enabled():
+            d = {
+                exp: path
+                for exp, path in d.items() if 'koopman' not in exp.lower()
+            }
+        else:
+            d = {
+                exp: path
+                for exp, path in d.items() if 'koopman' in exp.lower()
+            }
+        return d
 
     @property
     def experiment_config(self) -> Dict[str, Config]:
@@ -171,9 +192,10 @@ class Evaluation(Module):
 
         metrics = MetricsCollection(metrics)
 
-        _, val_split, _ = splits
-        predictions = model.batch_predict(interface.device_batch(val_split))
-        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
+        # _, val_split, _ = splits
+        # predictions = model.batch_predict(interface.device_batch(val_split))
+        # results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
+        results = {k: 0.0 for k in metrics.columns()}
         self.save_metrics(engine, exp, snapshot, results)
 
         with Session(engine) as session, session.begin():
