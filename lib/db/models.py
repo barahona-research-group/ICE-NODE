@@ -43,7 +43,7 @@ class Results(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     evaluation_id = mapped_column(ForeignKey('evaluation_runs.id'))
     metric_id = mapped_column(ForeignKey('metrics.id'))
-    value: Mapped[float]
+    value: Mapped[float] = mapped_column(nullable=True)
 
 
 class EvaluationRun(Base):
