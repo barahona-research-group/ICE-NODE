@@ -216,4 +216,5 @@ class Evaluation(Module):
             except IntegrityError as e:
 
                 logging.warning(
-                    f'Evaluation already exists: {exp}, {snapshot}')
+                    f'Possible: evaluation already exists: {exp}, {snapshot}')
+                logging.warning(e)
