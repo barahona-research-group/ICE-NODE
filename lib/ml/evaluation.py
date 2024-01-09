@@ -36,7 +36,7 @@ class EvaluationConfig(Config):
     metrics: List[Dict[str, Any]] = tuple()
     experiments_dir: str = 'experiments'
     frequency: int = 100
-    db: str = 'sqlite:///evaluation.db'
+    db: str = 'evaluation.db'
     max_duration: int = 24 * 3  # in hours
 
 
@@ -46,6 +46,11 @@ class Evaluation(Module):
         if isinstance(config, dict):
             config = Config.from_dict(config)
         super().__init__(config=config, **kwargs)
+
+    @property
+    def db_url(self):
+        expr_abs_path = os.path.abspath(self.config.experiments_dir)
+        return f'sqlite+pysqlite:///{expr_abs_path}/{self.config.db}'
 
     def load_metrics(self, interface, splits):
         external_kwargs = {'patients': interface, 'train_split': splits[0]}
@@ -205,7 +210,7 @@ class Evaluation(Module):
             new_eval.status = finished_status
 
     def start(self):
-        engine = create_engine(self.config.db)
+        engine = create_engine(self.db_url)
         create_tables(engine)
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
