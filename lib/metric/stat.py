@@ -1544,6 +1544,9 @@ class OtherMetrics(Metric):
 class MetricsCollection:
     metrics: List[Metric] = field(default_factory=list)
 
+    def columns(self):
+        return tuple(sum([m.columns() for m in self.metrics], ()))
+
     def to_df(self,
               iteration: int,
               predictions: Predictions,
