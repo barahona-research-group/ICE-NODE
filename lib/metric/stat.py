@@ -384,9 +384,17 @@ class LeadingPredictionAccuracy(Metric):
             AKI.
             - next_occurrence_value: value of the next occurrence of the AKI.
         """
-
-        lead_prediction = [p.to_cpu() for p in prediction.leading_observable]
-        lead_prediction = InpatientObservables.concat(lead_prediction)
+        if isinstance(prediction.leading_observable, list):
+            lead_prediction = [
+                p.to_cpu() for p in prediction.leading_observable
+            ]
+            lead_prediction = InpatientObservables.concat(lead_prediction)
+        elif isinstance(prediction.leading_observable, InpatientObservables):
+            lead_prediction = prediction.leading_observable.to_cpu()
+        else:
+            type_name = type(prediction.leading_observable).__name__
+            raise NotImplementedError(
+                f'unknown leading observable type {type_name}')
 
         # criterion (1) - minimum acquisitions, early skip function.
         if len(lead_prediction) <= self.config.minimum_acquisitions:
