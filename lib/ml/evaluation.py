@@ -6,6 +6,7 @@ import re
 import logging
 from datetime import datetime
 
+import jax
 import jax.random as jrandom
 import jax.numpy as jnp
 from sqlalchemy import create_engine
@@ -36,7 +37,7 @@ class EvaluationConfig(Config):
     metrics: List[Dict[str, Any]] = tuple()
     experiments_dir: str = 'experiments'
     frequency: int = 100
-    db: str = 'sqlite:///evaluation.db'
+    db: str = 'evaluation.db'
     max_duration: int = 24 * 3  # in hours
 
 
@@ -46,6 +47,11 @@ class Evaluation(Module):
         if isinstance(config, dict):
             config = Config.from_dict(config)
         super().__init__(config=config, **kwargs)
+
+    @property
+    def db_url(self):
+        expr_abs_path = os.path.abspath(self.config.experiments_dir)
+        return f'sqlite+pysqlite:///{expr_abs_path}/{self.config.db}'
 
     def load_metrics(self, interface, splits):
         external_kwargs = {'patients': interface, 'train_split': splits[0]}
@@ -191,6 +197,7 @@ class Evaluation(Module):
             os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
 
         _, val_split, _ = splits
+        val_split = val_split[:100]
         predictions = model.batch_predict(interface.device_batch(val_split))
         results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
         self.save_metrics(engine, exp, snapshot, results)
@@ -205,10 +212,14 @@ class Evaluation(Module):
             new_eval.status = finished_status
 
     def start(self):
-        engine = create_engine(self.config.db)
+        logging.info('Database URL: %s', self.db_url)
+        engine = create_engine(self.db_url)
         create_tables(engine)
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
+                jax.clear_caches()
+                jax.clear_backends()
+                logging.info(f'Running {exp}, {snapshot}')
                 self.run_evaluation(engine, exp=exp, snapshot=snapshot)
             except IntegrityError as e:
 
