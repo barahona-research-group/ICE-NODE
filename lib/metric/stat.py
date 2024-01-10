@@ -1,6 +1,6 @@
 """Performance metrics and loss functions."""
 
-from typing import Dict, Optional, List, Tuple, Any, Callable
+from typing import Dict, Optional, List, Tuple, Any, Callable, Union
 from abc import abstractmethod, ABCMeta
 from dataclasses import field, dataclass
 import sys
@@ -361,6 +361,17 @@ class LeadingPredictionAccuracy(Metric):
 
         return prediction
 
+    def _defragment_obs(self, x: Union[List[InpatientObservables],
+                                       InpatientObservables]):
+        if isinstance(x, list):
+            y = [xi.to_cpu() for xi in x]
+            return InpatientObservables.concat(y)
+        elif isinstance(x, InpatientObservables):
+            return x.to_cpu()
+        else:
+            type_name = type(x).__name__
+            raise NotImplementedError(f'unknown observable type {type_name}')
+
     def _lead_dataframe(self, prediction: AdmissionPrediction):
         """Returns a dataframe of leading predictions after filtering out
         non potential (non-useful) cases:
@@ -384,17 +395,8 @@ class LeadingPredictionAccuracy(Metric):
             AKI.
             - next_occurrence_value: value of the next occurrence of the AKI.
         """
-        if isinstance(prediction.leading_observable, list):
-            lead_prediction = [
-                p.to_cpu() for p in prediction.leading_observable
-            ]
-            lead_prediction = InpatientObservables.concat(lead_prediction)
-        elif isinstance(prediction.leading_observable, InpatientObservables):
-            lead_prediction = prediction.leading_observable.to_cpu()
-        else:
-            type_name = type(prediction.leading_observable).__name__
-            raise NotImplementedError(
-                f'unknown leading observable type {type_name}')
+        lead_prediction = self._defragment_obs(
+            prediction.leading_observable).to_cpu()
 
         # criterion (1) - minimum acquisitions, early skip function.
         if len(lead_prediction) <= self.config.minimum_acquisitions:
@@ -413,10 +415,9 @@ class LeadingPredictionAccuracy(Metric):
             lead_time = lead_time[entry_neglect_mask]
             lead_critical_val = lead_critical_val[entry_neglect_mask]
 
-        obs_ground_truth = [
-            o.to_cpu() for o in prediction.admission.observables
-        ]
-        obs_ground_truth = InpatientObservables.concat(obs_ground_truth)
+        obs_ground_truth = self._defragment_obs(
+            prediction.admission.observables)
+
         obs_index = self.lead_config.index
         mask = obs_ground_truth.mask[:, obs_index]
         # criterion (3) - no valid AKI measured, early skip function.
