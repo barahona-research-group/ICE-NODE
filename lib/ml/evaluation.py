@@ -6,6 +6,7 @@ import re
 import logging
 from datetime import datetime
 
+import jax
 import jax.random as jrandom
 import jax.numpy as jnp
 from sqlalchemy import create_engine
@@ -196,6 +197,7 @@ class Evaluation(Module):
             os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
 
         _, val_split, _ = splits
+        val_split = val_split[:100]
         predictions = model.batch_predict(interface.device_batch(val_split))
         results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
         self.save_metrics(engine, exp, snapshot, results)
@@ -215,6 +217,8 @@ class Evaluation(Module):
         create_tables(engine)
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
+                jax.clear_caches()
+                jax.clear_backends()
                 logging.info(f'Running {exp}, {snapshot}')
                 self.run_evaluation(engine, exp=exp, snapshot=snapshot)
             except IntegrityError as e:
