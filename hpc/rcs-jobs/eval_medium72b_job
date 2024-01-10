@@ -2,7 +2,7 @@
 
 #PBS -lwalltime=72:0:0
 
-#PBS -J 1-5
+
 
 # Setup environement using .bashrc
 source $HOME/.stores.sh
@@ -30,7 +30,13 @@ cd $TMPDIR/ICE-NODE
 
 export JAX_PLATFORM_NAME="cpu"
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
+if $JAX_PLATFORM_NAME == "cpu" ; then
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+else
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
+fi
+
+$PY_BIN_DIR/python -m lib.cli.run_eval \
 --config $CONFIG_PATH \
 --experiments-dir $EXPERIMENTS_DIR \
 --db $DB \

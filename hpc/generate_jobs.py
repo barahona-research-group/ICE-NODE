@@ -166,11 +166,10 @@ def gen_rcs_job(job_class, config, wconfig):
         job_file.write(replace_env_holders(job_file_text))
 
 
-def gen_rcs_eval_job(job_class, config):
+def gen_rcs_eval_job(job_class, config, array=True):
     cls_config = config[job_class]
 
-    if 'array' in cls_config and cls_config['array'] is not None \
-            and cls_config['array'] > 1:
+    if cls_config.get('array', False) and array:
         job_array_head = f"#PBS -J 1-{cls_config['array']}"
     else:
         job_array_head = ""
@@ -196,7 +195,10 @@ def gen_rcs_eval_job(job_class, config):
 
     Path('rcs-jobs').mkdir(parents=True, exist_ok=True)
 
-    filename = f'rcs-jobs/eval_{job_class}_job'
+    if array:
+        filename = f'rcs-jobs/eval_{job_class}_arrayjob'
+    else:
+        filename = f'rcs-jobs/eval_{job_class}_job'
 
     with open(filename, "w", encoding="utf-8") as job_file:
         job_file.write(replace_env_holders(job_file_text))
@@ -205,7 +207,8 @@ def gen_rcs_eval_job(job_class, config):
 def gen_rcs_jobs():
     config = load_config('rcs_config.json')
     for job_class in config:
-        gen_rcs_eval_job(job_class, config)
+        gen_rcs_eval_job(job_class, config, False)
+        gen_rcs_eval_job(job_class, config, True)
         for wconf in [True, False]:
             gen_rcs_job(job_class, config, wconf)
 

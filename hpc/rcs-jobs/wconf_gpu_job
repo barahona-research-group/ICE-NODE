@@ -32,7 +32,13 @@ module load cuda/11.4.2
 
 export JAX_PLATFORM_NAME="gpu"
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
+if $JAX_PLATFORM_NAME == "cpu" ; then
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+else
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
+fi
+
+$PY_BIN_DIR/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
 --output-path $OUTPUT_PATH \
 --dataset-path $DATASET_PATH \
