@@ -527,7 +527,7 @@ class LeadingPredictionAccuracy(Metric):
         time_window = self.config.lookahead_hours
         t1 = time_window[-1]
         pre_emergence_types = [
-            'first_pre_emergence', 'later_pre_emergence'
+            'first_pre_emergence', 'later_pre_emergence',
             'pre_emergence'
         ]
         for t0 in time_window[:-1]:

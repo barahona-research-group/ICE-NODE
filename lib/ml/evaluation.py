@@ -162,6 +162,23 @@ class Evaluation(Module):
                                       value=metric_value)
                 session.add(result)
 
+    def get_experiment(self, exp: str):
+        return InpatientExperiment(config=self.experiment_config[exp])
+
+    def evaluate(self, exp: str, snapshot: str):
+        experiment = self.get_experiment(exp)
+        interface = experiment.load_interface()
+        splits = experiment.load_splits(interface.dataset)
+        metrics = self.load_metrics(interface, splits)
+        model = experiment.load_model(interface)
+        model = model.load_params_from_archive(
+            os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
+
+        _, val_split, _ = splits
+        predictions = model.batch_predict(interface.device_batch(val_split))
+        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
+        return results
+
     def run_evaluation(self, engine: Engine, exp: str, snapshot: str):
         with Session(engine) as session, session.begin():
             running_status = get_or_create(engine,
@@ -187,19 +204,7 @@ class Evaluation(Module):
                                               snapshot=snapshot,
                                               status=running_status)
                 session.add(new_eval)
-
-        experiment = InpatientExperiment(config=self.experiment_config[exp])
-        interface = experiment.load_interface()
-        splits = experiment.load_splits(interface.dataset)
-        metrics = self.load_metrics(interface, splits)
-        model = experiment.load_model(interface)
-        model = model.load_params_from_archive(
-            os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
-
-        _, val_split, _ = splits
-        predictions = model.batch_predict(interface.device_batch(val_split))
-        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
-        self.save_metrics(engine, exp, snapshot, results)
+        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot))
 
         with Session(engine) as session, session.begin():
             finished_status = get_or_create(engine,
