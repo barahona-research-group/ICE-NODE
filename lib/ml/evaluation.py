@@ -197,7 +197,6 @@ class Evaluation(Module):
             os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
 
         _, val_split, _ = splits
-        val_split = val_split[:100]
         predictions = model.batch_predict(interface.device_batch(val_split))
         results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
         self.save_metrics(engine, exp, snapshot, results)
