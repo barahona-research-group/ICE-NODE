@@ -26,7 +26,13 @@ cd $TMPDIR/ICE-NODE
 
 export JAX_PLATFORM_NAME="cpu"
 
-$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
+if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+else
+    export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
+fi
+
+$PY_BIN_DIR/python -m icenode.cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $env_data_tag \
 --study-tag $STUDY_TAG \

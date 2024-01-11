@@ -34,7 +34,7 @@ source /vol/cuda/11.4.120-cudnn8.2.4/setup.sh
 
 
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
+$PY_BIN_DIR/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
 --output-path $OUTPUT_PATH \
 --dataset-path $DATASET_PATH \

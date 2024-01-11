@@ -1,8 +1,8 @@
-#PBS -lselect=1:ncpus=60:mem=240gb
+#PBS -lselect=1:ncpus=160:mem=2400gb
 
 #PBS -lwalltime=72:0:0
 
-
+#PBS -J 1-5
 
 # Setup environement using .bashrc
 source $HOME/.stores.sh

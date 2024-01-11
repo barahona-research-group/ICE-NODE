@@ -23,7 +23,7 @@ export JAX_PLATFORM_NAME="gpu"
 
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
+$PY_BIN_DIR/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
 --output-path $OUTPUT_PATH \
 --dataset-path $DATASET_PATH \

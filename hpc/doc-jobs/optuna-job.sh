@@ -29,7 +29,7 @@ source /vol/cuda/11.4.120-cudnn8.2.4/setup.sh
 
 
 
-$HOME/GP/env/icenode-dev/bin/python -m icenode.cli.optuna_multi \
+$PY_BIN_DIR/python -m icenode.cli.optuna_multi \
 --output-dir $OUTPUT_DIR \
 --dataset $env_data_tag \
 --study-tag $STUDY_TAG \

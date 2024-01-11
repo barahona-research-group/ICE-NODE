@@ -1,8 +1,8 @@
-#PBS -lselect=1:ncpus=60:mem=240gb
+#PBS -lselect=1:ncpus=16:mem=96gb:ngpus=1:gpu_type=RTX6000
 
 #PBS -lwalltime=72:0:0
 
-
+#PBS -J 1-10
 
 # Setup environement using .bashrc
 source $HOME/.stores.sh
@@ -20,7 +20,8 @@ git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TA
 cd $TMPDIR/ICE-NODE
 
 # Load modules
-
+module load cudnn/8.2.4
+module load cuda/11.4.2
 
 # Input data and output configuration
 
@@ -28,7 +29,7 @@ cd $TMPDIR/ICE-NODE
 
 # Run program
 
-export JAX_PLATFORM_NAME="cpu"
+export JAX_PLATFORM_NAME="gpu"
 
 if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
     export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
