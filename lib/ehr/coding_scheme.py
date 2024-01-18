@@ -2,19 +2,21 @@
 data structures to support conversion between CCS and ICD9."""
 
 from __future__ import annotations
-from abc import ABC, abstractmethod, ABCMeta
-from collections import defaultdict, OrderedDict
-from typing import Set, Optional
-from threading import Lock
-import re
-import os
-import gzip
-import xml.etree.ElementTree as ET
-import logging
 
+import gzip
+import logging
+import os
+import re
+import xml.etree.ElementTree as ET
+from abc import abstractmethod, ABCMeta
+from collections import defaultdict, OrderedDict
+from threading import Lock
+from typing import Set
+
+import equinox as eqx
 import numpy as np
 import pandas as pd
-import equinox as eqx
+
 from ..utils import write_config, load_config
 
 _DIR = os.path.dirname(__file__)
@@ -56,7 +58,7 @@ class _CodeMapper(defaultdict):
             t_dag_space: flag to enforce mapping to Directed Acyclic Graph
             (DAG) space instead of the leaf node set (i.e. flat space).
         """
-        super(_CodeMapper, self).__init__(*(args or (set, )))
+        super(_CodeMapper, self).__init__(*(args or (set,)))
 
         self._s_scheme = s_scheme
         self._t_scheme = t_scheme
@@ -587,8 +589,8 @@ class HierarchicalScheme(AbstractScheme):
             self._pt2ch = self.reverse_connection(ch2pt)
 
         for collection in [
-                self._dag_codes, self._dag_index, self._dag_desc,
-                self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
+            self._dag_codes, self._dag_index, self._dag_desc,
+            self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
         ]:
             assert all(
                 type(c) == str
@@ -1386,7 +1388,6 @@ class FlatCCSCommons(AbstractScheme):
 
 
 class DxFlatCCS(Singleton, FlatCCSCommons):
-
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
     def __init__(self):
@@ -1429,15 +1430,15 @@ class DxLTC212FlatCodes(Singleton, AbstractScheme):
         for disease_num, disease_df in df.groupby(disease_num_cname):
             disease_set = set(disease_df[disease_cname])
             assert len(disease_set) == 1, "Disease name should be unique"
-            (disease_name, ) = disease_set
+            (disease_name,) = disease_set
 
             system_set = set(disease_df[system_cname])
             system_num_set = set(disease_df[system_num_cname])
             assert len(system_set) == 1, "System name should be unique"
             assert len(system_num_set) == 1, "System num should be unique"
 
-            (system_name, ) = system_set
-            (system_num, ) = system_num_set
+            (system_name,) = system_set
+            (system_num,) = system_num_set
 
             medcodes_list = sorted(set(disease_df[medcode_cname]))
 
@@ -1528,7 +1529,7 @@ class CPRDEthnicity(Ethnicity):
         for eth_code, eth_df in df.groupby(self.ETH_CODE_CNAME):
             eth_set = set(eth_df[self.ETH_DESC_CNAME])
             assert len(eth_set) == 1, "Ethnicity description should be unique"
-            (eth_desc, ) = eth_set
+            (eth_desc,) = eth_set
             desc[eth_code] = eth_desc
 
         codes = sorted(set(df[self.ETH_CODE_CNAME]))
@@ -1598,7 +1599,7 @@ class MIMICEth(Ethnicity):
         for eth_code, eth_df in df.groupby(self.ETH_CNAME):
             eth_set = set(eth_df[self.ETH_CNAME])
             assert len(eth_set) == 1, "Ethnicity description should be unique"
-            (eth_desc, ) = eth_set
+            (eth_desc,) = eth_set
             desc[eth_code] = eth_code
 
         codes = sorted(set(df[self.ETH_CNAME]))
@@ -1848,69 +1849,69 @@ load_maps = {}
 # ICD9 <-> ICD10s
 load_maps.update({
     (DxICD10, DxICD9):
-    lambda: ICDCommons.register_mappings(DxICD10(), DxICD9(),
-                                         '2018_gem_cm_I10I9.txt.gz'),
+        lambda: ICDCommons.register_mappings(DxICD10(), DxICD9(),
+                                             '2018_gem_cm_I10I9.txt.gz'),
     (DxICD9, DxICD10):
-    lambda: ICDCommons.register_mappings(DxICD9(), DxICD10(),
-                                         '2018_gem_cm_I9I10.txt.gz'),
+        lambda: ICDCommons.register_mappings(DxICD9(), DxICD10(),
+                                             '2018_gem_cm_I9I10.txt.gz'),
     (PrICD10, PrICD9):
-    lambda: ICDCommons.register_mappings(PrICD10(), PrICD9(),
-                                         '2018_gem_pcs_I10I9.txt.gz'),
+        lambda: ICDCommons.register_mappings(PrICD10(), PrICD9(),
+                                             '2018_gem_pcs_I10I9.txt.gz'),
     (PrICD9, PrICD10):
-    lambda: ICDCommons.register_mappings(PrICD9(), PrICD10(),
-                                         '2018_gem_pcs_I9I10.txt.gz')
+        lambda: ICDCommons.register_mappings(PrICD9(), PrICD10(),
+                                             '2018_gem_pcs_I9I10.txt.gz')
 })
 
 # ICD9 <-> CCS
 load_maps.update({
     (DxCCS, DxICD9):
-    lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
+        lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
     (DxICD9, DxCCS):
-    lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
+        lambda: CCSCommons.register_mappings(DxCCS(), DxICD9()),
     (PrCCS, PrICD9):
-    lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
+        lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
     (PrICD9, PrCCS):
-    lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
+        lambda: CCSCommons.register_mappings(PrCCS(), PrICD9()),
     (DxFlatCCS, DxICD9):
-    lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
+        lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
     (DxICD9, DxFlatCCS):
-    lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
+        lambda: FlatCCSCommons.register_mappings(DxFlatCCS(), DxICD9()),
     (PrFlatCCS, PrICD9):
-    lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
+        lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
     (PrICD9, PrFlatCCS):
-    lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
+        lambda: FlatCCSCommons.register_mappings(PrFlatCCS(), PrICD9()),
 })
 
 # ICD10 <-> CCS (Through ICD9 as an intermediate scheme)
 load_maps.update({
     (DxCCS, DxICD10):
-    lambda: reg_dx_icd9_chained_map(DxCCS(), DxICD10()),
+        lambda: reg_dx_icd9_chained_map(DxCCS(), DxICD10()),
     (DxICD10, DxCCS):
-    lambda: reg_dx_icd9_chained_map(DxICD10(), DxCCS()),
+        lambda: reg_dx_icd9_chained_map(DxICD10(), DxCCS()),
     (PrCCS, PrICD10):
-    lambda: reg_pr_icd9_chained_map(PrCCS(), PrICD10()),
+        lambda: reg_pr_icd9_chained_map(PrCCS(), PrICD10()),
     (PrICD10, PrCCS):
-    lambda: reg_pr_icd9_chained_map(PrICD10(), PrCCS()),
+        lambda: reg_pr_icd9_chained_map(PrICD10(), PrCCS()),
     (DxFlatCCS, DxICD10):
-    lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxICD10()),
+        lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxICD10()),
     (DxICD10, DxFlatCCS):
-    lambda: reg_dx_icd9_chained_map(DxICD10(), DxFlatCCS()),
+        lambda: reg_dx_icd9_chained_map(DxICD10(), DxFlatCCS()),
     (PrFlatCCS, PrICD10):
-    lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrICD10()),
+        lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrICD10()),
     (PrICD10, PrFlatCCS):
-    lambda: reg_pr_icd9_chained_map(PrICD10(), PrFlatCCS())
+        lambda: reg_pr_icd9_chained_map(PrICD10(), PrFlatCCS())
 })
 
 # CCS <-> CCS
 load_maps.update({
     (DxCCS, DxFlatCCS):
-    lambda: reg_dx_icd9_chained_map(DxCCS(), DxFlatCCS()),
+        lambda: reg_dx_icd9_chained_map(DxCCS(), DxFlatCCS()),
     (DxFlatCCS, DxCCS):
-    lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxCCS()),
+        lambda: reg_dx_icd9_chained_map(DxFlatCCS(), DxCCS()),
     (PrCCS, PrFlatCCS):
-    lambda: reg_pr_icd9_chained_map(PrCCS(), PrFlatCCS()),
+        lambda: reg_pr_icd9_chained_map(PrCCS(), PrFlatCCS()),
     (PrFlatCCS, PrCCS):
-    lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrCCS())
+        lambda: reg_pr_icd9_chained_map(PrFlatCCS(), PrCCS())
 })
 
 # CPRD conversions
@@ -1919,23 +1920,23 @@ load_maps.update({
 
 load_maps.update({
     (DxLTC9809FlatMedcodes, DxLTC212FlatCodes):
-    lambda: register_medcode_mapping(DxLTC9809FlatMedcodes(),
-                                     DxLTC212FlatCodes()),
+        lambda: register_medcode_mapping(DxLTC9809FlatMedcodes(),
+                                         DxLTC212FlatCodes()),
     (CPRDEthnicity16, CPRDEthnicity5):
-    lambda: register_cprd_eth_mapping(CPRDEthnicity16(), CPRDEthnicity5())
+        lambda: register_cprd_eth_mapping(CPRDEthnicity16(), CPRDEthnicity5())
 })
 
 # MIMIC Inpatient conversions
 load_maps.update({
     (MIMICProcedures, MIMICProcedureGroups):
-    lambda: register_mimic4proc_mapping(MIMICProcedures(),
-                                        MIMICProcedureGroups()),
+        lambda: register_mimic4proc_mapping(MIMICProcedures(),
+                                            MIMICProcedureGroups()),
     (MIMICInput, MIMICInputGroups):
-    lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
+        lambda: register_mimic4input_mapping(MIMICInput(), MIMICInputGroups()),
     (MIMIC4Eth32, MIMIC4Eth5):
-    lambda: register_mimic_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5()),
+        lambda: register_mimic_eth_mapping(MIMIC4Eth32(), MIMIC4Eth5()),
     (MIMIC3Eth37, MIMIC3Eth7):
-    lambda: register_mimic_eth_mapping(MIMIC3Eth37(), MIMIC3Eth7())
+        lambda: register_mimic_eth_mapping(MIMIC3Eth37(), MIMIC3Eth7())
 })
 
 _OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')

@@ -157,3 +157,5 @@ class ConfigTest(unittest.TestCase):
 
         c2_updated = c2.path_update('b.y', 20)
         self.assertEqual(c2_updated, c3)
+
+
