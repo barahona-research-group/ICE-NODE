@@ -19,26 +19,55 @@ import pandas as pd
 
 from ..utils import write_config, load_config
 
+
+"""Define module-level constants and locks.
+
+_DIR: Base directory path of the module.
+_RSC_DIR: Resources directory path.
+_CCS_DIR: CCS resources directory path.
+
+singleton_lock: Lock to synchronize Singleton instantiations.
+maps_lock: Defaultdict of locks to synchronize code mappings.
+"""
 _DIR = os.path.dirname(__file__)
-_RSC_DIR = os.path.join(_DIR, 'resources')
-_CCS_DIR = os.path.join(_RSC_DIR, 'CCS')
+_RSC_DIR = os.path.join(_DIR, "resources")
+_CCS_DIR = os.path.join(_RSC_DIR, "CCS")
 singleton_lock = Lock()
 maps_lock = defaultdict(Lock)
 
 
 class Singleton(object):
+    """Implements the Singleton design pattern.
+
+    Uses a class attribute _instances to store instances of the Singleton class.
+
+    The __new__ method checks if an instance already exists for that class.
+    If not, it creates one using super and stores it in _instances.
+
+    Otherwise it returns the existing instance from _instances."""
+
     _instances = {}
 
     def __new__(cls, *args, **kwargs):
         with singleton_lock:
             if cls._instances.get(cls, None) is None:
-                cls._instances[cls] = super(Singleton,
-                                            cls).__new__(cls, *args, **kwargs)
+                cls._instances[cls] = super(Singleton, cls).__new__(
+                    cls, *args, **kwargs
+                )
 
         return Singleton._instances[cls]
 
 
 def get_type(x):
+    """
+    Returns the type of the input value.
+
+    Parameters:
+        x (str or type): the input value.
+
+    Returns:
+        type: the type of the input value.
+    """
     if isinstance(x, str):
         return eval(x)
     if isinstance(x, type):
