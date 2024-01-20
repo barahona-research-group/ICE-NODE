@@ -64,6 +64,19 @@ def nan_agg_median(x, axis):
     return safe_nan_agg(np.nanmedian, x, axis)
 
 
+def nan_agg_nonzero(x, axis):
+
+    def _nan_agg_nonzero(x, axis):
+        """Returns True if any element is nonzero. If all elements are NaN,
+        returns NaN."""
+
+        all_nan = np.all(np.isnan(x), axis=axis) * 1.0
+        replaced_nan = np.where(np.isnan(x), 0, x)
+        return np.where(all_nan, np.nan, np.any(replaced_nan, axis=axis) * 1.0)
+
+    return safe_nan_agg(_nan_agg_nonzero, x, axis)
+
+
 def nan_agg_quantile(q):
 
     def _nan_agg_quantile(x, axis):
@@ -75,7 +88,13 @@ def nan_agg_quantile(q):
 class LeadingObservableConfig(Config):
     index: int
     leading_hours: List[float]
-    window_aggregate: str
+    ## TODO: Add the following to the config:
+    # between nonzero and zero add NaN to 12 hours.
+    recovery_window: float
+    # ignore the first hours of the admission
+    entry_neglect_window: float
+    # set NaNs before a number of acquisitions obtained.
+    minimum_acquisitions: int  # minimum number of acquisitions to
     scheme: str
     _scheme: AbstractScheme
     _window_aggregate: Callable[[jnp.ndarray], float]
@@ -96,7 +115,6 @@ class LeadingObservableConfig(Config):
         else:
             self.scheme = scheme.__class__.__name__
             self._scheme = scheme
-
 
         assert (index is None) != (code is None), \
             'Either index or code must be specified'
@@ -127,6 +145,8 @@ class LeadingObservableConfig(Config):
             self._window_aggregate = nan_agg_median
         elif window_aggregate == 'mean':
             self._window_aggregate = nan_agg_mean
+        elif window_aggregate == 'nonzero':
+            self._window_aggregate = nan_agg_nonzero
         elif isinstance(window_aggregate, Tuple):
             if window_aggregate[0] == 'quantile':
                 self._window_aggregate = nan_agg_quantile(window_aggregate[1])
@@ -256,11 +276,29 @@ class InpatientObservables(Data):
         mask = self.mask[:, config.index]
         value = np.where(mask, self.value[:, config.index], np.nan)
         time = self.time
+
         # a time-window starting from timestamp_i for each row_i
+        # if time = [t0, t1, t2, t3]
+        # then t_leads = [[t0, t1, t2, t3],
+        #                 [t1, t2, t3, nan],
+        #                 [t2, t3, nan, nan],
+        #                 [t3, nan, nan, nan]]
         t_leads = nan_concat_leading_windows(time)
+
         # time relative to the first timestamp in the window
-        t_leads = t_leads - t_leads[:, 0, None]
+        # if time = [t0, t1, t2, t3]
+        # then delta_leads = [[0, t1-t0, t2-t0, t3-t0],
+        #                     [0, t2-t1, t3-t1, nan],
+        #                     [0, t3-t2, nan, nan],
+        #                     [0, nan, nan, nan]]
+        delta_leads = t_leads - t_leads[:, 0, None]
+
         # a value-window starting from timestamp_i for each row_i
+        # if value = [v0, v1, v2, v3]
+        # then v_leads = [[v0, v1, v2, v3],
+        #                 [v1, v2, v3, nan],
+        #                 [v2, v3, nan, nan],
+        #                 [v3, nan, nan, nan]]
         v_leads = nan_concat_leading_windows(value)
 
         values = []
@@ -268,7 +306,12 @@ class InpatientObservables(Data):
 
         for t in config.leading_hours:
             # select the rows where the time-window is less than t
-            mask = t_leads < t
+            # if time = [t0, t1, t2, t3]
+            # then mask = [[0 < t, t1 - t0 < t, t2 - t0 < t, t3 - t0 < t],
+            #              [0 < t, t2 - t1 < t, t3 - t1 < t, nan < t],
+            #              [0 < t, t3 - t2 < t, nan < t, nan < t]],
+            #              [0 < t, nan < t, nan < t, nan < t]]
+            mask = delta_leads < t
             # mask out the values outside the window
             v_lead = np.where(mask, v_leads, np.nan)
             # aggregate the values in the window
@@ -281,7 +324,13 @@ class InpatientObservables(Data):
         masks = np.stack(masks, axis=1)
         return InpatientObservables(time=time, value=values, mask=masks)
 
-    def time_binning(self, hours: int):
+    def time_binning(self, hours: float):
+        """
+        Bin the time-series into time-windows of length `hours`.
+        The values are averaged in each window and assigned to the
+        end of the window.
+        """
+
         if len(self) == 0:
             return self
 

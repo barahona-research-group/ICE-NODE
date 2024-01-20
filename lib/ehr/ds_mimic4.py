@@ -1,17 +1,15 @@
 """."""
 from __future__ import annotations
+
+import logging
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 from typing import Union, Dict, Callable, List, Optional
 
-from concurrent.futures import ThreadPoolExecutor
-import logging
-
-import numpy as np
-import pandas as pd
 import dask.dataframe as dd
 import equinox as eqx
-
-from ..base import Config
-from ..utils import load_config
+import numpy as np
+import pandas as pd
 
 from .coding_scheme import (ICDCommons, scheme_from_classname,
                             OutcomeExtractor, MIMICInput, MIMICProcedures,
@@ -23,8 +21,8 @@ from .concepts import (InpatientInput, InpatientObservables, Patient,
 from .dataset import (DatasetScheme, ColumnNames, DatasetConfig,
                       DatasetSchemeConfig)
 from .ds_mimic3 import MIMIC3Dataset, try_compute
-
-import warnings
+from ..base import Config
+from ..utils import load_config
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -32,6 +30,7 @@ warnings.filterwarnings('error',
 
 
 class OutlierRemover(eqx.Module):
+
     c_value: str
     c_code_index: str
     min_val: pd.Series
@@ -45,6 +44,21 @@ class OutlierRemover(eqx.Module):
 
 
 class ZScoreScaler(eqx.Module):
+    """Standardizes the values of a column in a DataFrame by subtracting the mean and scaling to unit variance.
+
+    Attributes:
+        c_value: Name of column to standardize.
+        c_code_index: Name of column with codes to map stats to.
+        mean: Mapping of codes to mean values for standardization.
+        std: Mapping of codes to std dev values for standardization.
+        use_float16: Whether to convert standardized values to float16.
+
+    Methods:
+        __call__: Performs standardization on the DataFrame passed.
+        unscale: Reverts standardized arrays back to original scale.
+        unscale_code: Reverts standardized arrays back to scale for a specific code.
+    """
+
     c_value: str
     c_code_index: str
     mean: pd.Series
@@ -58,7 +72,7 @@ class ZScoreScaler(eqx.Module):
     def __call__(self, df):
         mean = df[self.c_code_index].map(self.mean)
         std = df[self.c_code_index].map(self.std)
-        df.loc[:, self.c_value] = ((df[self.c_value] - mean) / std)
+        df.loc[:, self.c_value] = (df[self.c_value] - mean) / std
         if self.use_float16:
             df = df.astype({self.c_value: np.float16})
         return df
@@ -149,7 +163,6 @@ class AdaptiveScaler(eqx.Module):
 
     def unscale_code(self, array, code_index):
         array = array.astype(self.original_dtype)
-        index = np.arange(array.shape[-1])
         mu = self.mean.loc[code_index]
         sigma = self.std.loc[code_index]
         min_val = self.min_val.loc[code_index]
@@ -196,12 +209,12 @@ class MIMIC4DatasetScheme(DatasetScheme):
     @property
     def supported_target_scheme_options(self):
         supproted_attr_targets = {
-            k: (getattr(self, k).__class__.__name__, ) +
-            getattr(self, k).supported_targets
+            k: (getattr(self, k).__class__.__name__,) +
+               getattr(self, k).supported_targets
             for k in self.scheme_dict
         }
         supported_dx_targets = {
-            version: (scheme.__class__.__name__, ) + scheme.supported_targets
+            version: (scheme.__class__.__name__,) + scheme.supported_targets
             for version, scheme in self.dx.items()
         }
         supproted_attr_targets['dx'] = list(
@@ -249,7 +262,7 @@ class MIMIC4Dataset(MIMIC3Dataset):
                 code_col = df[c_code]
                 df = df.assign(**{
                     c_code:
-                    code_col.mask(ver_mask, code_col.map(scheme.add_dots))
+                        code_col.mask(ver_mask, code_col.map(scheme.add_dots))
                 })
         self.df["dx"] = df
 
@@ -273,7 +286,7 @@ class MIMIC4Dataset(MIMIC3Dataset):
             if len(unrecognised) > 0:
                 logging.debug(
                     f'Unrecognised ICD v{version} codes: {len(unrecognised)} '
-                    f'({len(unrecognised)/len(codeset):.2%})')
+                    f'({len(unrecognised) / len(codeset):.2%})')
                 logging.debug(f'Unrecognised {type(scheme)} codes '
                               f'({len(unrecognised)}) '
                               f'to be removed (first 30): '
@@ -399,7 +412,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             col = colname[df_name][time_col]
             assert df[col].between(df[c_admittime], df[c_dischtime]).all(), \
                 f"Time not between admission and discharge in {df_name} " \
-
+ \
     @staticmethod
     def _set_relative_times(df_dict, colname, df_name, time_cols,
                             seconds_scaler):
@@ -503,12 +516,12 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
 
         return {
             'obs':
-            self._fit_obs_outlier_remover(admission_ids=train_adms,
-                                          outlier_q1=outlier_q1,
-                                          outlier_q2=outlier_q2,
-                                          outlier_iqr_scale=outlier_iqr_scale,
-                                          outlier_z1=outlier_z1,
-                                          outlier_z2=outlier_z2)
+                self._fit_obs_outlier_remover(admission_ids=train_adms,
+                                              outlier_q1=outlier_q1,
+                                              outlier_q2=outlier_q2,
+                                              outlier_iqr_scale=outlier_iqr_scale,
+                                              outlier_z1=outlier_z1,
+                                              outlier_z2=outlier_z2)
         }
 
     def fit_scalers(self, subject_ids: Optional[List[int]] = None):
