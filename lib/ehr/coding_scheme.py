@@ -188,11 +188,11 @@ class FlatScheme(CodingScheme):
     _index2desc: Dict[int, str]
 
     def __init__(
-        self,
-        config: CodingSchemeConfig,
-        codes: List[str],
-        index: Dict[str, int],
-        desc: Dict[str, str],
+            self,
+            config: CodingSchemeConfig,
+            codes: List[str],
+            index: Dict[str, int],
+            desc: Dict[str, str],
     ):
         super().__init__(config=config)
 
@@ -411,7 +411,7 @@ class HierarchicalScheme(FlatScheme):
                 type(c) == str
                 for c in collection), f"{self}: All name types should be str."
 
-    def make_ancestors_mat(self, include_itself: bool=True) -> np.ndarray:
+    def make_ancestors_mat(self, include_itself: bool = True) -> np.ndarray:
         """
         Creates a matrix representing the ancestors of each code in the hierarchy.
 
@@ -465,7 +465,7 @@ class HierarchicalScheme(FlatScheme):
         """
         return self._dag2code
 
-    def __contains__(self, code: str)->bool:
+    def __contains__(self, code: str) -> bool:
         """
         Checks if a code is contained in the current hierarchy.
 
@@ -669,7 +669,7 @@ class HierarchicalScheme(FlatScheme):
                 raise RuntimeError('Common Ancestor not Found!')
         return codes[0]
 
-    def search_regex(self, query: str, regex_flags: int =re.I) -> Set[str]:
+    def search_regex(self, query: str, regex_flags: int = re.I) -> Set[str]:
         """
         A regex-based search of codes by a `query` string. the search is \
             applied on the code descriptions. for example, you can use it \
@@ -703,7 +703,7 @@ class HierarchicalScheme(FlatScheme):
 
 class Ethnicity(FlatScheme):
     pass
-        
+
 
 class CodeMapConfig(Config):
     """
@@ -1206,7 +1206,7 @@ class CodeMap(Module):
 #                     fwd_p=fwd_p,
 #                     bwd_p=bwd_p,
 #                     msg=msg)
-    
+
 
 class IdentityCodeMap(CodeMap):
     """
@@ -1292,7 +1292,7 @@ class CodesVector(Data):
     """
 
     vec: np.ndarray
-    scheme: str  
+    scheme: str
 
     @property
     def scheme_object(self):
@@ -1419,7 +1419,6 @@ class BinaryCodesVector(CodesVector):
             int: the length of the binary codes vector.
         """
         return 1
-
 
 
 def register_gender_scheme():

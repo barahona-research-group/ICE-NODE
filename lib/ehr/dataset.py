@@ -95,6 +95,26 @@ class DatasetSchemeConfig(Config):
 
 
 class DatasetScheme(Module):
+    """
+    Represents a dataset scheme that defines the coding schemes and outcome extractor for a dataset.
+
+    Attributes:
+        config (DatasetSchemeConfig): the configuration for the dataset scheme.
+        dx (CodingScheme): the coding scheme for the diagnosis.
+        ethnicity (CodingScheme): the coding scheme for the ethnicity.
+        gender (CodingScheme): the coding scheme for the gender.
+        outcome (Optional[OutcomeExtractor]): the outcome extractor for the dataset, if specified.
+
+    Methods:
+        __init__(self, config: DatasetSchemeConfig, **kwargs): initializes a new instance of the DatasetScheme class.
+        scheme_dict(self): returns a dictionary of the coding schemes in the dataset scheme.
+        make_target_scheme_config(self, **kwargs): creates a new target scheme configuration based on the current scheme.
+        make_target_scheme(self, config=None, **kwargs): creates a new target scheme based on the current scheme.
+        demographic_vector_size(self, demographic_vector_config: DemographicVectorConfig): calculates the size of the demographic vector.
+        dx_mapper(self, target_scheme: DatasetScheme): returns the mapper for the diagnosis coding scheme to the corresponding target scheme.
+        ethnicity_mapper(self, target_scheme: DatasetScheme): returns the mapper for the ethnicity coding scheme to the corresponding target scheme.
+        supported_target_scheme_options(self): returns the supported target scheme options for each coding scheme.
+    """
     config: DatasetSchemeConfig
     dx: CodingScheme
     ethnicity: CodingScheme
@@ -184,6 +204,23 @@ class DatasetConfig(Config):
 
 
 class Dataset(Module):
+    """
+    A class representing a dataset.
+
+    Attributes:
+        df (Dict[str, pd.DataFrame]): a dictionary of dataframes, where the keys are the names of the dataframes.
+        config (DatasetConfig): the configuration object for the dataset.
+        scheme (DatasetScheme): the scheme object for the dataset.
+        colname (Dict[str, ColumnNames]): a dictionary of column names, where the keys are the names of the dataframes.
+
+    Methods:
+        __init__(self, config: DatasetConfig = None, config_path: str = None, **kwargs): initializes the Dataset object.
+        supported_target_scheme_options(self): returns the supported target scheme options.
+        to_subjects(self, **kwargs): converts the dataset to subject objects.
+        save(self, path: Union[str, Path], overwrite: bool = False): saves the dataset to disk.
+        load(cls, path: Union[str, Path]): loads the dataset from disk.
+    """
+
     df: Dict[str, pd.DataFrame]
     config: DatasetConfig
     scheme: DatasetScheme
