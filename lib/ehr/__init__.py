@@ -1,21 +1,24 @@
 import os
 from pathlib import Path
-from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
-from .ds_mimic3 import MIMIC3Dataset
-from .ds_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
-from .ds_cprd import CPRDDataset
 
-from .coding_scheme import (AbstractScheme, OutcomeExtractor, Gender,
-                            Ethnicity)
+from ._coding_scheme_cprd import setup_cprd
+from ._coding_scheme_icd import setup_icd
+from ._coding_scheme_mimic import setup_mimic
+from ._dataset_cprd import CPRDDataset
+from ._dataset_mimic3 import MIMIC3Dataset
+from ._dataset_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
+from .coding_scheme import (CodingScheme, OutcomeExtractor)
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, AggregateRepresentation,
                        StaticInfo, InpatientInput, CodesVector,
-                       DemographicVectorConfig, LeadingObservableConfig,
+                       DemographicVectorConfig, LeadingObservableExtractorConfig,
+                       LeadingObservableExtractor,
                        CPRDDemographicVectorConfig)
+from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
 from .interface import (AdmissionPrediction, Predictions, Patients,
                         InterfaceConfig, PatientTrajectory, TrajectoryConfig)
-from ..utils import load_config
 from ..base import Config, Module
+from ..utils import load_config
 
 _DIR = os.path.dirname(__file__)
 _PROJECT_DIR = Path(_DIR).parent.parent.absolute()
@@ -61,3 +64,8 @@ def load_dataset(tag: str = None, config: 'Config' = None, **init_kwargs):
         return CPRDDataset(config)
     if tag == 'M4ICU':
         return MIMIC4ICUDataset(config)
+
+
+setup_icd()
+setup_mimic()
+setup_cprd()

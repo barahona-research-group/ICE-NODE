@@ -6,7 +6,7 @@ from typing import Dict
 import pandas as pd
 
 from .coding_scheme import (CodingSchemeConfig, FlatScheme,
-                            CodeMap, CodeMapConfig, AbstractGroupedProcedures,
+                            CodeMap, CodeMapConfig,
                             _RSC_DIR, Ethnicity)
 
 ETH_SCHEME_FILE = 'mimic4_race_grouper.csv.gz'
@@ -20,6 +20,27 @@ MIMIC3_ETH37_NAME = 'mimic3_eth37'
 MIMIC3_ETH37_COLNAME = 'ETH37'
 MIMIC3_ETH7_NAME = 'mimic3_eth7'
 MIMIC3_ETH7_COLNAME = 'ETH7'
+
+
+class AbstractGroupedProcedures(FlatScheme):
+
+    def __init__(self, groups, aggregation, aggregation_groups, **init_kwargs):
+        super().__init__(**init_kwargs)
+        self._groups = groups
+        self._aggregation = aggregation
+        self._aggregation_groups = aggregation_groups
+
+    @property
+    def groups(self):
+        return self._groups
+
+    @property
+    def aggregation(self):
+        return self._aggregation
+
+    @property
+    def aggregation_groups(self):
+        return self._aggregation_groups
 
 
 def register_mimic_ethnicity(scheme: str, filename: str, colname: str):
@@ -219,3 +240,7 @@ def setup_maps_loaders():
                                 lambda: register_mimic4proc_mapping('int_mimic4_proc', 'int_mimic4_grouped_proc'))
     CodeMap.register_map_loader('int_mimic4_input', 'int_mimic4_input_group',
                                 lambda: register_mimic4input_mapping('int_mimic4_input', 'int_mimic4_input_group'))
+
+def setup_mimic():
+    setup_scheme_loaders()
+    setup_maps_loaders()

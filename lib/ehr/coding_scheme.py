@@ -22,22 +22,31 @@ _RSC_DIR = os.path.join(_DIR, "resources")
 
 
 class CodingSchemeConfig(Config):
+    """The identifier name of the coding scheme."""
     name: str
 
 
 class CodingScheme(Module):
+    """
+    CodingScheme defines the base class and utilities for working with medical
+    coding schemes. It handles lazy loading of schemes, mapping between schemes,
+    converting codesets to vector representations, and searching codes by regex.
+
+    Key attributes and methods:
+
+    - codes, index, desc: Access the codes, indexes, and descriptions
+    - name: Get the scheme name
+    - index2code, index2desc: Reverse mappings
+    - search_regex: Search codes by a regex query
+    - mapper_to: Get mapper between schemes
+    - codeset2vec: Convert a codeset to a vector representation
+    - as_dataframe: View scheme as a Pandas DataFrame
+    """
+
     config: CodingSchemeConfig
     # Possible Schemes, Lazy-loaded schemes.
     _load_schemes: ClassVar[Dict[str, Callable]] = {}
-    _schemes: ClassVar[Dict[str, 'CodingScheme']] = {}
-
-    def __init__(self, config: CodingSchemeConfig):
-        super().__init__(config=config)
-        # Register the scheme by name
-        self._schemes[config.name] = self
-
-        # Register the identity map
-        CodeMap.register_map(self.name, self.name, IdentityCodeMap(self.name))
+    _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
 
     @classmethod
     def from_name(cls, name):
@@ -108,8 +117,10 @@ class CodingScheme(Module):
             and `regex_flags = re.i` (for case-insensitive search).
         """
         return set(
-            filter(lambda c: re.match(query, self.desc[c], flags=regex_flags),
-                   self.codes))
+            filter(
+                lambda c: re.match(query, self.desc[c], flags=regex_flags), self.codes
+            )
+        )
 
     def mapper_to(self, target_scheme: str):
         return CodeMap.get_mapper(self.name, target_scheme)
@@ -120,8 +131,9 @@ class CodingScheme(Module):
             for c in codeset:
                 vec[self.index[c]] = True
         except KeyError as missing:
-            logging.error(f'Code {missing} is missing.'
-                          f'Accepted keys: {self.index.keys()}')
+            logging.error(
+                f"Code {missing} is missing." f"Accepted keys: {self.index.keys()}"
+            )
 
         return CodesVector(vec, self.name)
 
@@ -136,14 +148,38 @@ class CodingScheme(Module):
         index = sorted(self.index.values())
         return pd.DataFrame(
             {
-                'code': self.index2code,
-                'desc': self.index2desc,
+                "code": self.index2code,
+                "desc": self.index2desc,
             },
-            index=index
+            index=index,
         )
 
 
 class FlatScheme(CodingScheme):
+    """FlatScheme is a subclass of CodingScheme that represents a flat coding scheme.
+
+    It contains the following attributes to represent the coding scheme:
+
+    - config: The CodingSchemeConfig for this scheme
+    - _codes: List of code strings
+    - _index: Dict mapping codes to integer indices
+    - _desc: Dict mapping codes to descriptions
+    - _index2code: Reverse mapping of _index
+    - _index2desc: Reverse mapping of _desc
+
+    The __init__ method constructs the scheme from the provided components after validating the types.
+
+    Additional methods:
+
+    - codes: Property exposing _codes
+    - index: Property exposing _index
+    - desc: Property exposing _desc
+    - index2code: Property exposing _index2code
+    - index2desc: Property exposing _index2desc
+
+    Subclasses would inherit from FlatScheme to represent specific flat coding scheme implementations.
+    """
+
     config: CodingSchemeConfig
     _codes: List[str]
     _index: Dict[str, int]
@@ -151,10 +187,16 @@ class FlatScheme(CodingScheme):
     _index2code: Dict[int, str]
     _index2desc: Dict[int, str]
 
-    def __init__(self, config: CodingSchemeConfig, codes: List[str], index: Dict[str, int], desc: Dict[str, str]):
+    def __init__(
+        self,
+        config: CodingSchemeConfig,
+        codes: List[str],
+        index: Dict[str, int],
+        desc: Dict[str, str],
+    ):
         super().__init__(config=config)
 
-        logging.debug(f'Constructing {config.name} ({type(self)}) scheme')
+        logging.debug(f"Constructing {config.name} ({type(self)}) scheme")
         self._codes = codes
         self._index = index
         self._desc = desc
@@ -167,8 +209,8 @@ class FlatScheme(CodingScheme):
     def _check_types(self):
         for collection in [self.codes, self.index, self.desc]:
             assert all(
-                type(c) == str
-                for c in collection), f"{self}: All name types should be str."
+                type(c) == str for c in collection
+            ), f"{self}: All name types should be str."
 
     @property
     def codes(self):
@@ -192,8 +234,26 @@ class FlatScheme(CodingScheme):
 
 
 class BinaryScheme(FlatScheme):
+    """
+    A class representing a special case of a coding scheme with one element.
 
-    def __init__(self, codes: List[str], index: Dict[str, int], desc: Dict[str, str], name: str):
+    Inherits from the FlatScheme class.
+
+    Attributes:
+        codes (List[str]): List containing the only code in the scheme.
+        index (Dict[str, int]): Dictionary mapping the only code to 0.
+        desc (Dict[str, str]): Dictionary mapping the only code to its description.
+        name (str): Name of the coding scheme.
+
+    Methods:
+        codeset2vec(code: str) -> BinaryCodesVector:
+            Converts a code to a BinaryCodesVector object.
+
+        __len__() -> int:
+            Returns the length of the coding scheme, i.e. one.
+    """
+
+    def __init__(self, codes: List[str], index: Dict[str, int], desc: Dict[str, str], name: str) -> object:
         assert all(len(c) == 2 for c in (codes, index, desc)), \
             f"{self}: Codes should be of length 2."
         super().__init__(codes, index, desc, name)
@@ -206,6 +266,17 @@ class BinaryScheme(FlatScheme):
 
 
 class SchemeWithMissing(FlatScheme):
+    """
+    A coding scheme that represents categorical schemes and supports missing/unkown values.
+
+    This class extends the `FlatScheme` class and adds support for a missing code.
+    It provides methods to convert a set of codes to a multi-hot vector representation,
+    where each element in the vector represents the presence or absence of a code.
+
+    Attributes:
+        _missing_code (str): the code that represents a missing value in the coding scheme.
+    """
+
     _missing_code: str
 
     def __init__(self, config: CodingSchemeConfig,
@@ -221,6 +292,16 @@ class SchemeWithMissing(FlatScheme):
         return self._missing_code
 
     def codeset2vec(self, codeset: Set[str]) -> CodesVectorWithMissing:
+        """
+        Convert a set of codes to multi-hot vector representation.
+
+        Args:
+            codeset (Set[str]): the set of codes.
+
+        Returns:
+            CodesVectorWithMissing: A binary vector representation of the codeset,
+            where each element in the vector represents the presence or absence of a code.
+        """
         vec = np.zeros(len(self), dtype=bool)
         try:
             for c in codeset:
@@ -234,27 +315,467 @@ class SchemeWithMissing(FlatScheme):
         return CodesVectorWithMissing(vec, self.name)
 
     def empty_vector(self) -> CodesVectorWithMissing:
+        """
+        Create an empty binary vector representation.
+
+        Returns:
+            CodesVectorWithMissing: An empty binary vector representation.
+        """
         return CodesVectorWithMissing.empty(self.name)
 
 
+class NullScheme(FlatScheme):
+    """
+    A coding scheme that represents a null scheme.
+
+    This scheme does not contain any codes or mappings. Only used as a typed placeholder alternative to None.
+
+    Attributes:
+        None
+
+    Methods:
+        __init__: Initializes the NullScheme object.
+    """
+
+    def __init__(self):
+        super().__init__(CodingSchemeConfig('null'), [], {}, {})
+
+
+class HierarchicalScheme(FlatScheme):
+    """
+    A class representing a hierarchical coding scheme.
+
+    This class extends the functionality of the FlatScheme class and provides
+    additional methods for working with hierarchical coding schemes.
+
+    Attributes:
+        dag_index (Dict[str, int]): A dictionary mapping codes to their indices in the hierarchy.
+        dag_codes (List[str]): A list of codes in the hierarchy.
+        dag_desc (Dict[str, str]): A dictionary mapping codes to their descriptions in the hierarchy.
+        code2dag (Dict[str, str]): A dictionary mapping codes to their corresponding codes in the hierarchy.
+        dag2code (Dict[str, str]): A dictionary mapping codes in the hierarchy to their corresponding codes.
+    """
+
+    def __init__(self,
+                 config: CodingSchemeConfig,
+                 codes: Optional[List[str]] = None,
+                 index: Optional[Dict[str, int]] = None,
+                 desc: Optional[Dict[str, str]] = None,
+                 dag_codes: Optional[List[str]] = None,
+                 dag_index: Optional[Dict[str, int]] = None,
+                 dag_desc: Optional[Dict[str, str]] = None,
+                 code2dag: Optional[Dict[str, str]] = None,
+                 pt2ch: Optional[Dict[str, Set[str]]] = None,
+                 ch2pt: Optional[Dict[str, Set[str]]] = None):
+        """
+        Initializes a HierarchicalScheme object.
+
+        Args:
+            config (CodingSchemeConfig): the configuration for the coding scheme.
+            codes (Optional[List[str]]): a list of codes in the flattened version of the scheme. Defaults to None.
+            index (Optional[Dict[str, int]]): a dictionary mapping codes to their indices in the flattened version of the scheme. Defaults to None.
+            desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the flattened version of the scheme. Defaults to None.
+            dag_codes (Optional[List[str]]): a list of codes in the hierarchical scheme. Defaults to None.
+            dag_index (Optional[Dict[str, int]]): a dictionary mapping codes to their indices in the hierarchical scheme. Defaults to None.
+            dag_desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the hierarchical scheme. Defaults to None.
+            code2dag (Optional[Dict[str, str]]): a dictionary mapping codes in the flat scheme to their corresponding codes in the hierarchical scheme. Defaults to None.
+            pt2ch (Optional[Dict[str, Set[str]]]): a dictionary mapping parent codes to their child codes in the hierarchical scheme. Defaults to None.
+            ch2pt (Optional[Dict[str, Set[str]]]): a dictionary mapping child codes to their parent codes in the hierarchical scheme. Defaults to None.
+        """
+        super().__init__(config, codes, index, desc)
+
+        self._dag_codes = dag_codes or codes
+        self._dag_index = dag_index or index
+        self._dag_desc = dag_desc or desc
+        self._code2dag = code2dag or {c: c for c in codes}
+        self._dag2code = {d: c for c, d in self._code2dag.items()}
+
+        assert pt2ch or ch2pt, (
+            "Should provide ch2pt or pt2ch connection dictionary")
+        self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
+        self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
+        self._check_types()
+
+    def _check_types(self):
+        """
+        Checks the types of the collections in the hierarchical scheme.
+
+        Raises:
+            AssertionError: If any of the collections contains a non-string element.
+        """
+        for collection in [
+            self._dag_codes, self._dag_index, self._dag_desc,
+            self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
+        ]:
+            assert all(
+                type(c) == str
+                for c in collection), f"{self}: All name types should be str."
+
+    def make_ancestors_mat(self, include_itself: bool=True) -> np.ndarray:
+        """
+        Creates a matrix representing the ancestors of each code in the hierarchy.
+
+        Args:
+            include_itself (bool): whether to include the code itself as its own ancestor. Defaults to True.
+
+        Returns:
+            np.ndarray: a boolean matrix where each element (i, j) is True if code i is an ancestor of code j, and False otherwise.
+        """
+        ancestors_mat = np.zeros((len(self.dag_index), len(self.dag_index)),
+                                 dtype=bool)
+        for code_i, i in self.dag_index.items():
+            for ancestor_j in self.code_ancestors_bfs(code_i, include_itself):
+                j = self._dag_index[ancestor_j]
+                ancestors_mat[i, j] = 1
+
+        return ancestors_mat
+
+    @property
+    def dag_index(self) -> Dict[str, int]:
+        """
+        Dict[str, int]: a dictionary mapping codes to their indices in the hierarchy.
+        """
+        return self._dag_index
+
+    @property
+    def dag_codes(self) -> List[str]:
+        """
+        List[str]: a list of codes in the hierarchy.
+        """
+        return self._dag_codes
+
+    @property
+    def dag_desc(self) -> Dict[str, str]:
+        """
+        Dict[str, str]: a dictionary mapping codes to their descriptions in the hierarchy.
+        """
+        return self._dag_desc
+
+    @property
+    def code2dag(self) -> Dict[str, str]:
+        """
+        Dict[str, str]: a dictionary mapping codes to their corresponding codes in the hierarchy.
+        """
+        return self._code2dag
+
+    @property
+    def dag2code(self) -> Dict[str, str]:
+        """
+        Dict[str, str]: a dictionary mapping codes in the hierarchy to their corresponding codes.
+        """
+        return self._dag2code
+
+    def __contains__(self, code: str)->bool:
+        """
+        Checks if a code is contained in the current hierarchy.
+
+        Args:
+            code (str): the code to check.
+
+        Returns:
+            bool: true if the code is contained in the hierarchy, False otherwise.
+        """
+        return code in self.dag_codes or code in self.codes
+
+    @staticmethod
+    def reverse_connection(connection: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+        """
+        Reverses a connection dictionary.
+
+        Args:
+            connection (Dict[str, Set[str]]): the connection dictionary to reverse.
+
+        Returns:
+            Dict[str, Set[str]]: the reversed connection dictionary.
+        """
+        rev_connection = defaultdict(set)
+        for node, conns in connection.items():
+            for conn in conns:
+                rev_connection[conn].add(node)
+        return rev_connection
+
+    @staticmethod
+    def _bfs_traversal(connection: Dict[str, Set[str]], code: str, include_itself: bool) -> List[str]:
+        """
+        Performs a breadth-first traversal of the hierarchy.
+
+        Args:
+            connection (Dict[str, Set[str]]): the connection dictionary representing the hierarchy.
+            code (str): the starting code for the traversal.
+            include_itself (bool): whether to include the starting code in the traversal.
+
+        Returns:
+            List[str]: a list of codes visited during the traversal.
+        """
+        result = OrderedDict()
+        q = [code]
+
+        while len(q) != 0:
+            # remove the first element from the stack
+            current_code = q.pop(0)
+            current_connections = connection.get(current_code, [])
+            q.extend([c for c in current_connections if c not in result])
+            if current_code not in result:
+                result[current_code] = 1
+
+        if not include_itself:
+            del result[code]
+        return list(result.keys())
+
+    @staticmethod
+    def _dfs_traversal(connection: Dict[str, Set[str]], code: str, include_itself: bool) -> List[str]:
+        """
+        Performs a depth-first traversal of the hierarchy.
+
+        Args:
+            connection (Dict[str, Set[str]]): the connection dictionary representing the hierarchy.
+            code (str): the starting code for the traversal.
+            include_itself (bool): whether to include the starting code in the traversal.
+
+        Returns:
+            List[str]: A list of codes visited during the traversal.
+        """
+        result = {code} if include_itself else set()
+
+        def _traversal(_node):
+            for conn in connection.get(_node, []):
+                result.add(conn)
+                _traversal(conn)
+
+        _traversal(code)
+
+        return list(result)
+
+    @staticmethod
+    def _dfs_edges(connection: Dict[str, Set[str]], code: str) -> Set[Tuple[str, str]]:
+        """
+        Returns the edges of the hierarchy obtained through a depth-first traversal.
+
+        Args:
+            connection (Dict[str, Set[str]]): the connection dictionary representing the hierarchy.
+            code (str): the starting code for the traversal.
+
+        Returns:
+            Set[Tuple[str, str]]: a set of edges in the hierarchy.
+        """
+        result = set()
+
+        def _edges(_node):
+            for conn in connection.get(_node, []):
+                result.add((_node, conn))
+                _edges(conn)
+
+        _edges(code)
+        return result
+
+    def code_ancestors_bfs(self, code: str, include_itself: bool) -> List[str]:
+        """
+        Returns the ancestors of a code in the hierarchy using breadth-first traversal.
+
+        Args:
+            code (str): the code for which to find the ancestors.
+            include_itself (bool): whether to include the code itself as its own ancestor. Defaults to True.
+
+        Returns:
+            List[str]: A list of ancestor codes.
+        """
+        return self._bfs_traversal(self._ch2pt, code, include_itself)
+
+    def code_ancestors_dfs(self, code: str, include_itself: bool) -> List[str]:
+        """
+        Returns the ancestors of a code in the hierarchy using depth-first traversal.
+
+        Args:
+            code (str): the code for which to find the ancestors.
+            include_itself (bool): whether to include the code itself as its own ancestor. Defaults to True.
+
+        Returns:
+            List[str]: a list of ancestor codes.
+        """
+        return self._dfs_traversal(self._ch2pt, code, include_itself)
+
+    def code_successors_bfs(self, code: str, include_itself: bool) -> List[str]:
+        """
+        Returns the successors of a code in the hierarchy using breadth-first traversal.
+
+        Args:
+            code (str): the code for which to find the successors.
+            include_itself (bool): whether to include the code itself as its own successor. Defaults to True.
+
+        Returns:
+            List[str]: A list of successor codes.
+        """
+        return self._bfs_traversal(self._pt2ch, code, include_itself)
+
+    def code_successors_dfs(self, code: str, include_itself: bool) -> List[str]:
+        """
+        Returns the successors of a code in the hierarchy using depth-first traversal.
+
+        Args:
+            code (str): the code for which to find the successors.
+            include_itself (bool): whether to include the code itself as its own successor. Defaults to True.
+
+        Returns:
+            List[str]: a list of successor codes.
+        """
+        return self._dfs_traversal(self._pt2ch, code, include_itself)
+
+    def ancestors_edges_dfs(self, code: str) -> Set[Tuple[str, str]]:
+        """
+        Returns the edges of the hierarchy obtained through a depth-first traversal of ancestors.
+
+        Args:
+            code (str): the code for which to find the ancestor edges.
+
+        Returns:
+            Set[Tuple[str, str]]: a set of edges in the hierarchy.
+        """
+        return self._dfs_edges(self._ch2pt, code)
+
+    def successors_edges_dfs(self, code: str) -> Set[Tuple[str, str]]:
+        """
+        Returns the edges of the hierarchy obtained through a depth-first traversal of successors.
+
+        Args:
+            code (str): the code for which to find the successor edges.
+
+        Returns:
+            Set[Tuple[str, str]]: a set of edges in the hierarchy.
+        """
+        return self._dfs_edges(self._pt2ch, code)
+
+    def least_common_ancestor(self, codes: List[str]) -> str:
+        """
+        Finds the least common ancestor of a list of codes in the hierarchy.
+
+        Args:
+            codes (List[str]): the list of codes for which to find the least common ancestor.
+
+        Returns:
+            str: the least common ancestor code.
+        
+        Raises:
+            RuntimeError: if a common ancestor is not found.
+        """
+        while len(codes) > 1:
+            a, b = codes[:2]
+            a_ancestors = self.code_ancestors_bfs(a, True)
+            b_ancestors = self.code_ancestors_bfs(b, True)
+            last_len = len(codes)
+            for ancestor in a_ancestors:
+                if ancestor in b_ancestors:
+                    codes = [ancestor] + codes[2:]
+            if len(codes) == last_len:
+                raise RuntimeError('Common Ancestor not Found!')
+        return codes[0]
+
+    def search_regex(self, query: str, regex_flags: int =re.I) -> Set[str]:
+        """
+        A regex-based search of codes by a `query` string. the search is \
+            applied on the code descriptions. for example, you can use it \
+            to return all codes related to cancer by setting the \
+            `query = 'cancer'` and `regex_flags = re.i` \
+            (for case-insensitive search). For all found codes, \
+            their successor codes are also returned in the resutls.
+
+        Args:
+            query (str): The regex query string.
+            regex_flags (int): The flags to use for the regex search. Defaults to re.I (case-insensitive).
+
+        Returns:
+            Set[str]: A set of codes that match the regex query, including their successor codes.
+        """
+        codes = filter(
+            lambda c: re.match(query, self._desc[c], flags=regex_flags),
+            self.codes)
+
+        dag_codes = filter(
+            lambda c: re.match(query, self._dag_desc[c], flags=regex_flags),
+            self.dag_codes)
+
+        all_codes = set(map(self._code2dag.get, codes)) | set(dag_codes)
+
+        for c in list(all_codes):
+            all_codes.update(self.code_successors_dfs(c))
+
+        return all_codes
+
+
+class Ethnicity(FlatScheme):
+    pass
+        
+
 class CodeMapConfig(Config):
+    """
+    Configuration class for code mapping.
+
+    Attributes:
+        source_scheme (str): the source coding scheme.
+        target_scheme (str): the target coding scheme.
+        mapped_to_dag_space (bool, optional): indicates if the codes are mapped to DAG space in the target scheme, if hierarchical. Defaults to False.
+    """
     source_scheme: str
     target_scheme: str
     mapped_to_dag_space: bool = False
 
 
 class CodeMap(Module):
+    """
+    Represents a mapping between two coding schemes.
+
+    Attributes:
+        config (CodeMapConfig): the configuration of the CodeMap.
+        _source_scheme (Union[CodingScheme, HierarchicalScheme]): the source coding scheme.
+        _target_scheme (Union[CodingScheme, HierarchicalScheme]): the target coding scheme.
+        _data (Dict[str, Set[str]]): the mapping data.
+
+    Class Variables:
+        _maps (Dict[Tuple[str, str], CodeMap]): a class-attribute dictionary of registered CodeMaps.
+        _load_maps (Dict[Tuple[str, str], Callable]): a class-attribute dictionary of lazy-loaded CodeMaps.
+        _maps_lock (Dict[Tuple[str, str], Lock]): a class-attribute dictionary of locks for thread safety.
+
+    Methods:
+        __init__(self, config: CodeMapConfig, data: Dict[str, Set[str]]): initializes a CodeMap instance.
+        register_map(cls, source_scheme: str, target_scheme: str, mapper: CodeMap): registers a CodeMap.
+        register_chained_map(cls, s_scheme: str, inter_scheme: str, t_scheme: str): registers a chained CodeMap.
+        register_chained_map_loader(cls, s_scheme: str, inter_scheme: str, t_scheme: str): registers a chained CodeMap lazy-loading function.
+        register_map_loader(cls, source_scheme: str, target_scheme: str, loader: Callable): registers a CodeMap lazy-loading function.
+        __str__(self): returns a string representation of the CodeMap.
+        __hash__(self): returns the hash value of the CodeMap.
+        __bool__(self): returns True if the CodeMap is not empty, False otherwise.
+        target_index(self): returns the target coding scheme index.
+        target_desc(self): returns the target coding scheme description.
+        source_index(self): returns the source coding scheme index.
+        source_scheme(self): returns the source coding scheme.
+        target_scheme(self): returns the target coding scheme.
+        mapped_to_dag_space(self): returns True if the CodeMap is mapped to DAG space, False otherwise.
+        has_mapper(cls, source_scheme: str, target_scheme: str): returns True if a mapper exists for the given source and target coding schemes, False otherwise.
+        get_mapper(cls, source_scheme: str, target_scheme: str) -> CodeMap: returns the mapper for the given source and target coding schemes.
+        __getitem__(self, item): returns the mapped codes for the given item.
+        keys(self): returns the supported codes in the source coding scheme that can be mapped to the target scheme.
+        map_codeset(self, codeset: Set[str]): maps a codeset to the target coding scheme.
+        target_code_ancestors(self, t_code: str, include_itself=True): returns the ancestors of a target code.
+        codeset2vec(self, codeset: Set[str]): converts a codeset to a binary vector representation.
+        codeset2dagset(self, codeset: Set[str]): converts a codeset to a DAG set representation.
+        codeset2dagvec(self, codeset: Set[str]): converts a codeset to a DAG vector representation.
+    """
     config: CodeMapConfig
     _source_scheme: Union[CodingScheme, HierarchicalScheme]
     _target_scheme: Union[CodingScheme, HierarchicalScheme]
     _data: Dict[str, Set[str]]
 
     _maps: ClassVar[Dict[Tuple[str, str], CodeMap]] = {}
-    # Possible Mappings, Lazy-loaded maps.
     _load_maps: ClassVar[Dict[Tuple[str, str], Callable]] = {}
     _maps_lock: ClassVar[Dict[Tuple[str, str], Lock]] = defaultdict(Lock)
 
     def __init__(self, config: CodeMapConfig, data: Dict[str, Set[str]]):
+        """
+        Initializes a CodeMap instance.
+
+        Args:
+            config (CodeMapConfig): the configuration of the CodeMap.
+            data (Dict[str, Set[str]]): the mapping data.
+        """
         super().__init__(config=config)
         self._data = data
         self._source_scheme = CodingScheme.from_name(config.source_scheme)
@@ -268,14 +789,28 @@ class CodeMap(Module):
             self._t_index = self._target_scheme.dag_index
             self._t_desc = self._target_scheme.dag_desc
 
-        self.register_map(config.source_scheme, config.target_scheme, self)
-
     @classmethod
     def register_map(cls, source_scheme: str, target_scheme: str, mapper: CodeMap):
+        """
+        Registers a CodeMap.
+
+        Args:
+            source_scheme (str): the source coding scheme.
+            target_scheme (str): the target coding scheme.
+            mapper (CodeMap): the CodeMap instance.
+        """
         cls._maps[(source_scheme, target_scheme)] = mapper
 
     @classmethod
     def register_chained_map(cls, s_scheme: str, inter_scheme: str, t_scheme: str):
+        """
+        Registers a chained CodeMap. The source and target coding schemes are chained together if there is an intermediate scheme that can act as a bridge between the two.
+        There must be registered two CodeMaps, one that maps between the source and intermediate coding schemes and one that maps between the intermediate and target coding schemes.
+        Args:
+            s_scheme (str): the source coding scheme.
+            inter_scheme (str): the intermediate coding scheme.
+            t_scheme (str): the target coding scheme.
+        """
         map1 = CodeMap.get_mapper(s_scheme, inter_scheme)
         map2 = CodeMap.get_mapper(inter_scheme, t_scheme)
         assert map1.config.mapped_to_dag_space == False
@@ -291,52 +826,142 @@ class CodeMap(Module):
 
     @classmethod
     def register_chained_map_loader(cls, s_scheme: str, inter_scheme: str, t_scheme: str):
+        """
+        Registers a chained CodeMap lazy-loading function..
+
+        Args:
+            s_scheme (str): the source coding scheme.
+            inter_scheme (str): the intermediate coding scheme.
+            t_scheme (str): the target coding scheme.
+        """
         cls._load_maps[(s_scheme, t_scheme)] = lambda: cls.register_chained_map(s_scheme, inter_scheme, t_scheme)
 
     @classmethod
     def register_map_loader(cls, source_scheme: str, target_scheme: str, loader: Callable):
+        """
+        Registers a CodeMap lazy-loading function.
+
+        Args:
+            source_scheme (str): the source coding scheme.
+            target_scheme (str): the target coding scheme.
+            loader (Callable): the loader function.
+        """
         cls._load_maps[(source_scheme, target_scheme)] = loader
 
     def __str__(self):
+        """
+        Returns a string representation of the CodeMap.
+
+        Returns:
+            str: the string representation of the CodeMap.
+        """
         return f'{self.source_scheme.name}->{self.target_scheme.name}'
 
     def __hash__(self):
+        """
+        Returns the hash value of the CodeMap.
+
+        Returns:
+            int: the hash value of the CodeMap.
+        """
         return hash(str(self))
 
     def __bool__(self):
+        """
+        Returns True if the CodeMap is not empty, False otherwise.
+
+        Returns:
+            bool: true if the CodeMap is not empty, False otherwise.
+        """
         return len(self) > 0
 
     @property
     def target_index(self):
+        """
+        Returns the target coding scheme index.
+
+        Returns:
+            dict: the target coding scheme index.
+        """
         return self._target_index
 
     @property
     def target_desc(self):
+        """
+        Returns the target coding scheme description.
+
+        Returns:
+            dict: the target coding scheme description.
+        """
         return self._target_desc
 
     @property
     def source_index(self):
+        """
+        Returns the source coding scheme index.
+
+        Returns:
+            dict: the source coding scheme index.
+        """
         return self._source_index
 
     @property
     def source_scheme(self):
+        """
+        Returns the source coding scheme.
+
+        Returns:
+            Union[CodingScheme, HierarchicalScheme]: the source coding scheme.
+        """
         return self._source_scheme
 
     @property
     def target_scheme(self):
+        """
+        Returns the target coding scheme.
+
+        Returns:
+            Union[CodingScheme, HierarchicalScheme]: the target coding scheme.
+        """
         return self._target_scheme
 
     @property
     def mapped_to_dag_space(self):
+        """
+        Returns True if the CodeMap is mapped to DAG space, False otherwise.
+
+        Returns:
+            bool: True if the CodeMap is mapped to DAG space, False otherwise.
+        """
         return self.config.mapped_to_dag_space
 
     @classmethod
     def has_mapper(cls, source_scheme: str, target_scheme: str):
+        """
+        Returns True if a mapper exists for the given source and target coding schemes, False otherwise.
+
+        Args:
+            source_scheme (str): the source coding scheme.
+            target_scheme (str): the target coding scheme.
+
+        Returns:
+            bool: True if a mapper exists, False otherwise.
+        """
         key = (source_scheme, target_scheme)
         return key in cls._maps or key[0] == key[1] or key in cls._load_maps
 
     @classmethod
     def get_mapper(cls, source_scheme: str, target_scheme: str) -> CodeMap:
+        """
+        Returns the mapper for the given source and target coding schemes.
+
+        Args:
+            source_scheme (str): the source coding scheme.
+            target_scheme (str): the target coding scheme.
+
+        Returns:
+            CodeMap: The mapper for the given source and target coding schemes.
+        """
         if not cls.has_mapper(source_scheme, target_scheme):
             logging.warning(f'Mapping {source_scheme}->{target_scheme} is not available')
             return NullCodeMap()
@@ -347,7 +972,9 @@ class CodeMap(Module):
                 return cls._maps[key]
 
             if key[0] == key[1]:
-                return IdentityCodeMap(source_scheme)
+                m = IdentityCodeMap(source_scheme)
+                cls.register_map(source_scheme, target_scheme, m)
+                return m
 
             if key in cls._load_maps:
                 cls._load_maps[key]()
@@ -355,39 +982,98 @@ class CodeMap(Module):
             return cls._maps[key]
 
     def __getitem__(self, item):
+        """
+        Returns the mapped codes for the given item.
+
+        Args:
+            item: the item to retrieve the mapped codes for.
+
+        Returns:
+            Set[str]: the mapped codes for the given item.
+        """
         return self._data[item]
 
     def keys(self):
+        """
+        Returns the codes in the source coding scheme that have a mapping to the target coding scheme.
+
+        Returns:
+            List[str]: the codes in the source coding scheme that have a mapping to the target coding scheme.
+        """
         return self._data.keys()
 
     def map_codeset(self, codeset: Set[str]):
+        """
+        Maps a codeset to the target coding scheme.
+
+        Args:
+            codeset (Set[str]): the codeset to map.
+
+        Returns:
+            Set[str]: The mapped codeset.
+        """
         return set().union(*[self[c] for c in codeset])
 
     def target_code_ancestors(self, t_code: str, include_itself=True):
+        """
+        Returns the ancestors of a target code.
+
+        Args:
+            t_code (str): The target code.
+            include_itself (bool): Whether to include the target code itself in the ancestors.
+
+        Returns:
+            List[str]: The ancestors of the target code.
+        """
         if self.config.mapped_to_dag_space == False:
             t_code = self.target_scheme.code2dag[t_code]
-        return self.target_scheme.code_ancestors_bfs(t_code,
-                                                     include_itself=include_itself)
+        return self.target_scheme.code_ancestors_bfs(t_code, include_itself=include_itself)
 
     def codeset2vec(self, codeset: Set[str]):
+        """
+        Converts a codeset to a multi-hot vector representation.
+
+        Args:
+            codeset (Set[str]): the codeset to convert.
+
+        Returns:
+            CodesVector: the binary vector representation of the codeset.
+        """
         index = self.target_index
         vec = np.zeros(len(index), dtype=bool)
         try:
             for c in codeset:
                 vec[index[c]] = True
         except KeyError as missing:
-            logging.error(
-                f'Code {missing} is missing. Accepted keys: {index.keys()}')
+            logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
         return CodesVector(vec, self.target_scheme)
 
     def codeset2dagset(self, codeset: Set[str]):
+        """
+        Converts a codeset to a DAG set representation.
+
+        Args:
+            codeset (Set[str]): the codeset to convert.
+
+        Returns:
+            Set[str]: the DAG set representation of the codeset.
+        """
         if self.config.mapped_to_dag_space == False:
             return set(self.target_scheme.code2dag[c] for c in codeset)
         else:
             return codeset
 
     def codeset2dagvec(self, codeset: Set[str]):
+        """
+        Converts a codeset to a DAG vector representation.
+
+        Args:
+            codeset (Set[str]): the codeset to convert.
+
+        Returns:
+            np.ndarray: the DAG vector representation of the codeset.
+        """
         if self.config.mapped_to_dag_space == False:
             codeset = set(self.target_scheme.code2dag[c] for c in codeset)
             index = self.target_scheme.dag_index
@@ -398,8 +1084,7 @@ class CodeMap(Module):
             for c in codeset:
                 vec[index[c]] = True
         except KeyError as missing:
-            logging.error(
-                f'Code {missing} is missing. Accepted keys: {index.keys()}')
+            logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
         return vec
 
@@ -521,9 +1206,25 @@ class CodeMap(Module):
 #                     fwd_p=fwd_p,
 #                     bwd_p=bwd_p,
 #                     msg=msg)
+    
+
 class IdentityCodeMap(CodeMap):
+    """
+    A code mapping class that maps codes to themselves.
+
+    This class inherits from the `CodeMap` base class and provides a simple
+    implementation of the `map_codeset` method that returns the input codeset
+    unchanged.
+
+    """
 
     def __init__(self, scheme: str):
+        """
+        Initialize a Identity CodeMap object.
+
+        Args:
+            scheme (str): the name of the coding scheme.S
+        """
         config = CodeMapConfig(source_scheme=scheme,
                                target_scheme=scheme,
                                mapped_to_dag_space=False)
@@ -532,10 +1233,38 @@ class IdentityCodeMap(CodeMap):
         super().__init__(config=config, data=data)
 
     def map_codeset(self, codeset):
+        """
+        Maps the input codeset to itself.
+
+        This method takes a codeset as input and returns the same codeset
+        unchanged.
+
+        Args:
+            codeset (list): the input codeset to be mapped.
+
+        Returns:
+            list: the mapped codeset, which is the same as the input codeset.
+
+        """
         return codeset
 
 
 class NullCodeMap(CodeMap):
+    """
+    A code map implementation that represents a null mapping.
+
+    This class provides a null implementation of the CodeMap interface.
+    It does not perform any mapping and always returns None.
+
+    Attributes:
+        config (CodeMapConfig): the configuration for the code map.
+        data (dict): the data for the code map.
+
+    Methods:
+        map_codeset(codeset): teturns None.
+        codeset2vec(codeset): teturns None.
+        __bool__(): Returns False.
+    """
 
     def __init__(self):
         config = CodeMapConfig(source_scheme='null',
@@ -555,265 +1284,151 @@ class NullCodeMap(CodeMap):
 
 class CodesVector(Data):
     """
-    Admission class encapsulates the patient EHRs diagnostic/procedure codes.
+    Represents a multi-hot vector encoding of codes using a specific coding scheme.
+
+    Attributes:
+        vec (np.ndarray): the vector of codes.
+        scheme (str): the coding scheme.
     """
+
     vec: np.ndarray
-    scheme: str  # Coding scheme for diagnostic codes
+    scheme: str  
 
     @property
     def scheme_object(self):
+        """
+        Returns the coding scheme object associated with the CodesVector.
+
+        Returns:
+            CodingScheme: the coding scheme object.
+        """
         return CodingScheme.from_name(self.scheme)
 
     @classmethod
     def empty_like(cls, other: CodesVector) -> CodesVector:
+        """
+        Creates an empty CodesVector with the same shape as the given CodesVector.
+
+        Args:
+            other (CodesVector): the CodesVector to mimic.
+
+        Returns:
+            CodesVector: the empty CodesVector.
+        """
         return cls(np.zeros_like(other.vec), other.scheme)
 
     @classmethod
     def empty(cls, scheme: str) -> CodesVector:
+        """
+        Creates an empty CodesVector with the specified coding scheme.
+
+        Args:
+            scheme (str): the coding scheme.
+
+        Returns:
+            CodesVector: the empty CodesVector.
+        """
         return cls(np.zeros(len(CodingScheme.from_name(scheme)), dtype=bool), scheme)
 
     def to_codeset(self):
+        """
+        Converts the CodesVector to a set of codes using the associated coding scheme.
+
+        Returns:
+            set: the set of codes.
+        """
         index = self.vec.nonzero()[0]
         scheme = self.scheme_object
         return set(scheme.index2code[i] for i in index)
 
     def union(self, other):
+        """
+        Performs a union operation with another CodesVector.
+
+        Args:
+            other (CodesVector): the CodesVector to perform the union with.
+
+        Returns:
+            CodesVector: the resulting CodesVector after the union operation.
+        """
         return CodesVector(self.vec | other.vec, self.scheme)
 
     def __len__(self):
+        """
+        Returns the length of the CodesVector.
+
+        Returns:
+            int: the length of the CodesVector.
+        """
         return len(self.vec)
 
 
 class CodesVectorWithMissing(CodesVector):
+    """
+    A subclass of CodesVector that represents a vector of codes with the ability to handle missing values.
+    """
 
     def to_codeset(self):
+        """
+        Convert the codes vector to a set of codes.
+
+        Returns:
+            set: a set of codes represented by the non-zero elements in the vector.
+        """
         index = self.vec.nonzero()[0]
         if len(index) == 0:
             return {self.scheme_object.missing_code}
 
 
 class BinaryCodesVector(CodesVector):
+    """
+    Represents a single-element binary code vector. It is used to represent a single code in a binary coding scheme, where the two codes are mutually exclusive.
+
+    Attributes:
+        vec (numpy.ndarray): the binary codes vector, which is a 1-element vector.
+        scheme (str): the binary coding scheme associated with the vector.
+    """
 
     @classmethod
     def empty(cls, scheme: str):
+        """
+        Creates a default binary codes vector.
+
+        Args:
+            scheme (str): the coding scheme associated with the vector.
+
+        Returns:
+            BinaryCodesVector: a vector representing the first code in the binary coding scheme.
+        """
         return cls(np.zeros(1, dtype=bool), scheme)
 
     def to_codeset(self):
+        """
+        Converts the binary codes vector to a set of one code.
+
+        Returns:
+            set: a set containing one code.
+        """
         return {self.scheme_object.index2code[self.vec[0]]}
 
     def __len__(self):
+        """
+        Returns 1, the length of the binary codes vector.
+
+        Returns:
+            int: the length of the binary codes vector.
+        """
         return 1
 
 
-class NullScheme(FlatScheme):
-
-    def __init__(self):
-        super().__init__(CodingSchemeConfig('null'), [], {}, {})
-
-
-class HierarchicalScheme(FlatScheme):
-
-    def __init__(self,
-                 config: CodingSchemeConfig,
-                 codes: Optional[List[str]] = None,
-                 index: Optional[Dict[str, int]] = None,
-                 desc: Optional[Dict[str, str]] = None,
-                 dag_codes: Optional[List[str]] = None,
-                 dag_index: Optional[Dict[str, int]] = None,
-                 dag_desc: Optional[Dict[str, str]] = None,
-                 code2dag: Optional[Dict[str, str]] = None,
-                 pt2ch: Optional[Dict[str, Set[str]]] = None,
-                 ch2pt: Optional[Dict[str, Set[str]]] = None):
-        super().__init__(config, codes, index, desc)
-
-        self._dag_codes = dag_codes or codes
-        self._dag_index = dag_index or index
-        self._dag_desc = dag_desc or desc
-        self._code2dag = code2dag or {c: c for c in codes}
-        self._dag2code = {d: c for c, d in self._code2dag.items()}
-
-        assert pt2ch or ch2pt, (
-            "Should provide ch2pt or pt2ch connection dictionary")
-        self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
-        self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
-        self._check_types()
-
-    def _check_types(self):
-        for collection in [
-            self._dag_codes, self._dag_index, self._dag_desc,
-            self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
-        ]:
-            assert all(
-                type(c) == str
-                for c in collection), f"{self}: All name types should be str."
-
-    def make_ancestors_mat(self, include_itself=True) -> np.ndarray:
-        ancestors_mat = np.zeros((len(self.dag_index), len(self.dag_index)),
-                                 dtype=bool)
-        for code_i, i in self.dag_index.items():
-            for ancestor_j in self.code_ancestors_bfs(code_i, include_itself):
-                j = self._dag_index[ancestor_j]
-                ancestors_mat[i, j] = 1
-
-        return ancestors_mat
-
-    @property
-    def dag_index(self):
-        return self._dag_index
-
-    @property
-    def dag_codes(self):
-        return self._dag_codes
-
-    @property
-    def dag_desc(self):
-        return self._dag_desc
-
-    @property
-    def code2dag(self):
-        return self._code2dag
-
-    @property
-    def dag2code(self):
-        return self._dag2code
-
-    def __contains__(self, code):
-        """Returns True if `code` is contained in the current hierarchy."""
-        return code in self.dag_codes or code in self.codes
-
-    @staticmethod
-    def reverse_connection(connection):
-        rev_connection = defaultdict(set)
-        for node, conns in connection.items():
-            for conn in conns:
-                rev_connection[conn].add(node)
-        return rev_connection
-
-    @staticmethod
-    def _bfs_traversal(connection, code, include_itself):
-        result = OrderedDict()
-        q = [code]
-
-        while len(q) != 0:
-            # remove the first element from the stack
-            current_code = q.pop(0)
-            current_connections = connection.get(current_code, [])
-            q.extend([c for c in current_connections if c not in result])
-            if current_code not in result:
-                result[current_code] = 1
-
-        if not include_itself:
-            del result[code]
-        return list(result.keys())
-
-    @staticmethod
-    def _dfs_traversal(connection, code, include_itself):
-        result = {code} if include_itself else set()
-
-        def _traversal(_node):
-            for conn in connection.get(_node, []):
-                result.add(conn)
-                _traversal(conn)
-
-        _traversal(code)
-
-        return list(result)
-
-    @staticmethod
-    def _dfs_edges(connection, code):
-        result = set()
-
-        def _edges(_node):
-            for conn in connection.get(_node, []):
-                result.add((_node, conn))
-                _edges(conn)
-
-        _edges(code)
-        return result
-
-    def code_ancestors_bfs(self, code, include_itself=True):
-        return self._bfs_traversal(self._ch2pt, code, include_itself)
-
-    def code_ancestors_dfs(self, code, include_itself=True):
-        return self._dfs_traversal(self._ch2pt, code, include_itself)
-
-    def code_successors_bfs(self, code, include_itself=True):
-        return self._bfs_traversal(self._pt2ch, code, include_itself)
-
-    def code_successors_dfs(self, code, include_itself=True):
-        return self._dfs_traversal(self._pt2ch, code, include_itself)
-
-    def ancestors_edges_dfs(self, code):
-        return self._dfs_edges(self._ch2pt, code)
-
-    def successors_edges_dfs(self, code):
-        return self._dfs_edges(self._pt2ch, code)
-
-    def least_common_ancestor(self, codes):
-        while len(codes) > 1:
-            a, b = codes[:2]
-            a_ancestors = self.code_ancestors_bfs(a, True)
-            b_ancestors = self.code_ancestors_bfs(b, True)
-            last_len = len(codes)
-            for ancestor in a_ancestors:
-                if ancestor in b_ancestors:
-                    codes = [ancestor] + codes[2:]
-            if len(codes) == last_len:
-                raise RuntimeError('Common Ancestor not Found!')
-        return codes[0]
-
-    def search_regex(self, query, regex_flags=re.I):
-        """
-        A regex-based search of codes by a `query` string. the search is \
-            applied on the code descriptions. for example, you can use it \
-            to return all codes related to cancer by setting the \
-            `query = 'cancer'` and `regex_flags = re.i` \
-            (for case-insensitive search). For all found codes, \
-            their successor codes are also returned in the resutls.
-        """
-
-        codes = filter(
-            lambda c: re.match(query, self._desc[c], flags=regex_flags),
-            self.codes)
-
-        dag_codes = filter(
-            lambda c: re.match(query, self._dag_desc[c], flags=regex_flags),
-            self.dag_codes)
-
-        all_codes = set(map(self._code2dag.get, codes)) | set(dag_codes)
-
-        for c in list(all_codes):
-            all_codes.update(self.code_successors_dfs(c))
-
-        return all_codes
-
-
-class Ethnicity(FlatScheme):
-    pass
-
-
-class AbstractGroupedProcedures(CodingScheme):
-
-    def __init__(self, groups, aggregation, aggregation_groups, **init_kwargs):
-        super().__init__(**init_kwargs)
-        self._groups = groups
-        self._aggregation = aggregation
-        self._aggregation_groups = aggregation_groups
-
-    @property
-    def groups(self):
-        return self._groups
-
-    @property
-    def aggregation(self):
-        return self._aggregation
-
-    @property
-    def aggregation_groups(self):
-        return self._aggregation_groups
-
 
 def register_gender_scheme():
+    """
+    Register a binary gender coding scheme.
+
+    This function registers a binary coding scheme for gender, with codes 'M' for male and 'F' for female.
+    The index maps the codes to their corresponding positions, and the desc provides descriptions for each code.
+    """
     CodingScheme.register_scheme(BinaryScheme(CodingSchemeConfig('gender'),
                                               codes=['M', 'F'], index={'M': 0, 'F': 1},
                                               desc={'M': 'male', 'F': 'female'}))
@@ -828,12 +1443,31 @@ class OutcomeExtractorConfig(CodingSchemeConfig):
 
 
 class OutcomeExtractor(FlatScheme):
+    """
+    Extracts outcomes from a coding scheme based on a given configuration/specs file.
+
+    Args:
+        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
+
+    Attributes:
+        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
+        _base_scheme (CodingScheme): the base coding scheme used for outcome extraction.
+        _spec_files (Dict[str, str]): a class-attribute dictionary of supported spec files.
+    """
+
     config: OutcomeExtractorConfig
     _base_scheme: CodingScheme
 
     _spec_files: ClassVar[Dict[str, str]] = {}
 
     def __init__(self, config: OutcomeExtractorConfig):
+        """
+        Initializes an instance of the OutcomeExtractor class.
+
+        Args:
+            config (OutcomeExtractorConfig): The configuration for the outcome extractor.
+
+        """
 
         specs = self.spec_from_json(config.spec_file)
 
@@ -852,6 +1486,15 @@ class OutcomeExtractor(FlatScheme):
 
     @classmethod
     def register_outcome_extractor_loader(cls, name: str, spec_file: str):
+        """
+        Registers an outcome extractor lazy loading routine.
+
+        Args:
+            name (str): the name of the outcome extractor.
+            spec_file (str): the spec file for the outcome extractor.
+
+        """
+
         def load():
             config = OutcomeExtractorConfig(name=name, spec_file=spec_file)
             cls.register_scheme(OutcomeExtractor(config))
@@ -861,6 +1504,19 @@ class OutcomeExtractor(FlatScheme):
 
     @classmethod
     def from_name(cls, name):
+        """
+        Creates an instance of the OutcomeExtractor class based on a given supported name.
+
+        Args:
+            name: the identifier name of the outcome extractor.
+
+        Returns:
+            OutcomeExtractor: an instance of the OutcomeExtractor class.
+
+        Raises:
+            AssertionError: if the created instance is not an OutcomeExtractor.
+        """
+
         outcome_extractor = super().from_name(name)
         assert isinstance(outcome_extractor,
                           OutcomeExtractor), f'OutcomeExtractor expected, got {type(outcome_extractor)}'
@@ -868,13 +1524,41 @@ class OutcomeExtractor(FlatScheme):
 
     @property
     def base_scheme(self):
+        """
+        Gets the base coding scheme used for outcome extraction.
+
+        Returns:
+            CodingScheme: the base coding scheme.
+
+        """
+
         return self._base_scheme
 
     @property
     def outcome_dim(self):
+        """
+        Gets the dimension of the outcome.
+
+        Returns:
+            int: the dimension of the outcome.
+
+        """
+
         return len(self.index)
 
     def _map_codeset(self, codeset: Set[str], base_scheme: str):
+        """
+        Maps a codeset to the base coding scheme.
+
+        Args:
+            codeset (Set[str]): the codeset to map.
+            base_scheme (str): the base coding scheme.
+
+        Returns:
+            Set[str]: the mapped codeset.
+
+        """
+
         m = CodeMap.get_mapper(base_scheme, self._base_scheme.name)
         codeset = m.map_codeset(codeset)
 
@@ -885,6 +1569,17 @@ class OutcomeExtractor(FlatScheme):
         return codeset & set(self.codes)
 
     def mapcodevector(self, codes: CodesVector):
+        """
+        Extract outcomes from a codes vector into a new codes vector.
+
+        Args:
+            codes (CodesVector): the codes vector to extract.
+
+        Returns:
+            CodesVector: the extracted outcomes represented by a codes vector.
+
+        """
+
         vec = np.zeros(len(self.index), dtype=bool)
         for c in self._map_codeset(codes.to_codeset(), codes.scheme):
             vec[self.index[c]] = True
@@ -892,6 +1587,16 @@ class OutcomeExtractor(FlatScheme):
 
     @classmethod
     def supported_outcomes(cls, base_scheme: str):
+        """
+        Gets the supported outcomes for a given base coding scheme.
+
+        Args:
+            base_scheme (str): the base coding scheme.
+
+        Returns:
+            Tuple[str]: the supported outcomes.
+        """
+
         outcome_base = {
             k: load_config(v, relative_to=_OUTCOME_DIR)['code_scheme']
             for k, v in cls._spec_files.items()
@@ -901,6 +1606,17 @@ class OutcomeExtractor(FlatScheme):
 
     @staticmethod
     def spec_from_json(json_file: str):
+        """
+        Loads the spec from a JSON file.
+
+        Args:
+            json_file (str): the path to the JSON file.
+
+        Returns:
+            dict: the loaded spec.
+
+        """
+
         conf = load_config(json_file, relative_to=_OUTCOME_DIR)
 
         if 'exclude_branches' in conf:

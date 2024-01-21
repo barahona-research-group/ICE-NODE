@@ -11,7 +11,6 @@ import pandas as pd
 import dask.dataframe as dd
 import numpy as np
 
-from .coding_scheme import (AbstractScheme, Ethnicity)
 from .concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
 from .dataset import Dataset, DatasetScheme
 

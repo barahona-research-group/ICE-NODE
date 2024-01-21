@@ -11,16 +11,14 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from .coding_scheme import (ICDCommons, scheme_from_classname,
-                            OutcomeExtractor, MIMICInput, MIMICProcedures,
-                            MIMICObservables)
+from .coding_scheme import OutcomeExtractor, CodingScheme
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
                        AggregateRepresentation, InpatientInterventions,
-                       LeadingObservableConfig, StaticInfo)
+                       LeadingObservableExtractorConfig, StaticInfo)
 from .dataset import (DatasetScheme, ColumnNames, DatasetConfig,
                       DatasetSchemeConfig)
-from .ds_mimic3 import MIMIC3Dataset, try_compute
+from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from ..base import Config
 from ..utils import load_config
 
@@ -173,14 +171,14 @@ class AdaptiveScaler(eqx.Module):
 
 
 class MIMIC4DatasetScheme(DatasetScheme):
-    dx: Union[Dict[str, ICDCommons], ICDCommons]
+    dx: Union[Dict[str, CodingScheme], CodingScheme]
 
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
 
         if isinstance(self.config.dx, dict):
             self.dx = {
-                version: scheme_from_classname(scheme)
+                version: CodingScheme.from_name(scheme)
                 for version, scheme in self.config.dx.items()
             }
 
@@ -202,7 +200,7 @@ class MIMIC4DatasetScheme(DatasetScheme):
 
     def dx_mapper(self, target_scheme: DatasetScheme):
         return {
-            version: s_dx.mapper_to(target_scheme.dx)
+            version: s_dx.mapper_to(target_scheme.dx.name)
             for version, s_dx in self.dx.items()
         }
 
@@ -230,20 +228,20 @@ class MIMIC4DatasetScheme(DatasetScheme):
 
 
 class MIMIC4ICUDatasetSchemeConfig(DatasetSchemeConfig):
-    int_proc: str = 'MIMICProcedures'
-    int_input: str = 'MIMICInput'
-    obs: str = 'MIMICObservables'
+    int_proc: str = 'int_mimic4_proc' # -> 'int_mimic4_grouped_proc'
+    int_input: str = 'int_mimic4_input' # -> 'int_mimic4_input_group'
+    obs: str = 'mimic4_obs'
 
 
 class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
-    int_proc: MIMICProcedures
-    int_input: MIMICInput
-    obs: MIMICObservables
+    int_proc: CodingScheme
+    int_input: CodingScheme
+    obs: CodingScheme
 
     def make_target_scheme_config(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
-        return self.config.update(int_proc='MIMICProcedureGroups',
-                                  int_input='MIMICInputGroups',
+        return self.config.update(int_proc='int_mimic4_grouped_proc',
+                                  int_input='int_mimic4_input_group',
                                   **kwargs)
 
 
@@ -257,7 +255,7 @@ class MIMIC4Dataset(MIMIC3Dataset):
         df = df.assign(**{c_code: df[c_code].str.strip()})
         self.df['dx'] = df
         for version, scheme in self.scheme.dx.items():
-            if isinstance(scheme, ICDCommons):
+            if isinstance(scheme, CodingScheme):
                 ver_mask = df[c_version] == version
                 code_col = df[c_code]
                 df = df.assign(**{

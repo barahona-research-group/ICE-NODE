@@ -1,33 +1,22 @@
 """."""
 from __future__ import annotations
-from pathlib import Path
-from typing import Dict, List, Any, Optional, ClassVar, Callable, Type, Union
-from collections import namedtuple
-from dataclasses import field
+
 import pickle
-from datetime import timedelta
 import random
 from abc import abstractmethod
-import logging
+from collections import namedtuple
+from dataclasses import field
+from datetime import timedelta
+from pathlib import Path
+from typing import Dict, Optional, Union, Tuple, Any, List
 
-import pandas as pd
-import numpy as np
 import equinox as eqx
+import numpy as np
+import pandas as pd
 
-from ..utils import load_config, translate_path
+from .coding_scheme import (CodingScheme, OutcomeExtractor)
+from .concepts import (DemographicVectorConfig)
 from ..base import Config, Module
-
-from .coding_scheme import (scheme_from_classname, OutcomeExtractor,
-                            AbstractScheme, ICDCommons, MIMICEth, MIMICInput,
-                            MIMICInputGroups, MIMICProcedures,
-                            MIMICProcedureGroups, MIMICObservables, NullScheme,
-                            Gender, Ethnicity, CPRDIMDCategorical, CPRDGender,
-                            load_maps)
-from .concepts import (InpatientInput, InpatientObservables, Patient,
-                       Admission, StaticInfo, DemographicVectorConfig,
-                       CPRDDemographicVectorConfig, CPRDStaticInfo,
-                       AggregateRepresentation, InpatientInterventions,
-                       LeadingObservableConfig)
 
 StrDict = Dict[str, str]
 
@@ -107,40 +96,39 @@ class DatasetSchemeConfig(Config):
 
 class DatasetScheme(Module):
     config: DatasetSchemeConfig
-    dx: AbstractScheme
-    ethnicity: Ethnicity
-    gender: Gender
+    dx: CodingScheme
+    ethnicity: CodingScheme
+    gender: CodingScheme
     outcome: Optional[OutcomeExtractor] = None
+
+    def __init__(self, config: DatasetSchemeConfig, **kwargs):
+        super().__init__(config=config, **kwargs)
+        config = self.config.as_dict()
+
+        if config.get('outcome'):
+            self.outcome = OutcomeExtractor.from_name(config.pop('outcome'))
+
+        for k, v in config.items():
+            if isinstance(v, str):
+                setattr(self, k, CodingScheme.from_name(v))
 
     @property
     def scheme_dict(self):
         return {
             k: v
             for k, v in self.__dict__.items()
-            if k != 'outcome' and isinstance(v, AbstractScheme)
+            if k != 'outcome' and isinstance(v, CodingScheme)
         }
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
-        attrs = source.scheme_dict
-        for attr in attrs:
+        for attr in source.scheme_dict.keys():
             att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
 
             assert att_s_scheme.mapper_to(
                 att_t_scheme
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
-
-    def __init__(self, config: DatasetSchemeConfig, **kwargs):
-        super().__init__(config=config, **kwargs)
-        config = self.config.as_dict()
-
-        if config.get('outcome') is not None:
-            self.outcome = OutcomeExtractor(config.pop('outcome'))
-
-        for k, v in config.items():
-            if isinstance(v, str):
-                setattr(self, k, scheme_from_classname(v))
 
     def make_target_scheme_config(self, **kwargs):
         assert 'outcome' in kwargs, "Outcome must be specified"
@@ -165,19 +153,19 @@ class DatasetScheme(Module):
         return size
 
     def dx_mapper(self, target_scheme: DatasetScheme):
-        return self.dx.mapper_to(target_scheme.dx)
+        return self.dx.mapper_to(target_scheme.dx.name)
 
     def ethnicity_mapper(self, target_scheme: DatasetScheme):
-        return self.ethnicity.mapper_to(target_scheme.ethnicity)
+        return self.ethnicity.mapper_to(target_scheme.ethnicity.name)
 
     @property
     def supported_target_scheme_options(self):
         supproted_attr_targets = {
-            k: (getattr(self, k).__class__.__name__, ) +
-            getattr(self, k).supported_targets
+            k: (getattr(self, k).__class__.__name__,) +
+               getattr(self, k).supported_targets
             for k in self.scheme_dict
         }
-        supported_outcomes = OutcomeExtractor.supported_outcomes(self.dx)
+        supported_outcomes = OutcomeExtractor.supported_outcomes(self.dx.name)
         supproted_attr_targets['outcome'] = supported_outcomes
         return supproted_attr_targets
 
@@ -314,3 +302,35 @@ class Dataset(Module):
             if cols.has('index'):
                 df[name] = df[name].set_index(cols.index)
         return eqx.tree_at(lambda x: x.df, rest, df)
+
+
+class DatasetTransformationConfig(Config):
+    pass
+
+
+class DatasetTransformation(Module):
+    config: DatasetTransformationConfig
+
+    @abstractmethod
+    def __call__(self, dataset: Dataset, **kwargs) -> Tuple[Dataset, Dict[str, Any]]:
+        pass
+
+
+class DatasetPipelineConfig(Config):
+    pass
+
+
+class DatasetPipeline(Module):
+    config: DatasetPipelineConfig
+    transformations: List[DatasetTransformation]
+
+    @classmethod
+    def external_argnames(cls):
+        return ['transformations']
+
+    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, Any]]:
+        kwargs = {}
+        for t in self.transformations:
+            dataset, auxiliary = t(dataset, **kwargs)
+            kwargs.update(auxiliary)
+        return dataset, kwargs

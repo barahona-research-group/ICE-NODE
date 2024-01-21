@@ -235,3 +235,8 @@ def setup_maps_loaders():
                                 lambda: register_medcode_mapping('dx_cprd_ltc9809', 'dx_cprd_ltc212'))
 
     CodeMap.register_map_loader('eth_cprd_16', 'eth_cprd_5', register_cprd_eth_mapping)
+
+
+def setup_cprd():
+    setup_scheme_loaders()
+    setup_maps_loaders()

@@ -10,11 +10,11 @@ import pandas as pd
 
 from ..utils import translate_path
 
-from .coding_scheme import CPRDIMDCategorical, scheme_from_classname
+from .coding_scheme import CodingScheme
 from .concepts import (Patient, Admission, StaticInfo,
                        CPRDDemographicVectorConfig, CPRDStaticInfo)
 from .dataset import DatasetScheme, ColumnNames, DatasetSchemeConfig
-from .ds_mimic3 import MIMIC3Dataset
+from ._dataset_mimic3 import MIMIC3Dataset
 
 
 class CPRDDatasetSchemeConfig(DatasetSchemeConfig):
@@ -22,11 +22,11 @@ class CPRDDatasetSchemeConfig(DatasetSchemeConfig):
 
 
 class CPRDDatasetScheme(DatasetScheme):
-    imd: CPRDIMDCategorical
+    imd: CodingScheme
 
     def __init__(self, config: CPRDDatasetSchemeConfig, **kwargs):
         super().__init__(config, **kwargs)
-        self.imd = scheme_from_classname(config.imd)
+        self.imd = CodingScheme.from_name(config.imd)
 
     def demographic_vector_size(
             self, demographic_vector_config: CPRDDemographicVectorConfig):

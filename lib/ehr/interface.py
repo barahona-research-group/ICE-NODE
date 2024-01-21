@@ -1,23 +1,24 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Union, Any, Callable
-from copy import deepcopy
+
 import logging
 import pickle
+from copy import deepcopy
 from pathlib import Path
-import json
-import numpy as np
-import jax
+from typing import List, Optional, Dict, Union, Callable
+
+import dask
+import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-import equinox as eqx
-import dask
-from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
-from ..base import Config, Data, Module
-from .dataset import Dataset, DatasetScheme, DatasetConfig
+import numpy as np
+
+from .coding_scheme import CodesVector
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, DemographicVectorConfig,
-                       LeadingObservableConfig)
-from .coding_scheme import CodesVector, AbstractScheme
+                       LeadingObservableExtractorConfig)
+from .dataset import Dataset, DatasetScheme, DatasetConfig
+from ..base import Config, Data, Module
+from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
@@ -380,14 +381,14 @@ class Predictions(dict):
 
 class InterfaceConfig(Config):
     demographic_vector: DemographicVectorConfig
-    leading_observable: Optional[LeadingObservableConfig]
+    leading_observable: Optional[LeadingObservableExtractorConfig]
     scheme: Dict[str, str]
     cache: Optional[str]
     time_binning: Optional[int] = None
 
     def __init__(self,
                  demographic_vector: DemographicVectorConfig,
-                 leading_observable: Optional[LeadingObservableConfig] = None,
+                 leading_observable: Optional[LeadingObservableExtractorConfig] = None,
                  dataset_scheme: Optional[DatasetScheme] = None,
                  scheme: Optional[Dict[str, str]] = None,
                  cache: Optional[str] = None,
@@ -409,6 +410,7 @@ class Patients(Module):
     config: InterfaceConfig
     dataset: Dataset
     subjects: Dict[str, Patient]
+
     _scheme: DatasetScheme
 
     def __init__(self,
@@ -654,12 +656,11 @@ class Patients(Module):
 
     def p_obs(self, subject_ids=None):
         if subject_ids is None:
-
             subject_ids = self.subjects.keys()
         return sum(o.mask.sum() for s in subject_ids
                    for a in self.subjects[s].admissions
                    for o in a.observables) / self.n_obs_times() / len(
-                       self._scheme.obs)
+            self._scheme.obs)
 
     def obs_coocurrence_matrix(self):
         obs = []
@@ -760,11 +761,3 @@ class Patients(Module):
         else:
             _np = np
         return [_np.ones_like(a.outcome.vec, dtype=bool) for a in adms]
-
-
-if __name__ == '__main__':
-    pass
-    # from .dataset import load_dataset
-    # logging.root.level = logging.DEBUG
-    # m4inpatient_dataset = load_dataset('M4ICU')
-    # inpatients = Inpatients(m4inpatient_dataset)
