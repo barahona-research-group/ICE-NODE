@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import zipfile
-
+from typing import Optional
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -161,15 +161,23 @@ def zip_members(zipfile_fname):
         return archive.namelist()
 
 
-def load_config(config_file):
+def load_config(config_file, relative_to: Optional[str] = None):
     """Load a JSON file from `config_file`.
 
     Parameters:
         config_file: Path to the JSON configuration file to load.
+        relative_to: if specified, and config_file is a relative path to nonexistent file, then the path is
+            interpreted as relative to this path.
 
     Returns:
         The deserialized JSON contents of the configuration file.
     """
+    if relative_to is not None:
+        relative_to = translate_path(relative_to)
+    config_file = translate_path(config_file)
+
+    if relative_to is not None and not os.path.isabs(config_file) and not os.path.exists(config_file):
+        config_file = os.path.join(relative_to, config_file)
     with open(translate_path(config_file)) as json_file:
         return json.load(json_file)
 
