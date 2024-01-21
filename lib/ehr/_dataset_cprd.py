@@ -1,20 +1,17 @@
 """."""
 from __future__ import annotations
-from typing import ClassVar, Type
 
+import logging
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-import logging
 
 import pandas as pd
 
-from ..utils import translate_path
-
-from .coding_scheme import CodingScheme
-from .concepts import (Patient, Admission, StaticInfo,
-                       CPRDDemographicVectorConfig, CPRDStaticInfo)
-from .dataset import DatasetScheme, ColumnNames, DatasetSchemeConfig
 from ._dataset_mimic3 import MIMIC3Dataset
+from .coding_scheme import CodingScheme
+from .concepts import (Patient, Admission, CPRDDemographicVectorConfig, CPRDStaticInfo)
+from .dataset import DatasetScheme, ColumnNames, DatasetSchemeConfig
+from ..utils import translate_path
 
 
 class CPRDDatasetSchemeConfig(DatasetSchemeConfig):
@@ -173,7 +170,6 @@ class CPRDDataset(MIMIC3Dataset):
                              interventions=None)
 
         def _gen_subject(subject_id):
-
             _admission_ids = admission_ids[subject_id]
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids,

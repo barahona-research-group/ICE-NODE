@@ -241,6 +241,7 @@ def setup_maps_loaders():
     CodeMap.register_map_loader('int_mimic4_input', 'int_mimic4_input_group',
                                 lambda: register_mimic4input_mapping('int_mimic4_input', 'int_mimic4_input_group'))
 
+
 def setup_mimic():
     setup_scheme_loaders()
     setup_maps_loaders()

@@ -1,4 +1,3 @@
-
 # class SyntheticDataset(MIMIC3Dataset):
 
 #     @classmethod

@@ -1123,7 +1123,7 @@ class Patient(Data):
     
     
     Properties:
-        d2d_interval_days: number of days between first and last admission.  
+        d2d_interval_days: number of days between first and last discharge.  
         
         
     Methods:
@@ -1137,7 +1137,7 @@ class Patient(Data):
     @property
     def d2d_interval_days(self):
         """
-        The interval in days between the first and last admission dates.
+        The interval in days between the first and last discharge dates.
 
         Returns:
             float: the interval in days.

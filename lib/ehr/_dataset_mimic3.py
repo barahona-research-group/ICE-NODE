@@ -1,15 +1,16 @@
 """."""
 from __future__ import annotations
-import os
-from collections import defaultdict
-from typing import Dict, List, Optional, ClassVar
-from concurrent.futures import ThreadPoolExecutor
-import random
-import logging
 
-import pandas as pd
+import logging
+import os
+import random
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, ClassVar
+
 import dask.dataframe as dd
 import numpy as np
+import pandas as pd
 
 from .concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
 from .dataset import Dataset, DatasetScheme
@@ -63,9 +64,9 @@ class MIMIC3Dataset(Dataset):
         logging.debug('Loading dataframe files')
         df = {
             k:
-            dd.read_csv(os.path.join(config.path, files[k]),
-                        usecols=colname[k].columns,
-                        dtype=colname[k].default_raw_types)
+                dd.read_csv(os.path.join(config.path, files[k]),
+                            usecols=colname[k].columns,
+                            dtype=colname[k].default_raw_types)
             for k in files.keys()
         }
         if config.sample is not None:
@@ -153,7 +154,6 @@ class MIMIC3Dataset(Dataset):
                              interventions=None)
 
         def _gen_subject(subject_id):
-
             _admission_ids = admission_ids[subject_id]
             # for subject_id, subject_admission_ids in admission_ids.items():
             _admission_ids = sorted(_admission_ids,
@@ -189,7 +189,7 @@ class MIMIC3Dataset(Dataset):
         unrecognised = codeset - scheme_codes
         if len(unrecognised) > 0:
             logging.debug(f'Unrecognised ICD codes: {len(unrecognised)} '
-                          f'({len(unrecognised)/len(codeset):.2%})')
+                          f'({len(unrecognised) / len(codeset):.2%})')
             logging.debug(f'Unrecognised {type(scheme)} codes '
                           f'({len(unrecognised)}) '
                           f'to be removed (first 30): '
@@ -229,7 +229,7 @@ class MIMIC3Dataset(Dataset):
             subject_intervals_sum = adm_df.groupby(c_subject_id).agg(
                 total_interval=(c_adm_interval, 'sum'))
             p_subject_intervals = subject_intervals_sum.loc[
-                subject_ids] / subject_intervals_sum.sum()
+                                      subject_ids] / subject_intervals_sum.sum()
             probs = p_subject_intervals.values.cumsum()
 
         splits = np.searchsorted(probs, splits)
@@ -255,10 +255,10 @@ class MIMIC3Dataset(Dataset):
 
             if interval_inclusive:
                 has_parent = s_df[c_admittime].iloc[
-                    1:].values <= disch_cummax.values
+                             1:].values <= disch_cummax.values
             else:
                 has_parent = s_df[c_admittime].iloc[
-                    1:].values < disch_cummax.values
+                             1:].values < disch_cummax.values
 
             s_df = s_df.iloc[1:]
             s_df['sup_adm'] = np.where(has_parent, disch_cummax_idx, pd.NA)
@@ -298,7 +298,7 @@ class MIMIC3Dataset(Dataset):
             df['adm_id'] = df.index
             df.loc[sup_adms, c_dischtime] = df.loc[sup_adms].apply(
                 lambda x: max(x[c_dischtime], df.loc[sup2ch[x.adm_id],
-                                                     c_dischtime].max()),
+                c_dischtime].max()),
                 axis=1)
 
             # Step 6: Remove merged admissions.

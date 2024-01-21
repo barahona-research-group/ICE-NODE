@@ -643,6 +643,7 @@ class FlatCCS(FlatScheme):
     def create_scheme(cls):
         pass
 
+
 class DxFlatCCSOps(FlatCCS):
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 

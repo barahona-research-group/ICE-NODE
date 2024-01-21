@@ -11,14 +11,15 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
+from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from .coding_scheme import OutcomeExtractor, CodingScheme
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
                        AggregateRepresentation, InpatientInterventions,
-                       LeadingObservableExtractorConfig, StaticInfo)
+                       LeadingObservableExtractorConfig, LeadingObservableExtractor,
+                       StaticInfo)
 from .dataset import (DatasetScheme, ColumnNames, DatasetConfig,
                       DatasetSchemeConfig)
-from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from ..base import Config
 from ..utils import load_config
 
@@ -28,7 +29,6 @@ warnings.filterwarnings('error',
 
 
 class OutlierRemover(eqx.Module):
-
     c_value: str
     c_code_index: str
     min_val: pd.Series
@@ -228,8 +228,8 @@ class MIMIC4DatasetScheme(DatasetScheme):
 
 
 class MIMIC4ICUDatasetSchemeConfig(DatasetSchemeConfig):
-    int_proc: str = 'int_mimic4_proc' # -> 'int_mimic4_grouped_proc'
-    int_input: str = 'int_mimic4_input' # -> 'int_mimic4_input_group'
+    int_proc: str = 'int_mimic4_proc'  # -> 'int_mimic4_grouped_proc'
+    int_input: str = 'int_mimic4_input'  # -> 'int_mimic4_input_group'
     obs: str = 'mimic4_obs'
 
 
@@ -411,7 +411,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             assert df[col].between(df[c_admittime], df[c_dischtime]).all(), \
                 f"Time not between admission and discharge in {df_name} " \
  \
-    @staticmethod
+                @ staticmethod
+
     def _set_relative_times(df_dict, colname, df_name, time_cols,
                             seconds_scaler):
         c_admittime = colname["adm"].admittime
@@ -625,7 +626,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                     subject_ids: List[int],
                     num_workers: int,
                     demographic_vector_config: DemographicVectorConfig,
-                    leading_observable_config: LeadingObservableConfig,
+                    leading_observable_config: LeadingObservableExtractorConfig,
                     target_scheme: MIMIC4ICUDatasetScheme,
                     time_binning: Optional[int] = None,
                     **kwargs):
@@ -672,6 +673,8 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         proc_repr = AggregateRepresentation(self.scheme.int_proc,
                                             target_scheme.int_proc)
 
+        leading_obs_extractor = LeadingObservableExtractor(leading_observable_config)
+
         def gen_admission(i):
             interventions = InpatientInterventions(
                 proc=procedures[i],
@@ -679,7 +682,7 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
                 adm_interval=adm_interval[i])
 
             obs = observables[i]
-            lead_obs = obs.make_leading_observable(leading_observable_config)
+            lead_obs = leading_obs_extractor(obs)
 
             if time_binning is None:
                 interventions = interventions.segment_proc(proc_repr)

@@ -22,6 +22,15 @@ from ..utils import tqdm_constructor, tree_hasnan, write_config, load_config
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
+    """
+    Find the first occurrence admission index of each outcome in a list of sorted admissions.
+
+    Args:
+        sorted_admissions (List[Admission]): a list of sorted Admission objects.
+
+    Returns:
+        np.ndarray: an array containing the admission index of the first occurrence of each outcome for each admission. -1 means no occurrence.
+    """
     first_occurrence = np.empty_like(
         sorted_admissions[0].outcome.vec,
         dtype=type[sorted_admissions[0].admission_id])
@@ -37,6 +46,14 @@ class TrajectoryConfig(Config):
 
 
 class PatientTrajectory(InpatientObservables):
+    """
+    Represents a patient's trajectory of observations over time.
+
+    Attributes:
+        time (jnp.ndarray): array of timestamps for the observations.
+        value (jnp.ndarray): array of observation values.
+    """
+
     time: jnp.ndarray
     value: jnp.ndarray
 
@@ -62,6 +79,24 @@ class PatientTrajectory(InpatientObservables):
 
 
 class AdmissionPrediction(Data):
+    """
+    Represents predictions associated with an admission in a healthcare system.
+
+    Attributes:
+        admission (Admission): the admission information.
+        outcome (Optional[CodesVector]): the *predicted* outcome.
+        observables (Optional[List[InpatientObservables]]): the list of *predicted* inpatient observables/measurements.
+        leading_observable (Optional[List[InpatientObservables]]): the list of *predicted* time-leading inpatient observables/measurements.
+        trajectory (Optional[PatientTrajectory]): the patient *predicted* trajectory, which is recorded based on TrajectoryConfig configuration.
+        associative_regularisation (Optional[Dict[str, jnp.ndarray]]): the associative regularisation data through the inference.
+        auxiliary_loss (Optional[Dict[str, jnp.ndarray]]): some auxiliary loss information.
+        other (Optional[Dict[str, jnp.ndarray]]): other additional data.
+
+    Methods:
+        has_nans(): checks if any of the attributes contain NaN values.
+        defragment_observables(): in case each of `observables` and `leading_observable` are sharded over lists, combine them into one object for each.
+    """
+
     admission: Admission
     outcome: Optional[CodesVector] = None
     observables: Optional[List[InpatientObservables]] = None
@@ -92,8 +127,47 @@ class AdmissionPrediction(Data):
 
 
 class Predictions(dict):
+    """
+    A dictionary-like class for storing and manipulating prediction data.
+
+    This class extends the built-in `dict` class and provides additional methods
+    for saving, loading, filtering, and analyzing prediction data.
+
+
+    Methods:
+        save: save the predictions to a file.
+        load: load predictions from a file.
+        add: add a prediction to the collection.
+        defragment_observables: defragment the sharded observables in each admission prediction.
+        subject_ids: get a list of subject IDs in the predictions.
+        get_predictions: get a list of predictions for the specified subject IDs.
+        associative_regularisation: calculate the associative regularization term.
+        get_patient_trajectories: get the trajectories of patients in the predictions.
+        average_interval_hours: calculate the average interval hours of the predictions.
+        filter_nans: filter out admission predictions with NaN values.
+        has_dx_predictions: check if the predictions have diagnosis predictions.
+        has_auxiliary_loss: check if the predictions have auxiliary loss.
+        prediction_dx_loss: calculate the diagnosis loss (the predicted outcome) of the predictions.
+        predicted_observables_list: get a list of *predicted* observables.
+        predicted_leading_observables_list: get a list of *predicted* leading observables.
+        observables_list: get a list of *ground-truth* observables in the predictions.
+        leading_observables_list: get a list of *ground-truth* leading observables in the predictions.
+        prediction_obs_loss: calculate the observation loss of the predictions.
+        prediction_lead_loss: calculate the leading observation loss of the predictions.
+        prediction_lead_data: get the data for leading observation loss calculation.
+        outcome_first_occurrence_masks: get the masks for the first occurrence of outcomes.
+    """
 
     def save(self, path: Union[str, Path]):
+        """
+        Save the predictions to a file.
+
+        Args:
+            path: the path to the file where the predictions will be saved.
+
+        Returns:
+            None
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path = path.with_suffix('.pickle')
@@ -102,18 +176,42 @@ class Predictions(dict):
 
     @staticmethod
     def load(path: Union[str, Path]) -> jtu.pytree:
+        """
+        Load predictions from a file.
+
+        Args:
+            path: the path to the file containing the predictions.
+
+        Returns:
+            The loaded predictions.
+        """
         path = Path(path)
         with open(path.with_suffix('.pickle'), 'rb') as file:
             return pickle.load(file)
 
-    def add(self, subject_id: str, prediction: AdmissionPrediction):
+    def add(self, subject_id: str, prediction: AdmissionPrediction) -> None:
+        """
+        Add an admission prediction to the collection.
 
+        Args:
+            subject_id: the ID of the subject.
+            prediction: the prediction to be added.
+
+        Returns:
+            None
+        """
         if subject_id not in self:
             self[subject_id] = {}
 
         self[subject_id][prediction.admission.admission_id] = prediction
 
     def defragment_observables(self):
+        """
+        Defragment the sharded observables in each admission prediction.
+
+        Returns:
+            the defragmented predictions (a copy of the original predictions).
+        """
         preds = deepcopy(self)
         for sid in preds.keys():
             for aid in preds[sid].keys():
@@ -126,20 +224,50 @@ class Predictions(dict):
         return preds
 
     def _defragment_observables(self):
+        """
+        Internal method for defragmenting observables.
+
+        Returns:
+            None
+        """
         for sid in tqdm_constructor(self.keys()):
             for aid in self[sid].keys():
                 self[sid][aid] = self[sid][aid].defragment_observables()
 
     @property
     def subject_ids(self):
+        """
+        Get a list of subject IDs in the predictions.
+
+        Returns:
+            a list of subject IDs.
+        """
         return sorted(self.keys())
 
     def get_predictions(self, subject_ids: Optional[List[str]] = None):
+        """
+        Get a list of predictions for the specified subject IDs.
+
+        Args:
+            subject_ids: the list of subject IDs. If None, all subject IDs will be used.
+
+        Returns:
+            A list of predictions.
+        """
         if subject_ids is None:
             subject_ids = self.keys()
         return sum((list(self[sid].values()) for sid in subject_ids), [])
 
     def associative_regularisation(self, regularisation: Config):
+        """
+        Calculate the associative regularization term.
+
+        Args:
+            regularisation: the regularization configuration.
+
+        Returns:
+            The associative regularization term.
+        """
         preds = self.get_predictions()
         reg = []
         for p in preds:
@@ -148,8 +276,16 @@ class Predictions(dict):
                     reg.append(term * regularisation.get(k))
         return sum(reg)
 
-    def get_patient_trajectories(self,
-                                 subject_ids: Optional[List[str]] = None):
+    def get_patient_trajectories(self, subject_ids: Optional[List[str]] = None):
+        """
+        Get the trajectories of patients in the predictions.
+
+        Args:
+            subject_ids: the list of subject IDs. If None, all subject IDs will be used.
+
+        Returns:
+            A dictionary mapping subject IDs to patient trajectories.
+        """
         if subject_ids is None:
             subject_ids = sorted(self.keys())
 
@@ -161,11 +297,23 @@ class Predictions(dict):
         return trajectories
 
     def average_interval_hours(self):
+        """
+        Calculate the average interval hours of the predictions.
+
+        Returns:
+            The average interval hours.
+        """
         preds = self.get_predictions()
         adms = [r.admission for r in preds]
         return np.mean([a.interval_hours for a in adms])
 
     def filter_nans(self):
+        """
+        Filter out predictions with NaN values.
+
+        Returns:
+            the filtered predictions (a copy of the original predictions).
+        """
         if len(self) == 0:
             return self
 
@@ -195,15 +343,36 @@ class Predictions(dict):
 
     @property
     def has_dx_predictions(self):
+        """
+        Check if the predictions have diagnosis predictions.
+
+        Returns:
+            True if all predictions have diagnosis predictions, False otherwise.
+        """
         preds = self.get_predictions()
         return all([p.outcome is not None for p in preds])
 
     @property
     def has_auxiliary_loss(self):
+        """
+        Check if the predictions have auxiliary loss.
+
+        Returns:
+            True if all predictions have auxiliary loss, False otherwise.
+        """
         preds = self.get_predictions()
         return all([p.auxiliary_loss is not None for p in preds])
 
     def prediction_dx_loss(self, dx_loss):
+        """
+        Calculate the diagnosis loss of the predictions.
+
+        Args:
+            dx_loss: the diagnosis loss function.
+
+        Returns:
+            The diagnosis loss.
+        """
         if not self.has_dx_predictions:
             return 0.
 
@@ -218,6 +387,12 @@ class Predictions(dict):
 
     @property
     def predicted_observables_list(self):
+        """
+        Get a list of *predicted* observables.
+
+        Returns:
+            A list of *predicted* observables.
+        """
         preds = self.get_predictions()
         obs_l = []
 
@@ -233,6 +408,12 @@ class Predictions(dict):
 
     @property
     def predicted_leading_observables_list(self):
+        """
+        Get a list of *predicted* leading observables.
+
+        Returns:
+            A list of *predicted* leading observables.
+        """
         preds = self.get_predictions()
         obs_l = []
 
@@ -248,6 +429,12 @@ class Predictions(dict):
 
     @property
     def observables_list(self):
+        """
+        Get a list of *ground-truth* observables in the predictions.
+
+        Returns:
+            A list of *ground-truth*  observables.
+        """
         preds = self.get_predictions()
         obs_l = []
 
@@ -263,6 +450,12 @@ class Predictions(dict):
 
     @property
     def leading_observables_list(self):
+        """
+        Get a list of *ground-truth* leading observables in the predictions.
+
+        Returns:
+            A list of *ground-truth* leading observables.
+        """
         preds = self.get_predictions()
         obs_l = []
 
@@ -277,6 +470,15 @@ class Predictions(dict):
         return obs_l
 
     def prediction_obs_loss(self, obs_loss):
+        """
+        Calculate the observation loss of the predictions.
+
+        Args:
+            obs_loss: the observation loss function.
+
+        Returns:
+            The observation loss.
+        """
         l_true = [obs.value for obs in self.observables_list]
         l_mask = [obs.mask for obs in self.observables_list]
         l_pred = [obs.value for obs in self.predicted_observables_list]
@@ -290,6 +492,15 @@ class Predictions(dict):
         return jnp.where(jnp.isnan(loss_v), 0., loss_v)
 
     def prediction_lead_loss(self, lead_loss):
+        """
+        Calculate the leading observation loss of the predictions.
+
+        Args:
+            lead_loss: the leading observation loss function.
+
+        Returns:
+            The leading observation loss.
+        """
         loss_v = []
         weight_v = []
         for pred in self.get_predictions():
@@ -324,6 +535,15 @@ class Predictions(dict):
         return jnp.nansum(loss_v * weight_v)
 
     def prediction_lead_data(self, obs_index):
+        """
+        Get the data for leading observation loss calculation.
+
+        Args:
+            obs_index: the coding scheme index of the particular observation in leading_observable.
+
+        Returns:
+            The data for leading observation loss calculation.
+        """
         preds = self.get_predictions()
 
         y = []
@@ -380,6 +600,17 @@ class Predictions(dict):
 
 
 class InterfaceConfig(Config):
+    """
+    Configuration class for the interface.
+
+    Attributes:
+        demographic_vector (DemographicVectorConfig): configuration for the demographic vector.
+        leading_observable (Optional[LeadingObservableExtractorConfig]): configuration for the leading observable (optional).
+        scheme (Dict[str, str]): dictionary representing the scheme.
+        cache (Optional[str]): cache path to store the interface after generation (optional).
+        time_binning (Optional[int]): time binning configuration to aggregate observables/measurements over intervals (optional).
+    """
+
     demographic_vector: DemographicVectorConfig
     leading_observable: Optional[LeadingObservableExtractorConfig]
     scheme: Dict[str, str]
@@ -407,6 +638,42 @@ class InterfaceConfig(Config):
 
 
 class Patients(Module):
+    """
+    A class representing a collection of patients in the EHR system, in ML-compliant format.
+
+    Attributes:
+        config (InterfaceConfig): the configuration for the interface.
+        dataset (Dataset): the dataset containing the patient data.
+        subjects (Dict[str, Patient]): a dictionary of patient objects, where the keys are subject IDs.
+        _scheme (DatasetScheme): the target scheme for the dataset.
+
+    Methods:
+        subject_ids: returns a sorted list of subject IDs.
+        scheme: returns the target scheme for the dataset.
+        schemes: returns a tuple containing the dataset scheme and the target scheme.
+        random_splits: generates random splits of the dataset.
+        __len__: returns the number of patients in the dataset.
+        equal_config: checks if the given configuration is equal to the cached configuration.
+        save: saves the Patients object to disk.
+        load: loads a Patients object from disk.
+        try_load_cached: tries to load a cached Patients object, or creates a new one if the cache does not match the configuration.
+        load_subjects: loads the subjects from the dataset.
+        device_batch: loads the subjects and moves them to the device (e.g. GPU).
+        epoch_splits: generates epoch splits for the subjects.
+        batch_gen: generates batches of subjects.
+        n_admissions: returns the total number of admissions for the given subjects.
+        n_segments: returns the total number of segments for the given subjects.
+        n_obs_times: returns the total number of observation timestamps for the given subjects.
+        d2d_interval_days: returns the total number of days between the first and last discharge.
+        interval_days: returns the total number of days between admissions for the given subjects.
+        interval_hours: returns the total number of hours between admissions for the given subjects.
+        p_obs: returns the proportion of present observations in the timestamped vectorized representation in the dataset.
+        obs_coocurrence_matrix: returns the co-occurrence (or co-presence) matrix of the observables.
+        size_in_bytes: returns the size of the Patients object in bytes.
+        _unscaled_observation: unscales the observation values, undos the preprocessing scaling.
+        _unscaled_leading_observable: unscales the leading observable values, undos the preprocessing scaling.
+    """
+
     config: InterfaceConfig
     dataset: Dataset
     subjects: Dict[str, Patient]
@@ -424,32 +691,58 @@ class Patients(Module):
 
     @property
     def subject_ids(self):
+        """Get the list of subject IDs."""
         return sorted(self.subjects.keys())
 
     @classmethod
     def external_argnames(cls):
+        """Get the external argument names."""
         return ['dataset', 'subjects']
 
     @property
     def scheme(self):
+        """Get the scheme."""
         return self._scheme
 
     @property
     def schemes(self):
+        """Get the schemes."""
         return (self.dataset.scheme, self._scheme)
 
     def random_splits(self,
                       splits: List[float],
                       random_seed: int = 42,
                       balanced: str = 'subjects'):
+        """Generate random splits of the dataset.
+
+        Args:
+            splits (List[float]): list of split ratios.
+            random_seed (int, optional): random seed for reproducibility. Defaults to 42.
+            balanced (str, optional): balancing strategy. Defaults to 'subjects'.
+
+        Returns:
+            Tuple[List[str]]: Tuple of lists containing the split subject IDs.
+        """
         return self.dataset.random_splits(splits, self.subjects.keys(),
                                           random_seed, balanced)
 
     def __len__(self):
+        """Get the number of subjects."""
         return len(self.subjects)
 
     @staticmethod
     def equal_config(path, config=None, dataset_config=None, subject_ids=None):
+        """Check if the configuration is equal to the cached configuration.
+
+        Args:
+            path: path to the configuration file.
+            config: interface configuration.
+            dataset_config: Dataset configuration.
+            subject_ids: list of subject IDs.
+
+        Returns:
+            bool: True if the configurations are equal, False otherwise.
+        """
         path = Path(path)
         try:
             cached_dsconfig = load_config(
@@ -478,12 +771,16 @@ class Patients(Module):
         return all(a == b for a, b in pairs)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
+        """Save the Patients object to disk.
 
+        Args:
+            path (Union[str, Path]): path to save the Patients object.
+            overwrite (bool, optional): whether to overwrite existing files. Defaults to False.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.dataset.save(path.with_suffix('.dataset'), overwrite)
 
-        # rest = eqx.tree_at(lambda x: x.dataset, self, None)
         subj_path = path.with_suffix('.subjects.pickle')
         if subj_path.exists():
             if overwrite:
@@ -499,7 +796,15 @@ class Patients(Module):
         write_config(self.subject_ids, path.with_suffix('.subject_ids.json'))
 
     @staticmethod
-    def load(path: Union[str, Path]) -> jtu.pytree:
+    def load(path: Union[str, Path]) -> Patients:
+        """Load the Patients object from disk.
+
+        Args:
+            path (Union[str, Path]): path to load the Patients object from.
+
+        Returns:
+            Patients: loaded Patients object.
+        """
         path = Path(path)
         with open(path.with_suffix('.subjects.pickle'), 'rb') as file:
             subjects = pickle.load(file)
@@ -516,6 +821,18 @@ class Patients(Module):
                         dataset_generator: Callable[[DatasetConfig], Dataset],
                         subject_subset: Optional[List[str]] = None,
                         num_workers: int = 8):
+        """Try to load the Patients object from cache, or create a new one if cache is not available or does not match the current config.
+
+        Args:
+            config (InterfaceConfig): Interface configuration.
+            dataset_config (DatasetConfig): Dataset configuration.
+            dataset_generator (Callable[[DatasetConfig], Dataset]): Dataset generator function, used to apply further post-processing on the dataset before generating the Patients object.
+            subject_subset (Optional[List[str]], optional): list of subject IDs to load. Defaults to None.
+            num_workers (int, optional): number of workers for parallel processing. Defaults to 8.
+
+        Returns:
+            Patients: loaded or created Patients object.
+        """
         if config.cache is None or not Patients.equal_config(
                 config.cache, config, dataset_config, subject_subset):
             if config.cache is not None:
@@ -539,6 +856,15 @@ class Patients(Module):
     def load_subjects(self,
                       subject_ids: Optional[List[str]] = None,
                       num_workers: int = 1):
+        """Load subjects from the dataset.
+
+        Args:
+            subject_ids (Optional[List[str]], optional): list of subject IDs to load. Defaults to None.
+            num_workers (int, optional): number of workers for parallel processing. Defaults to 1.
+
+        Returns:
+            Patients: Patients object with loaded subjects.
+        """
         if subject_ids is None:
             subject_ids = self.dataset.subject_ids
 
@@ -557,6 +883,14 @@ class Patients(Module):
         return interface
 
     def device_batch(self, subject_ids: Optional[List[str]] = None):
+        """Load subjects and move them to the device. If subject_ids is None, load all subjects.
+
+        Args:
+            subject_ids (Optional[List[str]], optional): list of subject IDs to load. Defaults to None.
+
+        Returns:
+            Patients: Patients object with subjects loaded and moved to the device.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -573,6 +907,16 @@ class Patients(Module):
                      subject_ids: Optional[List[str]],
                      batch_n_admissions: int,
                      ignore_first_admission: bool = False):
+        """Generate epoch splits for training.
+
+        Args:
+            subject_ids (Optional[List[str]]): list of subject IDs to split.
+            batch_n_admissions (int): number of admissions per batch.
+            ignore_first_admission (bool, optional): whether to ignore the first admission from the counts. Defaults to False.
+
+        Returns:
+            List[List[str]]: List of lists containing the split subject IDs.
+        """
         if subject_ids is None:
             subject_ids = list(self.subjects.keys())
 
@@ -603,6 +947,16 @@ class Patients(Module):
                   subject_ids,
                   batch_n_admissions: int,
                   ignore_first_admission: bool = False):
+        """Generate batches of subjects.
+
+        Args:
+            subject_ids: list of subject IDs.
+            batch_n_admissions (int): number of admissions per batch.
+            ignore_first_admission (bool, optional): whether to ignore the first admission from the counts. Defaults to False.
+
+        Yields:
+            Patients: Patients object with a batch of subjects.
+        """
         splits = self.epoch_splits(subject_ids, batch_n_admissions,
                                    ignore_first_admission)
         for split in splits:
@@ -611,6 +965,15 @@ class Patients(Module):
     def n_admissions(self,
                      subject_ids=None,
                      ignore_first_admission: bool = False):
+        """Get the total number of admissions.
+
+        Args:
+            subject_ids: list of subject IDs.
+            ignore_first_admission (bool, optional): Whether to ignore the first admission from the counts. Defaults to False.
+
+        Returns:
+            int: Total number of admissions.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
         if ignore_first_admission:
@@ -619,6 +982,14 @@ class Patients(Module):
         return sum(len(self.subjects[s].admissions) for s in subject_ids)
 
     def n_segments(self, subject_ids=None):
+        """Get the total number of segments.
+
+        Args:
+            subject_ids: list of subject IDs.
+
+        Returns:
+            int: total number of segments.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -627,6 +998,14 @@ class Patients(Module):
             for a in self.subjects[s].admissions)
 
     def n_obs_times(self, subject_ids=None):
+        """Get the total number of observation times.
+
+        Args:
+            subject_ids: list of subject IDs.
+
+        Returns:
+            int: total number of observation times.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -635,12 +1014,28 @@ class Patients(Module):
             for a in self.subjects[s].admissions for o in a.observables)
 
     def d2d_interval_days(self, subject_ids=None):
+        """Get the total number of days between first discharge and last discharge.
+
+        Args:
+            subject_ids: list of subject IDs.
+
+        Returns:
+            int: total number of days between first discharge and last discharge.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
         return sum(self.subjects[s].d2d_interval_days for s in subject_ids)
 
     def interval_days(self, subject_ids=None):
+        """Get the total number of days in-hospital.
+
+        Args:
+            subject_ids: List of subject IDs.
+
+        Returns:
+            int: total number of days in-hospital.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -648,6 +1043,14 @@ class Patients(Module):
                    for a in self.subjects[s].admissions)
 
     def interval_hours(self, subject_ids=None):
+        """Get the total number of hours in-hospital.
+
+        Args:
+            subject_ids: List of subject IDs.
+
+        Returns:
+            int: Total number of hours in-hospital.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
 
@@ -655,6 +1058,14 @@ class Patients(Module):
                    for a in self.subjects[s].admissions)
 
     def p_obs(self, subject_ids=None):
+        """Get the proportion of present observation over all unique timestamps for the given subject IDs.
+
+        Args:
+            subject_ids: list of subject IDs.
+
+        Returns:
+            float: proportion of observables presence per unique timestamp.
+        """
         if subject_ids is None:
             subject_ids = self.subjects.keys()
         return sum(o.mask.sum() for s in subject_ids
@@ -663,6 +1074,11 @@ class Patients(Module):
             self._scheme.obs)
 
     def obs_coocurrence_matrix(self):
+        """Compute the co-occurrence (or co-presence) matrix of observables.
+
+        Returns:
+            jnp.ndarray: co-occurrence (or co-presence) matrix of observables.
+        """
         obs = []
         for s in self.subjects.values():
             for a in s.admissions:
@@ -673,6 +1089,11 @@ class Patients(Module):
         return obs.T @ obs
 
     def size_in_bytes(self):
+        """Get the size of the Patients object in bytes.
+
+        Returns:
+            int: size of the Patients object in bytes.
+        """
         is_arr = eqx.filter(self.subjects, eqx.is_array)
         arr_size = jtu.tree_map(
             lambda a, m: a.size * a.itemsize
@@ -680,6 +1101,14 @@ class Patients(Module):
         return sum(jtu.tree_leaves(arr_size))
 
     def _unscaled_observation(self, obs_l: List[InpatientObservables]):
+        """Unscale the observation values, undo the preprocessing scaling.
+
+        Args:
+            obs_l (List[InpatientObservables]): list of InpatientObservables.
+
+        Returns:
+            List[InpatientObservables]: list of unscaled InpatientObservables.
+        """
         obs_scaler = self.dataset.scalers_history['obs']
         if not isinstance(obs_l, list):
             obs_l = [obs_l]
@@ -690,6 +1119,14 @@ class Patients(Module):
         return unscaled_obs
 
     def _unscaled_leading_observable(self, lead_l: List[InpatientObservables]):
+        """Unscale the leading observable values, undo the preprocessing scaling.
+
+        Args:
+            lead_l (List[InpatientObservables]): list of InpatientObservables.
+
+        Returns:
+            List[InpatientObservables]: ist of unscaled InpatientObservables.
+        """
         lead_scaler = self.dataset.scalers_history['obs']
         obs_index = self.config.leading_observable.index
         if not isinstance(lead_l, list):
@@ -701,6 +1138,14 @@ class Patients(Module):
         return unscaled_lead
 
     def _unscaled_input(self, input_: InpatientInterventions):
+        """Unscale the input values, undo the preprocessing scaling.
+
+        Args:
+            input_ (InpatientInterventions): input rates to unscale.
+
+        Returns:
+            InpatientInterventions: unscaled input rates.
+        """
         # (T, D)
         scaled_rate = input_.segmented_input
         input_scaler = self.dataset.scalers_history['int_input']
@@ -708,6 +1153,14 @@ class Patients(Module):
         return eqx.tree_at(lambda o: o.segmented_input, input_, unscaled_rate)
 
     def _unscaled_admission(self, inpatient_admission: Admission):
+        """Unscale the admission observations, leading observables, and interventions.
+
+        Args:
+            inpatient_admission (Admission): the admission object to unscale its relevant components.
+
+        Returns:
+            Admission: unscaled admission object (from a copy of the original).
+        """
         adm = eqx.tree_at(
             lambda o: o.observables, inpatient_admission,
             self._unscaled_observation(inpatient_admission.observables))
@@ -721,12 +1174,28 @@ class Patients(Module):
         return adm
 
     def unscaled_subject(self, subject_id: str):
+        """Apply the unscaling to all admissions in a subject.
+
+        Args:
+            subject_id (str): subject ID.
+
+        Returns:
+            Patient: patient object with the unscaled relevant components (from a copy of the original).
+        """
         s = self.subjects[subject_id]
         adms = s.admissions
         adms = [self._unscaled_admission(a) for a in adms]
         return eqx.tree_at(lambda o: o.admissions, s, adms)
 
     def subject_size_in_bytes(self, subject_id):
+        """Get the size of the subject object in bytes.
+
+        Args:
+            subject_id (str): subject ID.
+
+        Returns:
+            int: size of the subject object in bytes.
+        """
         is_arr = eqx.filter(self.subjects[subject_id], eqx.is_array)
         arr_size = jtu.tree_map(
             lambda a, m: a.size * a.itemsize
@@ -734,9 +1203,28 @@ class Patients(Module):
         return sum(jtu.tree_leaves(arr_size))
 
     def outcome_frequency_vec(self, subjects: List[str]):
+        """Get the outcome frequency vector for a list of subjects.
+
+        Args:
+            subjects (List[str]): list of subject IDs.
+
+        Returns:
+            jnp.ndarray: outcome frequency vector.
+        """
         return sum(self.subjects[i].outcome_frequency_vec() for i in subjects)
 
     def outcome_frequency_partitions(self, n_partitions, subjects: List[str]):
+        """
+        Get the outcome codes partitioned by their frequency of occurrence into `n_partitions` partitions. The codes in each partition contributes to 1 / n_partitions of the all outcome occurrences.
+        
+        Args:
+            n_partitions (int): number of partitions.
+            subjects (List[str]): list of subject IDs.
+
+        Returns:
+            List[List[int]]: list of outcome codes partitioned by frequency into `n_partitions` partitions.
+        
+        """
         frequency_vec = self.outcome_frequency_vec(subjects)
         frequency_vec = frequency_vec / frequency_vec.sum()
         sorted_codes = np.argsort(frequency_vec)
@@ -747,14 +1235,32 @@ class Patients(Module):
         return np.hsplit(sorted_codes, splitters)
 
     def outcome_first_occurrence(self, subject_id):
+        """Get the first occurrence admission index of each outcome for a subject. If an outcome does not occur, the index is set to -1.
+
+        Args:
+            subject_id (str): subject ID.
+
+        Returns:
+            int: first occurrence admission index of each outcome for a subject.
+        """
         return outcome_first_occurrence(self.subjects[subject_id].admissions)
 
     def outcome_first_occurrence_masks(self, subject_id):
+        """Get a list of masks indicating whether an outcome occurs for a subject for the first time.
+
+        Args:
+            subject_id (str): subject ID.
+
+        Returns:
+            List[bool]: list of masks indicating whether an outcome occurs for a subject for the first time.
+
+        """
         adms = self.subjects[subject_id].admissions
         first_occ_adm_id = outcome_first_occurrence(adms)
         return [first_occ_adm_id == a.admission_id for a in adms]
 
     def outcome_all_masks(self, subject_id):
+        """Get a list of full-masks with the same shape as the outcome vector."""
         adms = self.subjects[subject_id].admissions
         if isinstance(adms[0].outcome.vec, jnp.ndarray):
             _np = jnp
