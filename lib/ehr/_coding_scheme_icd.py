@@ -17,6 +17,35 @@ _CCS_DIR = os.path.join(_RSC_DIR, "CCS")
 
 
 class ICD(HierarchicalScheme):
+    """
+    Class representing the ICD (International Classification of Diseases) coding scheme.
+
+    This class inherits from the HierarchicalScheme class and provides additional methods
+    for loading conversion tables, analyzing conversions, and registering mappings.
+
+
+    Methods:
+        add_dots(code: str) -> str:
+            return the dotted code textual representation.
+
+        create_scheme():
+            abstract method for creating the ICD scheme.
+
+        _deselect_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
+            deselects a subtree from the given parent-to-child dictionary.
+
+        _select_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
+            selects a subtree from the given parent-to-child dictionary.
+
+        load_conv_table(s_scheme: ICD, t_scheme: ICD, conv_fname: str) -> Dict[str, Union[pd.DataFrame, str, Set[str]]]:
+            loads the conversion table from the specified file.
+
+        analyse_conversions(s_scheme: ICD, t_scheme: ICD, conv_fname: str) -> pd.DataFrame:
+            analyzes the conversions between the source and target schemes using the given conversion file.
+
+        register_mappings(s_scheme: str, t_scheme: str, conv_fname: str):
+            registers the mappings between the source and target schemes using the given conversion file.
+    """
 
     @staticmethod
     @abstractmethod
@@ -213,7 +242,7 @@ class DxICD10(ICD):
     def create_scheme(cls):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
         config = CodingSchemeConfig(name='dx_icd10')
-        CodingScheme.register_scheme(HierarchicalScheme(config, **cls.distill_icd10_xml('icd10cm_codes_2023.txt.gz')))
+        CodingScheme.register_scheme(DxICD10(config, **cls.distill_icd10_xml('icd10cm_tabular_2023.xml.gz')))
 
 
 class PrICD10(ICD):
@@ -265,6 +294,7 @@ class PrICD10(ICD):
         dag_codes = list(map(code2dag.get, codes))
         dag_codes.extend(sorted(pt2ch))
         dag_index = dict(zip(dag_codes, range(len(dag_codes))))
+        dag_desc.update({c: c for c in set(dag_codes) - set(dag_desc)})
 
         return {
             'codes': codes,
@@ -273,14 +303,14 @@ class PrICD10(ICD):
             'code2dag': code2dag,
             'dag_codes': dag_codes,
             'dag_index': dag_index,
-            'dag_desc': desc,
+            'dag_desc': dag_desc,
             'pt2ch': pt2ch
         }
 
     @classmethod
     def create_scheme(cls):
-        CodingScheme.register_scheme(HierarchicalScheme(CodingSchemeConfig(name='pr_icd10'),
-                                                        **cls.distill_icd10_xml('icd10pcs_codes_2023.txt.gz')))
+        CodingScheme.register_scheme(PrICD10(CodingSchemeConfig(name='pr_icd10'),
+                                             **cls.distill_icd10_xml('icd10pcs_codes_2023.txt.gz')))
 
 
 class DxICD9(ICD):
@@ -363,10 +393,10 @@ class DxICD9(ICD):
         dag_desc = dict(zip(df['NODE_IDX'], df['LABEL']))
 
         return {
-            'icd_codes': icd_codes,
-            'icd_index': icd_index,
-            'icd_desc': icd_desc,
-            'icd2dag': icd2dag,
+            'codes': icd_codes,
+            'index': icd_index,
+            'desc': icd_desc,
+            'code2dag': icd2dag,
             'dag_codes': dag_codes,
             'dag_index': dag_index,
             'dag_desc': dag_desc
@@ -388,8 +418,8 @@ class DxICD9(ICD):
 
         d = cls.generate_dictionaries(df)
 
-        CodingScheme.register_scheme(HierarchicalScheme(CodingSchemeConfig(name='dx_icd9'),
-                                                        **d, pt2ch=pt2ch))
+        CodingScheme.register_scheme(DxICD9(CodingSchemeConfig(name='dx_icd9'),
+                                            **d, pt2ch=pt2ch))
 
 
 class PrICD9(ICD):
@@ -420,8 +450,8 @@ class PrICD9(ICD):
 
         d = DxICD9.generate_dictionaries(df)
 
-        CodingScheme.register_scheme(HierarchicalScheme(CodingSchemeConfig(name='pr_icd9'),
-                                                        **d, pt2ch=pt2ch))
+        CodingScheme.register_scheme(PrICD9(CodingSchemeConfig(name='pr_icd9'),
+                                            **d, pt2ch=pt2ch))
 
 
 class CCS(HierarchicalScheme):
@@ -533,10 +563,9 @@ class CCS(HierarchicalScheme):
     def code_ancestors(cls, code: str, include_itself: bool) -> Set[str]:
         return cls._code_ancestors_dots(code, include_itself)
 
-    @abstractmethod
     @classmethod
     def create_scheme(cls):
-        pass
+        raise NotImplementedError()
 
 
 class DxCCS(CCS):
@@ -551,11 +580,11 @@ class DxCCS(CCS):
         pt2ch = cls.parent_child_mappings(df)
         desc = cls.desc_mappings(df)
         codes = sorted(desc.keys())
-        CodingScheme.register_scheme(HierarchicalScheme(CodingSchemeConfig(name='dx_ccs'),
-                                                        pt2ch=pt2ch,
-                                                        codes=codes,
-                                                        index=dict(zip(codes, range(len(codes)))),
-                                                        desc=desc))
+        CodingScheme.register_scheme(DxCCS(CodingSchemeConfig(name='dx_ccs'),
+                                           pt2ch=pt2ch,
+                                           codes=codes,
+                                           index=dict(zip(codes, range(len(codes)))),
+                                           desc=desc))
 
 
 class PrCCS(CCS):
@@ -570,11 +599,11 @@ class PrCCS(CCS):
         pt2ch = cls.parent_child_mappings(df)
         desc = cls.desc_mappings(df)
         codes = sorted(desc.keys())
-        CodingScheme.register_scheme(HierarchicalScheme(CodingSchemeConfig(name='pr_ccs'),
-                                                        pt2ch=pt2ch,
-                                                        codes=codes,
-                                                        index=dict(zip(codes, range(len(codes)))),
-                                                        desc=desc))
+        CodingScheme.register_scheme(PrCCS(CodingSchemeConfig(name='pr_ccs'),
+                                           pt2ch=pt2ch,
+                                           codes=codes,
+                                           index=dict(zip(codes, range(len(codes)))),
+                                           desc=desc))
 
 
 class FlatCCS(FlatScheme):
@@ -638,13 +667,12 @@ class FlatCCS(FlatScheme):
         CodeMap.register_map(icd9_scheme.name, flatccs_scheme.name,
                              CodeMap(icd92flatccs_config, icd92flatccs))
 
-    @abstractmethod
     @classmethod
     def create_scheme(cls):
-        pass
+        raise NotImplementedError()
 
 
-class DxFlatCCSOps(FlatCCS):
+class DxFlatCCS(FlatCCS):
     _SCHEME_FILE = '$dxref 2015.csv.gz'
 
     @classmethod
@@ -652,13 +680,13 @@ class DxFlatCCSOps(FlatCCS):
         dx_icd9 = CodingScheme.from_name('dx_icd9')
         cols = cls.flatccs_columns(dx_icd9)
         codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(FlatScheme(CodingSchemeConfig('dx_flatccs'),
-                                                codes=codes,
-                                                index=dict(zip(codes, range(len(codes)))),
-                                                desc=dict(zip(cols['code'], cols['desc']))))
+        CodingScheme.register_scheme(DxFlatCCS(CodingSchemeConfig('dx_flatccs'),
+                                               codes=codes,
+                                               index=dict(zip(codes, range(len(codes)))),
+                                               desc=dict(zip(cols['code'], cols['desc']))))
 
 
-class PrFlatCCSOps(FlatCCS):
+class PrFlatCCS(FlatCCS):
     _SCHEME_FILE = '$prref 2015.csv.gz'
 
     @classmethod
@@ -666,10 +694,10 @@ class PrFlatCCSOps(FlatCCS):
         pr_icd9 = CodingScheme.from_name('pr_icd9')
         cols = cls.flatccs_columns(pr_icd9)
         codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(FlatScheme(CodingSchemeConfig('pr_flatccs'),
-                                                codes=codes,
-                                                index=dict(zip(codes, range(len(codes)))),
-                                                desc=dict(zip(cols['code'], cols['desc']))))
+        CodingScheme.register_scheme(PrFlatCCS(CodingSchemeConfig('pr_flatccs'),
+                                               codes=codes,
+                                               index=dict(zip(codes, range(len(codes)))),
+                                               desc=dict(zip(cols['code'], cols['desc']))))
 
 
 def setup_scheme_loaders():
@@ -679,8 +707,8 @@ def setup_scheme_loaders():
     CodingScheme.register_scheme_loader('pr_icd9', PrICD9.create_scheme)
     CodingScheme.register_scheme_loader('dx_ccs', DxCCS.create_scheme)
     CodingScheme.register_scheme_loader('pr_ccs', PrCCS.create_scheme)
-    CodingScheme.register_scheme_loader('dx_flatccs', DxFlatCCSOps.create_scheme)
-    CodingScheme.register_scheme_loader('pr_flatccs', PrFlatCCSOps.create_scheme)
+    CodingScheme.register_scheme_loader('dx_flatccs', DxFlatCCS.create_scheme)
+    CodingScheme.register_scheme_loader('pr_flatccs', PrFlatCCS.create_scheme)
 
     OutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_mlhc_groups', 'dx_flatccs_mlhc_groups.json')
     OutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_filter_v1', 'dx_flatccs_v1.json')

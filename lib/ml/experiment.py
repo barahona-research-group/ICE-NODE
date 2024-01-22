@@ -1,17 +1,13 @@
-from typing import Optional, List, Union, Dict, Any
-import jax.random as jrandom
-from ..ehr import (Predictions, Patients, load_dataset, load_dataset_scheme,
-                   load_dataset_config, Dataset, DatasetConfig,
-                   DemographicVectorConfig, LeadingObservableConfig,
-                   InterfaceConfig)
-from ..metric import (MetricsCollection, Metric)
-from ..utils import (translate_path, load_config)
+from typing import Optional, List, Dict, Any
 
+import jax.random as jrandom
+
+from .model import (InpatientModel, ModelConfig)
+from .trainer import (TrainerConfig, ReportingConfig,
+                      TrainerReporting)
 from ..base import Config, Module
-from .trainer import (Trainer, InTrainer, TrainerConfig, ReportingConfig,
-                      TrainerReporting, WarmupConfig)
-from .model import (InpatientModel, OutpatientModel, AbstractModel,
-                    ModelConfig)
+from ..ehr import (Patients, load_dataset, DatasetConfig,
+                   InterfaceConfig)
 
 
 class SplitConfig(Config):

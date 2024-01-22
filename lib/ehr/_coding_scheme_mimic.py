@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict
+from typing import Dict, Set, List
 
 import pandas as pd
 
@@ -23,9 +23,22 @@ MIMIC3_ETH7_COLNAME = 'ETH7'
 
 
 class AbstractGroupedProcedures(FlatScheme):
+    """
+    AbstractGroupedProcedures is a subclass of FlatScheme that represents a coding scheme for grouped procedures. The grouping enables a more concise abstract representation based on aggregation operations applied on each procedure group.
 
-    def __init__(self, groups, aggregation, aggregation_groups, **init_kwargs):
-        super().__init__(**init_kwargs)
+    Attributes:
+        groups (Dict[str, set]): a dictionary mapping group names to sets of procedure codes.
+        aggregation (List[str]): a list of aggregation methods for the groups.
+        aggregation_groups (Dict[str, set]): a dictionary mapping aggregation methods to sets of group names.
+    """
+
+    _groups: Dict[str, Set[str]]
+    _aggregation: List[str]
+    _aggregation_groups: Dict[str, Set[str]]
+
+    def __init__(self, config: CodingSchemeConfig, groups: Dict[str, Set[str]], aggregation: List[str],
+                 aggregation_groups: Dict[str, Set[str]], **init_kwargs):
+        super().__init__(config=config, **init_kwargs)
         self._groups = groups
         self._aggregation = aggregation
         self._aggregation_groups = aggregation_groups
@@ -44,6 +57,14 @@ class AbstractGroupedProcedures(FlatScheme):
 
 
 def register_mimic_ethnicity(scheme: str, filename: str, colname: str):
+    """
+    Register a MIMIC ethnicity coding scheme.
+
+    Args:
+        scheme (str): the name of the coding scheme.
+        filename (str): the filename of the ethnicity scheme file.
+        colname (str): the column name of the ethnicity codes in the file.
+    """
     filepath = os.path.join(_RSC_DIR, filename)
     df = pd.read_csv(filepath, dtype=str)
     codes = sorted(set(df[colname]))
@@ -55,6 +76,9 @@ def register_mimic_ethnicity(scheme: str, filename: str, colname: str):
 
 
 def register_mimic_ethnicity_loaders():
+    """
+    Register loaders for the mimic ethnicity coding schemes.
+    """
     Ethnicity.register_scheme_loader(ETH32_NAME,
                                      lambda: register_mimic_ethnicity(ETH32_NAME, ETH_SCHEME_FILE, ETH32_COLNAME))
     Ethnicity.register_scheme_loader(ETH5_NAME,
@@ -68,6 +92,9 @@ def register_mimic_ethnicity_loaders():
 
 
 def register_mimic_procedures():
+    """
+    Register the mimic procedure coding scheme.
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     df = df[df.group != 'exclude']
@@ -82,6 +109,9 @@ def register_mimic_procedures():
 
 
 def register_mimic_procedure_groups():
+    """
+    Register the mimic procedure groups coding scheme.
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     df = df[df.group != 'exclude']
@@ -106,7 +136,14 @@ def register_mimic_procedure_groups():
 
 class MIMICInputGroups(AbstractGroupedProcedures):
     """
-    InterventionGroup class encapsulates the similar interventions.
+    This class represents grouped input items in the MIMIC dataset.
+    It provides a property `dose_impact` that returns a dictionary mapping
+    intervention names to flags indicating that the input rate/dose should be respected for the model adopting this scheme.
+
+    Attributes:
+        _dose_impact (Dict[str, str]): A dictionary mapping intervention names
+            to their corresponding `dose_impact` flag.
+
     """
 
     _dose_impact: Dict[str, str]
@@ -115,12 +152,22 @@ class MIMICInputGroups(AbstractGroupedProcedures):
     def dose_impact(self):
         return self._dose_impact
 
-    def __init__(self, dose_impact: Dict[str, str], **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config: CodingSchemeConfig, dose_impact: Dict[str, str], **kwargs):
+        super().__init__(config=config, **kwargs)
         self._dose_impact = dose_impact
 
 
 def register_mimic_input_groups():
+    """
+    Register the MIMIC input groups coding scheme.
+
+    This function reads a CSV file containing the MIMIC input groups data, which is manually curated and stored at `lib/ehr/resources`, filters out rows with group_decision 'E' (for exclude),
+    sorts the data by 'group_decision', 'group', and 'label', and then registers the coding scheme using the extracted
+    information.
+
+    Returns:
+        None
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     df = df[df.group_decision != 'E']
@@ -151,6 +198,17 @@ def register_mimic_input_groups():
 
 
 def register_mimic_input():
+    """
+    Register the MIMIC input coding scheme.
+
+    This function reads a CSV file containing mimic4_int_grouper input data, which is manually curated and stored at `lib/ehr/resources/mimic4_int_grouper_input.csv.gz`,
+    filters out rows with group_decision 'E', sorts the data by 'group_decision',
+    'group', and 'label', and registers the coding scheme using the unique labels
+    as codes and their corresponding labels as descriptions.
+
+    Returns:
+        None
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     df = df[df.group_decision != 'E']
@@ -165,18 +223,44 @@ def register_mimic_input():
 
 
 class MIMICObservables(FlatScheme):
+    """
+    A class representing the MIMIC observables coding scheme.
+
+    This class inherits from the FlatScheme class and provides a mapping of groups
+    for the MIMIC observables.
+
+    Attributes:
+        _groups (Dict[str, str]): a dictionary mapping group names to their corresponding values.
+    """
+
     _groups: Dict[str, str]
 
-    def __init__(self, groups: Dict[str, str], **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config: CodingSchemeConfig, groups: Dict[str, str], **kwargs):
+        super().__init__(config=config, **kwargs)
         self._groups = groups
 
     @property
     def groups(self):
+        """
+        Get the dictionary mapping group names to their corresponding values.
+
+        Returns:
+            Dict[str, str]: a dictionary mapping group names to their corresponding values.
+        """
         return self._groups
 
 
 def register_observables_scheme():
+    """
+    Register the MIMIC-IV observables coding scheme.
+
+    This function reads the MIMIC-IV observables codes from a CSV file, which is manually curated and stored at `lib/ehr/resources/mimic4_obs_codes.csv.gz`,
+    creates a dictionary mapping codes to their corresponding labels and groups,
+    and registers the coding scheme with the MIMICObservables class.
+
+    Returns:
+        None
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     codes = df.code.tolist()
@@ -191,6 +275,19 @@ def register_observables_scheme():
 
 def register_mimic_eth_mapping(s_scheme: str, t_scheme: str, filename: str,
                                s_colname: str, t_colname: str):
+    """
+    Register the mapping between two ethnicity coding schemes using a CSV file.
+
+    Args:
+        s_scheme (str): the source coding scheme.
+        t_scheme (str): the target coding scheme.
+        filename (str): the name of the CSV file containing the mapping.
+        s_colname (str): the column name in the CSV file representing the source codes.
+        t_colname (str): the column name in the CSV file representing the target codes.
+
+    Returns:
+        None
+    """
     filepath = os.path.join(_RSC_DIR, filename)
     df = pd.read_csv(filepath, dtype=str)
     mapper = df.groupby(s_colname)[t_colname].apply(set).to_dict()
@@ -199,6 +296,16 @@ def register_mimic_eth_mapping(s_scheme: str, t_scheme: str, filename: str,
 
 def register_mimic4proc_mapping(s_scheme: str,
                                 t_scheme: str):
+    """
+    Register the mapping for MIMIC-IV procedure codes.
+
+    Parameters:
+    - s_scheme (str): the source coding scheme.
+    - t_scheme (str): the target coding scheme.
+
+    Returns:
+    None
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_proc.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
     mapper = {}
@@ -209,6 +316,16 @@ def register_mimic4proc_mapping(s_scheme: str,
 
 def register_mimic4input_mapping(s_scheme: str,
                                  t_schame: str):
+    """
+    Register the mapping for MIMIC-IV input codes.
+
+    Parameters:
+    - s_scheme (str): The source coding scheme.
+    - t_scheme (str): The target coding scheme.
+
+    Returns:
+    None
+    """
     filepath = os.path.join(_RSC_DIR, 'mimic4_int_grouper_input.csv.gz')
     df = pd.read_csv(filepath, dtype=str)
 
@@ -220,6 +337,15 @@ def register_mimic4input_mapping(s_scheme: str,
 
 
 def setup_scheme_loaders():
+    """
+    Sets up the scheme loaders for the MIMIC-IV coding scheme.
+
+    This function registers various scheme loaders for different components of the MIMIC-IV coding scheme,
+    such as procedures, procedure groups, input groups, inputs, observables, and ethnicity loaders.
+
+    Returns:
+        None
+    """
     FlatScheme.register_scheme_loader('int_mimic4_proc', register_mimic_procedures)
     AbstractGroupedProcedures.register_scheme_loader('int_mimic4_grouped_proc', register_mimic_procedure_groups)
     MIMICInputGroups.register_scheme_loader('int_mimic4_input_group', register_mimic_input_groups)
@@ -229,6 +355,9 @@ def setup_scheme_loaders():
 
 
 def setup_maps_loaders():
+    """
+    Set up the map loaders for the coding schemes in the EHR module.
+    """
     CodeMap.register_map_loader(ETH32_NAME, ETH5_NAME,
                                 lambda: register_mimic_eth_mapping(ETH32_NAME, ETH5_NAME, ETH_SCHEME_FILE,
                                                                    ETH32_COLNAME, ETH5_COLNAME))
@@ -243,5 +372,8 @@ def setup_maps_loaders():
 
 
 def setup_mimic():
+    """
+    Sets up the MIMIC-IV coding schemes by loading the scheme loaders and maps loaders.
+    """
     setup_scheme_loaders()
     setup_maps_loaders()

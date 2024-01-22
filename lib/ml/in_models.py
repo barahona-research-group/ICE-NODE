@@ -1,28 +1,26 @@
 """."""
 from __future__ import annotations
+
 from typing import Callable, Tuple, Optional, List
-import jax
-import jax.numpy as jnp
-import jax.nn as jnn
-import jax.random as jrandom
+
 import equinox as eqx
+import jax
+import jax.nn as jnn
+import jax.numpy as jnp
+import jax.random as jrandom
 
-from ..utils import model_params_scaler
-from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableConfig, PatientTrajectory,
-                   TrajectoryConfig)
-from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
-                         EmbeddedInAdmission, InpatientLiteEmbedding,
-                         LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
-                         DeepMindPatientEmbeddingConfig,
-                         DeepMindEmbeddedAdmission)
-
-from .model import (InpatientModel, ModelConfig, ModelRegularisation,
-                    Precomputes)
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
-from ..base import Data, Config
+from .embeddings import (InpatientEmbedding, EmbeddedInAdmission, InpatientLiteEmbedding,
+                         LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
+                         DeepMindEmbeddedAdmission)
+from .model import (InpatientModel, ModelConfig, ModelRegularisation,
+                    Precomputes)
+from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
+                   DatasetScheme, DemographicVectorConfig, CodesVector, LeadingObservableExtractorConfig,
+                   PatientTrajectory,
+                   TrajectoryConfig)
+from ..utils import model_params_scaler
 
 
 class InICENODEConfig(ModelConfig):
@@ -39,7 +37,7 @@ class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
     def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: jax.random.PRNGKey, **mlp_kwargs):
         super().__init__()
         out_size = len(leading_observable_config.leading_hours) + 1
@@ -62,7 +60,7 @@ class SigmoidLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
     def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: jax.random.PRNGKey, **mlp_kwargs):
         super().__init__()
         self._t = jnp.array(leading_observable_config.leading_hours)
@@ -82,7 +80,7 @@ class MLPLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
     def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: jax.random.PRNGKey, **mlp_kwargs):
         super().__init__()
         width = mlp_kwargs.get(
@@ -119,7 +117,7 @@ class InICENODE(InpatientModel):
 
     def __init__(self, config: InICENODEConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
@@ -212,7 +210,7 @@ class InICENODE(InpatientModel):
 
     @eqx.filter_jit
     def _init_state(self, dx):
-        return jnp.hstack((jnp.zeros((self.config.state - len(dx), )), dx))
+        return jnp.hstack((jnp.zeros((self.config.state - len(dx),)), dx))
 
     @eqx.filter_jit
     def _safe_integrate(self, delta, state, int_e, precomputes):
@@ -369,7 +367,7 @@ class InICENODELite(InICENODE):
     def __init__(self, config: InICENODELiteConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         super_key, init_key = jrandom.split(key, 2)
         super().__init__(config, schemes, demographic_vector_config,
@@ -591,7 +589,6 @@ class InRETAINConfig(ModelConfig):
 
 
 class InRETAIN(InpatientModel):
-
     _f_gru_a: Callable
     _f_gru_b: Callable
     _f_att_a: Callable
@@ -604,7 +601,7 @@ class InRETAIN(InpatientModel):
 
     def __init__(self, config: InRETAINConfig, schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         keys = jrandom.split(key, 9)
@@ -824,7 +821,7 @@ class InSKELKoopman(InICENODELite):
     def __init__(self, config: InSKELKoopmanConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         super().__init__(config=config,
                          schemes=schemes,

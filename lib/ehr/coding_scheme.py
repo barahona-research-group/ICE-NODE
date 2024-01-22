@@ -8,7 +8,6 @@ import os
 import re
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
-from dataclasses import field
 from threading import Lock
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple
 
@@ -21,6 +20,42 @@ from ..utils import load_config
 
 _DIR = os.path.dirname(__file__)
 _RSC_DIR = os.path.join(_DIR, "resources")
+
+
+class CodesVector(Data):
+    """
+    Represents a multi-hot vector encoding of codes using a specific coding scheme.
+
+    Attributes:
+        vec (np.ndarray): the vector of codes.
+        scheme (str): the coding scheme.
+    """
+
+    vec: npt.NDArray[bool]
+    scheme: str
+
+    @property
+    def scheme_object(self):
+        """
+        Returns the coding scheme object associated with the CodesVector.
+
+        Returns:
+            CodingScheme: the coding scheme object.
+        """
+        return CodingScheme.from_name(self.scheme)
+
+    @classmethod
+    def empty_like(cls, other: CodesVector) -> CodesVector:
+        """
+        Creates an empty CodesVector with the same shape as the given CodesVector.
+
+        Args:
+            other (CodesVector): the CodesVector to mimic.
+
+        Returns:
+            CodesVector: the empty CodesVector.
+        """
+        return cls(np.zeros_like(other.vec), other.scheme)
 
 
 class CodingSchemeConfig(Config):
@@ -51,7 +86,7 @@ class CodingScheme(Module):
     _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
 
     # vector representation class
-    vector_cls: ClassVar[Type[CodesVector]] = field(default_factory=lambda: CodesVector)
+    vector_cls: ClassVar[Type[CodesVector]] = CodesVector
 
     @classmethod
     def from_name(cls, name: str) -> "CodingScheme":
@@ -65,11 +100,41 @@ class CodingScheme(Module):
 
     @classmethod
     def register_scheme(cls, scheme: CodingScheme) -> None:
+        """
+        Register a scheme in order to be retrieved by its name in `scheme.config.name` using the function `from_name`.
+        """
+        assert scheme.name not in cls._schemes, f"Scheme {scheme.name} already registered."
         cls._schemes[scheme.name] = scheme
 
     @classmethod
     def register_scheme_loader(cls, name: str, loader: Callable) -> None:
+        """
+        Register a scheme loader for easy-loading of schemes in order to be retrieved by its name in `name`.
+        """
+        assert name not in cls._schemes, f"Scheme {name} already registered."
+        assert name not in cls._load_schemes, f"Scheme {name} already registered."
         cls._load_schemes[name] = loader
+
+    @classmethod
+    def unregister_schemes(cls):
+        """
+        Unregister all schemes.
+        """
+        cls._schemes = {}
+
+    @classmethod
+    def unregister_scheme_loaders(cls):
+        """
+        Unregister all scheme loaders.
+        """
+        cls._load_schemes = {}
+
+    @classmethod
+    def available_schemes(cls) -> Set[str]:
+        """
+        Get a list of all registered schemes.
+        """
+        return set(cls._schemes.keys()) | set(cls._load_schemes.keys())
 
     @property
     @abstractmethod
@@ -100,13 +165,35 @@ class CodingScheme(Module):
     def index2desc(self) -> Dict[int, str]:
         pass
 
+    def equals(self, other: "CodingScheme") -> bool:
+        """
+        Check if the current scheme is equal to another scheme.
+        """
+        return ((self.name == other.name) and (self.codes == other.codes) and (self.index == other.index) and (
+                self.desc == other.desc))
+
+    def __eq__(self, other):
+        """
+        Check if the current scheme is equal to another scheme.
+        """
+        return self.equals(other)
+
     def __len__(self) -> int:
+        """
+        Returns the number of codes in the current scheme.
+        """
         return len(self.codes)
 
     def __bool__(self) -> bool:
+        """
+        Returns True if the current scheme is not empty.
+        """
         return len(self.codes) > 0
 
     def __str__(self) -> str:
+        """
+        Returns the name of the current scheme.
+        """
         return self.name
 
     def __contains__(self, code: str) -> bool:
@@ -115,22 +202,33 @@ class CodingScheme(Module):
 
     def search_regex(self, query: str, regex_flags: int = re.I) -> Set[str]:
         """
-        a regex-supported search of codes by a `query` string. the search is \
-            applied on the code description.\
-            for example, you can use it to return all codes related to cancer \
-            by setting the `query = 'cancer'` \
-            and `regex_flags = re.i` (for case-insensitive search).
+        A regex-supported search of codes by a `query` string. the search is applied on the code description.
+        For example, you can use it to return all codes related to cancer by setting the
+        `query = 'cancer'` and `regex_flags = re.i` (for case-insensitive search).
+
+        Args:
+            query (str): the query string.
+            regex_flags (int): the regex flags.
+
+        Returns:
+            Set[str]: the set of codes matching the query.
         """
-        return set(
-            filter(
-                lambda c: re.match(query, self.desc[c], flags=regex_flags), self.codes
-            )
-        )
+        return set(filter(lambda c: re.findall(query, self.desc[c], flags=regex_flags), self.codes))
 
     def mapper_to(self, target_scheme: str):
+        """
+        Returns a mapper between the current scheme and the target scheme.
+        """
         return CodeMap.get_mapper(self.name, target_scheme)
 
     def codeset2vec(self, codeset: Set[str]) -> "CodingScheme.vector_cls":
+        """
+        Convert a codeset to a vector representation.
+        Args:
+            codeset (Set[str]): the codeset to convert.
+        Returns:
+            CodingScheme.vector_cls: a vector representation of the current scheme.
+        """
         vec = np.zeros(len(self), dtype=bool)
         try:
             for c in codeset:
@@ -155,6 +253,13 @@ class CodingScheme(Module):
         return tuple(t for s, t in CodeMap._load_maps.keys() if s == self.name)
 
     def as_dataframe(self):
+        """
+        Returns the scheme as a Pandas DataFrame.
+        The DataFrame contains the following columns:
+            - code: the code string
+            - desc: the code description
+        """
+
         index = sorted(self.index.values())
         return pd.DataFrame(
             {
@@ -212,15 +317,41 @@ class FlatScheme(CodingScheme):
         self._desc = desc
 
         self._index2code = {idx: code for code, idx in index.items()}
-        self._index2desc = {index[code]: desc for code, desc in desc.items()}
+        self._index2desc = {index[code]: _desc for code, _desc in desc.items()}
 
         self._check_types()
+        self._check_sizes()
+        self._check_index_integrity()
 
     def _check_types(self):
+        assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
+        assert isinstance(self.codes, list), f"{self}: codes should be a list."
+        assert isinstance(self.index, dict), f"{self}: index should be a dict."
+        assert isinstance(self.desc, dict), f"{self}: desc should be a dict."
         for collection in [self.codes, self.index, self.desc]:
             assert all(
                 isinstance(c, str) for c in collection
             ), f"{self}: All name types should be str."
+
+        assert all(
+            isinstance(idx, int)
+            for idx in self.index.values()
+        ), f"{self}: All index types should be int."
+
+        assert all(
+            isinstance(desc, str)
+            for desc in self.desc.values()
+
+        ), f"{self}: All desc types should be str."
+
+    def _check_sizes(self):
+        for collection in [self.codes, self.index, self.desc, self.index2code, self.index2desc]:
+            assert len(collection) == len(self.codes)
+
+    def _check_index_integrity(self):
+        for code, idx in self.index.items():
+            assert idx == self.codes.index(
+                code), f"{self}: Index of {code} is not consistent with its position in the list."
 
     @property
     def codes(self):
@@ -243,6 +374,47 @@ class FlatScheme(CodingScheme):
         return self._index2desc
 
 
+class BinaryCodesVector(CodesVector):
+    """
+    Represents a single-element binary code vector. It is used to represent a single code in a binary coding scheme, where the two codes are mutually exclusive.
+
+    Attributes:
+        vec (numpy.ndarray): the binary codes vector, which is a 1-element vector.
+        scheme (str): the binary coding scheme associated with the vector.
+    """
+
+    @classmethod
+    def empty(cls, scheme: str):
+        """
+        Creates a default binary codes vector.
+
+        Args:
+            scheme (str): the coding scheme associated with the vector.
+
+        Returns:
+            BinaryCodesVector: a vector representing the first code in the binary coding scheme.
+        """
+        return cls(np.zeros(1, dtype=bool), scheme)
+
+    def to_codeset(self):
+        """
+        Converts the binary codes vector to a set of one code.
+
+        Returns:
+            set: a set containing one code.
+        """
+        return {self.scheme_object.index2code[self.vec[0]]}
+
+    def __len__(self):
+        """
+        Returns 1, the length of the binary codes vector.
+
+        Returns:
+            int: the length of the binary codes vector.
+        """
+        return 1
+
+
 class BinaryScheme(FlatScheme):
     """
     A class representing a special case of a coding scheme with two, mutually exclusive codes.
@@ -263,7 +435,7 @@ class BinaryScheme(FlatScheme):
             Returns the length of the coding scheme vectorized representation, i.e. one code can be represented at a time.
     """
 
-    vector_cls = field(default_factory=lambda: BinaryCodesVector)
+    vector_cls: ClassVar[Type[BinaryCodesVector]] = BinaryCodesVector
 
     def __init__(self, codes: List[str], index: Dict[str, int], desc: Dict[str, str], name: str) -> object:
         assert all(len(c) == 2 for c in (codes, index, desc)), \
@@ -290,6 +462,23 @@ class BinaryScheme(FlatScheme):
         return 1
 
 
+class CodesVectorWithMissing(CodesVector):
+    """
+    A subclass of CodesVector that represents a vector of codes with the ability to handle missing values.
+    """
+
+    def to_codeset(self):
+        """
+        Convert the codes vector to a set of codes.
+
+        Returns:
+            set: a set of codes represented by the non-zero elements in the vector.
+        """
+        index = self.vec.nonzero()[0]
+        if len(index) == 0:
+            return {self.scheme_object.missing_code}
+
+
 class SchemeWithMissing(FlatScheme):
     """
     A coding scheme that represents categorical schemes and supports missing/unkown values.
@@ -303,12 +492,12 @@ class SchemeWithMissing(FlatScheme):
     """
 
     _missing_code: str
-    vector_cls = field(default_factory=lambda: CodesVectorWithMissing)
+    vector_cls: ClassVar[Type[CodesVectorWithMissing]] = CodesVectorWithMissing
 
     def __init__(self, config: CodingSchemeConfig,
-                 codes: List[str], index: Dict[str, int], desc: Dict[str, str], name: str, missing_code: str):
-        super().__init__(config, codes, index, desc)
+                 codes: List[str], index: Dict[str, int], desc: Dict[str, str], missing_code: str):
         self._missing_code = missing_code
+        super().__init__(config, codes, index, desc)
 
     def __len__(self):
         return len(self.codes) - 1
@@ -316,6 +505,13 @@ class SchemeWithMissing(FlatScheme):
     @property
     def missing_code(self):
         return self._missing_code
+
+    def _check_index_integrity(self):
+        for code, idx in self.index.items():
+            if code == self.missing_code:
+                continue
+            assert idx == self.codes.index(
+                code), f"{self}: Index of {code} is not consistent with its position in the list."
 
 
 class NullScheme(FlatScheme):
@@ -350,6 +546,14 @@ class HierarchicalScheme(FlatScheme):
         dag2code (Dict[str, str]): A dictionary mapping codes in the hierarchy to their corresponding codes.
     """
 
+    _dag_codes: List[str]
+    _dag_index: Dict[str, int]
+    _dag_desc: Dict[str, str]
+    _code2dag: Dict[str, str]
+    _dag2code: Dict[str, str]
+    _pt2ch: Dict[str, Set[str]]
+    _ch2pt: Dict[str, Set[str]]
+
     def __init__(self,
                  config: CodingSchemeConfig,
                  codes: Optional[List[str]] = None,
@@ -376,7 +580,6 @@ class HierarchicalScheme(FlatScheme):
             pt2ch (Optional[Dict[str, Set[str]]]): a dictionary mapping parent codes to their child codes in the hierarchical scheme. Defaults to None.
             ch2pt (Optional[Dict[str, Set[str]]]): a dictionary mapping child codes to their parent codes in the hierarchical scheme. Defaults to None.
         """
-        super().__init__(config, codes, index, desc)
 
         self._dag_codes = dag_codes or codes
         self._dag_index = dag_index or index
@@ -388,7 +591,17 @@ class HierarchicalScheme(FlatScheme):
             "Should provide ch2pt or pt2ch connection dictionary")
         self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
         self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
-        self._check_types()
+
+        super().__init__(config, codes, index, desc)
+
+    def equals(self, other: "HierarchicalScheme") -> bool:
+        return (super().equals(other) and (self._dag_codes == other._dag_codes) and (
+                self._dag_index == other._dag_index)
+                and (self._dag_desc == other._dag_desc)
+                and (self._code2dag == other._code2dag)
+                and (self._dag2code == other._dag2code)
+                and (self._pt2ch == other._pt2ch)
+                and (self._ch2pt == other._ch2pt))
 
     def _check_types(self):
         """
@@ -397,13 +610,53 @@ class HierarchicalScheme(FlatScheme):
         Raises:
             AssertionError: If any of the collections contains a non-string element.
         """
-        for collection in [
-            self._dag_codes, self._dag_index, self._dag_desc,
-            self._code2dag, self._dag2code, self._pt2ch, self._ch2pt
-        ]:
+
+    def _check_types(self):
+        super()._check_types()
+
+        assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
+
+        assert isinstance(self.dag_codes, list), f"{self}: codes should be a list."
+        assert isinstance(self.dag_index, dict), f"{self}: index should be a dict."
+        assert isinstance(self.dag_desc, dict), f"{self}: desc should be a dict."
+        assert isinstance(self.code2dag, dict), f"{self}: code2dag should be a dict."
+        assert isinstance(self.dag2code, dict), f"{self}: dag2code should be a dict."
+        assert isinstance(self.pt2ch, dict), f"{self}: pt2ch should be a dict."
+        assert isinstance(self.ch2pt, dict), f"{self}: ch2pt should be a dict."
+
+        for collection in [self.dag_codes, self.dag_index, self.dag_desc]:
+            assert all(
+                isinstance(c, str) for c in collection
+            ), f"{self}: All name types should be str."
+
+        assert all(
+            isinstance(idx, int)
+            for idx in self.dag_index.values()
+        ), f"{self}: All index types should be int."
+
+        for collection in [self._dag_codes, self._dag_index, self._dag_desc, self._code2dag, self._dag2code,
+                           self._pt2ch, self._ch2pt]:
             assert all(
                 type(c) == str
                 for c in collection), f"{self}: All name types should be str."
+
+        for collection in [self._dag_desc, self._code2dag, self._dag2code]:
+            assert all(
+                isinstance(v, str)
+                for v in collection.values()
+            ), f"{self}: All values should be str."
+
+    def _check_sizes(self):
+        super()._check_sizes()
+        # TODO: note in the documentation that dag2code size can be less than the dag_codes since some dag_codes are internal nodes that themselves are not are not complete clinical concepts.
+        for collection in [self.dag_codes, self.dag_index, self.dag_desc]:
+            assert len(collection) == len(self.dag_codes), f"{self}: All collections should have the same size."
+
+    def _check_index_integrity(self):
+        super()._check_index_integrity()
+        for code, idx in self.dag_index.items():
+            assert idx == self.dag_codes.index(
+                code), f"{self}: Index of {code} is not consistent with its position in the list."
 
     def make_ancestors_mat(self, include_itself: bool = True) -> npt.NDArray[np.bool_]:
         """
@@ -458,6 +711,14 @@ class HierarchicalScheme(FlatScheme):
         Dict[str, str]: a dictionary mapping codes in the hierarchy to their corresponding codes.
         """
         return self._dag2code
+
+    @property
+    def pt2ch(self):
+        return self._pt2ch
+
+    @property
+    def ch2pt(self):
+        return self._ch2pt
 
     def __contains__(self, code: str) -> bool:
         """
@@ -680,11 +941,11 @@ class HierarchicalScheme(FlatScheme):
             Set[str]: A set of codes that match the regex query, including their successor codes.
         """
         codes = filter(
-            lambda c: re.match(query, self._desc[c], flags=regex_flags),
+            lambda c: re.findall(query, self._desc[c], flags=regex_flags),
             self.codes)
 
         dag_codes = filter(
-            lambda c: re.match(query, self._dag_desc[c], flags=regex_flags),
+            lambda c: re.findall(query, self._dag_desc[c], flags=regex_flags),
             self.dag_codes)
 
         all_codes = set(map(self._code2dag.get, codes)) | set(dag_codes)
@@ -1275,42 +1536,6 @@ class NullCodeMap(CodeMap):
     def __bool__(self):
         return False
 
-
-class CodesVector(Data):
-    """
-    Represents a multi-hot vector encoding of codes using a specific coding scheme.
-
-    Attributes:
-        vec (np.ndarray): the vector of codes.
-        scheme (str): the coding scheme.
-    """
-
-    vec: npt.NDArray[bool]
-    scheme: str
-
-    @property
-    def scheme_object(self):
-        """
-        Returns the coding scheme object associated with the CodesVector.
-
-        Returns:
-            CodingScheme: the coding scheme object.
-        """
-        return CodingScheme.from_name(self.scheme)
-
-    @classmethod
-    def empty_like(cls, other: CodesVector) -> CodesVector:
-        """
-        Creates an empty CodesVector with the same shape as the given CodesVector.
-
-        Args:
-            other (CodesVector): the CodesVector to mimic.
-
-        Returns:
-            CodesVector: the empty CodesVector.
-        """
-        return cls(np.zeros_like(other.vec), other.scheme)
-
     @classmethod
     def empty(cls, scheme: str) -> CodesVector:
         """
@@ -1357,64 +1582,6 @@ class CodesVector(Data):
         return len(self.vec)
 
 
-class CodesVectorWithMissing(CodesVector):
-    """
-    A subclass of CodesVector that represents a vector of codes with the ability to handle missing values.
-    """
-
-    def to_codeset(self):
-        """
-        Convert the codes vector to a set of codes.
-
-        Returns:
-            set: a set of codes represented by the non-zero elements in the vector.
-        """
-        index = self.vec.nonzero()[0]
-        if len(index) == 0:
-            return {self.scheme_object.missing_code}
-
-
-class BinaryCodesVector(CodesVector):
-    """
-    Represents a single-element binary code vector. It is used to represent a single code in a binary coding scheme, where the two codes are mutually exclusive.
-
-    Attributes:
-        vec (numpy.ndarray): the binary codes vector, which is a 1-element vector.
-        scheme (str): the binary coding scheme associated with the vector.
-    """
-
-    @classmethod
-    def empty(cls, scheme: str):
-        """
-        Creates a default binary codes vector.
-
-        Args:
-            scheme (str): the coding scheme associated with the vector.
-
-        Returns:
-            BinaryCodesVector: a vector representing the first code in the binary coding scheme.
-        """
-        return cls(np.zeros(1, dtype=bool), scheme)
-
-    def to_codeset(self):
-        """
-        Converts the binary codes vector to a set of one code.
-
-        Returns:
-            set: a set containing one code.
-        """
-        return {self.scheme_object.index2code[self.vec[0]]}
-
-    def __len__(self):
-        """
-        Returns 1, the length of the binary codes vector.
-
-        Returns:
-            int: the length of the binary codes vector.
-        """
-        return 1
-
-
 def register_gender_scheme():
     """
     Register a binary gender coding scheme.
@@ -1452,6 +1619,9 @@ class OutcomeExtractor(FlatScheme):
     _base_scheme: CodingScheme
 
     _spec_files: ClassVar[Dict[str, str]] = {}
+    # Possible Schemes, Lazy-loaded schemes.
+    _load_schemes: ClassVar[Dict[str, Callable]] = {}
+    _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
 
     def __init__(self, config: OutcomeExtractorConfig):
         """

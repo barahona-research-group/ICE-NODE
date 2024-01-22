@@ -9,7 +9,7 @@ from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
                             CodeMap, CodeMapConfig,
                             _RSC_DIR, SchemeWithMissing, Ethnicity, OutcomeExtractor)
 
-_CPRD_LTC_FILE = os.path.join(_RSC_DIR, 'CPRD_202_LTC_ALL.csv.gz')
+_CPRD_LTC_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 ETH16_CODE_CNAME = 'eth16'
 ETH5_CODE_CNAME = 'eth5'
 ETH16_DESC_CNAME = 'eth16_desc'
@@ -160,10 +160,10 @@ def register_cprd_ethnicity(name, eth_code_colname, eth_desc_colname):
         desc[eth_code] = eth_desc
 
     codes = sorted(set(df[eth_code_colname]))
-    Ethnicity.register_scheme(CodingSchemeConfig(name),
-                              codes=codes,
-                              index=dict(zip(codes, range(len(codes)))),
-                              desc=desc)
+    Ethnicity.register_scheme(Ethnicity(CodingSchemeConfig(name),
+                                        codes=codes,
+                                        index=dict(zip(codes, range(len(codes)))),
+                                        desc=desc))
 
 
 def register_cprd_ethnicity_scheme_loaders():
@@ -201,7 +201,7 @@ def register_cprd_imd():
     codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', missing_code]
     index = dict(zip(codes, range(len(codes))))
     index[missing_code] = -1
-    desc = index.copy()
+    desc = dict(zip(codes, codes))
     desc[missing_code] = 'missing'
     name = 'cprd_imd_cat'
 
@@ -218,8 +218,10 @@ def register_medcode_mapping(medcode_scheme: str,
 
 
 def setup_scheme_loaders():
-    CodingScheme.register_scheme_loader('dx_cprd_ltc212', DxLTC212FlatCodes.from_file)
-    CodingScheme.register_scheme_loader('dx_cprd_ltc9809', DxLTC9809FlatMedcodes.from_file)
+    CodingScheme.register_scheme_loader('dx_cprd_ltc212',
+                                        lambda: CodingScheme.register_scheme(DxLTC212FlatCodes.from_file()))
+    CodingScheme.register_scheme_loader('dx_cprd_ltc9809',
+                                        lambda: CodingScheme.register_scheme(DxLTC9809FlatMedcodes.from_file()))
     register_cprd_ethnicity_scheme_loaders()
     CodingScheme.register_scheme_loader('cprd_gender', register_cprd_gender)
     CodingScheme.register_scheme_loader('cprd_imd_cat', register_cprd_imd)

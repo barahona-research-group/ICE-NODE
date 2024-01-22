@@ -1,31 +1,26 @@
 """."""
 from __future__ import annotations
+
 from typing import Callable, Tuple, Optional
-import jax
-import jax.numpy as jnp
-import jax.nn as jnn
-import jax.random as jrandom
+
 import equinox as eqx
+import jax
+import jax.nn as jnn
+import jax.numpy as jnp
+import jax.random as jrandom
 
-from ..utils import model_params_scaler
-from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableConfig, PatientTrajectory,
-                   TrajectoryConfig)
-from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
-                         EmbeddedInAdmission, InpatientLiteEmbedding,
-                         LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
-                         DeepMindPatientEmbeddingConfig,
-                         DeepMindEmbeddedAdmission)
-
-from .model import (InpatientModel, ModelConfig, ModelRegularisation,
-                    Precomputes)
-from .in_models import (InICENODE, InICENODERegularisation,
-                        InSKELKoopmanRegularisation, InSKELKoopmanPrecomputes,
-                        InSKELKoopman)
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
-from ..base import Data, Config
+from .embeddings import (EmbeddedInAdmission, InpatientLiteEmbedding,
+                         LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
+                         DeepMindEmbeddedAdmission)
+from .in_models import (InICENODE, InICENODERegularisation)
+from .model import (InpatientModel, ModelConfig, Precomputes)
+from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
+                   DatasetScheme, DemographicVectorConfig, CodesVector,
+                   LeadingObservableExtractorConfig, PatientTrajectory,
+                   TrajectoryConfig)
+from ..utils import model_params_scaler
 
 
 class InModularICENODEConfig(ModelConfig):
@@ -67,7 +62,7 @@ class InModularICENODE(InICENODE):
     def __init__(self, config: InModularICENODEConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
@@ -135,11 +130,11 @@ class InModularICENODE(InICENODE):
     @eqx.filter_jit
     def join_state(self, mem, obs, lead, dx):
         if mem is None:
-            mem = jnp.zeros((self.config.mem, ))
+            mem = jnp.zeros((self.config.mem,))
         if obs is None:
-            obs = jnp.zeros((self.config.obs, ))
+            obs = jnp.zeros((self.config.obs,))
         if lead is None:
-            lead = jnp.zeros((self.config.lead, ))
+            lead = jnp.zeros((self.config.lead,))
 
         return jnp.hstack((mem, obs, lead, dx))
 
@@ -277,7 +272,7 @@ class InModularICENODELite(InModularICENODE):
     def __init__(self, config: InModularICENODELiteConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         super_key, init_key = jrandom.split(key, 2)
         super().__init__(config, schemes, demographic_vector_config,
@@ -370,7 +365,7 @@ class InModularSKELKoopman(InModularICENODELite):
     def __init__(self, config: InModularSKELKoopmanConfig,
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableConfig,
+                 leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
         super_key, init_key = jrandom.split(key, 2)
         jax.config.update("jax_enable_x64", True)
