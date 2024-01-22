@@ -10,11 +10,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
-from .coding_scheme import (AbstractScheme, AbstractGroupedProcedures,
-                            CodesVector, scheme_from_classname)
+from .coding_scheme import (CodesVector, CodingScheme)
 from ..base import Config, Data, Module
+
+Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
 
 
 class InpatientObservables(Data):
@@ -22,23 +24,23 @@ class InpatientObservables(Data):
     Vectorized representation of inpatient observables.
 
     Attributes:
-        time (jnp.ndarray): array of time values.
-        value (jnp.ndarray): array of observable values.
-        mask (jnp.ndarray): array indicating missing values.
+        time (Array): array of time values.
+        value (Array): array of observable values.
+        mask (Array): array indicating missing values.
 
     Methods:
         empty(size: int): creates an empty instance of InpatientObservables.
         __len__(): returns the length of the time array.
         as_dataframe(scheme: AbstractScheme, filter_missing_columns=False): converts the observables to a pandas DataFrame.
         groupby_code(index2code: Dict[int, str]): groups the observables by code.
-        segment(t_sep: jnp.ndarray): splits the observables into segments based on time values.
+        segment(t_sep: Array): splits the observables into segments based on time values.
         concat(observables: Union[InpatientObservables, List[InpatientObservables]]): concatenates multiple instances of InpatientObservables.
         time_binning(hours: float): bins the time-series into time-windows and averages the values in each window.
     """
 
     time: jnp.narray  # (time,)
-    value: jnp.ndarray  # (time, size)
-    mask: jnp.ndarray  # (time, size)
+    value: Array  # (time, size)
+    mask: Array  # (time, size)
 
     @staticmethod
     def empty(size: int):
@@ -63,8 +65,8 @@ class InpatientObservables(Data):
         return len(self.time)
 
     def as_dataframe(self,
-                     scheme: AbstractScheme,
-                     filter_missing_columns=False) -> pd.DataFrame:
+                     scheme: CodingScheme,
+                     filter_missing_columns: bool = False) -> pd.DataFrame:
         """
         Converts the observables to a pandas DataFrame.
 
@@ -100,7 +102,7 @@ class InpatientObservables(Data):
 
         assert len(index2code) == self.value.shape[1], \
             f'Expected {len(index2code)} columns, got {self.value.shape[1]}'
-        if isinstance(self.time, jnp.ndarray):
+        if isinstance(self.time, jax.Array):
             _np = jnp
         else:
             _np = np
@@ -123,12 +125,12 @@ class InpatientObservables(Data):
                                                                 dtype=bool))
         return dic
 
-    def segment(self, t_sep: jnp.ndarray) -> List[InpatientObservables]:
+    def segment(self, t_sep: Array) -> List[InpatientObservables]:
         """
         Splits the InpatientObservables object into multiple segments based on the given time points.
 
         Args:
-            t_sep (jnp.ndarray): array of time points used to split the InpatientObservables object.
+            t_sep (Array): array of time points used to split the InpatientObservables object.
 
         Returns:
             List[InpatientObservables]: list of segmented InpatientObservables objects.
@@ -162,7 +164,7 @@ class InpatientObservables(Data):
 
         if len(observables) == 0:
             return InpatientObservables.empty(0)
-        if isinstance(observables[0].time, jnp.ndarray):
+        if isinstance(observables[0].time, jax.Array):
             _np = jnp
         else:
             _np = np
@@ -266,7 +268,7 @@ class LeadingObservableExtractor(Module):
         _code2index (Dict[str, int]): a dictionary mapping code to index.
     """
     config: LeadingObservableExtractorConfig
-    _scheme: AbstractScheme
+    _scheme: CodingScheme
     _index2code: Dict[int, str]
     _code2index: Dict[str, int]
 
@@ -278,7 +280,7 @@ class LeadingObservableExtractor(Module):
             config (LeadingObservableExtractorConfig): the configuration for the extractor.
         """
         super().__init__(config=config)
-        self._scheme = scheme_from_classname(config.scheme)
+        self._scheme = CodingScheme.from_name(config.scheme)
         desc = self._scheme.index2desc[config.index]
         self._index2code = dict(
             zip(range(len(config.leading_hours)),
@@ -334,15 +336,15 @@ class LeadingObservableExtractor(Module):
         return InpatientObservables.empty(len(self.config.leading_hours))
 
     @staticmethod
-    def _nan_concat_leading_windows(x: np.ndarray) -> np.ndarray:
+    def _nan_concat_leading_windows(x: Array) -> Array:
         """
         Generates sliding windows of the input array, padded with NaN values.
 
         Args:
-            x (np.ndarray): the input array.
+            x (Array): the input array.
 
         Returns:
-            np.ndarray: the sliding windows of the input array, padded with NaN values.
+            Array: the sliding windows of the input array, padded with NaN values.
         """
         n = len(x)
         add_arr = np.full(n - 1, np.nan)
@@ -358,11 +360,11 @@ class LeadingObservableExtractor(Module):
         Aggregates the values in a given array along the specified axis, treating NaN values as zero.
 
         Args:
-            x (np.ndarray): The input array.
+            x (Array): The input array.
             axis: The axis along which to aggregate.
 
         Returns:
-            np.ndarray: The aggregated array.
+            Array: The aggregated array.
         """
         all_nan = np.all(np.isnan(x), axis=axis) * 1.0
         replaced_nan = np.where(np.isnan(x), 0, x)
@@ -439,7 +441,7 @@ class MaskedAggregator(eqx.Module):
     mask: jnp.array = eqx.static_field()
 
     def __init__(self,
-                 subsets: Union[np.ndarray, List[int]],
+                 subsets: Union[Array, List[int]],
                  input_size: int,
                  backend: str = 'jax'):
         super().__init__()
@@ -451,7 +453,7 @@ class MaskedAggregator(eqx.Module):
         else:
             self.mask = mask
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, x: Array) -> Array:
         raise NotImplementedError
 
 
@@ -472,10 +474,10 @@ class MaskedPerceptron(MaskedAggregator):
     - __call__(self, x): performs forward pass of the perceptron.
     """
 
-    linear: eqx.Linear
+    linear: eqx.nn.Linear
 
     def __init__(self,
-                 subsets: jnp.ndarray,
+                 subsets: Array,
                  input_size: int,
                  key: "jax.random.PRNGKey",
                  backend: str = 'jax'):
@@ -483,7 +485,7 @@ class MaskedPerceptron(MaskedAggregator):
         Initialize the MaskedPerceptron class.
 
         Args:
-            subsets (jnp.ndarray): the subsets of input features.
+            subsets (Array): the subsets of input features.
             input_size (int): the size of the input.
             key (jax.random.PRNGKey): the random key for initialization.
             backend (str, optional): the backend to use. Defaults to 'jax'.
@@ -500,35 +502,35 @@ class MaskedPerceptron(MaskedAggregator):
         Returns the weight of the linear layer.
 
         Returns:
-            jnp.ndarray: the weights of the linear layer.
+            Array: the weights of the linear layer.
         """
         return self.linear.weight
 
     @eqx.filter_jit
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, x: Array) -> Array:
         """
         Performs forward pass of the perceptron.
 
         Args:
-            x (jnp.ndarray): the input features.
+            x (Array): the input features.
 
         Returns:
-            jnp.ndarray: the output of the perceptron.
+            Array: the output of the perceptron.
         """
         return (self.weight * self.mask) @ x
 
 
 class MaskedSum(MaskedAggregator):
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, x: Array) -> Array:
         """
         performs a masked sum aggregation on the input array x.
 
         Args:
-            x (jnp.ndarray): input array to aggregate.
+            x (Array): input array to aggregate.
 
         Returns:
-            jnp.ndarray: sum of x for True mask locations.  
+            Array: sum of x for True mask locations.  
         """
         return self.mask @ x
 
@@ -549,10 +551,10 @@ class MaskedOr(MaskedAggregator):
             Boolean ndarray indicating if there was at least one True value in each 
             row of x after applying the mask.
         """
-        if isinstance(x, np.ndarray):
-            return np.any(self.mask & (x != 0), axis=1)
-        else:
+        if isinstance(x, jax.Array):
             return jnp.any(self.mask & (x != 0), axis=1)
+        else:
+            return np.any(self.mask & (x != 0), axis=1)
 
 
 class AggregateRepresentation(eqx.Module):
@@ -577,8 +579,8 @@ class AggregateRepresentation(eqx.Module):
     splits: Tuple[int] = eqx.static_field()
 
     def __init__(self,
-                 source_scheme: AbstractScheme,
-                 target_scheme: AbstractGroupedProcedures,
+                 source_scheme: CodingScheme,
+                 target_scheme: CodingScheme,
                  key: "jax.random.PRNGKey" = None,
                  backend: str = 'numpy'):
         """
@@ -641,23 +643,23 @@ class AggregateRepresentation(eqx.Module):
         self.splits = tuple(splits.tolist())
 
     @eqx.filter_jit
-    def __call__(self, inpatient_input: Union[jnp.ndarray, np.ndarray]) -> Union[jnp.ndarray, np.ndarray]:
+    def __call__(self, inpatient_input: Array) -> Array:
         """
         Apply aggregators to the input data.
 
         Args:
-            inpatient_input (Union[jnp.ndarray, np.ndarray]): the input data to be processed.
+            inpatient_input (Array): the input data to be processed.
 
         Returns:
-            Union[jnp.ndarray, np.ndarray]: the processed data after applying aggregators.
+            Array: the processed data after applying aggregators.
         """
-        if isinstance(inpatient_input, np.ndarray):
-            splitted = np.hsplit(inpatient_input, self.splits)
-            return np.hstack(
+        if isinstance(inpatient_input, jax.Array):
+            splitted = jnp.hsplit(inpatient_input, self.splits)
+            return jnp.hstack(
                 [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
-        splitted = jnp.hsplit(inpatient_input, self.splits)
-        return jnp.hstack(
+        splitted = np.hsplit(inpatient_input, self.splits)
+        return np.hstack(
             [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
@@ -666,20 +668,20 @@ class InpatientInput(Data):
     Represents inpatient input data.
 
     Attributes:
-        index (jnp.ndarray): the index array. Each index value correspond to a unique input code.
-        rate (jnp.ndarray): the rate array.
-        starttime (jnp.ndarray): the start time array.
-        endtime (jnp.ndarray): the end time array.
+        index (Array): the index array. Each index value correspond to a unique input code.
+        rate (Array): the rate array.
+        starttime (Array): the start time array.
+        endtime (Array): the end time array.
         size (int): the size of the input data.
     """
 
-    index: jnp.ndarray
-    rate: jnp.ndarray
-    starttime: jnp.ndarray
-    endtime: jnp.ndarray
+    index: Array
+    rate: Array
+    starttime: Array
+    endtime: Array
     size: int
 
-    def __call__(self, t: float) -> Union[jnp.ndarray, np.ndarray]:
+    def __call__(self, t: float) -> Array:
         """
         Returns the vectorized input at time t.
 
@@ -687,24 +689,24 @@ class InpatientInput(Data):
             t (float): the time at which to return the input.
 
         Returns:
-            jnp.ndarray: the input at time t.
+            Array: the input at time t.
         """
 
         mask = (self.starttime <= t) & (t < self.endtime)
-        if isinstance(self.index, np.ndarray):
+        if isinstance(self.index, jax.Array):
+            index = jnp.where(mask, self.index, 0)
+            rate = jnp.where(mask, self.rate, 0.0)
+            adm_input = jnp.zeros(self.size, dtype=rate.dtype)
+            return adm_input.at[index].add(rate)
+        else:
             index = self.index[mask]
             rate = self.rate[mask]
             adm_input = np.zeros(self.size, dtype=rate.dtype)
             adm_input[index] += rate
             return adm_input
-        else:
-            index = jnp.where(mask, self.index, 0)
-            rate = jnp.where(mask, self.rate, 0.0)
-            adm_input = jnp.zeros(self.size, dtype=rate.dtype)
-            return adm_input.at[index].add(rate)
 
     @classmethod
-    def empty(cls, size: int):
+    def empty(cls, size: int) -> InpatientInput:
         """
         Returns an empty InpatientInput object.
 
@@ -725,9 +727,9 @@ class InpatientInterventions(Data):
     Attributes:
         proc (Optional[InpatientInput]): the procedures' representation.
         input_ (Optional[InpatientInput]): the inputs' representation.
-        time (jnp.ndarray): the unique timestamps of the interventions starts and ends.
-        segmented_input (Optional[np.ndarray]): the segmented input array for the interventions.
-        segmented_proc (Optional[np.ndarray]): the segmented procedure array for the interventions.
+        time (Array): the unique timestamps of the interventions starts and ends.
+        segmented_input (Optional[Array]): the segmented input array for the interventions.
+        segmented_proc (Optional[Array]): the segmented procedure array for the interventions.
 
     Methods:
         segment_proc(self, proc_repr: Optional[AggregateRepresentation] = None): segments the procedure array and updates the segmented_proc attribute.
@@ -736,9 +738,9 @@ class InpatientInterventions(Data):
     proc: Optional[InpatientInput]
     input_: Optional[InpatientInput]
 
-    time: jnp.ndarray
-    segmented_input: Optional[np.ndarray]
-    segmented_proc: Optional[np.ndarray]
+    time: Array
+    segmented_input: Optional[Array]
+    segmented_proc: Optional[Array]
 
     def __init__(self, proc: InpatientInput, input_: InpatientInput,
                  adm_interval: float):
@@ -767,30 +769,30 @@ class InpatientInterventions(Data):
         self.time = time
 
     @staticmethod
-    def pad_array(array: np.ndarray,
+    def pad_array(array: Array,
                   maximum_padding: int = 100,
-                  value: float = 0.0) -> np.ndarray:
+                  value: float = 0.0) -> Array:
         """
         Pad array to be a multiple of maximum_padding. This is efficient to 
         avoid jit-compiling a different function for each array shape.
         
         Args:
-            array (np.ndarray): the array to be padded.
+            array (Array): the array to be padded.
             maximum_padding (int, optional): the maximum padding. Defaults to 100.
             value (float, optional): the value to pad with. Defaults to 0.0.
             
         Returns:
-            np.ndarray: the padded array."""
+            Array: the padded array."""
 
         n = len(array)
         n_pad = maximum_padding - (n % maximum_padding)
         if n_pad == maximum_padding:
             return array
 
-        if isinstance(array, np.ndarray):
-            _np = np
-        else:
+        if isinstance(array, jax.Array):
             _np = jnp
+        else:
+            _np = np
 
         return _np.pad(array,
                        pad_width=(0, n_pad),
@@ -799,10 +801,10 @@ class InpatientInterventions(Data):
 
     @property
     def _np(self):
-        if isinstance(self.time, np.ndarray):
-            return np
-        else:
+        if isinstance(self.time, jax.Array):
             return jnp
+        else:
+            return np
 
     @property
     def t0_padded(self):
@@ -837,7 +839,7 @@ class InpatientInterventions(Data):
         """Length of the admission interval"""
         return jnp.nanmax(self.time) - jnp.nanmin(self.time)
 
-    def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]) -> np.ndarray:
+    def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]) -> Array:
         """
         Generate segmented procedures and apply the specified procedure transformation.
 
@@ -857,7 +859,7 @@ class InpatientInterventions(Data):
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
 
-    def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]) -> np.ndarray:
+    def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]) -> Array:
         """
         Generate segmented inputs and apply the specified input transformation.
 
@@ -935,11 +937,9 @@ class Admission(Data):
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    observables: Optional[Union[InpatientObservables,
-    List[InpatientObservables]]]
+    observables: Optional[Union[InpatientObservables, List[InpatientObservables]]]
     interventions: Optional[InpatientInterventions]
-    leading_observable: Optional[Union[InpatientObservables,
-    List[InpatientObservables]]] = None
+    leading_observable: Optional[Union[InpatientObservables, List[InpatientObservables]]] = None
 
     @property
     def interval_hours(self) -> float:
@@ -1006,7 +1006,7 @@ class StaticInfo(Data):
         gender (Optional[CodesVector]): gender information of the patient.
         ethnicity (Optional[CodesVector]): ethnicity information of the patient.
         date_of_birth (Optional[date]): date of birth of the patient.
-        constant_vec (Optional[jnp.ndarray]): constant vector representing the static information.
+        constant_vec (Optional[Array]): constant vector representing the static information.
 
     Methods:
         __post_init__: initializes the constant vector based on the available attributes.
@@ -1020,7 +1020,7 @@ class StaticInfo(Data):
     gender: Optional[CodesVector] = None
     ethnicity: Optional[CodesVector] = None
     date_of_birth: Optional[date] = None
-    constant_vec: Optional[Union[jnp.ndarray, np.array]] = eqx.static_field(init=False)
+    constant_vec: Optional[Array] = eqx.static_field(init=False)
 
     def __post_init__(self):
         attrs_vec = []
@@ -1050,7 +1050,7 @@ class StaticInfo(Data):
         """
         return (current_date - self.date_of_birth).days / 365.25
 
-    def demographic_vector(self, current_date: date) -> jnp.ndarray:
+    def demographic_vector(self, current_date: date) -> Array:
         """
         Returns the demographic vector based on the current date.
 
@@ -1058,7 +1058,7 @@ class StaticInfo(Data):
             current_date (date): the current date.
 
         Returns:
-            jnp.ndarray: the demographic vector.
+            Array: the demographic vector.
         """
         if self.demographic_vector_config.age:
             return self._concat(self.age(current_date), self.constant_vec)
@@ -1071,10 +1071,10 @@ class StaticInfo(Data):
 
         Args:
             age (float): the age of the patient.
-            vec (jnp.ndarray): the vector to be concatenated.
+            vec (Array): the vector to be concatenated.
 
         Returns:
-            jnp.ndarray: the concatenated vector.
+            Array: the concatenated vector.
         """
         return jnp.hstack((age, vec), dtype=jnp.float16)
 
