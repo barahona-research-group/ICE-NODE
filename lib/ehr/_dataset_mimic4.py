@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from functools import cached_property
 from typing import Union, Dict, Callable, List, Optional, Tuple
 
 import dask.dataframe as dd
@@ -15,6 +17,7 @@ from sqlalchemy import Engine
 
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from .coding_scheme import OutcomeExtractor, CodingScheme
+from .coding_scheme import _RSC_DIR
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
                        AggregateRepresentation, InpatientInterventions,
@@ -840,101 +843,152 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
             yield (adm_id, InpatientObservables.empty(obs_dim))
 
 
-class MIMICIVSQLConfig(Config):
-    host: str
-    port: int
-    user: str
-    password: str
-    dbname: str
-
-
-
-class TimestampedMIMICIVSQLTableConfig(Config):
+class MIMICIVSQLTableConfig(Config):
     name: str
-    attributes: Tuple[str]
     query: str
-    time_col: str = 'time_bin'
-    admission_col: str = 'hadm_id'
+    admission_id_alias: str = 'hadm_id'
+
+    @property
+    def alias_dict(self):
+        return {k: v for k, v in self.as_dict().items() if k.endswith('_alias')}
+
+    @property
+    def alias_id_dict(self):
+        return {k: v for k, v in self.alias_dict.items() if '_id_' in k}
 
 
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
+class AdmissionLinkedMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
+    admission_id_alias: str = 'hadm_id'
 
-renal_creat_query = f"""
-select hadm_id,
-       {', '.join(renal_creat)},
-       charttime time_bin
+
+class SubjectLinkedMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
+    subject_id_alias: str = 'subject_id'
+
+
+class TimestampedMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
+    attributes: Tuple[str]
+    time_alias: str = 'time_bin'
+
+
+class IntervalMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
+    description_alias: str = 'description'
+    start_time_alias: str = 'start_time'
+    end_time_alias: str = 'end_time'
+
+
+class AdmissionMIMICIVSQLTableConfig(AdmissionLinkedMIMICIVSQLTableConfig, SubjectLinkedMIMICIVSQLTableConfig):
+    admission_time_alias: str = 'admittime'
+    discharge_time_alias: str = 'dischtime'
+
+
+class StaticMIMICIVSQLTableConfig(SubjectLinkedMIMICIVSQLTableConfig):
+    gender_alias: str = 'gender'
+    anchor_year_alias: str = 'anchor_year'
+    anchor_age_alias: str = 'anchor_age'
+    race_alias: str = 'race'
+
+
+class DxDischargeMIMICIVSQLTableConfig(AdmissionLinkedMIMICIVSQLTableConfig):
+    code_alias = 'icd_code'
+    version_alias = 'icd_version'
+
+
+class IntervalICUProcedureMIMICIVSQLTableConfig(IntervalMIMICIVSQLTableConfig):
+    item_id_alias: str = 'itemid'
+
+
+class IntervalHospProcedureMIMICIVSQLTableConfig(IntervalMIMICIVSQLTableConfig):
+    icd_code_alias: str = 'icd_code'
+    icd_version_alias: str = 'icd_version'
+
+
+class RatedInputMIMICIVSQLTableConfig(IntervalICUProcedureMIMICIVSQLTableConfig):
+    rate_alias: str = 'rate'
+    rate_unit_alias: str = 'rateuom'
+    amount_alias: str = 'amount'
+    amount_unit_alias: str = 'amountuom'
+
+
+renal_out_conf = TimestampedMIMICIVSQLTableConfig(name="renal_out",
+                                                  attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+                                                  query=(r"""
+select icu.hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.kdigo_uo as uo
+inner join mimiciv_icu.icustays icu
+on icu.stay_id = uo.stay_id
+    """))
+
+renal_creat_conf = TimestampedMIMICIVSQLTableConfig(name="renal_creat",
+                                                    attributes=['creat'],
+                                                    query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.kdigo_creatinine
-"""
+    """))
 
-renal_aki_query = f"""
-select hadm_id,
-       {', '.join(renal_aki)},
-       charttime time_bin
+renal_aki_conf = TimestampedMIMICIVSQLTableConfig(name="renal_aki",
+                                                  attributes=['aki_stage_smoothed'],
+                                                  query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.kdigo_stages
-"""
+    """))
 
-sofa_query = f"""
-select hadm_id,
-      s.sofa_24hours as sofa ,
-      s.endtime time_bin
+sofa_conf = TimestampedMIMICIVSQLTableConfig(name="renal_aki",
+                                             attributes=["sofa_24hours"],
+                                             query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, s.endtime {time_alias} 
 from mimiciv_derived.sofa as s
-inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id
-"""
+inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id    
+"""))
 
-blood_gas_query = f"""
-select hadm_id,
-       {', '.join(blood_gas)},
-       charttime time_bin
+blood_gas_conf = TimestampedMIMICIVSQLTableConfig(name="blood_gas",
+                                                  attributes=['so2', 'po2', 'pco2', 'fio2', 'fio2_chartevents',
+                                                              'aado2', 'aado2_calc',
+                                                              'pao2fio2ratio', 'ph',
+                                                              'baseexcess', 'bicarbonate', 'totalco2', 'hematocrit',
+                                                              'hemoglobin',
+                                                              'carboxyhemoglobin', 'methemoglobin',
+                                                              'chloride', 'calcium', 'temperature', 'potassium',
+                                                              'sodium', 'lactate', 'glucose'],
+                                                  query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.bg as bg
 where hadm_id is not null
-"""
+"""))
 
-#%%
-blood_chemistry_query = f"""
-select hadm_id,
-       {', '.join(blood_chemistry)},
-       charttime time_bin
+blood_chemistry_conf = TimestampedMIMICIVSQLTableConfig(name="blood_chemistry",
+                                                        attributes=['albumin', 'globulin', 'total_protein',
+                                                                    'aniongap', 'bicarbonate', 'bun',
+                                                                    'calcium', 'chloride',
+                                                                    'creatinine', 'glucose', 'sodium', 'potassium'],
+                                                        query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.chemistry as ch
 where hadm_id is not null
-"""
+"""))
 
-cardiac_marker_query = \
-f"""
-WITH trop AS
+cardiac_marker_conf = TimestampedMIMICIVSQLTableConfig(name="cardiac_marker",
+                                                       attributes=['troponin_t', 'ntprobnp', 'ck_mb'],
+                                                       query=(r"""
+with trop as
 (
-    SELECT specimen_id, MAX(valuenum) AS troponin_t
-    FROM mimiciv_hosp.labevents
-    WHERE itemid = 51003
-    GROUP BY specimen_id
+    select specimen_id, MAX(valuenum) as troponin_t
+    from mimiciv_hosp.labevents
+    where itemid = 51003
+    group by specimen_id
 )
-SELECT
-    c.hadm_id
-    , charttime time_bin
-    , trop.troponin_t
-    , c.ntprobnp
-    , c.ck_mb
-FROM mimiciv_hosp.admissions a
-LEFT JOIN mimiciv_derived.cardiac_marker c
-  ON a.hadm_id = c.hadm_id
-LEFT JOIN trop
-  ON c.specimen_id = trop.specimen_id
-WHERE c.hadm_id is not null
-"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_hosp.admissions a
+left join mimiciv_derived.cardiac_marker c
+  on a.hadm_id = c.hadm_id
+left join trop
+  on c.specimen_id = trop.specimen_id
+where c.hadm_id is not null
+"""))
 
-weight_query = f"""
-select icu.hadm_id,
-     w.weight,
-        w.time_bin
+weight_conf = TimestampedMIMICIVSQLTableConfig(name="weight",
+                                               attributes=['weight'],
+                                               query=(r"""
+select icu.hadm_id {admission_id_alias}, {attributes}, w.time_bin {time_alias}
  from (
  (select stay_id, w.weight, w.starttime time_bin
   from mimiciv_derived.weight_durations as w)
@@ -943,118 +997,106 @@ select icu.hadm_id,
      from mimiciv_derived.weight_durations as w)
  ) w
 inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
-"""
+"""))
 
-cbc_query = f"""
-select hadm_id,
-       {', '.join(cbc)},
-       cbc.charttime time_bin
+cbc_conf = TimestampedMIMICIVSQLTableConfig(name="cbc",
+                                            attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc', 'mcv', 'platelet',
+                                                        'rbc', 'rdw', 'wbc'],
+                                            query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, cbc.charttime {time_alias}
 from mimiciv_derived.complete_blood_count as cbc
 where hadm_id is not null
-"""
+"""))
 
-vital_query = f"""
-select icu.hadm_id,
-       {', '.join(vital_signs)},
-       v.charttime time_bin
+vital_conf = TimestampedMIMICIVSQLTableConfig(name="vital",
+                                              attributes=['heart_rate', 'sbp', 'dbp', 'mbp', 'sbp_ni', 'dbp_ni',
+                                                          'mbp_ni', 'resp_rate',
+                                                          'temperature', 'spo2',
+                                                          'glucose'],
+                                              query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, v.charttime {time_alias}
 from mimiciv_derived.vitalsign as v
 inner join mimiciv_icu.icustays as icu
  on icu.stay_id = v.stay_id
-"""
+"""))
 
-gcs_query = f"""
-select icu.hadm_id,
-       {', '.join(coma_signs)},
-       gcs.charttime time_bin
+# Glasgow Coma Scale, a measure of neurological function
+gcs_conf = TimestampedMIMICIVSQLTableConfig(name="gcs",
+                                            attributes=['gcs', 'gcs_motor', 'gcs_verbal', 'gcs_eyes', 'gcs_unable'],
+                                            query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, gcs.charttime {time_alias}
 from mimiciv_derived.gcs as gcs
 inner join mimiciv_icu.icustays as icu
  on icu.stay_id = gcs.stay_id
-"""
+"""))
+
+## Inputs - Canonicalise
+
+rated_input_conf = RatedInputMIMICIVSQLTableConfig(name="int_input",
+                                                   query=(r"""
+select
+    a.hadm_id as {admission_id_alias}
+    , inp.itemid as {item_id_alias}
+    , inp.starttime as {start_time_alias}
+    , inp.endtime as {end_time_alias}
+    , di.label as {description_alias}
+    , inp.rate  as {rate_alias}
+    , inp.amount as {amount_alias}
+    , inp.rateuom as {rate_unit_alias}
+    , inp.amountuom as {amount_unit_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_icu.icustays i
+    on a.hadm_id = i.hadm_id
+left join mimiciv_icu.inputevents inp
+    on i.stay_id = inp.stay_id
+left join mimiciv_icu.d_items di
+    on inp.itemid = di.itemid
+"""))
+
+## Procedures - Canonicalise and Refine
+icuproc_conf = IntervalICUProcedureMIMICIVSQLTableConfig(name="int_proc_icu", query=(r"""
+select a.hadm_id as {admission_id_alias}
+    , pe.itemid as {item_id_alias}
+    , pe.starttime as {start_time_alias}
+    , pe.endtime as {end_time_alias}
+    , di.label as {description_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_icu.icustays i
+    on a.hadm_id = i.hadm_id
+left join mimiciv_icu.procedureevents pe
+    on i.stay_id = pe.stay_id
+left join mimiciv_icu.d_items di
+    on pe.itemid = di.itemid
+"""))
+
+hospicdproc_conf = IntervalHospProcedureMIMICIVSQLTableConfig(name="int_proc_icd", query=(r"""
+select pi.hadm_id as {admission_id_alias}
+, (pi.chartdate)::timestamp as {start_time_alias}
+, (pi.chartdate + interval '1 hour')::timestamp as {end_time_alias}
+, pi.icd_code as {icd_code_alias}
+, pi.icd_version as {icd_version_alias}
+, di.long_title as {description_alias}
+FROM mimiciv_hosp.procedures_icd pi
+INNER JOIN mimiciv_hosp.d_icd_procedures di
+  ON pi.icd_version = di.icd_version
+  AND pi.icd_code = di.icd_code
+INNER JOIN mimiciv_hosp.admissions a
+  ON pi.hadm_id = a.hadm_id
+"""))
 
 
-blood_gas = ['so2', 'po2', 'pco2', 'fio2', 'fio2_chartevents', 'aado2', 'aado2_calc', 'pao2fio2ratio', 'ph', 'baseexcess', 'bicarbonate', 'totalco2', 'hematocrit', 'hemoglobin', 'carboxyhemoglobin', 'methemoglobin', 'chloride', 'calcium', 'temperature', 'potassium', 'sodium', 'lactate', 'glucose']
+class MIMICIVSQTable(Module):
+    config: MIMICIVSQLTableConfig
 
-blood_chemistry = ['albumin','globulin','total_protein','aniongap','bicarbonate','bun','calcium','chloride','creatinine','glucose','sodium','potassium']
-
-cardiac_markers = ['troponin_t','ntprobnp','ck_mb']
-
-cbc = ['hematocrit','hemoglobin','mch','mchc','mcv','platelet','rbc','rdw','wbc']
-
-vital_signs = ['heart_rate','sbp','dbp','mbp','sbp_ni','dbp_ni','mbp_ni','resp_rate','temperature','spo2','glucose']
-
-# Glasgow Coma Scale, a measure of neurological function
-coma_signs = ['gcs','gcs_motor','gcs_verbal','gcs_eyes','gcs_unable']
-
-renal_out = ['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr']
-
-renal_creat = ['creat']
-
-renal_aki = ['aki_stage_smoothed']
+    def _coerce_id_to_str(self, df: pd.DataFrame):
+        id_alias_dict = self.config.alias_id_dict
+        # coerce to integers then fix as strings.
+        int_dtypes = {k: int for k in id_alias_dict.values()}
+        str_dtypes = {k: str for k in id_alias_dict.values()}
+        return df.astype(int_dtypes).astype(str_dtypes)
 
 
-
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
-
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
-
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
-
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
-
-renal_out_kwargs = dict(
-    name="renal_out",
-    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-    query="""
-    select icu.hadm_id {admission_col},
-           {attributes},
-           charttime {time_col}
-    from mimiciv_derived.kdigo_uo
-    inner join mimiciv_icu.icustays icu
-    on icu.stay_id = stay_id
-    """)
-
-
-class TimestampedMIMICIVSQLTable(Module):
+class TimestampedMIMICIVSQLTable(MIMICIVSQTable):
     config: TimestampedMIMICIVSQLTableConfig
 
     def __call__(self, engine: Engine,
@@ -1064,9 +1106,44 @@ class TimestampedMIMICIVSQLTable(Module):
         assert all(a in self.config.attributes for a in attributes), \
             f"Some attributes {attributes} not in {self.config.attributes}"
         query = self.config.query.format(attributes=','.join(attributes),
-                                         time_col=self.config.time_col,
-                                         admission_col=self.config.admission_col)
-        return pd.read_sql(query, engine)
+                                         **self.config.alias_dict)
+        return self._coerce_id_to_str(pd.read_sql(query, engine))
+
+
+class IntervalMIMICIVSQLTable(MIMICIVSQTable):
+    config: IntervalMIMICIVSQLTableConfig
+
+    def __call__(self, engine: Engine):
+        query = self.config.query.format(**self.config.alias_dict)
+        return self._coerce_id_to_str(pd.read_sql(query, engine))
+
+
+class MIMICIVSQLConfig(Config):
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+
+    static_table: StaticMIMICIVSQLTableConfig
+    admissions_table: AdmissionMIMICIVSQLTableConfig
+    obs_tables: List[TimestampedMIMICIVSQLTableConfig] = [
+        renal_out_conf,
+        renal_creat_conf,
+        renal_aki_conf,
+        sofa_conf,
+        blood_gas_conf,
+        blood_chemistry_conf,
+        cardiac_marker_conf,
+        weight_conf,
+        cbc_conf,
+        vital_conf,
+        gcs_conf
+    ]
+    icu_procedures_table: IntervalICUProcedureMIMICIVSQLTableConfig = icuproc_conf
+    icu_inputs_table: RatedInputMIMICIVSQLTableConfig = rated_input_conf
+    hosp_procedures_table: IntervalHospProcedureMIMICIVSQLTableConfig = hospicdproc_conf
+
 
 class MIMICIVSQL(Module):
     config: MIMICIVSQLConfig
@@ -1076,4 +1153,137 @@ class MIMICIVSQL(Module):
             f'postgresql+psycopg2://{self.config.user}:{self.config.password}@'
             f'{self.config.host}:{self.config.port}/{self.config.dbname}')
 
+    @cached_property
+    def supported_obs_variables(self) -> pd.DataFrame:
+        rows = []
+        for table in self.config.obs_tables:
+            rows.extend([(table.name, a) for a in table.attributes])
+        return pd.DataFrame(rows, columns=['table_name', 'attribute']).set_index('attribute', drop=True)
 
+    @cached_property
+    def supported_icu_procedures(self) -> pd.DataFrame:
+        query = f"""
+        select di.label as {self.config.icu_procedures_table.item_id_alias}
+        from mimiciv_icu.procedureevents pe
+        left join mimiciv_icu.d_items di
+        on pe.itemid = di.itemid
+        """
+        return pd.read_sql(query, self.create_engine())
+
+    @cached_property
+    def supported_icu_inputs(self) -> pd.DataFrame:
+        query = f"""
+        select di.label as {self.config.icu_inputs_table.item_id_alias}
+        from mimiciv_icu.inputevents ie
+        left join mimiciv_icu.d_items di
+        on ie.itemid = di.itemid
+        """
+        return pd.read_sql(query, self.create_engine())
+
+    @cached_property
+    def supported_hosp_procedures(self) -> pd.DataFrame:
+        engine = self.create_engine()
+        query = f"""
+        select di.icd_code  as {self.config.hosp_procedures_table.icd_code_alias},  
+        di.icd_version as {self.config.hosp_procedures_table.icd_version_alias},
+        di.long_title as {self.config.hosp_procedures_table.description_alias}
+        from mimiciv_hosp.procedures_icd pi
+        inner join mimiciv_hosp.d_icd_procedures di
+          on pi.icd_version = di.icd_version
+          and pi.icd_code = di.icd_code
+        """
+        return pd.read_sql(query, engine)
+
+    def obs_table(self, table_name: str) -> TimestampedMIMICIVSQLTable:
+        table_conf = next(t for t in self.config.obs_tables if t.name == table_name)
+        return TimestampedMIMICIVSQLTable(table_conf)
+
+    def _extract_static_table(self, engine: Engine) -> pd.DataFrame:
+        query = f"""
+SELECT 
+p.subject_id as {self.config.static_table.subject_id_alias},
+p.gender as {self.config.static_table.gender_alias},
+a.race as {self.config.static_table.race_alias},
+p.anchor_age as {self.config.static_table.anchor_age_alias},
+p.anchor_year as {self.config.static_table.anchor_year_alias}
+from mimiciv_hosp.patients p
+left join 
+(select subject_id, max(race) as race
+from mimiciv_hosp.admissions
+group by subject_id) as a
+on p.subject_id = a.subject_id
+"""
+        return pd.read_sql(query, engine)
+
+    def _extract_admissions_table(self, engine: Engine) -> pd.DataFrame:
+        query = f"""
+SELECT
+hadm_id as {self.config.admissions_table.admission_id_alias}, 
+subject_id as {self.config.admissions_table.subject_id_alias},
+admittime as {self.config.admissions_table.admission_time_alias},
+dischtime as {self.config.admissions_table.discharge_time_alias}
+FROM mimiciv_hosp.admissions 
+"""
+        return pd.read_sql(query, engine)
+
+    def _extract_dx_discharge_table(self, engine: Engine) -> pd.DataFrame:
+
+        query = r"""
+        select
+        hadm_id, subject_id, icd_code, icd_version
+        from mimiciv_hosp.diagnoses_icd 
+        """
+        return pd.read_sql(query, engine)
+
+    def _extract_obs_table(self, engine: Engine, obs_variables: Optional[Dict[str, List[str]]]) -> pd.DataFrame:
+        dfs = dict()
+        for table_name, attributes in obs_variables.items():
+            table = self.obs_table(table_name)
+            dfs[table_name] = table(engine, attributes)
+        return dfs
+
+    def _extract_icu_procedures_table(self, engine: Engine, procedure_items: Optional[List[str]]) -> pd.DataFrame:
+        table = IntervalMIMICIVSQLTable(self.config.icu_procedures_table)
+        pass
+
+    def _extract_icu_inputs_table(self, engine: Engine, input_items: Optional[List[str]]) -> pd.DataFrame:
+        table = IntervalMIMICIVSQLTable(self.config.icu_inputs_table)
+        pass
+
+    def _extract_hosp_procedures_table(self, engine: Engine,
+                                       procedure_icd_items: Optional[List[str]]) -> pd.DataFrame:
+        table = IntervalMIMICIVSQLTable(self.config.hosp_procedures_table)
+        pass
+
+    def _merge_procedures(self, icu_proc_df: pd.DataFrame, hosp_proc_icd_df: pd.DataFrame) -> pd.DataFrame:
+        pass
+
+    def __call__(self, obs_variables: Optional[Dict[str, List[str]]] = None,
+                 inputs_items: Optional[pd.DataFrame] = None,
+                 hosp_procedures_icd: Optional[pd.DataFrame] = None,
+                 icu_procedures_items: Optional[pd.DataFrame] = None) -> Dict[str, pd.DataFrame]:
+        engine = self.create_engine()
+        static_df = self._extract_static_table(engine)
+        admissions_df = self._extract_admissions_table(engine)
+        obs_df = self._extract_obs_table(engine, obs_variables)
+        icu_input_df = self._extract_icu_inputs_table(engine, inputs_items)
+        icu_proc_df = self._extract_icu_procedures_table(engine, icu_procedures_items)
+        hosp_proc_icd_df = self._extract_hosp_procedures_table(engine, hosp_procedures_icd)
+
+
+def load_aki_default_input_items():
+    df = pd.read_csv(os.path.join(_RSC_DIR, 'mimic4_aki_icu_inputs_itemid_selection.csv.gz'),
+                     dtype={'itemid': str})
+    return df[['itemid']].reset_index(drop=True)
+
+
+def load_aki_default_icu_procedure_items():
+    df = pd.read_csv(os.path.join(_RSC_DIR, 'mimic4_aki_icu_procedures_itemid_selection.csv.gz'),
+                     dtype={'itemid': str})
+    return df[['itemid']].reset_index(drop=True)
+
+
+def load_aki_default_procedure_icd_items():
+    df = pd.read_csv(os.path.join(_RSC_DIR, 'mimic4_aki_hosp_procedures_icd_selection.csv.gz'),
+                     dtype={'icd_code': str, 'icd_version': str})
+    return df[['icd_code', 'icd_version']].reset_index(drop=True)
