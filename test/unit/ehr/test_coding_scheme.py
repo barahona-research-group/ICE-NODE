@@ -1,5 +1,6 @@
 import os
 from unittest import TestCase, main as main_test
+from typing import Dict, List
 
 from parameterized import parameterized
 
@@ -34,6 +35,15 @@ class TestFlatScheme(TestCase):
         cls.schemes_kwargs = schemes_kwargs
 
     def test_from_name(self):
+        """
+        Test the `from_name` method of the FlatScheme class.
+
+        This method iterates over the `schemes_kwargs` list and creates a FlatScheme object
+        using the provided keyword arguments. It then registers the scheme and asserts that
+        calling `from_name` with the scheme's name returns the same scheme object.
+
+        If a KeyError is raised, it means that the scheme is not registered and the test passes.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme(scheme)
@@ -44,6 +54,16 @@ class TestFlatScheme(TestCase):
             FlatScheme.from_name('42')
 
     def test_register_scheme(self):
+        """
+        Test the register_scheme method.
+
+        This method tests two scenarios:
+        1. It tests that the register_scheme method works by registering a scheme and then
+           asserting that the registered scheme can be retrieved using its name.
+        2. It tests that the register_scheme method raises an AssertionError when trying to
+           register a scheme that is already registered.
+
+        """
         # First, test that the register_scheme method works.
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
@@ -58,6 +78,16 @@ class TestFlatScheme(TestCase):
                 FlatScheme.register_scheme(scheme)
 
     def test_register_scheme_loader(self):
+        """
+        Test case for registering a scheme loader and verifying the scheme registration.
+
+        This test iterates over a list of scheme keyword arguments and performs the following steps:
+        1. Creates a FlatScheme instance using the scheme keyword arguments.
+        2. Registers a scheme loader for the scheme's name using a lambda function.
+        3. Asserts that the scheme can be retrieved using the scheme's name.
+        4. Asserts that attempting to register the same scheme loader again raises an AssertionError.
+        5. Asserts that attempting to register the same scheme again raises an AssertionError.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
@@ -70,6 +100,15 @@ class TestFlatScheme(TestCase):
                 FlatScheme.register_scheme(scheme)
 
     def test_registered_schemes(self):
+        """
+        Test case to verify the behavior of registered coding schemes.
+
+        This test case checks the following:
+        - The initial set of available coding schemes is empty.
+        - After each setup (setup_cprd, setup_mimic, setup_icd), the number of available coding schemes increases.
+        - Each registered coding scheme is an instance of FlatScheme object.
+        - The name of the instantiated FlatScheme object matches the registered coding scheme.
+        """
 
         self.assertSetEqual(CodingScheme.available_schemes(), set())
         count = 0
@@ -88,10 +127,14 @@ class TestFlatScheme(TestCase):
          (CodingSchemeConfig('p_desc'), ['1'], {1: 'one'}, {'1': 0}),
          (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {1: 0}),
          (CodingSchemeConfig('p_desc'), ['1'], {'1': 5}, {'1': 0})])
-    def test_type_error(self, config, codes, desc, index):
-        # Add a problematic scheme to test error handling
-        # code type should be str, not int.
+    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str], index: Dict[str, int]):
+        """
+        Test for type error handling in the FlatScheme constructor.
 
+        This test adds a problematic scheme to test the error handling of the constructor.
+        The code and description types should be strings, not integers. The test expects an AssertionError
+        or KeyError to be raised.
+        """
         with self.assertRaises((AssertionError, KeyError)):
             FlatScheme(config=config, codes=codes, desc=desc, index=index)
 
@@ -100,49 +143,96 @@ class TestFlatScheme(TestCase):
         (CodingSchemeConfig('p_desc'), ['3'], {'3': 'three', '1': 'one'}, {'1': 0}),
         (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {'1': 0, '2': 0}),
     ])
-    def test_sizes(self, config, codes, desc, index):
-        # Add a problematic scheme to test error handling
-        # code type should be str, not int.
+    def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str], index: Dict[str, int]):
+        """
+        Test the sizes of the coding scheme.
+
+        This method adds a problematic scheme to test error handling.
+        The codes, description, and index collections should all have the same sizes.
+        FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
+        """
         with self.assertRaises((AssertionError, KeyError)):
             FlatScheme(config=config, codes=codes, desc=desc, index=index)
 
     def test_codes(self):
-        # First, test that the codes is properly initialized.
+        """
+        Test the initialization and retrieval of codes in the FlatScheme class.
+
+        This method iterates over a list of scheme keyword arguments and performs the following steps:
+        1. Initializes a FlatScheme object with the provided keyword arguments.
+        2. Registers the scheme using the `register_scheme` method of the FlatScheme class.
+        3. Retrieves the scheme using the `from_name` method of the FlatScheme class.
+        4. Asserts that the retrieved scheme's codes match the provided keyword arguments' codes.
+
+        This test ensures that the codes are properly initialized and can be retrieved correctly.
+
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme(scheme)
             self.assertEqual(FlatScheme.from_name(scheme.config.name).codes, scheme_kwargs['codes'])
 
     def test_index(self):
-        # First, test that the index is properly initialized.
+        """
+        Test the initialization and retrieval of index in FlatScheme.
+
+        Same as the test_codes method, but for the index.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme(scheme)
             self.assertEqual(FlatScheme.from_name(scheme.config.name).codes, scheme_kwargs['codes'])
 
     def test_desc(self):
-        # First, test that the desc is properly initialized.
+        """
+        Test the initialization and description of the FlatScheme.
+
+        Same as the test_codes method, but for the description.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme(scheme)
             self.assertEqual(FlatScheme.from_name(scheme.config.name).desc, scheme_kwargs['desc'])
 
     def test_name(self):
+        """
+        Test case to verify if the name attribute of the FlatScheme instance
+        matches the name attribute specified in the scheme configuration.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             self.assertEqual(scheme.name, scheme_kwargs['config'].name)
 
     def test_index2code(self):
+        """
+        Test the index to code mapping in the coding scheme.
+
+        It tests if the index to code mapping is correct and respects the codes order.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             self.assertTrue(all(c == scheme.codes[i] for i, c in scheme.index2code.items()))
 
     def test_index2desc(self):
+        """
+        Test the mapping of index to description in the coding scheme.
+
+        Iterates over the scheme_kwargs and creates a FlatScheme object using each set of keyword arguments.
+        Then, it checks if the description for each code in the scheme matches the description obtained from the index.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             self.assertTrue(all(desc == scheme.desc[scheme.codes[i]] for i, desc in scheme.index2desc.items()))
 
     def test_search_regex(self):
+        """
+        Test the search_regex method of the FlatScheme class.
+
+        This method tests the search_regex method of the FlatScheme class by creating a FlatScheme object
+        with a specific coding scheme configuration and performing various search operations using the
+        search_regex method. It asserts the expected results for each search operation.
+
+        """
         scheme = FlatScheme(CodingSchemeConfig('p_codes'),
                             codes=['1', '3'],
                             desc={'1': 'one', '3': 'pancreatic cAnCeR'},
@@ -166,6 +256,14 @@ class TestFlatScheme(TestCase):
     #     self.fail()
 
     def test_as_dataframe(self):
+        """
+        Test the `as_dataframe` method of the FlatScheme class.
+
+        This method tests whether the `as_dataframe` method returns a DataFrame with the expected structure and values.
+        It checks if the index of the DataFrame matches the index values of the scheme, and if the columns of the DataFrame
+        are 'code' and 'desc'. It also verifies if the scheme object is equal to a new FlatScheme object created with the
+        same configuration, codes, descriptions, and index.
+        """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             df = scheme.as_dataframe()

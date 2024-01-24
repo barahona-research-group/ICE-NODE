@@ -1,35 +1,30 @@
-from typing import Optional, List, Union, Dict, Any, Tuple
+import logging
 import os
 import random
-from pathlib import Path
 import re
-import logging
 from datetime import datetime
+from typing import List, Dict, Any, Tuple
 
 import jax
-import jax.random as jrandom
 import jax.numpy as jnp
+import jax.random as jrandom
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-from ..metric import (MetricsCollection, Metric)
-from ..utils import (translate_path, write_config, load_config, zip_members)
-
+from .experiment import InpatientExperiment
 from ..base import Config, Module
-from ..db.models import (Base, Experiment as ExperimentModel, EvaluationRun as
-                         EvaluationRunModel, EvaluationStatus as
+from ..db.models import (Experiment as ExperimentModel, EvaluationRun as
+EvaluationRunModel, EvaluationStatus as
                          EvaluationStatusModel, Results as ResultsModel, Metric
                          as MetricModel, get_or_create, create_tables)
-
-from .trainer import (Trainer, InTrainer, TrainerConfig, ReportingConfig,
-                      TrainerReporting, WarmupConfig)
-from .experiment import InpatientExperiment
+from ..metric import (MetricsCollection)
+from ..utils import (load_config, zip_members)
 
 
 def is_x64_enabled():
-    x = jrandom.normal(jrandom.PRNGKey(0), (20, ), dtype=jnp.float64)
+    x = jrandom.normal(jrandom.PRNGKey(0), (20,), dtype=jnp.float64)
     return x.dtype == jnp.float64
 
 
@@ -95,7 +90,7 @@ class Evaluation(Module):
             os.path.join(self.config.experiments_dir, d)
             for d in os.listdir(self.config.experiments_dir)
             if os.path.isdir(os.path.join(self.config.experiments_dir, d))
-            and os.path.exists(
+               and os.path.exists(
                 os.path.join(self.config.experiments_dir, d, 'config.json'))
         ]
 
