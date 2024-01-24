@@ -349,7 +349,7 @@ class DatasetTransformation(Module):
     config: DatasetTransformationConfig
 
     @abstractmethod
-    def __call__(self, dataset: Dataset, **kwargs) -> Tuple[Dataset, Dict[str, Any]]:
+    def __call__(self, dataset: Dataset, auxiliary) -> Tuple[Dataset, Dict[str, Any]]:
         pass
 
 
@@ -366,8 +366,8 @@ class DatasetPipeline(Module):
         return ['transformations']
 
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, Any]]:
-        kwargs = {}
+        auxiliary = {}
         for t in self.transformations:
-            dataset, auxiliary = t(dataset, **kwargs)
-            kwargs.update(auxiliary)
-        return dataset, kwargs
+            dataset, auxiliary_ = t(dataset, auxiliary)
+            auxiliary.update(auxiliary_)
+        return dataset, auxiliary
