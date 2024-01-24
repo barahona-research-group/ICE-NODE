@@ -4,12 +4,14 @@ from __future__ import annotations
 import logging
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from typing import Union, Dict, Callable, List, Optional
+from typing import Union, Dict, Callable, List, Optional, Tuple
 
 import dask.dataframe as dd
 import equinox as eqx
 import numpy as np
 import pandas as pd
+import sqlalchemy
+from sqlalchemy import Engine
 
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from .coding_scheme import OutcomeExtractor, CodingScheme
@@ -20,7 +22,7 @@ from .concepts import (InpatientInput, InpatientObservables, Patient,
                        StaticInfo)
 from .dataset import (DatasetScheme, ColumnNames, DatasetConfig,
                       DatasetSchemeConfig)
-from ..base import Config
+from ..base import Config, Module
 from ..utils import load_config
 
 warnings.filterwarnings('error',
@@ -836,3 +838,242 @@ class MIMIC4ICUDataset(MIMIC4Dataset):
         logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
             yield (adm_id, InpatientObservables.empty(obs_dim))
+
+
+class MIMICIVSQLConfig(Config):
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+
+
+
+class TimestampedMIMICIVSQLTableConfig(Config):
+    name: str
+    attributes: Tuple[str]
+    query: str
+    time_col: str = 'time_bin'
+    admission_col: str = 'hadm_id'
+
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+renal_creat_query = f"""
+select hadm_id,
+       {', '.join(renal_creat)},
+       charttime time_bin
+from mimiciv_derived.kdigo_creatinine
+"""
+
+renal_aki_query = f"""
+select hadm_id,
+       {', '.join(renal_aki)},
+       charttime time_bin
+from mimiciv_derived.kdigo_stages
+"""
+
+sofa_query = f"""
+select hadm_id,
+      s.sofa_24hours as sofa ,
+      s.endtime time_bin
+from mimiciv_derived.sofa as s
+inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id
+"""
+
+blood_gas_query = f"""
+select hadm_id,
+       {', '.join(blood_gas)},
+       charttime time_bin
+from mimiciv_derived.bg as bg
+where hadm_id is not null
+"""
+
+#%%
+blood_chemistry_query = f"""
+select hadm_id,
+       {', '.join(blood_chemistry)},
+       charttime time_bin
+from mimiciv_derived.chemistry as ch
+where hadm_id is not null
+"""
+
+cardiac_marker_query = \
+f"""
+WITH trop AS
+(
+    SELECT specimen_id, MAX(valuenum) AS troponin_t
+    FROM mimiciv_hosp.labevents
+    WHERE itemid = 51003
+    GROUP BY specimen_id
+)
+SELECT
+    c.hadm_id
+    , charttime time_bin
+    , trop.troponin_t
+    , c.ntprobnp
+    , c.ck_mb
+FROM mimiciv_hosp.admissions a
+LEFT JOIN mimiciv_derived.cardiac_marker c
+  ON a.hadm_id = c.hadm_id
+LEFT JOIN trop
+  ON c.specimen_id = trop.specimen_id
+WHERE c.hadm_id is not null
+"""
+
+weight_query = f"""
+select icu.hadm_id,
+     w.weight,
+        w.time_bin
+ from (
+ (select stay_id, w.weight, w.starttime time_bin
+  from mimiciv_derived.weight_durations as w)
+ union all
+ (select stay_id, w.weight, w.endtime time_bin
+     from mimiciv_derived.weight_durations as w)
+ ) w
+inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
+"""
+
+cbc_query = f"""
+select hadm_id,
+       {', '.join(cbc)},
+       cbc.charttime time_bin
+from mimiciv_derived.complete_blood_count as cbc
+where hadm_id is not null
+"""
+
+vital_query = f"""
+select icu.hadm_id,
+       {', '.join(vital_signs)},
+       v.charttime time_bin
+from mimiciv_derived.vitalsign as v
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = v.stay_id
+"""
+
+gcs_query = f"""
+select icu.hadm_id,
+       {', '.join(coma_signs)},
+       gcs.charttime time_bin
+from mimiciv_derived.gcs as gcs
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = gcs.stay_id
+"""
+
+
+blood_gas = ['so2', 'po2', 'pco2', 'fio2', 'fio2_chartevents', 'aado2', 'aado2_calc', 'pao2fio2ratio', 'ph', 'baseexcess', 'bicarbonate', 'totalco2', 'hematocrit', 'hemoglobin', 'carboxyhemoglobin', 'methemoglobin', 'chloride', 'calcium', 'temperature', 'potassium', 'sodium', 'lactate', 'glucose']
+
+blood_chemistry = ['albumin','globulin','total_protein','aniongap','bicarbonate','bun','calcium','chloride','creatinine','glucose','sodium','potassium']
+
+cardiac_markers = ['troponin_t','ntprobnp','ck_mb']
+
+cbc = ['hematocrit','hemoglobin','mch','mchc','mcv','platelet','rbc','rdw','wbc']
+
+vital_signs = ['heart_rate','sbp','dbp','mbp','sbp_ni','dbp_ni','mbp_ni','resp_rate','temperature','spo2','glucose']
+
+# Glasgow Coma Scale, a measure of neurological function
+coma_signs = ['gcs','gcs_motor','gcs_verbal','gcs_eyes','gcs_unable']
+
+renal_out = ['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr']
+
+renal_creat = ['creat']
+
+renal_aki = ['aki_stage_smoothed']
+
+
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+renal_out_kwargs = dict(
+    name="renal_out",
+    attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+    query="""
+    select icu.hadm_id {admission_col},
+           {attributes},
+           charttime {time_col}
+    from mimiciv_derived.kdigo_uo
+    inner join mimiciv_icu.icustays icu
+    on icu.stay_id = stay_id
+    """)
+
+
+class TimestampedMIMICIVSQLTable(Module):
+    config: TimestampedMIMICIVSQLTableConfig
+
+    def __call__(self, engine: Engine,
+                 attributes: List[str]):
+        assert len(set(attributes)) == len(attributes), \
+            f"Duplicate attributes {attributes}"
+        assert all(a in self.config.attributes for a in attributes), \
+            f"Some attributes {attributes} not in {self.config.attributes}"
+        query = self.config.query.format(attributes=','.join(attributes),
+                                         time_col=self.config.time_col,
+                                         admission_col=self.config.admission_col)
+        return pd.read_sql(query, engine)
+
+class MIMICIVSQL(Module):
+    config: MIMICIVSQLConfig
+
+    def create_engine(self) -> Engine:
+        return sqlalchemy.create_engine(
+            f'postgresql+psycopg2://{self.config.user}:{self.config.password}@'
+            f'{self.config.host}:{self.config.port}/{self.config.dbname}')
+
+
