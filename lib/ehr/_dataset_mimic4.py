@@ -1328,6 +1328,7 @@ class MixedICDMIMICIVScheme(FlatScheme):
 
         # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
         mixed2pure_maps = {}
+        lost_codes = []
         dataframe = self.as_dataframe()
         for pure_version, pure_scheme in self.icd_schemes.items():
             # mixed2pure has the form {mixed_code: {icd}}.
@@ -1347,9 +1348,11 @@ class MixedICDMIMICIVScheme(FlatScheme):
                     for icd, mixed_code in icd2mixed.items():
                         if icd in pure_map:
                             mixed2pure[mixed_code].update(pure_map[icd])
-            mixed2pure_maps[pure_version] = mixed2pure
-        # register the mapping between the mixed and pure ICD schemes
+                        else:
+                            lost_codes.append(mixed_code)
 
+            mixed2pure_maps[pure_version] = mixed2pure
+        # register the mapping between the mixed and pure ICD schemes.
         for pure_version, mixed2pure in mixed2pure_maps.items():
             pure_scheme = self.icd_schemes[pure_version]
             conf = CodingSchemeConfig(self.name, pure_scheme.name)
@@ -1357,6 +1360,12 @@ class MixedICDMIMICIVScheme(FlatScheme):
             CodeMap.register_map(self.name,
                                  pure_scheme.name,
                                  CodeMap(conf, mixed2pure))
+
+        lost_df = dataframe[dataframe['code'].isin(lost_codes)]
+        if len(lost_df) > 0:
+            logging.warning(f"Lost {len(lost_df)} codes when generating the mapping between the Mixed ICD"
+                            "scheme and the individual ICD scheme.")
+            logging.warning(lost_df.to_string().replace('\n', '\n\t'))
 
     def register_maps_loaders(self):
         """
@@ -1485,6 +1494,7 @@ class MIMICIVSQL(Module):
         """
         c_version = self.config.hosp_procedures_table.icd_version_alias
         c_code = self.config.hosp_procedures_table.icd_code_alias
+        c_desc = self.config.hosp_procedures_table.icd_desc_alias
         supported_hosp_procedures = self.supported_hosp_procedures
         if icd_version_selection is None:
             icd_version_selection = supported_hosp_procedures[[c_version, c_code]].drop_duplicates()
@@ -1498,8 +1508,14 @@ class MIMICIVSQL(Module):
                 support_subset = supported_hosp_procedures[supported_hosp_procedures[c_version] == version]
                 assert codes[c_code].isin(support_subset[c_code]).all(), \
                     f"Some ICD codes {codes} not in {supported_hosp_procedures[supported_hosp_procedures[c_version] == version][c_code]}"
-        icu_proc_scheme = MixedICDMIMICIVScheme.from_selection(name, icd_version_selection)
+        icu_proc_scheme = MixedICDMIMICIVScheme.from_selection(name, icd_version_selection,
+                                                               version_alias=c_version,
+                                                               icd_code_alias=c_code,
+                                                               description_alias=c_desc,
+                                                               icd_schemes={'9': 'PrICD9', '10': 'PrICD10'})
         MixedICDMIMICIVScheme.register_scheme(icu_proc_scheme)
+        icu_proc_scheme.register_maps_loaders()
+
         return icu_proc_scheme
 
     def register_dx_discharge_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
@@ -1517,6 +1533,7 @@ class MIMICIVSQL(Module):
         """
         c_version = self.config.dx_discharge_table.version_alias
         c_code = self.config.dx_discharge_table.code_alias
+        c_desc = self.config.dx_discharge_table.description_alias
         supported_dx_discharge = self.supported_dx_discharge
         if icd_version_selection is None:
             icd_version_selection = supported_dx_discharge[[c_version, c_code]].drop_duplicates()
@@ -1530,7 +1547,11 @@ class MIMICIVSQL(Module):
                 support_subset = supported_dx_discharge[supported_dx_discharge[c_version] == version]
                 assert codes[c_code].isin(support_subset[c_code]).all(), \
                     f"Some ICD codes {codes} not in {supported_dx_discharge[supported_dx_discharge[c_version] == version][c_code]}"
-        dx_discharge_scheme = MixedICDMIMICIVScheme.from_selection(name, icd_version_selection)
+        dx_discharge_scheme = MixedICDMIMICIVScheme.from_selection(name, icd_version_selection,
+                                                                   version_alias=c_version,
+                                                                   icd_code_alias=c_code,
+                                                                   description_alias=c_desc,
+                                                                   icd_schemes={'9': 'DxICD9', '10': 'DxICD10'})
         MixedICDMIMICIVScheme.register_scheme(dx_discharge_scheme)
         return dx_discharge_scheme
 
