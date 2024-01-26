@@ -222,56 +222,6 @@ def register_mimic_input():
                                           desc=desc))
 
 
-class MIMICObservables(FlatScheme):
-    """
-    A class representing the MIMIC observables coding scheme.
-
-    This class inherits from the FlatScheme class and provides a mapping of groups
-    for the MIMIC observables.
-
-    Attributes:
-        _groups (Dict[str, str]): a dictionary mapping group names to their corresponding values.
-    """
-
-    _groups: Dict[str, str]
-
-    def __init__(self, config: CodingSchemeConfig, groups: Dict[str, str], **kwargs):
-        super().__init__(config=config, **kwargs)
-        self._groups = groups
-
-    @property
-    def groups(self):
-        """
-        Get the dictionary mapping group names to their corresponding values.
-
-        Returns:
-            Dict[str, str]: a dictionary mapping group names to their corresponding values.
-        """
-        return self._groups
-
-
-def register_observables_scheme():
-    """
-    Register the MIMIC-IV observables coding scheme.
-
-    This function reads the MIMIC-IV observables codes from a CSV file, which is manually curated and stored at `lib/ehr/resources/mimic4_obs_codes.csv.gz`,
-    creates a dictionary mapping codes to their corresponding labels and groups,
-    and registers the coding scheme with the MIMICObservables class.
-
-    Returns:
-        None
-    """
-    filepath = os.path.join(_RSC_DIR, 'mimic4_obs_codes.csv.gz')
-    df = pd.read_csv(filepath, dtype=str)
-    codes = df.code.tolist()
-    desc = dict(zip(codes, df.label.tolist()))
-    groups = dict(zip(codes, df.group.tolist()))
-    MIMICObservables.register_scheme(MIMICObservables(CodingSchemeConfig(name='mimic4_obs'),
-                                                      codes=codes,
-                                                      index=dict(zip(codes, range(len(codes)))),
-                                                      desc=desc,
-                                                      groups=groups))
-
 
 def register_mimic_eth_mapping(s_scheme: str, t_scheme: str, filename: str,
                                s_colname: str, t_colname: str):
@@ -350,7 +300,6 @@ def setup_scheme_loaders():
     AbstractGroupedProcedures.register_scheme_loader('int_mimic4_grouped_proc', register_mimic_procedure_groups)
     MIMICInputGroups.register_scheme_loader('int_mimic4_input_group', register_mimic_input_groups)
     FlatScheme.register_scheme_loader('int_mimic4_input', register_mimic_input)
-    MIMICObservables.register_scheme_loader('mimic4_obs', register_observables_scheme)
     register_mimic_ethnicity_loaders()
 
 

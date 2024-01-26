@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/ICE-NODE.iml" filepath="$PROJECT_DIR$/.idea/ICE-NODE.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/ICENODE.iml" filepath="$PROJECT_DIR$/.idea/ICENODE.iml" />
     </modules>
   </component>
 </project>
