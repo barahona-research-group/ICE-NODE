@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import warnings
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from functools import cached_property
 from typing import Union, Dict, Callable, List, Optional, Tuple
@@ -15,8 +16,9 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Engine
 
+from ._coding_scheme_icd import (ICD)
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
-from .coding_scheme import OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme
+from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme)
 from .coding_scheme import _RSC_DIR
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
@@ -1260,19 +1262,60 @@ class ObservableMIMICScheme(FlatScheme):
 
 
 class MixedICDMIMICIVScheme(FlatScheme):
+    icd_schemes: Dict[str, ICD]
+
     @classmethod
-    def from_selection(cls, name: str, icd_version_selection: pd.DataFrame):
-        icd_version_selection = icd_version_selection.sort_values(['icd_version', 'icd_code'])
+    def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
+                       version_alias: str, icd_code_alias: str, description_alias: str,
+                       icd9_scheme: ICD, icd10_scheme: ICD):
+        icd_version_selection = icd_version_selection.sort_values([version_alias, icd_code_alias])
+        assert icd_version_selection[version_alias].isin(['9', '10']).all(), \
+            "Only ICD-9 and ICD-10 are expected."
+        icd_schemes = {'9': icd9_scheme, '10': icd10_scheme}
+        assert all(isinstance(s, ICD) for s in (icd9_scheme, icd10_scheme)), \
+            "Only ICD schemes are expected."
+
+        for version, icd_df in icd_version_selection.groupby(version_alias):
+            scheme = icd_schemes[version]
+            icd_version_selection.loc[icd_df.index, icd_code_alias] = \
+                icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+
         codes = icd_version_selection.index.map(lambda x: f"{x}:{icd_version_selection.loc[x, 'icd_code']}").tolist()
         df = icd_version_selection.copy()
         df['code'] = codes
         index = dict(zip(codes, range(len(codes))))
-        desc = df.set_index('code')['long_title'].to_dict()
+        desc = df.set_index('code')[description_alias].to_dict()
 
         return cls(CodingSchemeConfig(name),
                    codes=codes,
                    desc=desc,
-                   index=index)
+                   index=index,
+                   icd_schemes=icd_schemes)
+
+    def process_table(self, table: pd.DataFrame, code_alias: str, version_alias: str, description_alias: str):
+        table = table.copy()
+        assert version_alias in table.columns, f"Column {version_alias} not found."
+        assert code_alias in table.columns, f"Column {code_alias} not found."
+        assert description_alias in table.columns, f"Column {description_alias} not found."
+        assert table[version_alias].isin(['9', '10']).all(), \
+            "Only ICD-9 and ICD-10 are expected."
+
+        for version, icd_df in table.groupby(version_alias):
+            scheme = self.icd_schemes[version]
+            table.loc[icd_df.index, code_alias] = \
+                icd_df[code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+        return table
+
+    defx register_maps(self):
+        to_map = {'9': defaultdict(set), '10': defaultdict(set)}
+        dataframe = self.as_dataframe()
+
+
+        for version, scheme in self.as_dataframe().groupby('icd_version'):
+            same_scheme = self.icd_schemes[version]
+            other_scheme = self.icd_schemes['9' if version == '10' else '10']
+            supported_codes = scheme[scheme['icd_code'].map(same_scheme.is_supported)]
+
 
     def as_dataframe(self):
         columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
