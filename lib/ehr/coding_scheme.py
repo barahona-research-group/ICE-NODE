@@ -103,7 +103,13 @@ class CodingScheme(Module):
         """
         Register a scheme in order to be retrieved by its name in `scheme.config.name` using the function `from_name`.
         """
-        assert scheme.name not in cls._schemes, f"Scheme {scheme.name} already registered."
+        assert scheme.name not in cls._schemes or scheme == cls._schemes[scheme.name], \
+            f"Scheme {scheme.name} already registered with mismatched content. Make sure to unregister schemes before" \
+            "loading new ones with the same name."
+
+        if scheme.name in cls._schemes:
+            logging.warning(f"Scheme {scheme.name} already registered and matching content. Overwriting.")
+
         cls._schemes[scheme.name] = scheme
 
     @classmethod
@@ -111,8 +117,10 @@ class CodingScheme(Module):
         """
         Register a scheme loader for easy-loading of schemes in order to be retrieved by its name in `name`.
         """
-        assert name not in cls._schemes, f"Scheme {name} already registered."
-        assert name not in cls._load_schemes, f"Scheme {name} already registered."
+
+        if name in cls._load_schemes:
+            logging.warning(f"Scheme {name} already registered. Overwriting.")
+
         cls._load_schemes[name] = loader
 
     @classmethod
@@ -1007,6 +1015,7 @@ class CodeMap(Module):
         has_mapper(cls, source_scheme: str, target_scheme: str): returns True if a mapper exists for the given source and target coding schemes, False otherwise.
         get_mapper(cls, source_scheme: str, target_scheme: str) -> CodeMap: returns the mapper for the given source and target coding schemes.
         __getitem__(self, item): returns the mapped codes for the given item.
+        __contains__(self, item): returns True if the given item is mapped to the target coding scheme, False otherwise.
         keys(self): returns the supported codes in the source coding scheme that can be mapped to the target scheme.
         map_codeset(self, codeset: Set[str]): maps a codeset to the target coding scheme.
         target_code_ancestors(self, t_code: str, include_itself=True): returns the ancestors of a target code.
@@ -1247,6 +1256,18 @@ class CodeMap(Module):
             Set[str]: the mapped codes for the given item.
         """
         return self._data[item]
+
+    def __contains__(self, item):
+        """
+        Checks if an item is in the CodeMap.
+
+        Args:
+            item: the item to check.
+
+        Returns:
+            bool: True if the item is in the CodeMap, False otherwise.
+        """
+        return item in self._data
 
     def keys(self):
         """

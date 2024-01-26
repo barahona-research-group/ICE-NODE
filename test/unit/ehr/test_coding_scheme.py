@@ -1,6 +1,7 @@
 import os
-from unittest import TestCase, main as main_test
 from typing import Dict, List
+from unittest import TestCase, main as main_test
+from unittest.mock import patch
 
 from parameterized import parameterized
 
@@ -53,16 +54,16 @@ class TestFlatScheme(TestCase):
             # Unregistered scheme
             FlatScheme.from_name('42')
 
-    def test_register_scheme(self):
+    @patch('logging.warning')
+    def test_register_scheme(self, mock_warning):
         """
         Test the register_scheme method.
 
         This method tests two scenarios:
         1. It tests that the register_scheme method works by registering a scheme and then
            asserting that the registered scheme can be retrieved using its name.
-        2. It tests that the register_scheme method raises an AssertionError when trying to
-           register a scheme that is already registered.
-
+        2. It tests that the register_scheme method logs a warning when trying to
+           register a scheme that is already registered with the same name and content.
         """
         # First, test that the register_scheme method works.
         for scheme_kwargs in self.schemes_kwargs:
@@ -74,10 +75,38 @@ class TestFlatScheme(TestCase):
         # the scheme is already registered.
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
-            with self.assertRaises(AssertionError):
-                FlatScheme.register_scheme(scheme)
+            mock_warning.reset_mock()
+            FlatScheme.register_scheme(scheme)
+            mock_warning.assert_called_once()
 
-    def test_register_scheme_loader(self):
+    def test_scheme_equality(self):
+        """
+        Test the equality of schemes.
+
+        This test iterates over the `schemes_kwargs` list and creates two FlatScheme objects
+        using the provided keyword arguments. It then asserts that the two schemes are equal.
+        It then mutates the description and index of one of the schemes and asserts that the two
+        schemes are not equal.
+        """
+
+        for scheme_kwargs in self.schemes_kwargs:
+            scheme1 = FlatScheme(**scheme_kwargs)
+            scheme2 = FlatScheme(**scheme_kwargs)
+            self.assertEqual(scheme1, scheme2)
+
+        for scheme_kwargs in self.schemes_kwargs:
+            scheme1 = FlatScheme(**scheme_kwargs)
+
+            if len(scheme1) > 0:
+                scheme_kwargs_desc_mutated = scheme_kwargs.copy()
+
+                scheme_kwargs_desc_mutated['desc'] = {code: f'{desc} muted' for code, desc in
+                                                      scheme_kwargs['desc'].items()}
+                scheme2 = FlatScheme(**scheme_kwargs_desc_mutated)
+                self.assertNotEqual(scheme1, scheme2)
+
+    @patch('logging.warning')
+    def test_register_scheme_loader(self, mock_warning):
         """
         Test case for registering a scheme loader and verifying the scheme registration.
 
@@ -85,19 +114,31 @@ class TestFlatScheme(TestCase):
         1. Creates a FlatScheme instance using the scheme keyword arguments.
         2. Registers a scheme loader for the scheme's name using a lambda function.
         3. Asserts that the scheme can be retrieved using the scheme's name.
-        4. Asserts that attempting to register the same scheme loader again raises an AssertionError.
-        5. Asserts that attempting to register the same scheme again raises an AssertionError.
+        4. Asserts that attempting to register the same scheme loader again logs a warning if it has the same name with
+        matching content.
+        5. Asserts that attempting to register the same scheme again logs a warning.
         """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
             FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
             self.assertEqual(FlatScheme.from_name(scheme.config.name), scheme)
 
-            with self.assertRaises(AssertionError):  # Scheme already registered
-                FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
+            mock_warning.reset_mock()
+            FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
+            mock_warning.assert_called_once()
 
-            with self.assertRaises(AssertionError):
-                FlatScheme.register_scheme(scheme)
+            mock_warning.reset_mock()
+            FlatScheme.register_scheme(scheme)
+            mock_warning.assert_called_once()
+
+            # If the scheme is registered with the same name but different content, an AssertionError should be raised.
+            if len(scheme) > 0:
+                scheme_kwargs_desc_mutated = scheme_kwargs.copy()
+                scheme_kwargs_desc_mutated['desc'] = {code: f'{desc} muted' for code, desc in
+                                                      scheme_kwargs['desc'].items()}
+
+                with self.assertRaises(AssertionError):
+                    FlatScheme.register_scheme(FlatScheme(**scheme_kwargs_desc_mutated))
 
     def test_registered_schemes(self):
         """
@@ -127,7 +168,8 @@ class TestFlatScheme(TestCase):
          (CodingSchemeConfig('p_desc'), ['1'], {1: 'one'}, {'1': 0}),
          (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {1: 0}),
          (CodingSchemeConfig('p_desc'), ['1'], {'1': 5}, {'1': 0})])
-    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str], index: Dict[str, int]):
+    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
+                        index: Dict[str, int]):
         """
         Test for type error handling in the FlatScheme constructor.
 
@@ -279,7 +321,6 @@ class TestFlatScheme(TestCase):
         CodingScheme.unregister_scheme_loaders()
         OutcomeExtractor.unregister_schemes()
         OutcomeExtractor.unregister_scheme_loaders()
-
 
 
 # class TestCommonCodingSchemes:

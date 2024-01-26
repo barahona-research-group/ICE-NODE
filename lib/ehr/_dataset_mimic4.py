@@ -6,6 +6,7 @@ import os
 import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import field
 from functools import cached_property
 from typing import Union, Dict, Callable, List, Optional, Tuple
 
@@ -18,7 +19,7 @@ from sqlalchemy import Engine
 
 from ._coding_scheme_icd import (ICD)
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
-from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme)
+from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme, CodeMap)
 from .coding_scheme import _RSC_DIR
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
@@ -868,12 +869,12 @@ class SubjectLinkedMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
 
 
 class TimestampedMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
-    attributes: Tuple[str]
+    attributes: Tuple[str] = tuple()
     time_alias: str = 'time_bin'
 
 
 class IntervalMIMICIVSQLTableConfig(MIMICIVSQLTableConfig):
-    space_query: str
+    space_query: str = ''
     description_alias: str = 'description'
     start_time_alias: str = 'start_time'
     end_time_alias: str = 'end_time'
@@ -892,7 +893,7 @@ class StaticMIMICIVSQLTableConfig(SubjectLinkedMIMICIVSQLTableConfig):
 
 
 class DxDischargeMIMICIVSQLTableConfig(AdmissionLinkedMIMICIVSQLTableConfig):
-    space_query: str
+    space_query: str = ''
     code_alias: str = 'icd_code'
     version_alias: str = 'icd_version'
     description_alias: str = 'description'
@@ -1209,7 +1210,7 @@ class MIMICIVSQLConfig(Config):
     static_table: StaticMIMICIVSQLTableConfig = static_conf
     admissions_table: AdmissionMIMICIVSQLTableConfig = admissions_conf
     dx_discharge_table: DxDischargeMIMICIVSQLTableConfig = dx_discharge_conf
-    obs_tables: List[TimestampedMIMICIVSQLTableConfig] = [
+    obs_tables: List[TimestampedMIMICIVSQLTableConfig] = field(default_factory=lambda: [
         renal_out_conf,
         renal_creat_conf,
         renal_aki_conf,
@@ -1221,7 +1222,7 @@ class MIMICIVSQLConfig(Config):
         cbc_conf,
         vital_conf,
         gcs_conf
-    ]
+    ])
     icu_procedures_table: IntervalICUProcedureMIMICIVSQLTableConfig = icuproc_conf
     icu_inputs_table: RatedInputMIMICIVSQLTableConfig = icu_input_conf
     hosp_procedures_table: IntervalHospProcedureMIMICIVSQLTableConfig = hospicdproc_conf
@@ -1267,16 +1268,17 @@ class MixedICDMIMICIVScheme(FlatScheme):
     @classmethod
     def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
                        version_alias: str, icd_code_alias: str, description_alias: str,
-                       icd9_scheme: ICD, icd10_scheme: ICD):
+                       icd_schemes: Dict[str, str]):
         icd_version_selection = icd_version_selection.sort_values([version_alias, icd_code_alias])
-        assert icd_version_selection[version_alias].isin(['9', '10']).all(), \
-            "Only ICD-9 and ICD-10 are expected."
-        icd_schemes = {'9': icd9_scheme, '10': icd10_scheme}
-        assert all(isinstance(s, ICD) for s in (icd9_scheme, icd10_scheme)), \
+        assert icd_version_selection[version_alias].isin(icd_schemes).all(), \
+            f"Only {', '.join(map(lambda x: f'ICD-{x}', icd_schemes))} are expected."
+        icd_schemes_loaded: Dict[str, ICD] = {k: ICD.from_name(v) for k, v in icd_schemes.items()}
+
+        assert all(isinstance(s, ICD) for s in icd_schemes_loaded.values()), \
             "Only ICD schemes are expected."
 
         for version, icd_df in icd_version_selection.groupby(version_alias):
-            scheme = icd_schemes[version]
+            scheme = icd_schemes_loaded[version]
             icd_version_selection.loc[icd_df.index, icd_code_alias] = \
                 icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
 
@@ -1290,32 +1292,78 @@ class MixedICDMIMICIVScheme(FlatScheme):
                    codes=codes,
                    desc=desc,
                    index=index,
-                   icd_schemes=icd_schemes)
+                   icd_schemes=icd_schemes_loaded)
 
-    def process_table(self, table: pd.DataFrame, code_alias: str, version_alias: str, description_alias: str):
+    def mixedcode_format_table(self, table: pd.DataFrame, code_alias: str, version_alias: str):
+        """
+        Format a table with mixed codes to the ICD version:icd_code format and filter out codes that are not in the scheme.
+        """
         table = table.copy()
         assert version_alias in table.columns, f"Column {version_alias} not found."
         assert code_alias in table.columns, f"Column {code_alias} not found."
-        assert description_alias in table.columns, f"Column {description_alias} not found."
-        assert table[version_alias].isin(['9', '10']).all(), \
-            "Only ICD-9 and ICD-10 are expected."
+        assert table[version_alias].isin(self.icd_schemes).all(), \
+            f"Only ICD version {list(self.icd_schemes.keys())} are expected."
 
         for version, icd_df in table.groupby(version_alias):
             scheme = self.icd_schemes[version]
-            table.loc[icd_df.index, code_alias] = \
-                icd_df[code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+            table.loc[icd_df.index, code_alias] = icd_df[code_alias].str.replace(' ', '').str.replace('.', '').map(
+                scheme.add_dots)
+
+        # the version:icd_code format.
+        table['code'] = table.index.map(lambda x: f"{table.loc[x, version_alias]}:{table.loc[x, code_alias]}")
+
+        # filter out codes that are not in the scheme.
+        table = table[table['code'].isin(self.codes)].reset_index(drop=True)
+        table = table.drop
         return table
 
-    defx register_maps(self):
-        to_map = {'9': defaultdict(set), '10': defaultdict(set)}
+    def generate_maps(self):
+        """
+        Register the mappings between the Mixed ICD scheme and the individual ICD scheme.
+        For example, if the current `MixedICDMIMICIV` is mixing ICD-9 and ICD-10,
+        then register the two mappings between this scheme and ICD-9 and ICD-10 separately.
+        This assumes that the current runtime has already registered mappings
+        between the individual ICD schemes.
+        """
+
+        # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
+        mixed2pure_maps = {}
         dataframe = self.as_dataframe()
+        for pure_version, pure_scheme in self.icd_schemes.items():
+            # mixed2pure has the form {mixed_code: {icd}}.
+            mixed2pure = defaultdict(set)
+            for mixed_version, mixed_version_df in dataframe.groupby('icd_version'):
+                icd2mixed = mixed_version_df.set_index('icd_code')['code'].to_dict()
+                icd2mixed = {icd: mixed_code for icd, mixed_code in icd2mixed.items() if icd in pure_scheme.codes}
+                assert len(icd2mixed) > 0, "No mapping between the mixed and pure ICD schemes was found."
+                if mixed_version == pure_version:
+                    mixed2pure.update({c: {icd} for icd, c in icd2mixed.items()})
+                else:
+                    # if mixed_version != pure_version, then retrieve
+                    # the mapping between ICD-{mixed_version} and ICD-{pure_version}
+                    pure_map = CodeMap.get_mapper(self.icd_schemes[mixed_version].name,
+                                                  self.icd_schemes[pure_version].name)
 
+                    for icd, mixed_code in icd2mixed.items():
+                        if icd in pure_map:
+                            mixed2pure[mixed_code].update(pure_map[icd])
+            mixed2pure_maps[pure_version] = mixed2pure
+        # register the mapping between the mixed and pure ICD schemes
 
-        for version, scheme in self.as_dataframe().groupby('icd_version'):
-            same_scheme = self.icd_schemes[version]
-            other_scheme = self.icd_schemes['9' if version == '10' else '10']
-            supported_codes = scheme[scheme['icd_code'].map(same_scheme.is_supported)]
+        for pure_version, mixed2pure in mixed2pure_maps.items():
+            pure_scheme = self.icd_schemes[pure_version]
+            conf = CodingSchemeConfig(self.name, pure_scheme.name)
 
+            CodeMap.register_map(self.name,
+                                 pure_scheme.name,
+                                 CodeMap(conf, mixed2pure))
+
+    def register_maps_loaders(self):
+        """
+        Register the lazy-loading of mapping between the Mixed ICD scheme and the individual ICD scheme.
+        """
+        for pure_version, pure_scheme in self.icd_schemes.items():
+            CodeMap.register_map_loader(self.name, pure_scheme.name, self.generate_maps)
 
     def as_dataframe(self):
         columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
@@ -1530,11 +1578,7 @@ class MIMICIVSQL(Module):
         dataframe = table(engine)
         c_icd_version = self.config.dx_discharge_table.version_alias
         c_icd_code = self.config.dx_discharge_table.code_alias
-        for icd_version, icd_codes in dx_discharge_scheme.as_dataframe().groupby(c_icd_version):
-            icd_codes = icd_codes[c_icd_code].tolist()
-            dataframe = dataframe[(dataframe[c_icd_version] != icd_version) |
-                                  (dataframe[c_icd_code].isin(icd_codes))]
-        return dataframe.reset_index(drop=True)
+        return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version)
 
     def _extract_obs_table(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         dfs = dict()
@@ -1576,12 +1620,7 @@ class MIMICIVSQL(Module):
         c_icd_code = self.config.hosp_procedures_table.icd_code_alias
         c_icd_version = self.config.hosp_procedures_table.icd_version_alias
         dataframe = table(engine)
-        scheme_df = procedure_icd_scheme.as_dataframe()
-        for icd_version, icd_codes in scheme_df.groupby(c_icd_version):
-            icd_codes = icd_codes[c_icd_code].tolist()
-            dataframe = dataframe[(dataframe[c_icd_version] != icd_version) |
-                                  (dataframe[c_icd_code].isin(icd_codes))]
-        return dataframe.reset_index(drop=True)
+        return procedure_icd_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version)
 
     def __call__(self,
                  dx_discharge_scheme: Optional[MixedICDMIMICIVScheme] = None,
