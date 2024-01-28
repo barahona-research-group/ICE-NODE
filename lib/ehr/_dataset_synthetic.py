@@ -1,3 +1,15 @@
+#
+# def random_date(start, end, rng: random.Random):
+#     """
+#     https://stackoverflow.com/a/553448
+#     This function will return a random datetime between two datetime
+#     objects.
+#     """
+#     delta = end - start
+#     int_delta = (delta.days * 24 * 60 * 60) + delta.seconds
+#     random_second = rng.randrange(int_delta)
+#     return start + timedelta(seconds=random_second)
+
 # class SyntheticDataset(MIMIC3Dataset):
 
 #     @classmethod

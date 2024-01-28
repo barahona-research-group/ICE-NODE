@@ -28,16 +28,7 @@ class MIMIC3Dataset(Dataset):
     scheme: DatasetScheme
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
-    @classmethod
-    def sample_n_subjects(cls, df, c_subject_id, n, seed=None, offset=0):
-        if seed is not None:
-            rng = random.Random(seed)
 
-        subjects = df[c_subject_id].unique().compute()
-        subjects = subjects.tolist()
-        rng.shuffle(subjects)
-        subjects = subjects[offset:offset + n]
-        return df[df[c_subject_id].isin(subjects)]
 
     @classmethod
     def _match_admissions_with_demographics(cls, df, colname):
@@ -336,17 +327,17 @@ class MIMIC3Dataset(Dataset):
             updated[name] = _df
         return updated
 
-    @staticmethod
-    def _adm_add_adm_interval(adm_df, colname, seconds_scaler):
-        c_admittime = colname.admittime
-        c_dischtime = colname.dischtime
-
-        delta = adm_df[c_dischtime] - adm_df[c_admittime]
-        adm_df = adm_df.assign(
-            adm_interval=(delta.dt.total_seconds() *
-                          seconds_scaler).astype(np.float32))
-        colname = colname._replace(adm_interval="adm_interval")
-        return adm_df, colname
+    # @staticmethod
+    # def _adm_add_adm_interval(adm_df, colname, seconds_scaler):
+    #     c_admittime = colname.admittime
+    #     c_dischtime = colname.dischtime
+    #
+    #     delta = adm_df[c_dischtime] - adm_df[c_admittime]
+    #     adm_df = adm_df.assign(
+    #         adm_interval=(delta.dt.total_seconds() *
+    #                       seconds_scaler).astype(np.float32))
+    #     colname = colname._replace(adm_interval="adm_interval")
+    #     return adm_df, colname
 
     @staticmethod
     def _adm_remove_subjects_with_negative_adm_interval(adm_df, colname):
