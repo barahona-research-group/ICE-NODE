@@ -4,16 +4,15 @@ data structures to support conversion between CCS and ICD9."""
 from __future__ import annotations
 
 import logging
+import numpy as np
+import numpy.typing as npt
 import os
+import pandas as pd
 import re
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
 from threading import Lock
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple
-
-import numpy as np
-import numpy.typing as npt
-import pandas as pd
 
 from ..base import Config, Module, Data
 from ..utils import load_config
@@ -358,8 +357,7 @@ class FlatScheme(CodingScheme):
 
     def _check_index_integrity(self):
         for code, idx in self.index.items():
-            assert idx == self.codes.index(
-                code), f"{self}: Index of {code} is not consistent with its position in the list."
+            assert code == self.codes[idx], f"{self}: Index of {code} is not consistent with its position in the list."
 
     @property
     def codes(self):
