@@ -3,12 +3,11 @@ from __future__ import annotations
 import gzip
 import logging
 import os
+import pandas as pd
 import xml.etree.ElementTree as ET
 from abc import abstractmethod
 from collections import defaultdict
 from typing import Set, Dict, List, Union, Any
-
-import pandas as pd
 
 from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
                             _RSC_DIR, CodeMapConfig, CodeMap, OutcomeExtractor)
@@ -16,11 +15,11 @@ from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, Hierar
 _CCS_DIR = os.path.join(_RSC_DIR, "CCS")
 
 
-class ICD(HierarchicalScheme):
+class ICD:
     """
     Class representing the ICD (International Classification of Diseases) coding scheme.
 
-    This class inherits from the HierarchicalScheme class and provides additional methods
+    This class provides additional methods
     for loading conversion tables, analyzing conversions, and registering mappings.
 
 
@@ -177,7 +176,7 @@ class DxICD10(ICD):
             return code
 
     @staticmethod
-    def distill_icd10_xml(filename: str) -> Dict[str, Any]:
+    def distill_icd10_xml(filename: str, hierarchical: bool = True) -> Dict[str, Any]:
         # https://www.cdc.gov/nchs/icd/Comprehensive-Listing-of-ICD-10-CM-Files.htm
         _ICD10_FILE = os.path.join(_RSC_DIR, filename)
         with gzip.open(_ICD10_FILE, 'r') as f:
@@ -222,6 +221,13 @@ class DxICD10(ICD):
         icd_codes = sorted(c.split(':')[1] for c in desc if 'dx:' in c)
         icd_index = dict(zip(icd_codes, range(len(icd_codes))))
         icd_desc = {c: desc[f'dx:{c}'] for c in icd_codes}
+
+        if not hierarchical:
+            return {
+                'codes': icd_codes,
+                'index': icd_index,
+                'desc': icd_desc
+            }
         icd2dag = {c: f'dx:{c}' for c in icd_codes}
         dag_codes = [f'dx:{c}' for c in icd_codes] + sorted(
             c for c in set(desc) - set(icd2dag.values()))
@@ -238,11 +244,37 @@ class DxICD10(ICD):
             'pt2ch': dict(pt2ch)
         }
 
+
+class ICDScheme(ICD, CodingScheme):
+    pass
+
+
+class HierarchicalICDScheme(ICDScheme, HierarchicalScheme):
+    pass
+
+
+class FlatICDScheme(ICDScheme, FlatScheme):
+    pass
+
+
+class DxHierarchicalICD10(HierarchicalICDScheme, DxICD10):
+
     @classmethod
     def create_scheme(cls):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
         config = CodingSchemeConfig(name='dx_icd10')
-        CodingScheme.register_scheme(DxICD10(config, **cls.distill_icd10_xml('icd10cm_tabular_2023.xml.gz')))
+        CodingScheme.register_scheme(
+            DxHierarchicalICD10(config, **cls.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', True)))
+
+
+class DxFlatICD10(FlatICDScheme, DxICD10):
+
+    @classmethod
+    def create_scheme(cls):
+        # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
+        config = CodingSchemeConfig(name='dx_flat_icd10')
+        CodingScheme.register_scheme(
+            DxFlatICD10(config, **cls.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', False)))
 
 
 class PrICD10(ICD):
@@ -253,7 +285,7 @@ class PrICD10(ICD):
         return code
 
     @staticmethod
-    def distill_icd10_xml(filename: str) -> Dict[str, Any]:
+    def distill_icd10_xml(filename: str, hierarchical: bool = True) -> Dict[str, Any]:
         _ICD10_FILE = os.path.join(_RSC_DIR, filename)
 
         with gzip.open(_ICD10_FILE, 'rt') as f:
@@ -264,6 +296,12 @@ class PrICD10(ICD):
             }
         codes = sorted(desc)
         index = dict(zip(codes, range(len(codes))))
+
+        if not hierarchical: return {
+            'codes': codes,
+            'index': index,
+            'desc': desc
+        }
 
         dag_desc = {'_': 'root'}
         code2dag = {}
@@ -307,13 +345,22 @@ class PrICD10(ICD):
             'pt2ch': pt2ch
         }
 
+
+class PrHierarchicalICD10(PrICD10, HierarchicalICDScheme):
     @classmethod
     def create_scheme(cls):
-        CodingScheme.register_scheme(PrICD10(CodingSchemeConfig(name='pr_icd10'),
-                                             **cls.distill_icd10_xml('icd10pcs_codes_2023.txt.gz')))
+        CodingScheme.register_scheme(PrHierarchicalICD10(CodingSchemeConfig(name='pr_icd10'),
+                                                         **cls.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', True)))
 
 
-class DxICD9(ICD):
+class PrFlatICD10(PrICD10, FlatICDScheme):
+    @classmethod
+    def create_scheme(cls):
+        CodingScheme.register_scheme(PrFlatICD10(CodingSchemeConfig(name='pr_flat_icd10'),
+                                                 **cls.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', False)))
+
+
+class DxICD9(HierarchicalICDScheme):
     _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
     _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
     _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
@@ -422,7 +469,7 @@ class DxICD9(ICD):
                                             **d, pt2ch=pt2ch))
 
 
-class PrICD9(ICD):
+class PrICD9(HierarchicalICDScheme):
 
     @staticmethod
     def add_dots(code: str) -> str:
@@ -701,8 +748,10 @@ class PrFlatCCS(FlatCCS):
 
 
 def setup_scheme_loaders():
-    CodingScheme.register_scheme_loader('dx_icd10', DxICD10.create_scheme)
-    CodingScheme.register_scheme_loader('pr_icd10', PrICD10.create_scheme)
+    CodingScheme.register_scheme_loader('dx_icd10', DxHierarchicalICD10.create_scheme)
+    CodingScheme.register_scheme_loader('pr_icd10', PrHierarchicalICD10.create_scheme)
+    CodingScheme.register_scheme_loader('dx_flat_icd10', DxFlatICD10.create_scheme)
+    CodingScheme.register_scheme_loader('pr_flat_icd10', PrFlatICD10.create_scheme)
     CodingScheme.register_scheme_loader('dx_icd9', DxICD9.create_scheme)
     CodingScheme.register_scheme_loader('pr_icd9', PrICD9.create_scheme)
     CodingScheme.register_scheme_loader('dx_ccs', DxCCS.create_scheme)
@@ -727,6 +776,14 @@ def setup_maps_loaders():
                                 lambda: ICD.register_mappings('pr_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
     CodeMap.register_map_loader('pr_icd9', 'pr_icd10',
                                 lambda: ICD.register_mappings('pr_icd9', 'pr_icd10', '2018_gem_pcs_I9I10.txt.gz'))
+    CodeMap.register_map_loader('dx_flat_icd10', 'dx_icd9',
+                                lambda: ICD.register_mappings('dx_flat_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz'))
+    CodeMap.register_map_loader('dx_icd9', 'dx_flat_icd10',
+                                lambda: ICD.register_mappings('dx_icd9', 'dx_flat_icd10', '2018_gem_cm_I9I10.txt.gz'))
+    CodeMap.register_map_loader('pr_flat_icd10', 'pr_icd9',
+                                lambda: ICD.register_mappings('pr_flat_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
+    CodeMap.register_map_loader('pr_icd9', 'pr_flat_icd10',
+                                lambda: ICD.register_mappings('pr_icd9', 'pr_flat_icd10', '2018_gem_pcs_I9I10.txt.gz'))
 
     # ICD9 <-> CCS
     bimap_dx_ccs_icd9 = lambda: CCS.register_mappings('dx_ccs', 'dx_icd9')
@@ -753,14 +810,17 @@ def setup_maps_loaders():
     CodeMap.register_map_loader('pr_icd9', 'pr_flatccs',
                                 bimap_pr_flatccs_icd9)
     # ICD10 <-> CCS (Through ICD9 as an intermediate scheme)
-    CodeMap.register_chained_map_loader('dx_ccs', 'dx_icd9', 'dx_icd10')
-    CodeMap.register_chained_map_loader('dx_icd10', 'dx_icd9', 'dx_ccs')
-    CodeMap.register_chained_map_loader('pr_ccs', 'pr_icd9', 'pr_icd10')
-    CodeMap.register_chained_map_loader('pr_icd10', 'pr_icd9', 'pr_ccs')
-    CodeMap.register_chained_map_loader('dx_flatccs', 'dx_icd9', 'dx_icd10')
-    CodeMap.register_chained_map_loader('dx_icd10', 'dx_icd9', 'dx_flatccs')
-    CodeMap.register_chained_map_loader('pr_flatccs', 'pr_icd9', 'pr_icd10')
-    CodeMap.register_chained_map_loader('pr_icd10', 'pr_icd9', 'pr_flatccs')
+    for dx_icd10_str in ('dx_icd10', 'dx_flat_icd10'):
+        CodeMap.register_chained_map_loader('dx_ccs', 'dx_icd9', dx_icd10_str)
+        CodeMap.register_chained_map_loader(dx_icd10_str, 'dx_icd9', 'dx_ccs')
+        CodeMap.register_chained_map_loader('dx_flatccs', 'dx_icd9', dx_icd10_str)
+        CodeMap.register_chained_map_loader(dx_icd10_str, 'dx_icd9', 'dx_flatccs')
+
+    for pr_icd10_str in ('pr_icd10', 'pr_flat_icd10'):
+        CodeMap.register_chained_map_loader('pr_ccs', 'pr_icd9', pr_icd10_str)
+        CodeMap.register_chained_map_loader(pr_icd10_str, 'pr_icd9', 'pr_ccs')
+        CodeMap.register_chained_map_loader('pr_flatccs', 'pr_icd9', pr_icd10_str)
+        CodeMap.register_chained_map_loader(pr_icd10_str, 'pr_icd9', 'pr_flatccs')
 
     # CCS <-> FlatCCS (Through ICD9 as an intermediate scheme)
     CodeMap.register_chained_map_loader('dx_flatccs', 'dx_icd9', 'dx_ccs')

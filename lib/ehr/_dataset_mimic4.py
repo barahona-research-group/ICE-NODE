@@ -1,22 +1,21 @@
 """."""
 from __future__ import annotations
 
+import dask.dataframe as dd
+import equinox as eqx
 import logging
+import numpy as np
+import pandas as pd
+import sqlalchemy
 import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import field
 from functools import cached_property
+from sqlalchemy import Engine
 from typing import Union, Dict, Callable, List, Optional, Tuple
 
-import dask.dataframe as dd
-import equinox as eqx
-import numpy as np
-import pandas as pd
-import sqlalchemy
-from sqlalchemy import Engine
-
-from ._coding_scheme_icd import (ICD)
+from ._coding_scheme_icd import ICDScheme
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme, CodeMap)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
@@ -1204,7 +1203,7 @@ class TimestampedMIMICIVSQLTable(MIMICIVSQLTable):
         for table in configs:
             rows.extend([(table.name, a) for a in table.attributes])
         df = pd.DataFrame(rows, columns=['table_name', 'attribute']).set_index('table_name', drop=True)
-        return df.sort_index().sort_values('attribute')
+        return df.sort_values('attribute').sort_index()
 
 
 class CategoricalMIMICIVSQLTable(MIMICIVSQLTable):
@@ -1323,11 +1322,11 @@ class ObservableMIMICScheme(FlatScheme):
 
 
 class MixedICDMIMICIVScheme(FlatScheme):
-    _icd_schemes: Dict[str, ICD]
+    _icd_schemes: Dict[str, ICDScheme]
     _sep: str = ':'
 
     def __init__(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
-                 index: Dict[str, int], icd_schemes: Dict[str, ICD], sep: str = ':'):
+                 index: Dict[str, int], icd_schemes: Dict[str, ICDScheme], sep: str = ':'):
         super().__init__(config, codes=codes, desc=desc, index=index)
         self._icd_schemes = icd_schemes
         self._sep = sep
@@ -1345,9 +1344,9 @@ class MixedICDMIMICIVScheme(FlatScheme):
         assert icd_version_selection.groupby([version_alias, icd_code_alias]).size().max() == 1, \
             "Duplicate (icd_code, icd_version) pairs are not allowed."
 
-        icd_schemes_loaded: Dict[str, ICD] = {k: ICD.from_name(v) for k, v in icd_schemes.items()}
+        icd_schemes_loaded: Dict[str, ICDScheme] = {k: ICDScheme.from_name(v) for k, v in icd_schemes.items()}
 
-        assert all(isinstance(s, ICD) for s in icd_schemes_loaded.values()), \
+        assert all(isinstance(s, ICDScheme) for s in icd_schemes_loaded.values()), \
             "Only ICD schemes are expected."
 
         for version, icd_df in icd_version_selection.groupby(version_alias):
@@ -1568,7 +1567,7 @@ class MIMICIVSQL(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = MixedICDMIMICIVSQLTable(self.config.hosp_procedures_table)
-        return table.register_scheme(name, self.create_engine(), {'9': 'pr_icd9', '10': 'pr_icd10'},
+        return table.register_scheme(name, self.create_engine(), {'9': 'pr_icd9', '10': 'pr_flat_icd10'},
                                      icd_version_selection)
 
     def register_dx_discharge_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
@@ -1585,7 +1584,7 @@ class MIMICIVSQL(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = MixedICDMIMICIVSQLTable(self.config.dx_discharge_table)
-        return table.register_scheme(name, self.create_engine(), {'9': 'dx_icd9', '10': 'dx_icd10'},
+        return table.register_scheme(name, self.create_engine(), {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
                                      icd_version_selection)
 
     @cached_property
