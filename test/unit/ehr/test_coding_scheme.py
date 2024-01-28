@@ -184,17 +184,21 @@ class TestFlatScheme(TestCase):
         (CodingSchemeConfig('p_codes'), ['1', '3'], {'1': 'one'}, {'1': 0}),
         (CodingSchemeConfig('p_desc'), ['3'], {'3': 'three', '1': 'one'}, {'1': 0}),
         (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {'1': 0, '2': 0}),
+        (CodingSchemeConfig('p_duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'}, {'1': 0, '2': 1})
     ])
     def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str], index: Dict[str, int]):
         """
-        Test the sizes of the coding scheme.
+        Test the consistency between scheme components, in their size, and mapping correctness.
 
         This method adds a problematic scheme to test error handling.
-        The codes, description, and index collections should all have the same sizes.
+        The codes, description, and index collections should all have the same sizes,
+        codes should be unique, and mapping should be correct and 1-to-1.
         FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
         """
         with self.assertRaises((AssertionError, KeyError)):
             FlatScheme(config=config, codes=codes, desc=desc, index=index)
+
+
 
     def test_codes(self):
         """
