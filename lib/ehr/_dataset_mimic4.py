@@ -465,7 +465,7 @@ class MixedICDMIMICIVScheme(FlatScheme):
 
         for version, icd_df in table.groupby(icd_version_alias):
             scheme = self._icd_schemes[str(version)]
-            fixed_icd = icd_df[icd_code_alias].str.replace(' ', '').str.replace('.','').map(scheme.add_dots)
+            fixed_icd = icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
             table.loc[icd_df.index, icd_code_alias] = fixed_icd
 
         # the version:icd_code format.

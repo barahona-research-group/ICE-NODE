@@ -4,15 +4,16 @@ data structures to support conversion between CCS and ICD9."""
 from __future__ import annotations
 
 import logging
-import numpy as np
-import numpy.typing as npt
 import os
-import pandas as pd
 import re
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
 from threading import Lock
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
 
 from ..base import Config, Module, Data
 from ..utils import load_config

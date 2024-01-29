@@ -222,7 +222,6 @@ def register_mimic_input():
                                           desc=desc))
 
 
-
 def register_mimic_eth_mapping(s_scheme: str, t_scheme: str, filename: str,
                                s_colname: str, t_colname: str):
     """

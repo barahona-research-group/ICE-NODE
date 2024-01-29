@@ -3,11 +3,12 @@ from __future__ import annotations
 import gzip
 import logging
 import os
-import pandas as pd
 import xml.etree.ElementTree as ET
 from abc import abstractmethod
 from collections import defaultdict
 from typing import Set, Dict, List, Union, Any
+
+import pandas as pd
 
 from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
                             _RSC_DIR, CodeMapConfig, CodeMap, OutcomeExtractor)

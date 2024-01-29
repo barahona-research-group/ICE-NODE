@@ -28,8 +28,6 @@ class MIMIC3Dataset(Dataset):
     scheme: DatasetScheme
     seconds_scaler: ClassVar[float] = 1 / 3600.0  # convert seconds to hours
 
-
-
     @classmethod
     def _match_admissions_with_demographics(cls, df, colname):
         adm = df["adm"]

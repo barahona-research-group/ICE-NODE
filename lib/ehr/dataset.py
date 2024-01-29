@@ -503,7 +503,10 @@ class SetCodeIntegerIndices(DatasetTransformation):
         admissions = tables.pop('admissions')
         static
         SSSSSSSSSSSSSSSSSSS
-        CONTINUE FROM HERE
+        CONTINUE
+        FROM
+        HERE
+
 
 class SetIndex(DatasetTransformation):
     name: str = 'SetIndex'
