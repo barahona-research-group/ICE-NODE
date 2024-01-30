@@ -51,7 +51,7 @@ class SubjectLinkedTableConfig(TableConfig):
     subject_id_alias: str = 'subject_id'
 
 
-class TimestampedTableConfig(AdmissionLinkedTableConfig):
+class TimestampedTableConfig(TableConfig):
     time_alias: str = 'time_bin'
 
 
@@ -59,16 +59,20 @@ class TimestampedMultiColumnTableConfig(TimestampedTableConfig):
     attributes: Tuple[str] = tuple()
 
 
-class CategoricalTableConfig(AdmissionLinkedTableConfig):
+class CodedTableConfig(TableConfig):
     code_alias: str = 'code'
     description_alias: str = 'description'
 
 
-class TimestampedCategoricalTableConfig(CategoricalTableConfig, TimestampedTableConfig):
+class TimestampedCodedTableConfig(CodedTableConfig, TimestampedTableConfig):
     pass
 
 
-class IntervalBasedTableConfig(CategoricalTableConfig):
+class TimestampedCodedValueTableConfig(TimestampedCodedTableConfig):
+    value_alias: str = 'value'
+
+
+class IntervalBasedTableConfig(TableConfig):
     start_time_alias: str = 'start_time'
     end_time_alias: str = 'end_time'
 
@@ -76,7 +80,6 @@ class IntervalBasedTableConfig(CategoricalTableConfig):
 class AdmissionTableConfig(AdmissionLinkedTableConfig, SubjectLinkedTableConfig):
     admission_time_alias: str = 'admittime'
     discharge_time_alias: str = 'dischtime'
-    admission_length_of_stay_alias: str = 'los'
 
     @property
     def index(self):
@@ -93,30 +96,58 @@ class StaticTableConfig(SubjectLinkedTableConfig):
         return self.subject_id_alias
 
 
-class MixedICDTableConfig(CategoricalTableConfig):
+class AdmissionMixedICDTableConfig(CodedTableConfig, AdmissionLinkedTableConfig):
     icd_code_alias: str = 'icd_code'
     icd_version_alias: str = 'icd_version'
 
 
-class ItemBasedCategoricalTableConfig(CategoricalTableConfig):
-    item_id_alias: str = 'itemid'
+class AdmissionTimestampedMultiColumnTableConfig(TimestampedMultiColumnTableConfig, AdmissionLinkedTableConfig):
+    pass
 
 
-class RatedInputTableConfig(IntervalBasedTableConfig, ItemBasedCategoricalTableConfig):
-    rate_alias: str = 'rate'
-    rate_unit_alias: str = 'rateuom'
+class AdmissionTimestampedCodedValueTableConfig(TimestampedCodedValueTableConfig, AdmissionLinkedTableConfig):
+    pass
+
+
+class AdmissionIntervalBasedCodedTableConfig(IntervalBasedTableConfig, CodedTableConfig,
+                                             AdmissionTableConfig):
+    pass
+
+
+class AdmissionIntervalBasedMixedICDTableConfig(IntervalBasedTableConfig, AdmissionMixedICDTableConfig):
+    pass
+
+
+class RatedInputTableConfig(AdmissionIntervalBasedCodedTableConfig):
     amount_alias: str = 'amount'
     amount_unit_alias: str = 'amountuom'
+    derived_amount_per_hour: str = 'derived_amount_per_hour'
+    derived_normalized_amount_per_hour: str = 'derived_normalized_amount_per_hour'
+    derived_unit_normalization_factor: str = 'derived_unit_normalization_factor'
+    derived_universal_unit: str = 'derived_universal_unit'
 
 
 class DatasetTablesConfig(Config):
     static: StaticTableConfig
     admissions: AdmissionTableConfig
-    dx_discharge: Optional[MixedICDTableConfig] = None
+    dx_discharge: Optional[AdmissionMixedICDTableConfig] = None
     obs: Optional[List[TimestampedTableConfig]] = None
     icu_procedures: Optional[IntervalBasedTableConfig] = None
     icu_inputs: Optional[RatedInputTableConfig] = None
     hosp_procedures: Optional[IntervalBasedTableConfig] = None
+
+    @property
+    def table_config_dict(self):
+        return {k: v for k, v in self.__dict__.items() if isinstance(v, TableConfig)}
+
+    @property
+    def timestamped_table_config_dict(self):
+        return {k: v for k, v in self.__dict__.items() if isinstance(v, TimestampedTableConfig)}
+
+    @property
+    def interval_based_table_config_dict(self):
+        return {k: v for k, v in self.__dict__.items() if
+                isinstance(v, IntervalBasedTableConfig)}
 
     @property
     def indices(self) -> Dict[str, str]:
@@ -136,7 +167,7 @@ class DatasetTablesConfig(Config):
 
     @property
     def code_column(self) -> Dict[str, str]:
-        return {k: v.code_alias for k, v in self.__dict__.items() if isinstance(v, CategoricalTableConfig)}
+        return {k: v.code_alias for k, v in self.__dict__.items() if isinstance(v, CodedTableConfig)}
 
 
 class DatasetTables(Module):
@@ -228,13 +259,16 @@ class DatasetScheme(Module):
     def scheme_dict(self):
         return {
             k: v
-            for k, v in self.__dict__.items()
-            if k != 'outcome' and isinstance(v, CodingScheme)
+            for k, v in self.__dict__.items() if isinstance(v, CodingScheme)
         }
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
         for attr in source.scheme_dict.keys():
+
+            if attr == 'outcome':
+                continue
+
             att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
 
@@ -275,7 +309,7 @@ class DatasetScheme(Module):
         supproted_attr_targets = {
             k: (getattr(self, k).__class__.__name__,) +
                getattr(self, k).supported_targets
-            for k in self.scheme_dict
+            for k in self.scheme_dict if k != 'outcome'
         }
         supported_outcomes = OutcomeExtractor.supported_outcomes(self.dx_discharge.name)
         supproted_attr_targets['outcome'] = supported_outcomes
@@ -363,9 +397,20 @@ class DatasetPipeline(Module):
 
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, Any]]:
         auxiliary = {'report': []}
+        current_report_list = []
         for t in self.transformations:
             dataset, auxiliary_ = t(dataset, auxiliary)
             auxiliary.update(auxiliary_)
+            if auxiliary.get('report'):
+                new_report_list = auxiliary.get('report').copy()
+                transformation_report = new_report_list[len(current_report_list):]
+                current_report_list = new_report_list
+
+                if len(transformation_report) > 0:
+                    report_df = pd.DataFrame([x.as_dict() for x in transformation_report])
+                    report_str = report_df.to_string().replace('\n', '\n\t')
+                    logging.debug(f"Transformation Statistics: {t.name or type(t).__name__}:\n{report_str}")
+
         if auxiliary.get('report'):
             report = pd.DataFrame([x.as_dict() for x in auxiliary['report']])
             auxiliary['report'] = report
@@ -514,43 +559,70 @@ class CastTimestamps(DatasetTransformation):
 
 
 class FilterCodes(DatasetTransformation):
+
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        pass
+        tables_dict = dataset.tables.tables_dict
+        for table_name, code_column in dataset.config.tables.code_column.items():
+            table = tables_dict[table_name]
+            coding_scheme = getattr(dataset.scheme, table_name)
+            n1 = len(table)
+            table = table[table[code_column].isin(coding_scheme.codes)]
+            n2 = len(table)
+            self.report(aux, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
+                        operation='filter')
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, table)
+        return dataset, aux
 
 
 class SetAdmissionRelativeTimes(DatasetTransformation):
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        pass
+    @staticmethod
+    def temporal_admission_linked_table(dataset: Dataset, table_name: str) -> bool:
+        conf = getattr(dataset.config.tables, table_name)
+        temporal = isinstance(conf, TimestampedTableConfig) or isinstance(conf, IntervalBasedTableConfig)
+        admission_linked = isinstance(conf, AdmissionLinkedTableConfig)
+        return temporal and admission_linked
 
-
-class AddAdmissionInterval(DatasetTransformation):
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        time_cols = {k: v for k, v in dataset.config.tables.time_cols.items()
+                     if self.temporal_admission_linked_table(dataset, k)}
+
         c_admittime = dataset.config.tables.admissions.admission_time_alias
-        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
-        c_los = dataset.config.tables.admissions.admission_length_of_stay_alias
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        admissions = dataset.tables.admissions[[c_admittime]]
+        tables_dict = dataset.tables.tables_dict
 
-        admissions = dataset.tables.admissions
+        for table_name, time_cols in time_cols.items():
+            table = tables_dict[table_name]
+            df = pd.merge(table, admissions,
+                          left_on=c_admission_id,
+                          right_index=True,
+                          how='left')
+            for time_col in time_cols:
+                df = df.assign(time_col=(df[time_col] - df[c_admittime]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
+                self.report(aux, table=table_name, column=time_col, before=table[time_col].dtype,
+                            after=df[time_col].dtype,
+                            value_type='dtype', operation='set_admission_relative_times')
 
-        delta = admissions[c_dischtime] - admissions[c_admittime]
-        admissions = admissions.assign(
-            c_los=(delta.dt.total_seconds() *
-                   SECONDS_TO_HOURS_SCALER).astype(float))
-        self.report(aux, table='admissions', column=c_los, value_type='dtype', operation='add_column',
-                    before=None, after='float')
-        return eqx.tree_at(lambda x: x.tables.admissions, dataset, admissions), aux
+            df = df[table.columns]
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, df)
+        return dataset, aux
 
 
 class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
     name: str = 'FilterSubjectsNegativeAdmissionLengths'
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        c_los = dataset.config.tables.admissions.admission_length_of_stay_alias
         c_subject = dataset.config.tables.static.subject_id_alias
+        c_admittime = dataset.config.tables.admissions.admission_time_alias
+        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+        # assert dtypes are datetime64[ns]
+        assert dataset.tables.static[c_admittime].dtype == 'datetime64[ns]' and \
+               dataset.tables.static[c_dischtime].dtype == 'datetime64[ns]', \
+            f'{c_admittime} and {c_dischtime} must be datetime64[ns]'
 
         admissions = dataset.tables.admissions
         static = dataset.tables.static
-        assert c_los in admissions.columns, f'{c_los} not found in admissions. Check the pipeline.'
-        neg_los_subjects = admissions[c_subject][admissions[c_los] < 0].unique()
+        neg_los_subjects = admissions[admissions[c_dischtime] < admissions[c_admittime]][c_subject].unique()
         n_before = len(static)
         static = static[~static.index.isin(neg_los_subjects)]
         n_after = len(static)
@@ -703,23 +775,151 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             return self.synchronize_subjects(dataset, aux)
 
 
-class FilterClampTimestamps(DatasetTransformation):
+class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
+
+    def _filter_timestamped_tables(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+        timestamped_tables_conf = dataset.config.tables.timestamped_table_config_dict
+        timestamped_tables = {name: getattr(dataset.tables, name) for name in
+                              timestamped_tables_conf.keys()}
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+        c_admittime = dataset.config.tables.admissions.admission_time_alias
+        admissions = dataset.tables.admissions[[c_admittime, c_dischtime]]
+
+        for name, table in timestamped_tables.items():
+            c_time = timestamped_tables_conf[name].time_alias
+            df = pd.merge(table, admissions, how='left', left_on=c_admission_id, right_index=True)
+            index = df[df[c_time].between(df[c_admittime], df[c_dischtime])].index
+            n1 = len(table)
+            table = table.loc[index]
+            n2 = len(table)
+            self.report(aux, table=name, column=c_time, value_type='count', operation='filter',
+                        before=n1, after=n2)
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, name), dataset, table)
+
+        return dataset, aux
+
+    def _filter_interval_based_tables(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+        interval_based_tables_conf = dataset.config.tables.interval_based_table_config_dict
+        interval_based_tables = {name: getattr(dataset.tables, name) for name in
+                                 interval_based_tables_conf.keys()}
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+        c_admittime = dataset.config.tables.admissions.admission_time_alias
+        admissions = dataset.tables.admissions[[c_admittime, c_dischtime]]
+
+        for name, table in interval_based_tables.items():
+            c_start_time = interval_based_tables_conf[name].start_time_alias
+            c_end_time = interval_based_tables_conf[name].end_time_alias
+            df = pd.merge(table, admissions, how='left', left_on=c_admission_id, right_index=True)
+            index = df[df[c_start_time].between(df[c_admittime], df[c_dischtime]) |
+                       df[c_end_time].between(df[c_admittime], df[c_dischtime])].index
+            # Step 1: Filter out intervals that are entirely outside admission interval.
+            n1 = len(df)
+            df = df.loc[index]
+            n2 = len(df)
+            self.report(aux, table=name, column=(c_start_time, c_end_time),
+                        value_type='count', operation='filter',
+                        before=n1, after=n2)
+
+            # Step 2: Clamp intervals to admission interval.
+            n_to_clamp = (df[c_start_time] < df[c_admittime] | df[c_end_time] > df[c_dischtime]).sum()
+            self.report(aux, table=name, column=(c_start_time, c_end_time),
+                        value_type='count', operation='clamp',
+                        before=None, after=n_to_clamp)
+            df[c_start_time] = df[c_start_time].clip(lower=df[c_admittime], upper=df[c_dischtime])
+            df[c_end_time] = df[c_end_time].clip(lower=df[c_admittime], upper=df[c_dischtime])
+            df = df[table.columns]
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, name), dataset, df)
+
+        return dataset, aux
+
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        pass
+        dataset, aux = self._filter_timestamped_tables(dataset, aux)
+        return self._filter_interval_based_tables(dataset, aux)
 
 
-class FilterSubjectsInvalidInputRates(DatasetTransformation):
+class FilterInvalidInputRatesSubjects(DatasetTransformation):
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        pass
+        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        c_subject_id = dataset.config.tables.admissions.subject_id_alias
+
+        icu_inputs = dataset.tables.icu_inputs
+        static = dataset.tables.static
+        admissions = dataset.tables.admissions
+
+        nan_input_rates = icu_inputs[icu_inputs[c_normalized_amount_per_hour].isnull()]
+        n_nan_inputs = len(nan_input_rates)
+        nan_adm_ids = nan_input_rates[c_admission_id].unique()
+        n_nan_adms = len(nan_adm_ids)
+
+        nan_subject_ids = admissions[admissions.index.isin(nan_adm_ids)][c_subject_id].unique()
+        n_nan_subjects = len(nan_subject_ids)
+
+        self.report(aux, table=('icu_inputs', 'admissions', 'static'),
+                    column=(c_normalized_amount_per_hour, c_admission_id, c_subject_id),
+                    value_type='nan_counts',
+                    before=(n_nan_inputs, n_nan_adms, n_nan_subjects),
+                    after=None,
+                    operation='filter_invalid_input_rates_subjects')
+
+        n1 = len(static)
+        static = static[~static[c_subject_id].isin(nan_subject_ids)]
+        n2 = len(static)
+        self.report(aux, table='static', column=c_subject_id, value_type='count',
+                    before=n1, after=n2,
+                    operation='filter_invalid_input_rates_subjects')
+
+        return self.synchronize_subjects(dataset, aux)
 
 
-class ObsOutlierRemovel(DatasetTransformation):
+class ICUInputRateUnitConversion(DatasetTransformation):
+    conversion_table: pd.DataFrame
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        c_code = dataset.config.tables.icu_inputs.code_alias
+        c_amount = dataset.config.tables.icu_inputs.amount_alias
+        c_start_time = dataset.config.tables.icu_inputs.start_time_alias
+        c_end_time = dataset.config.tables.icu_inputs.end_time_alias
+        c_amount_unit = dataset.config.tables.icu_inputs.amount_unit_alias
+        c_amount_per_hour = dataset.config.tables.icu_inputs.derived_amount_per_hour
+        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        c_universal_unit = dataset.config.tables.icu_inputs.derived_universal_unit
+        c_normalization_factor = dataset.config.tables.icu_inputs.derived_unit_normalization_factor
+        icu_inputs = dataset.tables.icu_inputs
+        assert (c in icu_inputs.columns for c in [c_code, c_amount, c_amount_unit]), \
+            f"Some columns in: {c_code}, {c_amount}, {c_amount_unit}, not found in icu_inputs table"
+        assert c_amount_per_hour not in icu_inputs.columns and c_normalized_amount_per_hour not in icu_inputs.columns, \
+            f"Column {c_amount_per_hour} or {c_normalized_amount_per_hour} already exists in icu_inputs table"
+        assert (c in self.conversion_table for c in [c_code, c_amount_unit, c_universal_unit,
+                                                     c_normalization_factor]), \
+            f"Some columns in: {', '.join([c_code, c_amount_unit, c_universal_unit, c_normalization_factor])}, not " \
+            "found in the conversion table"
+
+        df = pd.merge(icu_inputs, self.conversion_table, how='left',
+                      on=[c_code, c_amount_unit])
+        delta_hours = ((df[c_end_time] - df[c_start_time]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
+        df[c_amount_per_hour] = df[c_amount] / delta_hours
+        df[c_normalized_amount_per_hour] = df[c_amount_per_hour] * df[c_normalization_factor]
+        df = df[icu_inputs.columns + [c_amount_per_hour, c_normalized_amount_per_hour,
+                                      c_universal_unit, c_normalization_factor]]
+        dataset = eqx.tree_at(lambda x: x.tables.icu_inputs, dataset, df)
+        self.report(aux, table='icu_inputs', column=None,
+                    value_type='columns', operation='new_columns',
+                    before=icu_inputs.columns, after=df.columns)
+
+        return dataset, aux
+
+
+class OutlierRemovel(DatasetTransformation):
     outlier_q1: float = 0.25
     outlier_q2: float = 0.75
     outlier_iqr_scale: float = 1.5
     outlier_z1: float = -2.5
     outlier_z2: float = 2.5
+    table_name: str = None
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         pass

@@ -15,6 +15,7 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Engine
 
+import _dataset_sql_mimic4 as m4sql
 from . import DatasetConfig
 from ._coding_scheme_icd import ICDScheme
 from ._dataset_mimic3 import MIMIC3Dataset, try_compute
@@ -25,10 +26,12 @@ from .concepts import (InpatientInput, InpatientObservables, Patient,
                        LeadingObservableExtractorConfig, LeadingObservableExtractor,
                        StaticInfo)
 from .dataset import (DatasetScheme, DatasetSchemeConfig, DatasetPipeline, StaticTableConfig,
-                      TimestampedMultiColumnTableConfig, TimestampedCategoricalTableConfig)
+                      AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
+                      AdmissionIntervalBasedMixedICDTableConfig,
+                      AdmissionTimestampedCodedValueTableConfig)
 from .dataset import (TableConfig, AdmissionLinkedTableConfig, SubjectLinkedTableConfig,
-                      CategoricalTableConfig, IntervalBasedTableConfig, AdmissionTableConfig,
-                      MixedICDTableConfig, ItemBasedCategoricalTableConfig, RatedInputTableConfig, DatasetTablesConfig,
+                      CodedTableConfig, AdmissionTableConfig,
+                      AdmissionMixedICDTableConfig, RatedInputTableConfig, DatasetTablesConfig,
                       Dataset)
 from ..base import Module
 
@@ -116,68 +119,52 @@ class SQLTableConfig(TableConfig):
     query: str
 
 
-class CategoricalSQLTableConfig(SQLTableConfig):
+class CodedSQLTableConfig(SQLTableConfig, CodedTableConfig):
     space_query: str = ''
 
 
-class AdmissionLinkedMIMICIVSQLTableConfig(AdmissionLinkedTableConfig, SQLTableConfig):
+class AdmissionLinkedSQLTableConfig(AdmissionLinkedTableConfig, SQLTableConfig):
     pass
 
 
-class SubjectLinkedMIMICIVSQLTableConfig(SubjectLinkedTableConfig, SQLTableConfig):
+class SubjectLinkedSQLTableConfig(SubjectLinkedTableConfig, SQLTableConfig):
     pass
 
 
-class TimestampedMultiColumnMIMICIVSQLTableConfig(TimestampedMultiColumnTableConfig, SQLTableConfig):
+class AdmissionTimestampedMultiColumnSQLTableConfig(AdmissionTimestampedMultiColumnTableConfig, SQLTableConfig):
     pass
 
 
-class CategoricalMIMICIVSQLTableConfig(CategoricalTableConfig, CategoricalSQLTableConfig):
+class AdmissionTimestampedCodedValueSQLTableConfig(AdmissionTimestampedCodedValueTableConfig, CodedSQLTableConfig):
+    components: List[AdmissionTimestampedMultiColumnTableConfig] = field(default_factory=list)
+
+
+class AdmissionSQLTableConfig(AdmissionTableConfig, SQLTableConfig):
     pass
 
 
-class TimestampedCategoricalMIMICIVSQLTableConfig(TimestampedCategoricalTableConfig, CategoricalMIMICIVSQLTableConfig):
-    components: List[TimestampedMultiColumnTableConfig] = field(default_factory=list)
-
-
-class IntervalMIMICIVSQLTableConfig(IntervalBasedTableConfig, SQLTableConfig):
-    pass
-
-
-class AdmissionMIMICIVSQLTableConfig(AdmissionTableConfig, SQLTableConfig):
-    pass
-
-
-class StaticMIMICIVSQLTableConfig(StaticTableConfig, SQLTableConfig):
+class StaticSQLTableConfig(StaticTableConfig, SQLTableConfig):
     anchor_year_alias: str = 'anchor_year'
     anchor_age_alias: str = 'anchor_age'
 
 
-class MixedICDMIMICIVSQLTableConfig(MixedICDTableConfig, CategoricalSQLTableConfig):
+class AdmissionMixedICDSQLTableConfig(AdmissionMixedICDTableConfig, CodedSQLTableConfig):
     pass
 
 
-class ItemBasedMIMICIVSQLTableConfig(ItemBasedCategoricalTableConfig, CategoricalSQLTableConfig):
+class IntervalBasedMixedICDSQLTableConfig(AdmissionIntervalBasedMixedICDTableConfig, AdmissionMixedICDSQLTableConfig):
     pass
 
 
-class DxDischargeMIMICIVSQLTableConfig(AdmissionLinkedMIMICIVSQLTableConfig, MixedICDMIMICIVSQLTableConfig):
+class IntervalICUProcedureSQLTableConfig(AdmissionIntervalBasedCodedTableConfig, CodedSQLTableConfig):
     pass
 
 
-class IntervalHospProcedureMIMICIVSQLTableConfig(IntervalMIMICIVSQLTableConfig, MixedICDMIMICIVSQLTableConfig):
+class RatedInputSQLTableConfig(RatedInputTableConfig, CodedSQLTableConfig):
     pass
 
 
-class IntervalICUProcedureMIMICIVSQLTableConfig(IntervalMIMICIVSQLTableConfig, ItemBasedMIMICIVSQLTableConfig):
-    pass
-
-
-class RatedInputMIMICIVSQLTableConfig(RatedInputTableConfig, CategoricalMIMICIVSQLTableConfig):
-    pass
-
-
-class MIMICIVSQLTable(Module):
+class SQLTable(Module):
     config: SQLTableConfig
 
     def _coerce_id_to_str(self, df: pd.DataFrame):
@@ -197,8 +184,8 @@ class MIMICIVSQLTable(Module):
                                                   coerce_float=False))
 
 
-class TimestampedMultiColumnMIMICIVSQLTable(MIMICIVSQLTable):
-    config: TimestampedMultiColumnMIMICIVSQLTableConfig
+class TimestampedMultiColumnSQLTable(SQLTable):
+    config: AdmissionTimestampedMultiColumnSQLTableConfig
 
     def __call__(self, engine: Engine, attributes: List[str]) -> pd.DataFrame:
         assert len(set(attributes)) == len(attributes), f"Duplicate attributes {attributes}"
@@ -215,8 +202,8 @@ class TimestampedMultiColumnMIMICIVSQLTable(MIMICIVSQLTable):
         return space.set_index('table_name', drop=True).sort_values('attribute').sort_index()
 
 
-class StaticMIMICIVSQLTable(MIMICIVSQLTable):
-    config: StaticMIMICIVSQLTableConfig
+class StaticSQLTable(SQLTable):
+    config: StaticSQLTableConfig
 
     def __call__(self, engine: Engine):
         query = self.config.query.format(**self.config.alias_dict)
@@ -248,8 +235,8 @@ class StaticMIMICIVSQLTable(MIMICIVSQLTable):
         pass
 
 
-class CategoricalMIMICIVSQLTable(MIMICIVSQLTable):
-    config: CategoricalMIMICIVSQLTableConfig
+class CategoricalSQLTable(SQLTable):
+    config: CodedSQLTableConfig
 
     def space(self, engine: Engine):
         query = self.config.space_query.format(**self.config.alias_dict)
@@ -257,12 +244,13 @@ class CategoricalMIMICIVSQLTable(MIMICIVSQLTable):
                                                   coerce_float=False))
 
 
-class ObservablesMIMICIVSQLTable(MIMICIVSQLTable):
-    config: TimestampedCategoricalMIMICIVSQLTableConfig
+class ObservablesSQLTable(SQLTable):
+    config: AdmissionTimestampedCodedValueSQLTableConfig
 
     def __cal__(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         dfs = []
         c_code = self.config.code_alias
+        c_value = self.config.value_alias
         for table_name, attrs_df in obs_scheme.as_dataframe().groupby('table_name'):
             attributes = attrs_df['attribute'].tolist()
             attr2code = attrs_df.set_index('attribute')['code'].to_dict()
@@ -271,7 +259,7 @@ class ObservablesMIMICIVSQLTable(MIMICIVSQLTable):
             obs_df = table(engine, attributes)
             # melt the table. (admission_id, time, attribute, value)
             melted_obs_df = obs_df.melt(id_vars=[table.config.admission_id_alias, table.config.time_alias],
-                                        var_name=['attribute'], value_name='value', value_vars=attributes)
+                                        var_name=['attribute'], value_name=c_value, value_vars=attributes)
             # add the code. (admission_id, time, attribute, value, code)
             melted_obs_df[c_code] = melted_obs_df['attribute'].map(attr2code)
             melted_obs_df = melted_obs_df[melted_obs_df.value.notnull()]
@@ -285,9 +273,9 @@ class ObservablesMIMICIVSQLTable(MIMICIVSQLTable):
         df_list = [self.table_interface(c.name).space(engine) for c in self.config.components]
         return pd.concat(df_list).sort_values(['attribute']).sort_index()
 
-    def table_interface(self, table_name: str) -> TimestampedMultiColumnMIMICIVSQLTable:
+    def table_interface(self, table_name: str) -> TimestampedMultiColumnSQLTable:
         table_conf = next(t for t in self.config.components if t.name == table_name)
-        return TimestampedMultiColumnMIMICIVSQLTable(config=table_conf)
+        return TimestampedMultiColumnSQLTable(config=table_conf)
 
     def register_scheme(self, name: str,
                         engine: Engine, attributes_selection: Optional[pd.DataFrame]):
@@ -300,8 +288,8 @@ class ObservablesMIMICIVSQLTable(MIMICIVSQLTable):
         return scheme
 
 
-class MixedICDMIMICIVSQLTable(CategoricalMIMICIVSQLTable):
-    config: MixedICDMIMICIVSQLTableConfig
+class MixedICDSQLTable(CategoricalSQLTable):
+    config: AdmissionMixedICDSQLTableConfig
 
     def register_scheme(self, name: str,
                         engine: Engine,
@@ -327,19 +315,19 @@ class MixedICDMIMICIVSQLTable(CategoricalMIMICIVSQLTable):
             for version, codes in icd_version_selection.groupby(c_version):
                 support_subset = supported_space[supported_space[c_version] == version]
                 assert codes[c_code].isin(support_subset[c_code]).all(), "Some ICD codes are not supported"
-        scheme = MixedICDMIMICIVScheme.from_selection(name, icd_version_selection,
-                                                      icd_version_alias=c_version,
-                                                      icd_code_alias=c_code,
-                                                      description_alias=c_desc,
-                                                      icd_schemes=icd_schemes)
-        MixedICDMIMICIVScheme.register_scheme(scheme)
+        scheme = MixedICDScheme.from_selection(name, icd_version_selection,
+                                               icd_version_alias=c_version,
+                                               icd_code_alias=c_code,
+                                               description_alias=c_desc,
+                                               icd_schemes=icd_schemes)
+        MixedICDScheme.register_scheme(scheme)
         scheme.register_maps_loaders()
 
         return scheme
 
 
-class ItemBasedMIMICIVSQLTable(CategoricalMIMICIVSQLTable):
-    config: ItemBasedMIMICIVSQLTableConfig
+class CodedSQLTable(CategoricalSQLTable):
+    config: CodedSQLTableConfig
 
     @staticmethod
     def _register_flat_scheme(name: str, codes: List[str], desc: Dict[str, str]):
@@ -355,21 +343,21 @@ class ItemBasedMIMICIVSQLTable(CategoricalMIMICIVSQLTable):
         return scheme
 
     def register_scheme(self, name: str,
-                        engine: Engine, itemid_selection: Optional[pd.DataFrame]):
+                        engine: Engine, code_selection: Optional[pd.DataFrame]):
 
-        c_itemid = self.config.item_id_alias
+        c_code = self.config.item_id_alias
         c_desc = self.config.description_alias
         supported_space = self.space(engine)
-        if itemid_selection is None:
-            itemid_selection = supported_space[c_itemid].drop_duplicates().astype(str).tolist()
+        if code_selection is None:
+            code_selection = supported_space[c_code].drop_duplicates().astype(str).tolist()
         else:
-            itemid_selection = itemid_selection[c_itemid].drop_duplicates().astype(str).tolist()
+            code_selection = code_selection[c_code].drop_duplicates().astype(str).tolist()
 
-            assert len(set(itemid_selection) - set(supported_space[c_itemid])) == 0, \
+            assert len(set(code_selection) - set(supported_space[c_code])) == 0, \
                 "Some item ids are not supported."
-        desc = supported_space.set_index(c_itemid)[c_desc].to_dict()
-        desc = {k: v for k, v in desc.items() if k in itemid_selection}
-        return self._register_flat_scheme(name, itemid_selection, desc)
+        desc = supported_space.set_index(c_code)[c_desc].to_dict()
+        desc = {k: v for k, v in desc.items() if k in code_selection}
+        return self._register_flat_scheme(name, code_selection, desc)
 
 
 class ObservableMIMICScheme(FlatScheme):
@@ -406,7 +394,7 @@ class ObservableMIMICScheme(FlatScheme):
                             columns=columns)
 
 
-class MixedICDMIMICIVScheme(FlatScheme):
+class MixedICDScheme(FlatScheme):
     _icd_schemes: Dict[str, ICDScheme]
     _sep: str = ':'
 
@@ -419,7 +407,7 @@ class MixedICDMIMICIVScheme(FlatScheme):
     @classmethod
     def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
                        icd_version_alias: str, icd_code_alias: str, description_alias: str,
-                       icd_schemes: Dict[str, str], sep: str = ':') -> MixedICDMIMICIVScheme:
+                       icd_schemes: Dict[str, str], sep: str = ':') -> MixedICDScheme:
         icd_version_selection = icd_version_selection.sort_values([icd_version_alias, icd_code_alias])
         icd_version_selection = icd_version_selection.drop_duplicates([icd_version_alias, icd_code_alias]).astype(str)
         assert icd_version_selection[icd_version_alias].isin(icd_schemes).all(), \
@@ -439,18 +427,18 @@ class MixedICDMIMICIVScheme(FlatScheme):
             icd_version_selection.loc[icd_df.index, icd_code_alias] = \
                 icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
 
-        codes = (icd_version_selection['icd_version'] + sep + icd_version_selection['icd_code']).tolist()
+        codes = (icd_version_selection[icd_version_alias] + sep + icd_version_selection[icd_code_alias]).tolist()
         df = icd_version_selection.copy()
         df['code'] = codes
         index = dict(zip(codes, range(len(codes))))
         desc = df.set_index('code')[description_alias].to_dict()
 
-        return MixedICDMIMICIVScheme(config=CodingSchemeConfig(name),
-                                     codes=codes,
-                                     desc=desc,
-                                     index=index,
-                                     icd_schemes=icd_schemes_loaded,
-                                     sep=sep)
+        return MixedICDScheme(config=CodingSchemeConfig(name),
+                              codes=codes,
+                              desc=desc,
+                              index=index,
+                              icd_schemes=icd_schemes_loaded,
+                              sep=sep)
 
     def mixedcode_format_table(self, table: pd.DataFrame, icd_code_alias: str,
                                icd_version_alias: str, code_alias: str) -> pd.DataFrame:
@@ -477,7 +465,7 @@ class MixedICDMIMICIVScheme(FlatScheme):
     def generate_maps(self):
         """
         Register the mappings between the Mixed ICD scheme and the individual ICD scheme.
-        For example, if the current `MixedICDMIMICIV` is mixing ICD-9 and ICD-10,
+        For example, if the current `MixedICD` is mixing ICD-9 and ICD-10,
         then register the two mappings between this scheme and ICD-9 and ICD-10 separately.
         This assumes that the current runtime has already registered mappings
         between the individual ICD schemes.
@@ -544,13 +532,14 @@ class MIMICIVSQLConfig(DatasetTablesConfig):
     password: str
     dbname: str
 
-    static_table: StaticMIMICIVSQLTableConfig = field(default_factory=lambda: STATIC_CONF)
-    admissions_table: AdmissionMIMICIVSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF)
-    dx_discharge_table: DxDischargeMIMICIVSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF)
-    obs_table: TimestampedCategoricalMIMICIVSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG)
-    icu_procedures_table: IntervalICUProcedureMIMICIVSQLTableConfig = field(default_factory=lambda: ICU_PROC_CONF)
-    icu_inputs_table: RatedInputMIMICIVSQLTableConfig = field(default_factory=lambda: ICU_INPUT_CONF)
-    hosp_procedures_table: IntervalHospProcedureMIMICIVSQLTableConfig = field(default_factory=lambda: HOSP_PROC_CONF)
+    static_table: StaticSQLTableConfig = field(default_factory=lambda: m4sql.STATIC_CONF)
+    admissions_table: AdmissionSQLTableConfig = field(default_factory=lambda: m4sql.ADMISSIONS_CONF)
+    dx_discharge_table: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: m4sql.DX_DISCHARGE_CONF)
+    obs_table: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: m4sql.OBS_TABLE_CONFIG)
+    icu_procedures_table: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: m4sql.ICU_PROC_CONF)
+    icu_inputs_table: RatedInputSQLTableConfig = field(default_factory=lambda: m4sql.ICU_INPUT_CONF)
+    hosp_procedures_table: IntervalBasedMixedICDSQLTableConfig = field(
+        default_factory=lambda: m4sql.HOSP_PROC_CONF)
 
 
 class MIMICIVSQL(Module):
@@ -576,40 +565,40 @@ class MIMICIVSQL(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
 
-        table = ObservablesMIMICIVSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs_table)
         return table.register_scheme(name, self.create_engine(), attributes_selection)
 
-    def register_icu_input_scheme(self, name: str, itemid_selection: Optional[pd.DataFrame]):
+    def register_icu_input_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
         """
-        From the given selection of ICU input items `itemid_selection`, generate a new scheme
-        that can be used to generate for vectorisation of the ICU inputs. If `itemid_selection` is None,
+        From the given selection of ICU input items `code_selection`, generate a new scheme
+        that can be used to generate for vectorisation of the ICU inputs. If `code_selection` is None,
         all supported items will be used.
 
         Args:
             name : The name of the new scheme.
-            itemid_selection : A dataframe containing the `itemid`s to generate the new scheme. If None, all supported items will be used.
+            code_selection : A dataframe containing the `code`s to generate the new scheme. If None, all supported items will be used.
 
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_inputs_table)
-        return table.register_scheme(name, self.create_engine(), itemid_selection)
+        table = CodedSQLTable(self.config.icu_inputs_table)
+        return table.register_scheme(name, self.create_engine(), code_selection)
 
-    def register_icu_procedure_scheme(self, name: str, itemid_selection: Optional[pd.DataFrame]):
+    def register_icu_procedure_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
         """
-        From the given selection of ICU procedure items `itemid_selection`, generate a new scheme
-        that can be used to generate for vectorisation of the ICU procedures. If `itemid_selection` is None,
+        From the given selection of ICU procedure items `code_selection`, generate a new scheme
+        that can be used to generate for vectorisation of the ICU procedures. If `code_selection` is None,
         all supported items will be used.
 
         Args:
             name : The name of the new scheme.
-            itemid_selection : A dataframe containing the `itemid`s of choice. If None, all supported items will be used.
+            code_selection : A dataframe containing the `code`s of choice. If None, all supported items will be used.
 
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_procedures_table)
-        return table.register_scheme(name, self.create_engine(), itemid_selection)
+        table = CodedSQLTable(self.config.icu_procedures_table)
+        return table.register_scheme(name, self.create_engine(), code_selection)
 
     def register_hosp_procedure_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
         """
@@ -624,7 +613,7 @@ class MIMICIVSQL(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = MixedICDMIMICIVSQLTable(self.config.hosp_procedures_table)
+        table = MixedICDSQLTable(self.config.hosp_procedures_table)
         return table.register_scheme(name, self.create_engine(), {'9': 'pr_icd9', '10': 'pr_flat_icd10'},
                                      icd_version_selection)
 
@@ -641,75 +630,73 @@ class MIMICIVSQL(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = MixedICDMIMICIVSQLTable(self.config.dx_discharge_table)
+        table = MixedICDSQLTable(self.config.dx_discharge_table)
         return table.register_scheme(name, self.create_engine(), {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
                                      icd_version_selection)
 
     @cached_property
     def supported_obs_variables(self) -> pd.DataFrame:
-        table = ObservablesMIMICIVSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs_table)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_icu_procedures(self) -> pd.DataFrame:
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_procedures_table)
+        table = CodedSQLTable(self.config.icu_procedures_table)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_icu_inputs(self) -> pd.DataFrame:
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_inputs_table)
+        table = CodedSQLTable(self.config.icu_inputs_table)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_hosp_procedures(self) -> pd.DataFrame:
-        table = MixedICDMIMICIVSQLTable(self.config.hosp_procedures_table)
+        table = MixedICDSQLTable(self.config.hosp_procedures_table)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_dx_discharge(self) -> pd.DataFrame:
-        table = MixedICDMIMICIVSQLTable(self.config.dx_discharge_table)
+        table = MixedICDSQLTable(self.config.dx_discharge_table)
         return table.space(self.create_engine())
 
     def _extract_static_table(self, engine: Engine) -> pd.DataFrame:
-        table = MIMICIVSQLTable(self.config.static_table)
+        table = SQLTable(self.config.static_table)
         return table(engine)
 
     def _extract_admissions_table(self, engine: Engine) -> pd.DataFrame:
-        table = MIMICIVSQLTable(self.config.admissions_table)
+        table = SQLTable(self.config.admissions_table)
         return table(engine)
 
-    def _extract_dx_discharge_table(self, engine: Engine, dx_discharge_scheme: MixedICDMIMICIVScheme) -> pd.DataFrame:
-        table = MIMICIVSQLTable(self.config.dx_discharge_table)
+    def _extract_dx_discharge_table(self, engine: Engine, dx_discharge_scheme: MixedICDScheme) -> pd.DataFrame:
+        table = SQLTable(self.config.dx_discharge_table)
         dataframe = table(engine)
         c_icd_version = self.config.dx_discharge_table.icd_version_alias
         c_icd_code = self.config.dx_discharge_table.icd_code_alias
         return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version)
 
     def _extract_obs_table(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
-        table = ObservablesMIMICIVSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs_table)
         return table(engine, obs_scheme)
 
     def _extract_icu_procedures_table(self, engine: Engine, icu_procedure_scheme: FlatScheme) -> pd.DataFrame:
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_procedures_table)
-        c_itemid = self.config.icu_procedures_table.item_id_alias
+        table = CodedSQLTable(self.config.icu_procedures_table)
         c_code = self.config.icu_procedures_table.code_alias
         dataframe = table(engine)
-        dataframe = dataframe[dataframe[c_itemid].isin(icu_procedure_scheme.codes)]
-        dataframe[c_code] = dataframe[c_itemid]
+        dataframe = dataframe[dataframe[c_code].isin(icu_procedure_scheme.codes)]
+        dataframe[c_code] = dataframe[c_code]
         return dataframe.reset_index(drop=True)
 
     def _extract_icu_inputs_table(self, engine: Engine, icu_input_scheme: FlatScheme) -> pd.DataFrame:
-        table = ItemBasedMIMICIVSQLTable(self.config.icu_inputs_table)
-        c_itemid = self.config.icu_inputs_table.item_id_alias
+        table = CodedSQLTable(self.config.icu_inputs_table)
         c_code = self.config.icu_inputs_table.code_alias
         dataframe = table(engine)
-        dataframe = dataframe[dataframe[c_itemid].isin(icu_input_scheme.codes)]
-        dataframe[c_code] = dataframe[c_itemid]
+        dataframe = dataframe[dataframe[c_code].isin(icu_input_scheme.codes)]
+        dataframe[c_code] = dataframe[c_code]
         return dataframe.reset_index(drop=True)
 
     def _extract_hosp_procedures_table(self, engine: Engine,
-                                       procedure_icd_scheme: MixedICDMIMICIVScheme) -> pd.DataFrame:
-        table = MixedICDMIMICIVSQLTable(self.config.hosp_procedures_table)
+                                       procedure_icd_scheme: MixedICDScheme) -> pd.DataFrame:
+        table = MixedICDSQLTable(self.config.hosp_procedures_table)
         c_icd_code = self.config.hosp_procedures_table.icd_code_alias
         c_icd_version = self.config.hosp_procedures_table.icd_version_alias
         c_code = self.config.hosp_procedures_table.code_alias
@@ -736,8 +723,8 @@ class MIMICIVSQL(Module):
                 - icd_code: The ICD code.
             obs_selection: A dictionary of observation table names and their corresponding attributes.
                 If None, all supported variables will be used.
-            icu_input_selection: A dataframe containing the `itemid`s to generate the new scheme. If None, all supported items will be used.
-            icu_procedure_selection: A dataframe containing the `itemid`s of choice. If None, all supported items will be used.
+            icu_input_selection: A dataframe containing the `code`s to generate the new scheme. If None, all supported items will be used.
+            icu_procedure_selection: A dataframe containing the `code`s of choice. If None, all supported items will be used.
             hosp_procedure_selection: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
                 - icd_version: The version of the ICD.
                 - icd_code: The ICD code.
@@ -751,285 +738,9 @@ class MIMICIVSQL(Module):
         pass
 
 
-ADMISSIONS_CONF = AdmissionMIMICIVSQLTableConfig(name="admissions",
-                                                 query=(r"""
-select hadm_id as {admission_id_alias}, 
-subject_id as {subject_id_alias},
-admittime as {admission_time_alias},
-dischtime as {discharge_time_alias}
-from mimiciv_hosp.admissions 
-"""))
-
-STATIC_CONF = StaticMIMICIVSQLTableConfig(name="static",
-                                          query=(r"""
-select 
-p.subject_id as {subject_id_alias},
-p.gender as {gender_alias},
-a.race as {race_alias},
-p.anchor_age as {anchor_age_alias},
-p.anchor_year as {anchor_year_alias}
-from mimiciv_hosp.patients p
-left join 
-(select subject_id, max(race) as race
-from mimiciv_hosp.admissions
-group by subject_id) as a
-on p.subject_id = a.subject_id
-"""))
-
-DX_DISCHARGE_CONF = DxDischargeMIMICIVSQLTableConfig(name="dx_discharge",
-                                                     query=(r"""
-select hadm_id as {admission_id_alias}, 
-        icd_code as {icd_code_alias}, 
-        icd_version as {icd_version_alias}
-from mimiciv_hosp.diagnoses_icd 
-"""),
-                                                     space_query=(r"""
-select icd_code as {icd_code_alias},
-        icd_version as {icd_version_alias},
-        long_title as {description_alias}
-from mimiciv_hosp.d_icd_diagnoses
-"""))
-
-RENAL_OUT_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="renal_out",
-                                                             attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
-                                                             query=(r"""
-select icu.hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
-from mimiciv_derived.kdigo_uo as uo
-inner join mimiciv_icu.icustays icu
-on icu.stay_id = uo.stay_id
-    """))
-
-RENAL_CREAT_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="renal_creat",
-                                                               attributes=['creat'],
-                                                               query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
-from mimiciv_derived.kdigo_creatinine
-    """))
-
-RENAL_AKI_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="renal_aki",
-                                                             attributes=['aki_stage_smoothed', 'aki_binary'],
-                                                             query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
-from (select hadm_id, charttime, aki_stage_smoothed, 
-    case when aki_stage_smoothed = 1 then 1 else 0 end as aki_binary from mimiciv_derived.kdigo_stages)
-    """))
-
-SOFA_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="renal_aki",
-                                                        attributes=["sofa_24hours"],
-                                                        query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, s.endtime {time_alias} 
-from mimiciv_derived.sofa as s
-inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id    
-"""))
-
-BLOOD_GAS_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="blood_gas",
-                                                             attributes=['so2', 'po2', 'pco2', 'fio2',
-                                                                         'fio2_chartevents',
-                                                                         'aado2', 'aado2_calc',
-                                                                         'pao2fio2ratio', 'ph',
-                                                                         'baseexcess', 'bicarbonate', 'totalco2',
-                                                                         'hematocrit',
-                                                                         'hemoglobin',
-                                                                         'carboxyhemoglobin', 'methemoglobin',
-                                                                         'chloride', 'calcium', 'temperature',
-                                                                         'potassium',
-                                                                         'sodium', 'lactate', 'glucose'],
-                                                             query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
-from mimiciv_derived.bg as bg
-where hadm_id is not null
-"""))
-
-BLOOD_CHEMISTRY_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="blood_chemistry",
-                                                                   attributes=['albumin', 'globulin', 'total_protein',
-                                                                               'aniongap', 'bicarbonate', 'bun',
-                                                                               'calcium', 'chloride',
-                                                                               'creatinine', 'glucose', 'sodium',
-                                                                               'potassium'],
-                                                                   query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
-from mimiciv_derived.chemistry as ch
-where hadm_id is not null
-"""))
-
-CARDIAC_MARKER_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="cardiac_marker",
-                                                                  attributes=['troponin_t', 'ntprobnp', 'ck_mb'],
-                                                                  query=(r"""
-with trop as
-(
-    select specimen_id, MAX(valuenum) as troponin_t
-    from mimiciv_hosp.labevents
-    where itemid = 51003
-    group by specimen_id
-)
-select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
-from mimiciv_hosp.admissions a
-left join mimiciv_derived.cardiac_marker c
-  on a.hadm_id = c.hadm_id
-left join trop
-  on c.specimen_id = trop.specimen_id
-where c.hadm_id is not null
-"""))
-
-WEIGHT_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="weight",
-                                                          attributes=['weight'],
-                                                          query=(r"""
-select icu.hadm_id {admission_id_alias}, {attributes}, w.time_bin {time_alias}
- from (
- (select stay_id, w.weight, w.starttime time_bin
-  from mimiciv_derived.weight_durations as w)
- union all
- (select stay_id, w.weight, w.endtime time_bin
-     from mimiciv_derived.weight_durations as w)
- ) w
-inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
-"""))
-
-CBC_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="cbc",
-                                                       attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc', 'mcv',
-                                                                   'platelet',
-                                                                   'rbc', 'rdw', 'wbc'],
-                                                       query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, cbc.charttime {time_alias}
-from mimiciv_derived.complete_blood_count as cbc
-where hadm_id is not null
-"""))
-
-VITAL_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="vital",
-                                                         attributes=['heart_rate', 'sbp', 'dbp', 'mbp', 'sbp_ni',
-                                                                     'dbp_ni',
-                                                                     'mbp_ni', 'resp_rate',
-                                                                     'temperature', 'spo2',
-                                                                     'glucose'],
-                                                         query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, v.charttime {time_alias}
-from mimiciv_derived.vitalsign as v
-inner join mimiciv_icu.icustays as icu
- on icu.stay_id = v.stay_id
-"""))
-
-# Glasgow Coma Scale, a measure of neurological function
-GCS_CONF = TimestampedMultiColumnMIMICIVSQLTableConfig(name="gcs",
-                                                       attributes=['gcs', 'gcs_motor', 'gcs_verbal', 'gcs_eyes',
-                                                                   'gcs_unable'],
-                                                       query=(r"""
-select hadm_id {admission_id_alias}, {attributes}, gcs.charttime {time_alias}
-from mimiciv_derived.gcs as gcs
-inner join mimiciv_icu.icustays as icu
- on icu.stay_id = gcs.stay_id
-"""))
-
-OBS_TABLE_CONFIG = TimestampedCategoricalMIMICIVSQLTableConfig(components=[
-    RENAL_OUT_CONF,
-    RENAL_CREAT_CONF,
-    RENAL_AKI_CONF,
-    SOFA_CONF,
-    BLOOD_GAS_CONF,
-    BLOOD_CHEMISTRY_CONF,
-    CARDIAC_MARKER_CONF,
-    WEIGHT_CONF,
-    CBC_CONF,
-    VITAL_CONF,
-    GCS_CONF
-])
-
-## Inputs - Canonicalise
-
-ICU_INPUT_CONF = RatedInputMIMICIVSQLTableConfig(name="int_input",
-                                                 query=(r"""
-select
-    a.hadm_id as {admission_id_alias}
-    , inp.itemid as {item_id_alias}
-    , inp.starttime as {start_time_alias}
-    , inp.endtime as {end_time_alias}
-    , di.label as {description_alias}
-    , inp.rate  as {rate_alias}
-    , inp.amount as {amount_alias}
-    , inp.rateuom as {rate_unit_alias}
-    , inp.amountuom as {amount_unit_alias}
-from mimiciv_hosp.admissions a
-inner join mimiciv_icu.icustays i
-    on a.hadm_id = i.hadm_id
-left join mimiciv_icu.inputevents inp
-    on i.stay_id = inp.stay_id
-left join mimiciv_icu.d_items di
-    on inp.itemid = di.itemid
-"""),
-                                                 space_query=(r"""
-select di.itemid as {item_id_alias}, max(di.label) as {description_alias}
-from  mimiciv_icu.d_items di
-inner join mimiciv_icu.inputevents ie
-    on di.itemid = ie.itemid
-where di.itemid is not null
-group by di.itemid
-"""))
-
-## Procedures - Canonicalise and Refine
-ICU_PROC_CONF = IntervalICUProcedureMIMICIVSQLTableConfig(name="int_proc_icu",
-                                                          query=(r"""
-select a.hadm_id as {admission_id_alias}
-    , pe.itemid as {item_id_alias}
-    , pe.starttime as {start_time_alias}
-    , pe.endtime as {end_time_alias}
-    , di.label as {description_alias}
-from mimiciv_hosp.admissions a
-inner join mimiciv_icu.icustays i
-    on a.hadm_id = i.hadm_id
-left join mimiciv_icu.procedureevents pe
-    on i.stay_id = pe.stay_id
-left join mimiciv_icu.d_items di
-    on pe.itemid = di.itemid
-"""),
-                                                          space_query=(r"""
-select di.itemid as {item_id_alias}, max(di.label) as {description_alias}
-from  mimiciv_icu.d_items di
-inner join mimiciv_icu.procedureevents pe
-    on di.itemid = pe.itemid
-where di.itemid is not null
-group by di.itemid
-"""))
-
-HOSP_PROC_CONF = IntervalHospProcedureMIMICIVSQLTableConfig(name="int_proc_icd",
-                                                            query=(r"""
-select pi.hadm_id as {admission_id_alias}
-, (pi.chartdate)::timestamp as {start_time_alias}
-, (pi.chartdate + interval '1 hour')::timestamp as {end_time_alias}
-, pi.icd_code as {icd_code_alias}
-, pi.icd_version as {icd_version_alias}
-, di.long_title as {description_alias}
-FROM mimiciv_hosp.procedures_icd pi
-INNER JOIN mimiciv_hosp.d_icd_procedures di
-  ON pi.icd_version = di.icd_version
-  AND pi.icd_code = di.icd_code
-INNER JOIN mimiciv_hosp.admissions a
-  ON pi.hadm_id = a.hadm_id
-"""),
-                                                            space_query=(r"""
-
-select di.icd_code  as {icd_code_alias},  
-di.icd_version as {icd_version_alias},
-max(di.long_title) as {description_alias}
-from mimiciv_hosp.d_icd_procedures di
-where di.icd_code is not null and di.icd_version is not null
-group by di.icd_code, di.icd_version
-"""))
-
-
 class MIMIC4Dataset(MIMIC3Dataset):
     scheme: MIMIC4DatasetScheme
 
-    def _dx_fix_icd_dots(self):
-        raise NotImplementedError("Not implemented")
-
-    def _dx_filter_unsupported_icd(self):
-        c_code = self.colname["dx_discharge"].code
-        c_version = self.colname["dx_discharge"].version
-        self.df["dx_discharge"] = self._validate_dx_codes(self.df["dx_discharge"], c_code,
-                                                c_version, self.scheme.dx)
-
-    @staticmethod
-    def _validate_dx_codes(df, code_col, version_col, version_map):
-        raise NotImplementedError("Not implemented")
 
     def subject_info_extractor(self, subject_ids, target_scheme):
 
@@ -1094,125 +805,6 @@ class MIMIC4ICUDataset(Dataset):
     @classmethod
     def _setup_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
         raise NotImplementedError("Not implemented")
-
-    def _int_input_remove_subjects_with_nans(self):
-        c_subject = self.colname["adm"].subject_id
-        c_adm_id = self.colname["int_input"].admission_id
-        c_rate = self.colname["int_input"].rate
-        adm_df = self.df["adm"]
-        inp_df = self.df["int_input"]
-
-        nan_input_rates = inp_df[c_rate].isnull()
-        nan_adm_ids = inp_df[nan_input_rates][c_adm_id].unique()
-        nan_subj_ids = adm_df[adm_df.index.isin(
-            nan_adm_ids)][c_subject].unique()
-        logging.debug("Removing subjects with at least "
-                      f"one nan input rate: {len(nan_subj_ids)}")
-        self.df["adm"] = adm_df[~adm_df[c_subject].isin(nan_subj_ids)]
-
-    @staticmethod
-    def _add_code_source_index(df, source_scheme, colname):
-        c_code = colname.code
-        colname = colname._replace(code_source_index="code_source_index")
-        df = df.assign(
-            code_source_index=df[c_code].map(source_scheme.index).astype(int))
-        return df, colname
-
-    @classmethod
-    def _validate_time_betweenness(cls, df, df_name, colname, time_cols):
-        c_admittime = colname["adm"].admittime
-        c_dischtime = colname["adm"].dischtime
-        c_adm_id = colname[df_name].admission_id
-
-        adm_df = df['adm'][[c_admittime, c_dischtime]]
-        df = df[df_name]
-        df = df.merge(adm_df, left_on=c_adm_id, right_index=True, how='left')
-        for time_col in time_cols:
-            col = colname[df_name][time_col]
-            assert df[col].between(df[c_admittime], df[c_dischtime]).all(), \
-                f"Time not between admission and discharge in {df_name} "
-
-    @staticmethod
-    def _set_relative_times(df_dict, colname, df_name, time_cols,
-                            seconds_scaler):
-        c_admittime = colname["adm"].admittime
-        c_adm_id = colname[df_name].admission_id
-
-        target_df = df_dict[df_name]
-        adm_df = df_dict["adm"][[c_admittime]]
-        df = target_df.merge(adm_df,
-                             left_on=c_adm_id,
-                             right_index=True,
-                             how='left')
-        df_colname = colname[df_name]
-        for time_col in time_cols:
-            col = df_colname[time_col]
-            delta = df[col] - df[c_admittime]
-
-            target_df = target_df.assign(
-                **{
-                    col: (delta.dt.total_seconds() *
-                          seconds_scaler).astype(np.float32)
-                })
-
-        df_dict[df_name] = target_df
-
-    def _load_dataframes(self):
-
-        MIMIC3Dataset._load_dataframes(self)
-
-        colname = self.colname.copy()
-        scheme = self.scheme
-        df = self.df
-
-        logging.debug("Time casting..")
-        # Cast timestamps for intervensions
-        for time_col in ("start_time", "end_time"):
-            for file in ("int_proc", "int_input"):
-                col = colname[file][time_col]
-                df[file][col] = pd.to_datetime(df[file][col])
-
-        # Cast timestamps for observables
-        col = colname["obs"].timestamp
-        df["obs"][col] = pd.to_datetime(df["obs"][col])
-
-        self._validate_time_betweenness(df, "obs", colname, ["timestamp"])
-        self._validate_time_betweenness(df, "int_proc", colname,
-                                        ["start_time", "end_time"])
-        self._validate_time_betweenness(df, "int_input", colname,
-                                        ["start_time", "end_time"])
-
-        logging.debug("[DONE] Time casting..")
-
-        logging.debug("Dataframes validation and time conversion")
-
-        def _filter_codes(df, c_code, source_scheme):
-            mask = df[c_code].isin(source_scheme.codes)
-            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
-            return df[mask]
-
-        for name in ("int_proc", "int_input", "obs"):
-            df[name] = _filter_codes(df[name], colname[name].code,
-                                     getattr(scheme, name))
-
-            df[name], colname[name] = self._add_code_source_index(
-                df[name], getattr(scheme, name), colname[name])
-
-        # self._adm_remove_subjects_with_overlapping_admissions(
-        #     self.df["adm"], self.colname["adm"])
-        self._int_input_remove_subjects_with_nans()
-        self._set_relative_times(df, colname, "int_proc",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(df, colname, "int_input",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(df, colname, "obs", ["timestamp"],
-                                 self.seconds_scaler)
-        self.df = {k: try_compute(v) for k, v in df.items()}
-        self._match_admissions_with_demographics(self.df, colname)
-        self.colname = colname
-        logging.debug("[DONE] Dataframes validation and time conversion")
 
     def to_subjects(self,
                     subject_ids: List[int],
@@ -1428,65 +1020,3 @@ class MIMIC4ICUDataset(Dataset):
         logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
             yield (adm_id, InpatientObservables.empty(obs_dim))
-
-
-"""
-
-    def _load_dataframes(self):
-
-        MIMIC3Dataset._load_dataframes(self)
-
-        colname = self.colname.copy()
-        scheme = self.scheme
-        df = self.df
-
-        logging.debug("Time casting..")
-        # Cast timestamps for intervensions
-        for time_col in ("start_time", "end_time"):
-            for file in ("int_proc", "int_input"):
-                col = colname[file][time_col]
-                df[file][col] = pd.to_datetime(df[file][col])
-
-        # Cast timestamps for observables
-        col = colname["obs"].timestamp
-        df["obs"][col] = pd.to_datetime(df["obs"][col])
-
-        self._validate_time_betweenness(df, "obs", colname, ["timestamp"])
-        self._validate_time_betweenness(df, "int_proc", colname,
-                                        ["start_time", "end_time"])
-        self._validate_time_betweenness(df, "int_input", colname,
-                                        ["start_time", "end_time"])
-
-        logging.debug("[DONE] Time casting..")
-
-        logging.debug("Dataframes validation and time conversion")
-
-        def _filter_codes(df, c_code, source_scheme):
-            mask = df[c_code].isin(source_scheme.codes)
-            logging.debug(f'Removed codes: {df[~mask][c_code].unique()}')
-            return df[mask]
-
-        for name in ("int_proc", "int_input", "obs"):
-            df[name] = _filter_codes(df[name], colname[name].code,
-                                     getattr(scheme, name))
-
-            df[name], colname[name] = self._add_code_source_index(
-                df[name], getattr(scheme, name), colname[name])
-
-        # self._adm_remove_subjects_with_overlapping_admissions(
-        #     self.df["adm"], self.colname["adm"])
-        self._int_input_remove_subjects_with_nans()
-        self._set_relative_times(df, colname, "int_proc",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(df, colname, "int_input",
-                                 ["start_time", "end_time"],
-                                 self.seconds_scaler)
-        self._set_relative_times(df, colname, "obs", ["timestamp"],
-                                 self.seconds_scaler)
-        self.df = {k: try_compute(v) for k, v in df.items()}
-        self._match_admissions_with_demographics(self.df, colname)
-        self.colname = colname
-        logging.debug("[DONE] Dataframes validation and time conversion")
-
-"""
