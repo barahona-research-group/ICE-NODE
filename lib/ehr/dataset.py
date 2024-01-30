@@ -617,6 +617,30 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), aux
 
+    @staticmethod
+    def _collect_overlaps(subject_admissions, c_admittime, c_dischtime):
+        # Sort by admission time.
+        subject_admissions = subject_admissions.sort_values(c_admittime)
+
+        # Previous discharge time.
+        index = subject_admissions.index
+        subject_admissions.loc[index[1:], 'prev_dischtime'] = subject_admissions.loc[index[:-1], c_dischtime].values
+        # Cumulative-max of previous discharge time.
+        subject_admissions['prev_dischtime_cummax'] = subject_admissions['prev_dischtime'].cummax()
+
+        # Get corresponding index of the maximum discharge time up to the current admission.
+        lambda_fn = lambda x: subject_admissions[subject_admissions['prev_dischtime_cummax'] == x].first_valid_index()
+        subject_admissions['prev_dischtime_cummax_idx'] = subject_admissions['prev_dischtime_cummax'].map(lambda_fn)
+
+        # Drop admissions with admittime after the prev_max discharge time. No overlaps with preceding admissions.
+        # Note: this line needs to come after adding 'prev_dischtime_cummax_idx' column.
+        subject_admissions = subject_admissions[
+            subject_admissions[c_admittime] > subject_admissions['prev_dischtime_cummax']]
+        subject_admissions = subject_admissions[subject_admissions['prev_dischtime_cummax_idx'].notnull()]
+
+        # New admissions mappings.
+        return subject_admissions['prev_dischtime_cummax_idx'].to_dict()
+
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         admissions = dataset.tables.admissions
         c_subject_id = dataset.config.tables.admissions.subject_id_alias
@@ -625,33 +649,9 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         c_dischtime = dataset.config.tables.admissions.discharge_time_alias
 
         # Step 1: Collect overlapping admissions
-        def _collect_overlaps(subject_admissions):
-            # Sort by admission time.
-            subject_admissions = subject_admissions.sort_values(c_admittime)
-
-            # Previous discharge time.
-            index = subject_admissions.index
-            subject_admissions.loc[index[1:], 'prev_dischtime'] = subject_admissions.loc[index[:-1], c_dischtime].values
-            # Cumulative-max of previous discharge time.
-            subject_admissions['prev_dischtime_cummax'] = subject_admissions['prev_dischtime'].cummax()
-
-            # Get corresponding index of the maximum discharge time up to the current admission.
-            lambda_fn = lambda x: subject_admissions[
-                subject_admissions['prev_dischtime_cummax'] == x].first_valid_index()
-            subject_admissions['prev_dischtime_cummax_idx'] = subject_admissions['prev_dischtime_cummax'].map(lambda_fn)
-
-            # Drop admissions with admittime after the prev_max discharge time. No overlaps with preceding admissions.
-            # Note: this line needs to come after adding 'prev_dischtime_cummax_idx' column.
-            subject_admissions = subject_admissions[
-                subject_admissions[c_admittime] > subject_admissions['prev_dischtime_cummax']]
-            subject_admissions = subject_admissions[subject_admissions['prev_dischtime_cummax_idx'].notnull()]
-
-            # New admissions mappings.
-            return subject_admissions['prev_dischtime_cummax_idx'].to_dict()
-
         # Map from sub-admissions to the new super-admissions.
         sub2sup = {adm_id: super_adm_id for _, subject_adms in admissions.groupby(c_subject_id)
-                   for adm_id, super_adm_id in _collect_overlaps(subject_adms).items()}
+                   for adm_id, super_adm_id in self._collect_overlaps(subject_adms, c_admittime, c_dischtime).items()}
         # Map from super-admissions to its sub-admissions.
         sup2sub = defaultdict(list)
         for sub, sup in sub2sup.items():
@@ -676,6 +676,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
 
         else:
+            # Step 3: Collect subjects with at least one overlapping admission and remove them entirely.
             subject_ids = admissions.loc[sub2sup.keys(), c_subject_id].unique()
             static = dataset.tables.static
             n1 = len(static)
@@ -685,7 +686,8 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
                         operation='filter_problematic_subjects',
                         before=n1, after=n2)
             dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-
+            # Step 4: synchronize subjects
+            dataset, aux = self.synchronize_subjects(dataset, aux)
         return dataset, aux
 
 
