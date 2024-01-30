@@ -670,13 +670,11 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
                     before=n1, after=n2)
 
         # Step 4: update admission ids in other tables.
-        dataset, aux = self.map_admission_ids(dataset, aux, sub2sup)
-        return dataset, aux
+        return self.map_admission_ids(dataset, aux, sub2sup)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         admissions = dataset.tables.admissions
         c_subject_id = dataset.config.tables.admissions.subject_id_alias
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
         c_admittime = dataset.config.tables.admissions.admission_time_alias
         c_dischtime = dataset.config.tables.admissions.discharge_time_alias
 
@@ -690,7 +688,6 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             # Step 3: Extend discharge time of super admissions, remove sub-admissions,
             # and update admission ids in other tables.
             return self._merge_overlapping_admissions(dataset, aux, sub2sup)
-
         else:
             # Step 3: Collect subjects with at least one overlapping admission and remove them entirely.
             subject_ids = admissions.loc[sub2sup.keys(), c_subject_id].unique()
@@ -703,8 +700,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
                         before=n1, after=n2)
             dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
             # Step 4: synchronize subjects
-            dataset, aux = self.synchronize_subjects(dataset, aux)
-        return dataset, aux
+            return self.synchronize_subjects(dataset, aux)
 
 
 class FilterClampTimestamps(DatasetTransformation):
