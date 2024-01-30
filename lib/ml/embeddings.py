@@ -67,7 +67,7 @@ class PatientEmbedding(eqx.Module):
         super().__init__()
         (dx_emb_key, dem_emb_key) = jrandom.split(key, 2)
 
-        self._f_dx_emb = eqx.nn.MLP(len(schemes[1].dx),
+        self._f_dx_emb = eqx.nn.MLP(len(schemes[1].dx_discharge),
                                     config.dx,
                                     width_size=config.dx * 5,
                                     depth=1,

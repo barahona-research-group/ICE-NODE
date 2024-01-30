@@ -294,7 +294,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
     embeddings_size = emb_conf['embeddings_size']
 
     if classname == 'MatrixEmbeddings':
-        if code_type == 'dx':
+        if code_type == 'dx_discharge':
             input_size = subject_interface.dx_dim
         else:
             input_size = subject_interface.pr_dim
@@ -304,7 +304,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
                                 key=jrandom.PRNGKey(0))
 
     if classname == 'GRAM':
-        if code_type == 'dx':
+        if code_type == 'dx_discharge':
             cooc_f = subject_interface.dx_augmented_coocurrence
             ancestors_mat = subject_interface.dx_make_ancestors_mat()
         else:
@@ -330,11 +330,11 @@ def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
                          subject_interface: Patients, train_ids: List[int],
                          decoder_input_size: int):
     models = {}
-    if conf.get('dx'):
-        models['dx_emb'] = create_embeddings_model('dx', conf['dx'],
+    if conf.get('dx_discharge'):
+        models['dx_emb'] = create_embeddings_model('dx_discharge', conf['dx_discharge'],
                                                    subject_interface,
                                                    train_ids)
-        dec_n_layers = conf['dx']['decoder_n_layers']
+        dec_n_layers = conf['dx_discharge']['decoder_n_layers']
         dec_output_size = subject_interface.outcome_dim
         models['dx_dec'] = LogitsDecoder(n_layers=dec_n_layers,
                                          input_size=decoder_input_size,

@@ -191,7 +191,7 @@ class DxICD10(ICD):
         def _traverse_diag_dfs(parent_name, dx_element):
             dx_name = next(e for e in dx_element if e.tag == 'name').text
             dx_desc = next(e for e in dx_element if e.tag == 'desc').text
-            dx_name = f'dx:{dx_name}'
+            dx_name = f'dx_discharge:{dx_name}'
             desc[dx_name] = dx_desc
             pt2ch[parent_name].add(dx_name)
 
@@ -219,9 +219,9 @@ class DxICD10(ICD):
                 for dx in diags:
                     _traverse_diag_dfs(sec_name, dx)
 
-        icd_codes = sorted(c.split(':')[1] for c in desc if 'dx:' in c)
+        icd_codes = sorted(c.split(':')[1] for c in desc if 'dx_discharge:' in c)
         icd_index = dict(zip(icd_codes, range(len(icd_codes))))
-        icd_desc = {c: desc[f'dx:{c}'] for c in icd_codes}
+        icd_desc = {c: desc[f'dx_discharge:{c}'] for c in icd_codes}
 
         if not hierarchical:
             return {
@@ -229,8 +229,8 @@ class DxICD10(ICD):
                 'index': icd_index,
                 'desc': icd_desc
             }
-        icd2dag = {c: f'dx:{c}' for c in icd_codes}
-        dag_codes = [f'dx:{c}' for c in icd_codes] + sorted(
+        icd2dag = {c: f'dx_discharge:{c}' for c in icd_codes}
+        dag_codes = [f'dx_discharge:{c}' for c in icd_codes] + sorted(
             c for c in set(desc) - set(icd2dag.values()))
         dag_index = dict(zip(dag_codes, range(len(dag_codes))))
 

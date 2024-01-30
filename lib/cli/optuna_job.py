@@ -23,8 +23,8 @@ from .. import embeddings as E
 cli_args = [
     '--model', '--dataset', '--emb', '--output-dir', '--num-trials',
     '--trials-time-limit', '--training-time-limit', '--optuna-store',
-    '--mlflow-store', '--study-tag', '--job-id', '--dx-scheme',
-    '--pr-scheme', '--dx-outcome'
+    '--mlflow-store', '--study-tag', '--job-id', '--dx_discharge-scheme',
+    '--pr-scheme', '--dx_discharge-outcome'
 ]
 
 
@@ -180,7 +180,7 @@ if __name__ == '__main__':
     logging.info('[LOADING] patient interface')
     dataset = ehr.datasets[args.dataset]
     code_scheme = {
-        'dx': args.dx_scheme,
+        'dx_discharge': args.dx_scheme,
         'dx_outcome': args.dx_outcome,
         'pr': args.pr_scheme
     }

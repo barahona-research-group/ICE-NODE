@@ -114,14 +114,14 @@ class MIMIC3Dataset(Dataset):
             subject_ids, target_scheme)
         admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
-        logging.debug('Extracting dx codes...')
+        logging.debug('Extracting dx_discharge codes...')
         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
-        logging.debug('[DONE] Extracting dx codes')
-        logging.debug('Extracting dx codes history...')
+        logging.debug('[DONE] Extracting dx_discharge codes')
+        logging.debug('Extracting dx_discharge codes history...')
         dx_codes_history = dict(
             self.dx_codes_history_extractor(dx_codes, admission_ids,
                                             target_scheme))
-        logging.debug('[DONE] Extracting dx codes history')
+        logging.debug('[DONE] Extracting dx_discharge codes history')
         logging.debug('Extracting outcome...')
         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
         logging.debug('[DONE] Extracting outcome')
@@ -162,17 +162,17 @@ class MIMIC3Dataset(Dataset):
         return list(map(_gen_subject, subject_ids))
 
     def _dx_fix_icd_dots(self):
-        c_code = self.colname["dx"].code
-        add_dots = self.scheme.dx.add_dots
-        df = self.df["dx"]
+        c_code = self.colname["dx_discharge"].code
+        add_dots = self.scheme.dx_discharge.add_dots
+        df = self.df["dx_discharge"]
         df = df.assign(**{c_code: df[c_code].str.strip().map(add_dots)})
-        self.df['dx'] = df
+        self.df['dx_discharge'] = df
 
     def _dx_filter_unsupported_icd(self):
-        c_code = self.colname["dx"].code
-        df = self.df["dx"]
+        c_code = self.colname["dx_discharge"].code
+        df = self.df["dx_discharge"]
         codeset = set(df[c_code])
-        scheme = self.scheme.dx
+        scheme = self.scheme.dx_discharge
         scheme_codes = set(scheme.codes)
 
         unrecognised = codeset - scheme_codes
@@ -184,7 +184,7 @@ class MIMIC3Dataset(Dataset):
                           f'to be removed (first 30): '
                           f'{sorted(unrecognised)[:30]}')
         df = df[df[c_code].isin(scheme_codes)]
-        self.df['dx'] = df
+        self.df['dx_discharge'] = df
 
     def random_splits(self,
                       splits: List[float],
@@ -420,17 +420,17 @@ class MIMIC3Dataset(Dataset):
 
     def dx_codes_extractor(self, admission_ids_list,
                            target_scheme: DatasetScheme):
-        c_adm_id = self.colname["dx"].admission_id
-        c_code = self.colname["dx"].code
+        c_adm_id = self.colname["dx_discharge"].admission_id
+        c_code = self.colname["dx_discharge"].code
 
-        df = self.df["dx"]
+        df = self.df["dx_discharge"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
 
         codes_df = {
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_vector = target_scheme.dx.empty_vector()
+        empty_vector = target_scheme.dx_discharge.empty_vector()
         mapper = self.scheme.dx_mapper(target_scheme)
 
         def _extract_codes(adm_id):
@@ -446,7 +446,7 @@ class MIMIC3Dataset(Dataset):
                                    target_scheme):
         for subject_id, subject_admission_ids in admission_ids.items():
             _adm_ids = sorted(subject_admission_ids)
-            vec = target_scheme.dx.empty_vector()
+            vec = target_scheme.dx_discharge.empty_vector()
             yield (_adm_ids[0], vec)
 
             for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):

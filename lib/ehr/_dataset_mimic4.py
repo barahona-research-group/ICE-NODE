@@ -38,20 +38,20 @@ warnings.filterwarnings('error',
 
 
 class MIMIC4DatasetScheme(DatasetScheme):
-    dx: Union[Dict[str, CodingScheme], CodingScheme]
+    dx_discharge: Union[Dict[str, CodingScheme], CodingScheme]
 
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
 
-        if isinstance(self.config.dx, dict):
+        if isinstance(self.config.dx_discharge, dict):
             self.dx = {
                 version: CodingScheme.from_name(scheme)
-                for version, scheme in self.config.dx.items()
+                for version, scheme in self.config.dx_discharge.items()
             }
 
     @classmethod
     def _assert_valid_maps(cls, source, target):
-        attrs = list(k for k in source.scheme_dict if k != 'dx')
+        attrs = list(k for k in source.scheme_dict if k != 'dx_discharge')
         for attr in attrs:
             att_s_scheme = getattr(source, attr)
             att_t_scheme = getattr(target, attr)
@@ -59,15 +59,15 @@ class MIMIC4DatasetScheme(DatasetScheme):
             assert att_s_scheme.mapper_to(
                 att_t_scheme
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
-        for version, s_scheme in source.dx.items():
-            t_scheme = target.dx
+        for version, s_scheme in source.dx_discharge.items():
+            t_scheme = target.dx_discharge
             assert s_scheme.mapper_to(
-                t_scheme), f"Cannot map dx (version={version}) \
+                t_scheme), f"Cannot map dx_discharge (version={version}) \
                 from {s_scheme} to {t_scheme}"
 
     def dx_mapper(self, target_scheme: DatasetScheme):
         return {
-            version: s_dx.mapper_to(target_scheme.dx.name)
+            version: s_dx.mapper_to(target_scheme.dx_discharge.name)
             for version, s_dx in self.dx.items()
         }
 
@@ -82,7 +82,7 @@ class MIMIC4DatasetScheme(DatasetScheme):
             version: (scheme.__class__.__name__,) + scheme.supported_targets
             for version, scheme in self.dx.items()
         }
-        supproted_attr_targets['dx'] = list(
+        supproted_attr_targets['dx_discharge'] = list(
             set.intersection(*map(set, supported_dx_targets.values())))
         supported_outcomes = {
             version: OutcomeExtractor.supported_outcomes(scheme)
@@ -776,7 +776,7 @@ group by subject_id) as a
 on p.subject_id = a.subject_id
 """))
 
-DX_DISCHARGE_CONF = DxDischargeMIMICIVSQLTableConfig(name="dx",
+DX_DISCHARGE_CONF = DxDischargeMIMICIVSQLTableConfig(name="dx_discharge",
                                                      query=(r"""
 select hadm_id as {admission_id_alias}, 
         icd_code as {icd_code_alias}, 
@@ -1022,9 +1022,9 @@ class MIMIC4Dataset(MIMIC3Dataset):
         raise NotImplementedError("Not implemented")
 
     def _dx_filter_unsupported_icd(self):
-        c_code = self.colname["dx"].code
-        c_version = self.colname["dx"].version
-        self.df["dx"] = self._validate_dx_codes(self.df["dx"], c_code,
+        c_code = self.colname["dx_discharge"].code
+        c_version = self.colname["dx_discharge"].version
+        self.df["dx_discharge"] = self._validate_dx_codes(self.df["dx_discharge"], c_code,
                                                 c_version, self.scheme.dx)
 
     @staticmethod
@@ -1059,17 +1059,17 @@ class MIMIC4Dataset(MIMIC3Dataset):
         return subject_dob, subject_gender, subject_eth
 
     def dx_codes_extractor(self, admission_ids_list, target_scheme):
-        c_adm_id = self.colname["dx"].admission_id
-        c_code = self.colname["dx"].code
-        c_version = self.colname["dx"].version
+        c_adm_id = self.colname["dx_discharge"].admission_id
+        c_code = self.colname["dx_discharge"].code
+        c_version = self.colname["dx_discharge"].version
 
-        df = self.df["dx"]
+        df = self.df["dx_discharge"]
         df = df[df[c_adm_id].isin(admission_ids_list)]
         codes_df = {
             adm_id: codes_df
             for adm_id, codes_df in df.groupby(c_adm_id)
         }
-        empty_vector = target_scheme.dx.empty_vector()
+        empty_vector = target_scheme.dx_discharge.empty_vector()
 
         dx_mapper = self.scheme.dx_mapper(target_scheme)
 
@@ -1227,14 +1227,14 @@ class MIMIC4ICUDataset(Dataset):
             subject_ids, target_scheme)
         admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
-        logging.debug('Extracting dx codes...')
+        logging.debug('Extracting dx_discharge codes...')
         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
-        logging.debug('[DONE] Extracting dx codes')
-        logging.debug('Extracting dx codes history...')
+        logging.debug('[DONE] Extracting dx_discharge codes')
+        logging.debug('Extracting dx_discharge codes history...')
         dx_codes_history = dict(
             self.dx_codes_history_extractor(dx_codes, admission_ids,
                                             target_scheme))
-        logging.debug('[DONE] Extracting dx codes history')
+        logging.debug('[DONE] Extracting dx_discharge codes history')
         logging.debug('Extracting outcome...')
         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
         logging.debug('[DONE] Extracting outcome')

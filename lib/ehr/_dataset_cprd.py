@@ -130,8 +130,8 @@ class CPRDDataset(MIMIC3Dataset):
             demo_cols.subject_id: int
         }).set_index(demo_cols.index)
 
-        self.df = {'adm': adm_df, 'dx': dx_df, 'static': demo_df}
-        self.colname = {'adm': adm_cols, 'dx': dx_cols, 'static': demo_cols}
+        self.df = {'adm': adm_df, 'dx_discharge': dx_df, 'static': demo_df}
+        self.colname = {'adm': adm_cols, 'dx_discharge': dx_cols, 'static': demo_cols}
         self._match_admissions_with_demographics(self.df, self.colname)
 
     def to_subjects(self, subject_ids, num_workers, demographic_vector_config,
@@ -141,14 +141,14 @@ class CPRDDataset(MIMIC3Dataset):
          subject_imd) = self.subject_info_extractor(subject_ids, target_scheme)
         admission_ids = self.adm_extractor(subject_ids)
         adm_ids_list = sum(map(list, admission_ids.values()), [])
-        logging.debug('Extracting dx codes...')
+        logging.debug('Extracting dx_discharge codes...')
         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
-        logging.debug('[DONE] Extracting dx codes')
-        logging.debug('Extracting dx codes history...')
+        logging.debug('[DONE] Extracting dx_discharge codes')
+        logging.debug('Extracting dx_discharge codes history...')
         dx_codes_history = dict(
             self.dx_codes_history_extractor(dx_codes, admission_ids,
                                             target_scheme))
-        logging.debug('[DONE] Extracting dx codes history')
+        logging.debug('[DONE] Extracting dx_discharge codes history')
         logging.debug('Extracting outcome...')
         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
         logging.debug('[DONE] Extracting outcome')

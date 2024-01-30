@@ -86,21 +86,21 @@ class ICENODE(DX_ICENODE):
     @classmethod
     def sample_embeddings_config(cls, trial: optuna.Trial, emb_kind: str):
         if emb_kind == 'matrix':
-            dx_emb_config = E.MatrixEmbeddings.sample_model_config('dx', trial)
+            dx_emb_config = E.MatrixEmbeddings.sample_model_config('dx_discharge', trial)
             pr_emb_config = E.MatrixEmbeddings.sample_model_config('pr', trial)
         elif emb_kind == 'gram':
-            dx_emb_config = E.GRAM.sample_model_config('dx', trial)
+            dx_emb_config = E.GRAM.sample_model_config('dx_discharge', trial)
             pr_emb_config = E.GRAM.sample_model_config('pr', trial)
         else:
             raise RuntimeError(f'Unrecognized Embedding kind {emb_kind}')
 
-        return {'dx': dx_emb_config, 'pr': pr_emb_config, 'kind': emb_kind}
+        return {'dx_discharge': dx_emb_config, 'pr': pr_emb_config, 'kind': emb_kind}
 
     @classmethod
     def create_embedding(cls, category, emb_config, emb_kind,
                          subject_interface, train_ids):
         if emb_kind == 'matrix':
-            if category == 'dx':
+            if category == 'dx_discharge':
                 input_dim = subject_interface.dx_dim
             else:
                 input_dim = subject_interface.pr_dim
@@ -116,8 +116,8 @@ class ICENODE(DX_ICENODE):
 
     @classmethod
     def create_model(cls, config, subject_interface, train_ids):
-        dx_emb = cls.create_embedding(category='dx',
-                                      emb_config=config['emb']['dx'],
+        dx_emb = cls.create_embedding(category='dx_discharge',
+                                      emb_config=config['emb']['dx_discharge'],
                                       emb_kind=config['emb']['kind'],
                                       subject_interface=subject_interface,
                                       train_ids=train_ids)

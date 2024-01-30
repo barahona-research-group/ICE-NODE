@@ -97,9 +97,9 @@ class InModularICENODE(InICENODE):
 
     @staticmethod
     def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.emb.dx,
+        return eqx.nn.MLP(config.emb.dx_discharge,
                           dx_size,
-                          config.emb.dx * 5,
+                          config.emb.dx_discharge * 5,
                           depth=1,
                           key=key)
 
@@ -285,10 +285,10 @@ class InModularICENODELite(InModularICENODE):
 
     @staticmethod
     def _make_init(config, key):
-        init_input_size = config.emb.inp_proc_demo + config.emb.dx
+        init_input_size = config.emb.inp_proc_demo + config.emb.dx_discharge
         return eqx.nn.MLP(init_input_size,
                           config.state_size,
-                          config.emb.dx * 5,
+                          config.emb.dx_discharge * 5,
                           depth=2,
                           key=key)
 
@@ -387,10 +387,10 @@ class InModularSKELKoopman(InModularICENODELite):
 
     @staticmethod
     def _make_init(config, key):
-        init_input_size = config.emb.inp_proc_demo + config.emb.dx
+        init_input_size = config.emb.inp_proc_demo + config.emb.dx_discharge
         return eqx.nn.MLP(init_input_size,
                           config.state_size,
-                          config.emb.dx * 5,
+                          config.emb.dx_discharge * 5,
                           depth=2,
                           key=key)
 
@@ -507,10 +507,10 @@ class InModularGRUJump(InModularICENODELite):
 
     @staticmethod
     def _make_init(config, key):
-        init_input_size = config.emb.demo + config.emb.dx
+        init_input_size = config.emb.demo + config.emb.dx_discharge
         return eqx.nn.MLP(init_input_size,
                           config.state_size,
-                          config.emb.dx * 5,
+                          config.emb.dx_discharge * 5,
                           depth=2,
                           key=key)
 

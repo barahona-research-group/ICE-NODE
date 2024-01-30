@@ -20,8 +20,8 @@ from ..metric import (CodeAUC, UntilFirstCodeAUC, AdmissionAUC,
 
 cli_args = [
     '--model', '--config', '--config-tag', '--study-tag', '--dataset',
-    '--output-dir', '--device', '--prediction-task', '--dx-scheme',
-    '--dx-outcome', '--static-features'
+    '--output-dir', '--device', '--prediction-task', '--dx_discharge-scheme',
+    '--dx_discharge-outcome', '--static-features'
 ]
 
 dx_scheme = {
@@ -96,7 +96,7 @@ if __name__ == '__main__':
     logging.info('[LOADING] patient interface')
     dataset = ehr.dataset.load_dataset(args.dataset)
     scheme = {
-        'dx': dx_scheme[args.dx_scheme](),
+        'dx_discharge': dx_scheme[args.dx_scheme](),
         'outcome': task[args.prediction_task](args.dx_outcome)
     }
     static_features_dict = {}
