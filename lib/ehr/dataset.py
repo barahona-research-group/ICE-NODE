@@ -641,6 +641,38 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         # New admissions mappings.
         return subject_admissions['prev_dischtime_cummax_idx'].to_dict()
 
+    def _merge_overlapping_admissions(self,
+                                      dataset: Dataset, aux: Dict[str, Any],
+                                      sub2sup: Dict[str, str]) -> Tuple[Dataset, Dict[str, Any]]:
+        admissions = dataset.tables.admissions
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+
+        # Map from super-admissions to its sub-admissions.
+        sup2sub = defaultdict(list)
+        for sub, sup in sub2sup.items():
+            sup2sub[sup].append(sub)
+
+        # Step 2: Merge overlapping admissions by extending discharge time to the maximum discharge
+        # time of its sub-admissions.
+        for super_idx, sub_indices in sup2sub.items():
+            current_dischtime = admissions.loc[super_idx, c_dischtime]
+            new_dischtime = max(admissions.loc[sub_indices, c_dischtime].max(), current_dischtime)
+            admissions.loc[super_idx, c_dischtime] = new_dischtime
+
+        # Step 3: Remove sub-admissions.
+        n1 = len(admissions)
+        admissions = admissions.drop(list(sub2sup.keys()), axis='index')
+        n2 = len(admissions)
+        dataset = eqx.tree_at(lambda x: x.tables.admissions, dataset, admissions)
+        self.report(aux, table='admissions', column=c_admission_id, value_type='count',
+                    operation='merge_overlapping_admissions',
+                    before=n1, after=n2)
+
+        # Step 4: update admission ids in other tables.
+        dataset, aux = self.map_admission_ids(dataset, aux, sub2sup)
+        return dataset, aux
+
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         admissions = dataset.tables.admissions
         c_subject_id = dataset.config.tables.admissions.subject_id_alias
@@ -652,28 +684,12 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         # Map from sub-admissions to the new super-admissions.
         sub2sup = {adm_id: super_adm_id for _, subject_adms in admissions.groupby(c_subject_id)
                    for adm_id, super_adm_id in self._collect_overlaps(subject_adms, c_admittime, c_dischtime).items()}
-        # Map from super-admissions to its sub-admissions.
-        sup2sub = defaultdict(list)
-        for sub, sup in sub2sup.items():
-            sup2sub[sup].append(sub)
 
         # Step 2: Apply action.
         if self.merge:
-            # Step 3: Merge overlapping admissions by extending discharge time.
-            admissions.loc[sup2sub.keys(), c_dischtime] = list(
-                map(lambda sup_idx: admissions.loc[sup2sub[sup_idx], c_dischtime].max(), sup2sub.keys()))
-            # Step 4: Remove sub-admissions.
-            n1 = len(admissions)
-            admissions = admissions.drop(list(sub2sup.keys()), axis='index')
-            n2 = len(admissions)
-            dataset = eqx.tree_at(lambda x: x.tables.admissions, dataset, admissions)
-            self.report(aux, table='admissions', column=c_admission_id, value_type='count',
-                        operation='merge_overlapping_admissions',
-                        before=n1, after=n2)
-
-            # Step 5: update admission ids in other tables.
-            dataset, aux = self.map_admission_ids(dataset, aux, sub2sup)
-
+            # Step 3: Extend discharge time of super admissions, remove sub-admissions,
+            # and update admission ids in other tables.
+            return self._merge_overlapping_admissions(dataset, aux, sub2sup)
 
         else:
             # Step 3: Collect subjects with at least one overlapping admission and remove them entirely.
