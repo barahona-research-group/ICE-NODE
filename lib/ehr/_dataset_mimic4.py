@@ -18,7 +18,6 @@ from sqlalchemy import Engine
 import _dataset_sql_mimic4 as m4sql
 from . import DatasetConfig
 from ._coding_scheme_icd import ICDScheme
-from ._dataset_mimic3 import MIMIC3Dataset, try_compute
 from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme, CodeMap)
 from .concepts import (InpatientInput, InpatientObservables, Patient,
                        Admission, DemographicVectorConfig,
@@ -27,13 +26,18 @@ from .concepts import (InpatientInput, InpatientObservables, Patient,
                        StaticInfo)
 from .dataset import (DatasetScheme, DatasetSchemeConfig, DatasetPipeline, StaticTableConfig,
                       AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
-                      AdmissionIntervalBasedMixedICDTableConfig,
-                      AdmissionTimestampedCodedValueTableConfig)
-from .dataset import (TableConfig, AdmissionLinkedTableConfig, SubjectLinkedTableConfig,
+                      AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
+                      TableConfig, AdmissionLinkedTableConfig, SubjectLinkedTableConfig,
                       CodedTableConfig, AdmissionTableConfig,
-                      AdmissionMixedICDTableConfig, RatedInputTableConfig, DatasetTablesConfig,
+                      RatedInputTableConfig, DatasetTablesConfig,
                       Dataset)
 from ..base import Module
+
+
+class AdmissionMixedICDTableConfig(AdmissionLinkedCodedValueTableConfig):
+    icd_code_alias: str = 'icd_code'
+    icd_version_alias: str = 'icd_version'
+
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -161,6 +165,10 @@ class IntervalICUProcedureSQLTableConfig(AdmissionIntervalBasedCodedTableConfig,
 
 
 class RatedInputSQLTableConfig(RatedInputTableConfig, CodedSQLTableConfig):
+    pass
+
+
+class AdmissionIntervalBasedMixedICDTableConfig(AdmissionIntervalBasedCodedTableConfig, AdmissionMixedICDTableConfig):
     pass
 
 
@@ -738,9 +746,8 @@ class MIMICIVSQL(Module):
         pass
 
 
-class MIMIC4Dataset(MIMIC3Dataset):
+class MIMIC4Dataset(Dataset):
     scheme: MIMIC4DatasetScheme
-
 
     def subject_info_extractor(self, subject_ids, target_scheme):
 
@@ -803,7 +810,7 @@ class MIMIC4ICUDataset(Dataset):
     scheme: MIMIC4ICUDatasetScheme
 
     @classmethod
-    def _setup_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
         raise NotImplementedError("Not implemented")
 
     def to_subjects(self,

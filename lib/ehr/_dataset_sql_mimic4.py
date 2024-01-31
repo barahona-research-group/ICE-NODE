@@ -1,5 +1,6 @@
 from lib.ehr._dataset_mimic4 import (AdmissionMixedICDSQLTableConfig, StaticSQLTableConfig, AdmissionSQLTableConfig,
-                                     AdmissionTimestampedMultiColumnSQLTableConfig, AdmissionTimestampedCodedValueSQLTableConfig,
+                                     AdmissionTimestampedMultiColumnSQLTableConfig,
+                                     AdmissionTimestampedCodedValueSQLTableConfig,
                                      RatedInputSQLTableConfig)
 
 ADMISSIONS_CONF = AdmissionSQLTableConfig(name="admissions",
@@ -75,16 +76,16 @@ inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id
 
 BLOOD_GAS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_gas",
                                                                attributes=['so2', 'po2', 'pco2', 'fio2',
-                                                                  'fio2_chartevents',
-                                                                  'aado2', 'aado2_calc',
-                                                                  'pao2fio2ratio', 'ph',
-                                                                  'baseexcess', 'bicarbonate', 'totalco2',
-                                                                  'hematocrit',
-                                                                  'hemoglobin',
-                                                                  'carboxyhemoglobin', 'methemoglobin',
-                                                                  'chloride', 'calcium', 'temperature',
-                                                                  'potassium',
-                                                                  'sodium', 'lactate', 'glucose'],
+                                                                           'fio2_chartevents',
+                                                                           'aado2', 'aado2_calc',
+                                                                           'pao2fio2ratio', 'ph',
+                                                                           'baseexcess', 'bicarbonate', 'totalco2',
+                                                                           'hematocrit',
+                                                                           'hemoglobin',
+                                                                           'carboxyhemoglobin', 'methemoglobin',
+                                                                           'chloride', 'calcium', 'temperature',
+                                                                           'potassium',
+                                                                           'sodium', 'lactate', 'glucose'],
                                                                query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.bg as bg
@@ -93,10 +94,10 @@ where hadm_id is not null
 
 BLOOD_CHEMISTRY_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_chemistry",
                                                                      attributes=['albumin', 'globulin', 'total_protein',
-                                                                        'aniongap', 'bicarbonate', 'bun',
-                                                                        'calcium', 'chloride',
-                                                                        'creatinine', 'glucose', 'sodium',
-                                                                        'potassium'],
+                                                                                 'aniongap', 'bicarbonate', 'bun',
+                                                                                 'calcium', 'chloride',
+                                                                                 'creatinine', 'glucose', 'sodium',
+                                                                                 'potassium'],
                                                                      query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from mimiciv_derived.chemistry as ch
@@ -138,8 +139,8 @@ inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
 
 CBC_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="cbc",
                                                          attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc', 'mcv',
-                                                            'platelet',
-                                                            'rbc', 'rdw', 'wbc'],
+                                                                     'platelet',
+                                                                     'rbc', 'rdw', 'wbc'],
                                                          query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, cbc.charttime {time_alias}
 from mimiciv_derived.complete_blood_count as cbc
@@ -148,10 +149,10 @@ where hadm_id is not null
 
 VITAL_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="vital",
                                                            attributes=['heart_rate', 'sbp', 'dbp', 'mbp', 'sbp_ni',
-                                                              'dbp_ni',
-                                                              'mbp_ni', 'resp_rate',
-                                                              'temperature', 'spo2',
-                                                              'glucose'],
+                                                                       'dbp_ni',
+                                                                       'mbp_ni', 'resp_rate',
+                                                                       'temperature', 'spo2',
+                                                                       'glucose'],
                                                            query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, v.charttime {time_alias}
 from mimiciv_derived.vitalsign as v
@@ -162,7 +163,7 @@ inner join mimiciv_icu.icustays as icu
 # Glasgow Coma Scale, a measure of neurological function
 GCS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="gcs",
                                                          attributes=['gcs', 'gcs_motor', 'gcs_verbal', 'gcs_eyes',
-                                                            'gcs_unable'],
+                                                                     'gcs_unable'],
                                                          query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, gcs.charttime {time_alias}
 from mimiciv_derived.gcs as gcs

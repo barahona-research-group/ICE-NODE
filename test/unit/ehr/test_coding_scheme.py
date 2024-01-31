@@ -9,6 +9,23 @@ from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, se
 
 _DIR = os.path.dirname(__file__)
 
+# TODO: Add tests for the following:
+# [  ] test CodeMaps:
+#       [  ] register code map
+#       [  ] test mapper_to
+#       [  ] test chained maps
+#       [  ] test code2index
+#       [  ] test code2vec
+# [  ] test hierarchical schemes:
+#       [  ] test 1
+#       [  ] test 2
+#       [  ] test 3
+# [  ] test OutcomeExtractor:
+#       [  ] test 1
+#       [  ] test 2
+#       [  ] test 3
+
+
 
 class TestFlatScheme(TestCase):
     @classmethod
