@@ -417,6 +417,8 @@ class TestMergeOverlappingAdmissions(unittest.TestCase):
         self.fail()
 
     def _generate_admission_from_pattern(self, pattern: List[str]) -> pd.DataFrame:
+        if len(pattern) == 0:
+            return pd.DataFrame(columns=['admittime', 'dischtime'])
         random_monotonic_positive_integers = np.random.randint(1, 50, size=len(pattern)).cumsum()
         sequence_dates = list(
             map(lambda x: pd.Timestamp.today() + pd.Timedelta(days=x), random_monotonic_positive_integers))
@@ -456,6 +458,11 @@ class TestMergeOverlappingAdmissions(unittest.TestCase):
         (['A1', 'D1', 'A2', 'A3', 'D2', 'D3'], {'A2': ['A3']}),
         (['A1', 'D1', 'A2', 'A3', 'D3', 'D2'], {'A2': ['A3']}),
         (['A1', 'D1', 'A2', 'D2', 'A3', 'D3'], {}),
+        ##
+        (['A1', 'D1'], {}),
+        ([], {}),
+        (['A1', 'D1', 'A2', 'A3', 'D3', 'A4', 'D2', 'D4'], {'A2': ['A3', 'A4']}),
+        (['A1', 'A2', 'D2', 'D1', 'A3', 'A4', 'D3', 'D4'], {'A1': ['A2'], 'A3': ['A4']}),
     ])
     def test_overlapping_cases(self, admission_pattern, expected_super_sub):
         admissions = self._generate_admission_from_pattern(admission_pattern)

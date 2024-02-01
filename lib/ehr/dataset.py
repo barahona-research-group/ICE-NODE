@@ -475,7 +475,7 @@ class Dataset(Module):
 #  - [x] change from_fit to __init__().fit()
 #  - [x] SQLTableConfig to inherit from DatasetTablesConfig
 #  - [x] Assert functions to check the consistency of subject_id, admission_id in all tables.
-#  - [ ] List the three main test cases for merge_overlapping_admissions.
+#  - [x] List the three main test cases for merge_overlapping_admissions.
 #  - [ ] Interface Structure: Controls (icu_inputs, icu_procedures, hosp_procedures), InitObs (dx_codes or dx_history), Obs (obs), Lead(lead(obs))
 #  - [ ] Move Predictions/AdmissionPredictions to lib.ml.
 #  - [ ] Plan a week of refactoring/testing/documentation/ship the lib.ehr separately.
