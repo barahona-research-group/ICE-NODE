@@ -311,6 +311,10 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
     @staticmethod
     def _collect_overlaps(subject_admissions, c_admittime, c_dischtime):
+        """
+        Collect overlapping admissions for a subject.
+        Tested in test.unit.ehr.test_pipeline.TestProcessOverlappingAdmissions.test_overlapping_cases
+        """
         # Sort by admission time.
         subject_admissions = subject_admissions.sort_values(c_admittime)
 

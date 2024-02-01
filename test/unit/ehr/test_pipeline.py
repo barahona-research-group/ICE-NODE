@@ -1,4 +1,5 @@
 import unittest
+from typing import List
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -196,12 +197,12 @@ class TestFilterUnsupportedCodes(unittest.TestCase):
         dataset.tables.table1.code_column = 'code'
         dataset.scheme.table1.codes = ['A', 'B']
         dataset.tables.table1.code = ['A', 'C', 'B']
-        
+
         aux = {}
-        
+
         filter = FilterUnsupportedCodes()
         result, aux = filter(dataset, aux)
-        
+
         dataset.tables.table1.assert_called_with(['A', 'B'])
         self.assertEqual(len(aux['report']), 1)
         self.assertEqual(aux['report'][0]['before'], 3)
@@ -212,20 +213,21 @@ class TestFilterUnsupportedCodes(unittest.TestCase):
         dataset = MagicMock()
         dataset.tables.table1.code_column = 'code1'
         dataset.tables.table2.code_column = 'code2'
-        dataset.scheme.table1.codes = ['A', 'B'] 
+        dataset.scheme.table1.codes = ['A', 'B']
         dataset.scheme.table2.codes = ['X', 'Y']
         dataset.tables.table1.code1 = ['A', 'C', 'B']
         dataset.tables.table2.code2 = ['X', 'Z', 'Y']
-        
+
         aux = {}
-        
+
         filter = FilterUnsupportedCodes()
         result, aux = filter(dataset, aux)
-        
+
         dataset.tables.table1.assert_called_with(['A', 'B'])
         dataset.tables.table2.assert_called_with(['X', 'Y'])
         self.assertEqual(len(aux['report']), 2)
         self.fail()
+
 
 class TestSetAdmissionRelativeTimes(unittest.TestCase):
 
@@ -240,6 +242,7 @@ class TestSetAdmissionRelativeTimes(unittest.TestCase):
         dataset.config.tables.table3 = MagicMock(spec=AdmissionLinkedTableConfig)
         self.assertFalse(SetAdmissionRelativeTimes.temporal_admission_linked_table(dataset, 'table3'))
         self.fail()
+
     def test_call(self):
         dataset = MagicMock()
         dataset.config.tables.time_cols = {'table1': ['time1'],
@@ -352,7 +355,6 @@ class TestSetIndex(unittest.TestCase):
         self.assertEqual(result_aux['report'][1]['table'], 'table2')
         self.fail()
 
-
     def test_no_index_change(self):
         dataset = MagicMock()
         dataset.tables.table1.index.name = 'current_index'
@@ -414,7 +416,26 @@ class TestMergeOverlappingAdmissions(unittest.TestCase):
         self.assertEqual(len(admissions), 2)
         self.fail()
 
+    def _generate_admission_from_pattern(self, pattern: List[str]) -> pd.DataFrame:
+        random_monotonic_positive_integers = np.random.randint(1, 50, size=len(pattern)).cumsum()
+        sequence_dates = list(
+            map(lambda x: pd.Timestamp.today() + pd.Timedelta(days=x), random_monotonic_positive_integers))
+        event_times = dict(zip(pattern, sequence_dates))
+        admittimes = {k: v for k, v in event_times.items() if k.startswith('A')}
+        dischtimes = {k.replace('D', 'A'): v for k, v in event_times.items() if k.startswith('D')}
+        admissions = pd.DataFrame(index=admittimes.keys())
+        admissions['admittime'] = admissions.index.map(admittimes)
+        admissions['dischtime'] = admissions.index.map(dischtimes)
+        # shuffle the rows shuffled.
+        return admissions.sample(frac=1).reset_index(drop=True)
+
     @parameterized.expand([
+        # TODO: check https://hypothesis.readthedocs.io/en/latest/quickstart.html to automate generation of test cases.
+        # Below are a list of tuples of the form (admission_pattern, expected_super_sub).
+        # The admission pattern is a sequence of admission/discharge.
+        # In the database it is possible to have overlapping admissions, so we merge them.
+        # A1 and D1 represent the admission and discharge time of a particular admission record in the database.
+        # A2 and D2 means the same and that A2 happened after A1 (and not necessarily after D1).
         (['A1', 'A2', 'A3', 'D1', 'D3', 'D2'], {'A1': ['A2', 'A3']}),
         (['A1', 'A2', 'A3', 'D1', 'D2', 'D3'], {'A1': ['A2', 'A3']}),
         (['A1', 'A2', 'A3', 'D2', 'D1', 'D3'], {'A1': ['A2', 'A3']}),
@@ -437,7 +458,9 @@ class TestMergeOverlappingAdmissions(unittest.TestCase):
         (['A1', 'D1', 'A2', 'D2', 'A3', 'D3'], {}),
     ])
     def test_overlapping_cases(self, admission_pattern, expected_super_sub):
-        self.fail()
+        admissions = self._generate_admission_from_pattern(admission_pattern)
+        sub2sup = ProcessOverlappingAdmissions._collect_overlaps(admissions, 'admittime', 'dischtime')
+        self.assertEqual(sub2sup, expected_super_sub)
 
     def test_mapping_admission_ids(self):
         # Test mapping admission ids
@@ -773,6 +796,8 @@ class TestInputScaler(unittest.TestCase):
 
         self.assertEqual(dataset, {})
         self.fail()
+
+
 # Mocks
 
 class MockDataset:

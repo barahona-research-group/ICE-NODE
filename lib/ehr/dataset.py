@@ -154,6 +154,14 @@ class DatasetTablesConfig(Config):
                 f"Expected {self.admissions.admission_id_alias}."
 
     @property
+    def admission_id_alias(self):
+        return self.admissions.admission_id_alias
+
+    @property
+    def subject_id_alias(self):
+        return self.static.subject_id_alias
+
+    @property
     def table_config_dict(self):
         return {k: v for k, v in self.__dict__.items() if isinstance(v, TableConfig)}
 
