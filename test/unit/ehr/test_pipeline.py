@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from parameterized import parameterized
 
-from lib.ehr.dataset import DatasetTransformation, DatasetPipeline, SampleSubjects, CastTimestamps, \
+from lib.ehr.pipeline import DatasetTransformation, DatasetPipeline, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
     ObsIQROutlierRemover, ObsAdaptiveScaler, InputScaler
