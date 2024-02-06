@@ -15,7 +15,6 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Engine
 
-import _dataset_sql_mimic4 as m4sql
 from . import DatasetConfig
 from ._coding_scheme_icd import ICDScheme
 from .coding_scheme import (OutcomeExtractor, CodingScheme, CodingSchemeConfig, FlatScheme, CodeMap)
@@ -27,17 +26,10 @@ from .concepts import (InpatientInput, InpatientObservables, Patient,
 from .dataset import (DatasetScheme, DatasetSchemeConfig, DatasetPipeline, StaticTableConfig,
                       AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                       AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
-                      TableConfig, AdmissionLinkedTableConfig, SubjectLinkedTableConfig,
-                      CodedTableConfig, AdmissionTableConfig,
+                      TableConfig, CodedTableConfig, AdmissionTableConfig,
                       RatedInputTableConfig, DatasetTablesConfig,
                       Dataset)
 from ..base import Module
-
-
-class AdmissionMixedICDTableConfig(AdmissionLinkedCodedValueTableConfig):
-    icd_code_alias: str = 'icd_code'
-    icd_version_alias: str = 'icd_version'
-
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -120,56 +112,79 @@ class MIMIC4ICUDatasetScheme(MIMIC4DatasetScheme):
 
 
 class SQLTableConfig(TableConfig):
-    query: str
+    query: str = field(kw_only=True)
 
 
 class CodedSQLTableConfig(SQLTableConfig, CodedTableConfig):
-    space_query: str = ''
+    space_query: str = field(kw_only=True)
 
 
-class AdmissionLinkedSQLTableConfig(AdmissionLinkedTableConfig, SQLTableConfig):
-    pass
+class AdmissionTimestampedMultiColumnSQLTableConfig(SQLTableConfig, AdmissionTimestampedMultiColumnTableConfig):
+    admission_id_alias: str = 'admission_id'
+    time_alias: str = 'time'
 
 
-class SubjectLinkedSQLTableConfig(SubjectLinkedTableConfig, SQLTableConfig):
-    pass
+class AdmissionTimestampedCodedValueSQLTableConfig(CodedSQLTableConfig, AdmissionTimestampedCodedValueTableConfig):
+    components: List[AdmissionTimestampedMultiColumnSQLTableConfig] = field(kw_only=True)
+    query: Optional[str] = None
+    space_query: Optional[str] = None
+    admission_id_alias: str = 'admission_id'
+    time_alias: str = 'time'
+    value_alias: str = 'value'
+    code_alias: str = 'code'
+    description_alias: str = 'description'
 
 
-class AdmissionTimestampedMultiColumnSQLTableConfig(AdmissionTimestampedMultiColumnTableConfig, SQLTableConfig):
-    pass
+class AdmissionSQLTableConfig(SQLTableConfig, AdmissionTableConfig):
+    admission_id_alias: str = 'admission_id'
+    subject_id_alias: str = 'subject_id'
+    admission_time_alias: str = 'admission_time'
+    discharge_time_alias: str = 'discharge_time'
 
 
-class AdmissionTimestampedCodedValueSQLTableConfig(AdmissionTimestampedCodedValueTableConfig, CodedSQLTableConfig):
-    components: List[AdmissionTimestampedMultiColumnTableConfig] = field(default_factory=list)
-
-
-class AdmissionSQLTableConfig(AdmissionTableConfig, SQLTableConfig):
-    pass
-
-
-class StaticSQLTableConfig(StaticTableConfig, SQLTableConfig):
+class StaticSQLTableConfig(SQLTableConfig, StaticTableConfig):
+    subject_id_alias: str = 'subject_id'
+    gender_alias: str = 'gender'
+    date_of_birth_alias: str = 'date_of_birth'
+    race_alias: str = 'race'
     anchor_year_alias: str = 'anchor_year'
     anchor_age_alias: str = 'anchor_age'
 
 
-class AdmissionMixedICDSQLTableConfig(AdmissionMixedICDTableConfig, CodedSQLTableConfig):
-    pass
+class AdmissionMixedICDSQLTableConfig(AdmissionLinkedCodedValueTableConfig, CodedSQLTableConfig):
+    admission_id_alias: str = 'admission_id'
+    code_alias: str = 'code'
+    description_alias: str = 'description'
+    icd_code_alias: str = 'icd_code'
+    icd_version_alias: str = 'icd_version'
 
 
-class IntervalBasedMixedICDSQLTableConfig(AdmissionIntervalBasedMixedICDTableConfig, AdmissionMixedICDSQLTableConfig):
-    pass
+class IntervalICUProcedureSQLTableConfig(CodedSQLTableConfig, AdmissionIntervalBasedCodedTableConfig):
+    admission_id_alias: str = 'admission_id'
+    code_alias: str = 'code'
+    description_alias: str = 'description'
+    start_time_alias: str = 'start_time'
+    end_time_alias: str = 'end_time'
 
 
-class IntervalICUProcedureSQLTableConfig(AdmissionIntervalBasedCodedTableConfig, CodedSQLTableConfig):
-    pass
+class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
+    admission_id_alias: str = 'admission_id'
+    amount_alias: str = 'amount'
+    amount_unit_alias: str = 'amount_unit'
+    start_time_alias: str = 'start_time'
+    end_time_alias: str = 'end_time'
+    code_alias: str = 'code'
+    description_alias: str = 'description'
+    derived_amount_per_hour: str = 'derived_amount_per_hour'
+    derived_universal_unit: str = 'derived_universal_unit'
+    derived_unit_normalization_factor: str = 'derived_unit_normalization_factor'
+    derived_normalized_amount_per_hour: str = 'derived_normalized_amount_per_hour'
 
 
-class RatedInputSQLTableConfig(RatedInputTableConfig, CodedSQLTableConfig):
-    pass
-
-
-class AdmissionIntervalBasedMixedICDTableConfig(AdmissionIntervalBasedCodedTableConfig, AdmissionMixedICDTableConfig):
-    pass
+class AdmissionIntervalBasedMixedICDTableConfig(AdmissionMixedICDSQLTableConfig,
+                                                AdmissionIntervalBasedCodedTableConfig):
+    start_time_alias: str = 'start_time'
+    end_time_alias: str = 'end_time'
 
 
 class SQLTable(Module):
@@ -540,14 +555,14 @@ class MIMICIVSQLConfig(DatasetTablesConfig):
     password: str
     dbname: str
 
-    static_table: StaticSQLTableConfig = field(default_factory=lambda: m4sql.STATIC_CONF)
-    admissions_table: AdmissionSQLTableConfig = field(default_factory=lambda: m4sql.ADMISSIONS_CONF)
-    dx_discharge_table: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: m4sql.DX_DISCHARGE_CONF)
-    obs_table: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: m4sql.OBS_TABLE_CONFIG)
-    icu_procedures_table: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: m4sql.ICU_PROC_CONF)
-    icu_inputs_table: RatedInputSQLTableConfig = field(default_factory=lambda: m4sql.ICU_INPUT_CONF)
-    hosp_procedures_table: IntervalBasedMixedICDSQLTableConfig = field(
-        default_factory=lambda: m4sql.HOSP_PROC_CONF)
+    static_table: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF)
+    admissions_table: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF)
+    dx_discharge_table: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF)
+    obs_table: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG)
+    icu_procedures_table: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROC_CONF)
+    icu_inputs_table: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUT_CONF)
+    hosp_procedures_table: AdmissionIntervalBasedMixedICDTableConfig = field(
+        default_factory=lambda: HOSP_PROC_CONF)
 
 
 class MIMICIVSQL(Module):
@@ -668,7 +683,7 @@ class MIMICIVSQL(Module):
         return table.space(self.create_engine())
 
     def _extract_static_table(self, engine: Engine) -> pd.DataFrame:
-        table = SQLTable(self.config.static_table)
+        table = StaticSQLTable(self.config.static_table)
         return table(engine)
 
     def _extract_admissions_table(self, engine: Engine) -> pd.DataFrame:
@@ -1027,3 +1042,268 @@ class MIMIC4ICUDataset(Dataset):
         logging.debug("obs: empty")
         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
             yield (adm_id, InpatientObservables.empty(obs_dim))
+
+
+ADMISSIONS_CONF = AdmissionSQLTableConfig(name="admissions",
+                                          query=(r"""
+select hadm_id as {admission_id_alias}, 
+subject_id as {subject_id_alias},
+admittime as {admission_time_alias},
+dischtime as {discharge_time_alias}
+from mimiciv_hosp.admissions 
+"""))
+
+STATIC_CONF = StaticSQLTableConfig(name="static",
+                                   query=(r"""
+select 
+p.subject_id as {subject_id_alias},
+p.gender as {gender_alias},
+a.race as {race_alias},
+p.anchor_age as {anchor_age_alias},
+p.anchor_year as {anchor_year_alias}
+from mimiciv_hosp.patients p
+left join 
+(select subject_id, max(race) as race
+from mimiciv_hosp.admissions
+group by subject_id) as a
+on p.subject_id = a.subject_id
+"""))
+
+DX_DISCHARGE_CONF = AdmissionMixedICDSQLTableConfig(name="dx_discharge",
+                                                    query=(r"""
+select hadm_id as {admission_id_alias}, 
+        icd_code as {icd_code_alias}, 
+        icd_version as {icd_version_alias}
+from mimiciv_hosp.diagnoses_icd 
+"""),
+                                                    space_query=(r"""
+select icd_code as {icd_code_alias},
+        icd_version as {icd_version_alias},
+        long_title as {description_alias}
+from mimiciv_hosp.d_icd_diagnoses
+"""))
+
+RENAL_OUT_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_out",
+                                                               attributes=['uo_rt_6hr', 'uo_rt_12hr', 'uo_rt_24hr'],
+                                                               query=(r"""
+select icu.hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.kdigo_uo as uo
+inner join mimiciv_icu.icustays icu
+on icu.stay_id = uo.stay_id
+    """))
+
+RENAL_CREAT_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_creat",
+                                                                 attributes=['creat'],
+                                                                 query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
+from mimiciv_derived.kdigo_creatinine
+    """))
+
+RENAL_AKI_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
+                                                               attributes=['aki_stage_smoothed', 'aki_binary'],
+                                                               query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
+from (select hadm_id, charttime, aki_stage_smoothed, 
+    case when aki_stage_smoothed = 1 then 1 else 0 end as aki_binary from mimiciv_derived.kdigo_stages)
+    """))
+
+SOFA_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
+                                                          attributes=["sofa_24hours"],
+                                                          query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, s.endtime {time_alias} 
+from mimiciv_derived.sofa as s
+inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id    
+"""))
+
+BLOOD_GAS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_gas",
+                                                               attributes=['so2', 'po2', 'pco2', 'fio2',
+                                                                           'fio2_chartevents',
+                                                                           'aado2', 'aado2_calc',
+                                                                           'pao2fio2ratio', 'ph',
+                                                                           'baseexcess', 'bicarbonate', 'totalco2',
+                                                                           'hematocrit',
+                                                                           'hemoglobin',
+                                                                           'carboxyhemoglobin', 'methemoglobin',
+                                                                           'chloride', 'calcium', 'temperature',
+                                                                           'potassium',
+                                                                           'sodium', 'lactate', 'glucose'],
+                                                               query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
+from mimiciv_derived.bg as bg
+where hadm_id is not null
+"""))
+
+BLOOD_CHEMISTRY_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_chemistry",
+                                                                     attributes=['albumin', 'globulin', 'total_protein',
+                                                                                 'aniongap', 'bicarbonate', 'bun',
+                                                                                 'calcium', 'chloride',
+                                                                                 'creatinine', 'glucose', 'sodium',
+                                                                                 'potassium'],
+                                                                     query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
+from mimiciv_derived.chemistry as ch
+where hadm_id is not null
+"""))
+
+CARDIAC_MARKER_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="cardiac_marker",
+                                                                    attributes=['troponin_t', 'ntprobnp', 'ck_mb'],
+                                                                    query=(r"""
+with trop as
+(
+    select specimen_id, MAX(valuenum) as troponin_t
+    from mimiciv_hosp.labevents
+    where itemid = 51003
+    group by specimen_id
+)
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_hosp.admissions a
+left join mimiciv_derived.cardiac_marker c
+  on a.hadm_id = c.hadm_id
+left join trop
+  on c.specimen_id = trop.specimen_id
+where c.hadm_id is not null
+"""))
+
+WEIGHT_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="weight",
+                                                            attributes=['weight'],
+                                                            query=(r"""
+select icu.hadm_id {admission_id_alias}, {attributes}, w.time_bin {time_alias}
+ from (
+ (select stay_id, w.weight, w.starttime time_bin
+  from mimiciv_derived.weight_durations as w)
+ union all
+ (select stay_id, w.weight, w.endtime time_bin
+     from mimiciv_derived.weight_durations as w)
+ ) w
+inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
+"""))
+
+CBC_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="cbc",
+                                                         attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc', 'mcv',
+                                                                     'platelet',
+                                                                     'rbc', 'rdw', 'wbc'],
+                                                         query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, cbc.charttime {time_alias}
+from mimiciv_derived.complete_blood_count as cbc
+where hadm_id is not null
+"""))
+
+VITAL_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="vital",
+                                                           attributes=['heart_rate', 'sbp', 'dbp', 'mbp', 'sbp_ni',
+                                                                       'dbp_ni',
+                                                                       'mbp_ni', 'resp_rate',
+                                                                       'temperature', 'spo2',
+                                                                       'glucose'],
+                                                           query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, v.charttime {time_alias}
+from mimiciv_derived.vitalsign as v
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = v.stay_id
+"""))
+
+# Glasgow Coma Scale, a measure of neurological function
+GCS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="gcs",
+                                                         attributes=['gcs', 'gcs_motor', 'gcs_verbal', 'gcs_eyes',
+                                                                     'gcs_unable'],
+                                                         query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, gcs.charttime {time_alias}
+from mimiciv_derived.gcs as gcs
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = gcs.stay_id
+"""))
+
+OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(name="obs",
+                                                                components=[
+                                                                    RENAL_OUT_CONF,
+                                                                    RENAL_CREAT_CONF,
+                                                                    RENAL_AKI_CONF,
+                                                                    SOFA_CONF,
+                                                                    BLOOD_GAS_CONF,
+                                                                    BLOOD_CHEMISTRY_CONF,
+                                                                    CARDIAC_MARKER_CONF,
+                                                                    WEIGHT_CONF,
+                                                                    CBC_CONF,
+                                                                    VITAL_CONF,
+                                                                    GCS_CONF
+                                                                ])
+
+## Inputs - Canonicalise
+
+ICU_INPUT_CONF = RatedInputSQLTableConfig(name="int_input",
+                                          query=(r"""
+select
+    a.hadm_id as {admission_id_alias}
+    , inp.itemid as {code_alias}
+    , inp.starttime as {start_time_alias}
+    , inp.endtime as {end_time_alias}
+    , di.label as {description_alias}
+    , inp.rate  as {rate_alias}
+    , inp.amount as {amount_alias}
+    , inp.rateuom as {rate_unit_alias}
+    , inp.amountuom as {amount_unit_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_icu.icustays i
+    on a.hadm_id = i.hadm_id
+left join mimiciv_icu.inputevents inp
+    on i.stay_id = inp.stay_id
+left join mimiciv_icu.d_items di
+    on inp.itemid = di.itemid
+"""),
+                                          space_query=(r"""
+select di.itemid as {code_alias}, max(di.label) as {description_alias}
+from  mimiciv_icu.d_items di
+inner join mimiciv_icu.inputevents ie
+    on di.itemid = ie.itemid
+where di.itemid is not null
+group by di.itemid
+"""))
+
+## Procedures - Canonicalise and Refine
+ICU_PROC_CONF = IntervalICUProcedureSQLTableConfig(name="int_proc_icu",
+                                                   query=(r"""
+select a.hadm_id as {admission_id_alias}
+    , pe.itemid as {code_alias}
+    , pe.starttime as {start_time_alias}
+    , pe.endtime as {end_time_alias}
+    , di.label as {description_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_icu.icustays i
+    on a.hadm_id = i.hadm_id
+left join mimiciv_icu.procedureevents pe
+    on i.stay_id = pe.stay_id
+left join mimiciv_icu.d_items di
+    on pe.itemid = di.itemid
+"""),
+                                                   space_query=(r"""
+select di.itemid as {code_alias}, max(di.label) as {description_alias}
+from  mimiciv_icu.d_items di
+inner join mimiciv_icu.procedureevents pe
+    on di.itemid = pe.itemid
+where di.itemid is not null
+group by di.itemid
+"""))
+
+HOSP_PROC_CONF = AdmissionIntervalBasedMixedICDTableConfig(name="int_proc_icd",
+                                                           query=(r"""
+select pi.hadm_id as {admission_id_alias}
+, (pi.chartdate)::timestamp as {start_time_alias}
+, (pi.chartdate + interval '1 hour')::timestamp as {end_time_alias}
+, pi.icd_code as {icd_code_alias}
+, pi.icd_version as {icd_version_alias}
+, di.long_title as {description_alias}
+FROM mimiciv_hosp.procedures_icd pi
+INNER JOIN mimiciv_hosp.d_icd_procedures di
+  ON pi.icd_version = di.icd_version
+  AND pi.icd_code = di.icd_code
+INNER JOIN mimiciv_hosp.admissions a
+  ON pi.hadm_id = a.hadm_id
+"""),
+                                                           space_query=(r"""
+
+select di.icd_code  as {icd_code_alias},  
+di.icd_version as {icd_version_alias},
+max(di.long_title) as {description_alias}
+from mimiciv_hosp.d_icd_procedures di
+where di.icd_code is not null and di.icd_version is not null
+group by di.icd_code, di.icd_version
+"""))

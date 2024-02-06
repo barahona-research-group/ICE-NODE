@@ -1,21 +1,22 @@
 import os
 from pathlib import Path
 
-from ._coding_scheme_cprd import setup_cprd
-from ._coding_scheme_icd import setup_icd
-from ._coding_scheme_mimic import setup_mimic
-from ._dataset_cprd import CPRDDataset
-from ._dataset_mimic3 import MIMIC3Dataset
-from ._dataset_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
 from .coding_scheme import (CodingScheme, OutcomeExtractor, CodingSchemeConfig, FlatScheme, HierarchicalScheme,
                             OutcomeExtractorConfig)
+from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
+
+
+from ._coding_scheme_cprd import setup_cprd
+from ._coding_scheme_icd import setup_icd
+from ._dataset_mimic3 import MIMIC3Dataset
+from ._dataset_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
+
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, AggregateRepresentation,
                        StaticInfo, InpatientInput, CodesVector,
                        DemographicVectorConfig, LeadingObservableExtractorConfig,
                        LeadingObservableExtractor,
                        CPRDDemographicVectorConfig)
-from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
 from .interface import (AdmissionPrediction, Predictions, Patients,
                         InterfaceConfig, PatientTrajectory, TrajectoryConfig)
 from ..base import Config, Module
@@ -68,5 +69,4 @@ def load_dataset(tag: str = None, config: 'Config' = None, **init_kwargs):
 
 
 setup_icd()
-setup_mimic()
 setup_cprd()

@@ -268,7 +268,7 @@ class CodingScheme(Module):
             - desc: the code description
         """
 
-        index = sorted(self.index.values())
+        index = list(range(len(self)))
         return pd.DataFrame(
             {
                 "code": self.index2code,
@@ -314,22 +314,26 @@ class FlatScheme(CodingScheme):
             self,
             config: CodingSchemeConfig,
             codes: List[str],
-            index: Dict[str, int],
             desc: Dict[str, str],
     ):
         super().__init__(config=config)
 
         logging.debug(f"Constructing {config.name} ({type(self)}) scheme")
-        self._codes = codes
-        self._index = index
+
+        self._codes = list(codes)
+        self._index = dict(zip(self._codes, range(len(codes))))
         self._desc = desc
 
-        self._index2code = {idx: code for code, idx in index.items()}
-        self._index2desc = {index[code]: _desc for code, _desc in desc.items()}
+        self._index2code = {idx: code for code, idx in self._index.items()}
+        self._index2desc = {self._index[code]: _desc for code, _desc in desc.items()}
 
+        self._check_uniqueness()
         self._check_types()
         self._check_sizes()
         self._check_index_integrity()
+
+    def _check_uniqueness(self):
+        assert len(self.codes) == len(set(self.codes)), f"{self}: Codes should be unique."
 
     def _check_types(self):
         assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
@@ -502,11 +506,18 @@ class SchemeWithMissing(FlatScheme):
     vector_cls: ClassVar[Type[CodesVectorWithMissing]] = CodesVectorWithMissing
 
     def __init__(self, config: CodingSchemeConfig,
-                 codes: List[str], index: Dict[str, int], desc: Dict[str, str], missing_code: str):
+                 codes: List[str], desc: Dict[str, str], missing_code: str):
         self._missing_code = missing_code
-        super().__init__(config, codes, index, desc)
+        super().__init__(config, codes, desc)
+        assert missing_code not in codes, f"{self}: Missing code should not be in the list of codes."
+        self._codes = codes + [missing_code]
+        self._desc = desc.copy()
+        self._desc[self._missing_code] = "Missing"
+        self._index[self._missing_code] = -1
 
-    def __len__(self):
+        self._check_index_integrity()
+
+    def __len__(self) -> int:
         return len(self.codes) - 1
 
     @property
@@ -535,7 +546,7 @@ class NullScheme(FlatScheme):
     """
 
     def __init__(self):
-        super().__init__(CodingSchemeConfig('null'), [], {}, {})
+        super().__init__(CodingSchemeConfig('null'), [], {})
 
 
 class HierarchicalScheme(FlatScheme):
@@ -564,10 +575,8 @@ class HierarchicalScheme(FlatScheme):
     def __init__(self,
                  config: CodingSchemeConfig,
                  codes: Optional[List[str]] = None,
-                 index: Optional[Dict[str, int]] = None,
                  desc: Optional[Dict[str, str]] = None,
                  dag_codes: Optional[List[str]] = None,
-                 dag_index: Optional[Dict[str, int]] = None,
                  dag_desc: Optional[Dict[str, str]] = None,
                  code2dag: Optional[Dict[str, str]] = None,
                  pt2ch: Optional[Dict[str, Set[str]]] = None,
@@ -578,10 +587,8 @@ class HierarchicalScheme(FlatScheme):
         Args:
             config (CodingSchemeConfig): the configuration for the coding scheme.
             codes (Optional[List[str]]): a list of codes in the flattened version of the scheme. Defaults to None.
-            index (Optional[Dict[str, int]]): a dictionary mapping codes to their indices in the flattened version of the scheme. Defaults to None.
             desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the flattened version of the scheme. Defaults to None.
             dag_codes (Optional[List[str]]): a list of codes in the hierarchical scheme. Defaults to None.
-            dag_index (Optional[Dict[str, int]]): a dictionary mapping codes to their indices in the hierarchical scheme. Defaults to None.
             dag_desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the hierarchical scheme. Defaults to None.
             code2dag (Optional[Dict[str, str]]): a dictionary mapping codes in the flat scheme to their corresponding codes in the hierarchical scheme. Defaults to None.
             pt2ch (Optional[Dict[str, Set[str]]]): a dictionary mapping parent codes to their child codes in the hierarchical scheme. Defaults to None.
@@ -589,7 +596,7 @@ class HierarchicalScheme(FlatScheme):
         """
 
         self._dag_codes = dag_codes or codes
-        self._dag_index = dag_index or index
+        self._dag_index = {c: i for i, c in enumerate(self._dag_codes)}
         self._dag_desc = dag_desc or desc
         self._code2dag = code2dag or {c: c for c in codes}
         self._dag2code = {d: c for c, d in self._code2dag.items()}
@@ -599,7 +606,7 @@ class HierarchicalScheme(FlatScheme):
         self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
         self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
 
-        super().__init__(config, codes, index, desc)
+        super().__init__(config, codes, desc)
 
     def equals(self, other: "HierarchicalScheme") -> bool:
         return (super().equals(other) and (self._dag_codes == other._dag_codes) and (
@@ -617,8 +624,6 @@ class HierarchicalScheme(FlatScheme):
         Raises:
             AssertionError: If any of the collections contains a non-string element.
         """
-
-    def _check_types(self):
         super()._check_types()
 
         assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
@@ -1610,7 +1615,7 @@ def register_gender_scheme():
     The index maps the codes to their corresponding positions, and the desc provides descriptions for each code.
     """
     CodingScheme.register_scheme(BinaryScheme(CodingSchemeConfig('gender'),
-                                              codes=['M', 'F'], index={'M': 0, 'F': 1},
+                                              codes=['M', 'F'],
                                               desc={'M': 'male', 'F': 'female'}))
 
 
@@ -1660,11 +1665,9 @@ class OutcomeExtractor(FlatScheme):
             if c not in specs['exclude_codes']
         ]
 
-        index = dict(zip(codes, range(len(codes))))
         desc = {c: self.base_scheme.desc[c] for c in codes}
         super().__init__(config=config,
                          codes=codes,
-                         index=index,
                          desc=desc)
 
     @classmethod

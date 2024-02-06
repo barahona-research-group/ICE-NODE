@@ -22,11 +22,10 @@ class DxLTC212FlatCodes(FlatScheme):
     _system: Dict[str, str]
 
     def __init__(self, config: CodingSchemeConfig,
-                 codes: List[str], index: Dict[str, int], desc: Dict[str, str], system: Dict[str, str],
+                 codes: List[str], desc: Dict[str, str], system: Dict[str, str],
                  medcodes: Dict[str, Set[str]]):
         super().__init__(config=config,
                          codes=codes,
-                         index=index,
                          desc=desc)
         self._system = system
         self._medcodes = medcodes
@@ -75,7 +74,6 @@ class DxLTC212FlatCodes(FlatScheme):
         codes = sorted(set(df[disease_num_cname]))
         return cls(config=CodingSchemeConfig(name),
                    codes=codes,
-                   index=dict(zip(codes, range(len(codes)))),
                    desc=desc,
                    system=system,
                    medcodes=medcodes)
@@ -88,11 +86,10 @@ class DxLTC9809FlatMedcodes(FlatScheme):
     _systems_desc: Dict[str, str]
 
     def __init__(self, config: CodingSchemeConfig,
-                 codes: List[str], index: Dict[str, int], desc: Dict[str, str], diseases: Dict[str, List[str]],
+                 codes: List[str], desc: Dict[str, str], diseases: Dict[str, List[str]],
                  systems: Dict[str, List[str]], diseases_desc: Dict[str, str], systems_desc: Dict[str, str]):
         super().__init__(config=config,
                          codes=codes,
-                         index=index,
                          desc=desc)
         self._diseases = diseases
         self._systems = systems
@@ -141,7 +138,6 @@ class DxLTC9809FlatMedcodes(FlatScheme):
         systems_desc = df.groupby(system_num_cname)[desc_cname].apply(list).to_dict()
         return cls(config=CodingSchemeConfig(name),
                    codes=codes,
-                   index=dict(zip(codes, range(len(codes)))),
                    desc=desc,
                    systems=systems,
                    diseases=diseases,
@@ -162,7 +158,6 @@ def register_cprd_ethnicity(name, eth_code_colname, eth_desc_colname):
     codes = sorted(set(df[eth_code_colname]))
     Ethnicity.register_scheme(Ethnicity(CodingSchemeConfig(name),
                                         codes=codes,
-                                        index=dict(zip(codes, range(len(codes)))),
                                         desc=desc))
 
 
@@ -182,31 +177,26 @@ def register_cprd_eth_mapping():
 
 def register_cprd_gender():
     missing_code = '9'
-    codes = ['0', '1', '2', missing_code]
-    index = {'0': 0, '1': 1, '2': 2, missing_code: -1}  # 9 is unknown
+    codes = ['0', '1', '2']
     desc = {
         '0': 'female',
         '1': 'male',
-        '2': 'intermediate',
-        missing_code: 'missing'
+        '2': 'intermediate'
     }
     name = 'cprd_gender'
     SchemeWithMissing.register_scheme(
         SchemeWithMissing(CodingSchemeConfig(name),
-                          codes=codes, index=index, desc=desc, missing_code=missing_code))
+                          codes=codes, desc=desc, missing_code=missing_code))
 
 
 def register_cprd_imd():
     missing_code = '99'
-    codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', missing_code]
-    index = dict(zip(codes, range(len(codes))))
-    index[missing_code] = -1
+    codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
     desc = dict(zip(codes, codes))
-    desc[missing_code] = 'missing'
     name = 'cprd_imd_cat'
 
     SchemeWithMissing.register_scheme(SchemeWithMissing(CodingSchemeConfig(name),
-                                                        codes=codes, index=index, desc=desc,
+                                                        codes=codes, desc=desc,
                                                         missing_code=missing_code))
 
 

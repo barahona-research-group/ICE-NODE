@@ -220,27 +220,22 @@ class DxICD10(ICD):
                     _traverse_diag_dfs(sec_name, dx)
 
         icd_codes = sorted(c.split(':')[1] for c in desc if 'dx_discharge:' in c)
-        icd_index = dict(zip(icd_codes, range(len(icd_codes))))
         icd_desc = {c: desc[f'dx_discharge:{c}'] for c in icd_codes}
 
         if not hierarchical:
             return {
                 'codes': icd_codes,
-                'index': icd_index,
                 'desc': icd_desc
             }
         icd2dag = {c: f'dx_discharge:{c}' for c in icd_codes}
         dag_codes = [f'dx_discharge:{c}' for c in icd_codes] + sorted(
             c for c in set(desc) - set(icd2dag.values()))
-        dag_index = dict(zip(dag_codes, range(len(dag_codes))))
 
         return {
             'codes': icd_codes,
-            'index': icd_index,
             'desc': icd_desc,
             'code2dag': icd2dag,
             'dag_codes': dag_codes,
-            'dag_index': dag_index,
             'dag_desc': desc,
             'pt2ch': dict(pt2ch)
         }
@@ -296,11 +291,9 @@ class PrICD10(ICD):
                                       f.readlines())
             }
         codes = sorted(desc)
-        index = dict(zip(codes, range(len(codes))))
 
         if not hierarchical: return {
             'codes': codes,
-            'index': index,
             'desc': desc
         }
 
@@ -332,16 +325,13 @@ class PrICD10(ICD):
 
         dag_codes = list(map(code2dag.get, codes))
         dag_codes.extend(sorted(pt2ch))
-        dag_index = dict(zip(dag_codes, range(len(dag_codes))))
         dag_desc.update({c: c for c in set(dag_codes) - set(dag_desc)})
 
         return {
             'codes': codes,
-            'index': index,
             'desc': desc,
             'code2dag': code2dag,
             'dag_codes': dag_codes,
-            'dag_index': dag_index,
             'dag_desc': dag_desc,
             'pt2ch': pt2ch
         }
@@ -432,21 +422,17 @@ class DxICD9(HierarchicalICDScheme):
         df_internal = df[(df['ICD9'] == '') | df['ICD9'].isnull()]
 
         icd_codes = sorted(df_leaves['ICD9'])
-        icd_index = dict(zip(icd_codes, range(len(icd_codes))))
         icd_desc = dict(zip(df_leaves['ICD9'], df_leaves['LABEL']))
 
         dag_codes = list(map(icd2dag.get, icd_codes)) + sorted(
             df_internal['NODE_IDX'])
-        dag_index = dict(zip(dag_codes, range(len(dag_codes))))
         dag_desc = dict(zip(df['NODE_IDX'], df['LABEL']))
 
         return {
             'codes': icd_codes,
-            'index': icd_index,
             'desc': icd_desc,
             'code2dag': icd2dag,
             'dag_codes': dag_codes,
-            'dag_index': dag_index,
             'dag_desc': dag_desc
         }
 
@@ -631,7 +617,6 @@ class DxCCS(CCS):
         CodingScheme.register_scheme(DxCCS(CodingSchemeConfig(name='dx_ccs'),
                                            pt2ch=pt2ch,
                                            codes=codes,
-                                           index=dict(zip(codes, range(len(codes)))),
                                            desc=desc))
 
 
@@ -650,7 +635,6 @@ class PrCCS(CCS):
         CodingScheme.register_scheme(PrCCS(CodingSchemeConfig(name='pr_ccs'),
                                            pt2ch=pt2ch,
                                            codes=codes,
-                                           index=dict(zip(codes, range(len(codes)))),
                                            desc=desc))
 
 
@@ -730,7 +714,6 @@ class DxFlatCCS(FlatCCS):
         codes = sorted(set(cols['code']))
         CodingScheme.register_scheme(DxFlatCCS(CodingSchemeConfig('dx_flatccs'),
                                                codes=codes,
-                                               index=dict(zip(codes, range(len(codes)))),
                                                desc=dict(zip(cols['code'], cols['desc']))))
 
 
@@ -744,7 +727,6 @@ class PrFlatCCS(FlatCCS):
         codes = sorted(set(cols['code']))
         CodingScheme.register_scheme(PrFlatCCS(CodingSchemeConfig('pr_flatccs'),
                                                codes=codes,
-                                               index=dict(zip(codes, range(len(codes)))),
                                                desc=dict(zip(cols['code'], cols['desc']))))
 
 

@@ -4,7 +4,7 @@ from parameterized import parameterized
 
 from lib.ehr.dataset import TableConfig, AdmissionLinkedTableConfig, SubjectLinkedTableConfig, TimestampedTableConfig, \
     IntervalBasedTableConfig, DatasetTables, Dataset
-from lib.ehr.pipeline import DatasetPipeline, ProcessOverlappingAdmissions
+from lib.ehr.dataset import DatasetPipeline, ProcessOverlappingAdmissions
 
 
 class TestTableConfig(unittest.TestCase):

@@ -1,13 +1,15 @@
 import os
+import unittest
 from typing import Dict, List
 from unittest import TestCase, main as main_test
 from unittest.mock import patch
 
 from parameterized import parameterized
 
-from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_mimic, setup_cprd, OutcomeExtractor)
+from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
 
 _DIR = os.path.dirname(__file__)
+
 
 # TODO: Add tests for the following:
 # [  ] test CodeMaps:
@@ -26,13 +28,11 @@ _DIR = os.path.dirname(__file__)
 #       [  ] test 3
 
 
-
 class TestFlatScheme(TestCase):
     @classmethod
     def setUpClass(cls):
         codes100 = list(f'code_{i}' for i in range(100))
         desc100 = dict(zip(codes100, codes100))
-        index100 = dict(zip(codes100, range(100)))
         CodingScheme.unregister_schemes()
         CodingScheme.unregister_scheme_loaders()
         OutcomeExtractor.unregister_schemes()
@@ -40,16 +40,13 @@ class TestFlatScheme(TestCase):
 
         schemes_kwargs = [{'config': CodingSchemeConfig('one'),
                            'codes': ['1'],
-                           'desc': {'1': 'one'},
-                           'index': {'1': 0}},
+                           'desc': {'1': 'one'}},
                           {'config': CodingSchemeConfig('zero'),
                            'codes': [],
-                           'desc': dict(),
-                           'index': dict()},
+                           'desc': dict()},
                           {'config': CodingSchemeConfig('100'),
                            'codes': codes100,
-                           'desc': desc100,
-                           'index': index100}]
+                           'desc': desc100}]
         cls.schemes_kwargs = schemes_kwargs
 
     def test_from_name(self):
@@ -70,6 +67,13 @@ class TestFlatScheme(TestCase):
         with self.assertRaises(KeyError):
             # Unregistered scheme
             FlatScheme.from_name('42')
+
+    @parameterized.expand([(('A', 'B', 'C', 'C'),),
+                           (('A', 'B', 'C', 'B'),),
+                           (('A', 'A', 'A', 'A'),)])
+    def test_codes_uniqueness(self, codes):
+        with self.assertRaises(AssertionError):
+            s = FlatScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
 
     @patch('logging.warning')
     def test_register_scheme(self, mock_warning):
@@ -157,6 +161,9 @@ class TestFlatScheme(TestCase):
                 with self.assertRaises(AssertionError):
                     FlatScheme.register_scheme(FlatScheme(**scheme_kwargs_desc_mutated))
 
+    @unittest.skipUnless(os.environ.get('TEST_REGISTERED_SCHEMES', False) or os.environ.get('TEST_HEAVY', False),
+                         'Skipping test_registered_schemes. Runs only when TEST_REGISTERED_SCHEMES is set to'
+                         'True or TEST_HEAVY is set to True.')
     def test_registered_schemes(self):
         """
         Test case to verify the behavior of registered coding schemes.
@@ -170,7 +177,7 @@ class TestFlatScheme(TestCase):
 
         self.assertSetEqual(CodingScheme.available_schemes(), set())
         count = 0
-        for setup in (setup_cprd, setup_mimic, setup_icd):
+        for setup in (setup_cprd, setup_icd):
             setup()
             self.assertGreater(len(CodingScheme.available_schemes()), count)
             count = len(CodingScheme.available_schemes())
@@ -181,12 +188,10 @@ class TestFlatScheme(TestCase):
             self.assertEqual(scheme.name, registered_scheme)
 
     @parameterized.expand(
-        [(CodingSchemeConfig('p_codes'), [1], {'1': 'one'}, {'1': 0}),
-         (CodingSchemeConfig('p_desc'), ['1'], {1: 'one'}, {'1': 0}),
-         (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {1: 0}),
-         (CodingSchemeConfig('p_desc'), ['1'], {'1': 5}, {'1': 0})])
-    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
-                        index: Dict[str, int]):
+        [(CodingSchemeConfig('p_codes'), [1], {'1': 'one'}),
+         (CodingSchemeConfig('p_desc'), ['1'], {1: 'one'}),
+         (CodingSchemeConfig('p_desc'), ['1'], {'1': 5})])
+    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
         """
         Test for type error handling in the FlatScheme constructor.
 
@@ -195,15 +200,14 @@ class TestFlatScheme(TestCase):
         or KeyError to be raised.
         """
         with self.assertRaises((AssertionError, KeyError)):
-            FlatScheme(config=config, codes=codes, desc=desc, index=index)
+            FlatScheme(config=config, codes=codes, desc=desc)
 
     @parameterized.expand([
-        (CodingSchemeConfig('p_codes'), ['1', '3'], {'1': 'one'}, {'1': 0}),
-        (CodingSchemeConfig('p_desc'), ['3'], {'3': 'three', '1': 'one'}, {'1': 0}),
-        (CodingSchemeConfig('p_idx'), ['1'], {'1': 'one'}, {'1': 0, '2': 0}),
-        (CodingSchemeConfig('p_duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'}, {'1': 0, '2': 1})
+        (CodingSchemeConfig('p_codes'), ['1', '3'], {'1': 'one'}),
+        (CodingSchemeConfig('p_desc'), ['3'], {'3': 'three', '1': 'one'}),
+        (CodingSchemeConfig('p_duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'})
     ])
-    def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str], index: Dict[str, int]):
+    def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
         """
         Test the consistency between scheme components, in their size, and mapping correctness.
 
@@ -213,9 +217,7 @@ class TestFlatScheme(TestCase):
         FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
         """
         with self.assertRaises((AssertionError, KeyError)):
-            FlatScheme(config=config, codes=codes, desc=desc, index=index)
-
-
+            FlatScheme(config=config, codes=codes, desc=desc)
 
     def test_codes(self):
         """
@@ -229,17 +231,6 @@ class TestFlatScheme(TestCase):
 
         This test ensures that the codes are properly initialized and can be retrieved correctly.
 
-        """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme(scheme)
-            self.assertEqual(FlatScheme.from_name(scheme.config.name).codes, scheme_kwargs['codes'])
-
-    def test_index(self):
-        """
-        Test the initialization and retrieval of index in FlatScheme.
-
-        Same as the test_codes method, but for the index.
         """
         for scheme_kwargs in self.schemes_kwargs:
             scheme = FlatScheme(**scheme_kwargs)
@@ -298,8 +289,7 @@ class TestFlatScheme(TestCase):
         """
         scheme = FlatScheme(CodingSchemeConfig('p_codes'),
                             codes=['1', '3'],
-                            desc={'1': 'one', '3': 'pancreatic cAnCeR'},
-                            index={'1': 0, '3': 1})
+                            desc={'1': 'one', '3': 'pancreatic cAnCeR'})
         self.assertSetEqual(scheme.search_regex('cancer'), {'3'})
         self.assertSetEqual(scheme.search_regex('one'), {'1'})
         self.assertSetEqual(scheme.search_regex('pancreatic'), {'3'})
@@ -335,7 +325,7 @@ class TestFlatScheme(TestCase):
             codes = df.code.tolist()
             desc = df.set_index('code')['desc'].to_dict()
             index = dict(zip(df.code, df.index))
-            self.assertEqual(scheme, FlatScheme(config=scheme.config, codes=codes, desc=desc, index=index))
+            self.assertEqual(scheme, FlatScheme(config=scheme.config, codes=codes, desc=desc))
 
     def tearDown(self):
         CodingScheme.unregister_schemes()
