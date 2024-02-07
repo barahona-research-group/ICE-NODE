@@ -1,12 +1,15 @@
 import os
-import unittest
+from copy import deepcopy
 from typing import Dict, List
-from unittest import TestCase, main as main_test
-from unittest.mock import patch
+from unittest import mock
 
-from parameterized import parameterized
+import pytest
 
 from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
+
+# from unittest import TestCase, main as main_test
+# from unittest.mock import patch
+# from parameterized import parameterized
 
 _DIR = os.path.dirname(__file__)
 
@@ -27,56 +30,60 @@ _DIR = os.path.dirname(__file__)
 #       [  ] test 2
 #       [  ] test 3
 
+@pytest.fixture(scope='class', params=[dict(name='one', codes=['1'], desc={'1': 'one'}),
+                                       dict(name='zero', codes=[], desc=dict()),
+                                       dict(name='100', codes=list(f'code_{i}' for i in range(100)))])
+def primitive_flat_scheme_kwarg(request):
+    config = CodingSchemeConfig(request.param['name'])
+    if 'desc' in request.param:
+        desc = request.param['desc']
+    elif len(request.param['codes']) > 0:
+        desc = dict(zip(request.param['codes'], request.param['codes']))
+    else:
+        desc = dict()
+    return dict(config=config, codes=request.param['codes'], desc=desc)
 
-class TestFlatScheme(TestCase):
-    @classmethod
-    def setUpClass(cls):
-        codes100 = list(f'code_{i}' for i in range(100))
-        desc100 = dict(zip(codes100, codes100))
-        CodingScheme.unregister_schemes()
-        CodingScheme.unregister_scheme_loaders()
-        OutcomeExtractor.unregister_schemes()
-        OutcomeExtractor.unregister_scheme_loaders()
 
-        schemes_kwargs = [{'config': CodingSchemeConfig('one'),
-                           'codes': ['1'],
-                           'desc': {'1': 'one'}},
-                          {'config': CodingSchemeConfig('zero'),
-                           'codes': [],
-                           'desc': dict()},
-                          {'config': CodingSchemeConfig('100'),
-                           'codes': codes100,
-                           'desc': desc100}]
-        cls.schemes_kwargs = schemes_kwargs
+@pytest.fixture(scope='class')
+def primitive_flat_scheme(primitive_flat_scheme_kwarg):
+    return FlatScheme(**primitive_flat_scheme_kwarg)
 
-    def test_from_name(self):
+
+@pytest.fixture
+def clean_schemes():
+    CodingScheme.unregister_schemes()
+    CodingScheme.unregister_scheme_loaders()
+    OutcomeExtractor.unregister_schemes()
+    OutcomeExtractor.unregister_scheme_loaders()
+
+
+class TestFlatScheme:
+
+    def test_from_name(self, primitive_flat_scheme):
         """
         Test the `from_name` method of the FlatScheme class.
 
-        This method iterates over the `schemes_kwargs` list and creates a FlatScheme object
-        using the provided keyword arguments. It then registers the scheme and asserts that
+        This method registers the scheme and asserts that
         calling `from_name` with the scheme's name returns the same scheme object.
 
         If a KeyError is raised, it means that the scheme is not registered and the test passes.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme(scheme)
-            self.assertEqual(FlatScheme.from_name(scheme.config.name), scheme)
+        FlatScheme.register_scheme(primitive_flat_scheme)
+        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
-        with self.assertRaises(KeyError):
+        with pytest.raises(KeyError):
             # Unregistered scheme
             FlatScheme.from_name('42')
 
-    @parameterized.expand([(('A', 'B', 'C', 'C'),),
-                           (('A', 'B', 'C', 'B'),),
-                           (('A', 'A', 'A', 'A'),)])
+    @pytest.mark.parametrize("codes", [('A', 'B', 'C', 'C'),
+                                       ('A', 'B', 'C', 'B'),
+                                       ('A', 'A', 'A', 'A')])
     def test_codes_uniqueness(self, codes):
-        with self.assertRaises(AssertionError):
-            s = FlatScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
+        with pytest.raises(AssertionError) as excinfo:
+            FlatScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
+        assert 'should be unique' in str(excinfo.value)
 
-    @patch('logging.warning')
-    def test_register_scheme(self, mock_warning):
+    def test_register_scheme(self, primitive_flat_scheme):
         """
         Test the register_scheme method.
 
@@ -87,83 +94,71 @@ class TestFlatScheme(TestCase):
            register a scheme that is already registered with the same name and content.
         """
         # First, test that the register_scheme method works.
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme(scheme)
-            self.assertEqual(FlatScheme.from_name(scheme.config.name), scheme)
+        FlatScheme.register_scheme(primitive_flat_scheme)
+        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
         # Second, test that the register_scheme method raises an error when
         # the scheme is already registered.
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            mock_warning.reset_mock()
-            FlatScheme.register_scheme(scheme)
-            mock_warning.assert_called_once()
+        with mock.patch('logging.warning') as mocker:
+            FlatScheme.register_scheme(primitive_flat_scheme)
+            mocker.assert_called_once()
 
-    def test_scheme_equality(self):
+    def test_scheme_equality(self, primitive_flat_scheme):
         """
         Test the equality of schemes.
 
-        This test iterates over the `schemes_kwargs` list and creates two FlatScheme objects
-        using the provided keyword arguments. It then asserts that the two schemes are equal.
+        This test asserts that a scheme equal to its deepcopy.
         It then mutates the description and index of one of the schemes and asserts that the two
         schemes are not equal.
         """
+        assert primitive_flat_scheme == deepcopy(primitive_flat_scheme)
 
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme1 = FlatScheme(**scheme_kwargs)
-            scheme2 = FlatScheme(**scheme_kwargs)
-            self.assertEqual(scheme1, scheme2)
+        if len(primitive_flat_scheme) > 0:
+            desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
+            mutated_scheme = FlatScheme(config=primitive_flat_scheme.config,
+                                        codes=primitive_flat_scheme.codes,
+                                        desc=desc_mutated)
+            assert primitive_flat_scheme != mutated_scheme
 
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme1 = FlatScheme(**scheme_kwargs)
-
-            if len(scheme1) > 0:
-                scheme_kwargs_desc_mutated = scheme_kwargs.copy()
-
-                scheme_kwargs_desc_mutated['desc'] = {code: f'{desc} muted' for code, desc in
-                                                      scheme_kwargs['desc'].items()}
-                scheme2 = FlatScheme(**scheme_kwargs_desc_mutated)
-                self.assertNotEqual(scheme1, scheme2)
-
-    @patch('logging.warning')
-    def test_register_scheme_loader(self, mock_warning):
+    def test_register_scheme_loader(self, primitive_flat_scheme):
         """
         Test case for registering a scheme loader and verifying the scheme registration.
 
-        This test iterates over a list of scheme keyword arguments and performs the following steps:
-        1. Creates a FlatScheme instance using the scheme keyword arguments.
-        2. Registers a scheme loader for the scheme's name using a lambda function.
-        3. Asserts that the scheme can be retrieved using the scheme's name.
-        4. Asserts that attempting to register the same scheme loader again logs a warning if it has the same name with
+        This test performs the following steps:
+        1. Registers a scheme loader for the scheme's name using a lambda function.
+        2. Asserts that the scheme can be retrieved using the scheme's name.
+        3. Asserts that attempting to register the same scheme loader again logs a warning if it has the same name with
         matching content.
-        5. Asserts that attempting to register the same scheme again logs a warning.
+        4. Asserts that attempting to register the same scheme again logs a warning.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
-            self.assertEqual(FlatScheme.from_name(scheme.config.name), scheme)
 
-            mock_warning.reset_mock()
-            FlatScheme.register_scheme_loader(scheme.config.name, lambda: FlatScheme.register_scheme(scheme))
-            mock_warning.assert_called_once()
+        FlatScheme.register_scheme_loader(primitive_flat_scheme.config.name,
+                                          lambda: FlatScheme.register_scheme(primitive_flat_scheme))
+        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
-            mock_warning.reset_mock()
-            FlatScheme.register_scheme(scheme)
-            mock_warning.assert_called_once()
+        with mock.patch('logging.warning') as mocker:
+            FlatScheme.register_scheme_loader(primitive_flat_scheme.config.name,
+                                              lambda: FlatScheme.register_scheme(primitive_flat_scheme))
+            mocker.assert_called_once()
+        with mock.patch('logging.warning') as mocker:
+            FlatScheme.register_scheme(primitive_flat_scheme)
+            mocker.assert_called_once()
 
-            # If the scheme is registered with the same name but different content, an AssertionError should be raised.
-            if len(scheme) > 0:
-                scheme_kwargs_desc_mutated = scheme_kwargs.copy()
-                scheme_kwargs_desc_mutated['desc'] = {code: f'{desc} muted' for code, desc in
-                                                      scheme_kwargs['desc'].items()}
+        # If the scheme is registered with the same name but different content, an AssertionError should be raised.
+        if len(primitive_flat_scheme) > 0:
+            desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
+            mutated_scheme = FlatScheme(config=primitive_flat_scheme.config,
+                                        codes=primitive_flat_scheme.codes,
+                                        desc=desc_mutated)
 
-                with self.assertRaises(AssertionError):
-                    FlatScheme.register_scheme(FlatScheme(**scheme_kwargs_desc_mutated))
+            with pytest.raises(AssertionError):
+                FlatScheme.register_scheme(mutated_scheme)
 
-    @unittest.skipUnless(os.environ.get('TEST_REGISTERED_SCHEMES', False) or os.environ.get('TEST_HEAVY', False),
-                         'Skipping test_registered_schemes. Runs only when TEST_REGISTERED_SCHEMES is set to'
-                         'True or TEST_HEAVY is set to True.')
+    @pytest.mark.skipif(
+        os.environ.get('TEST_REGISTERED_SCHEMES', False) is False and os.environ.get('TEST_HEAVY', False) is False,
+        reason='Skipping test_registered_schemes. Runs only when TEST_REGISTERED_SCHEMES is set to'
+               'True or TEST_HEAVY is set to True.')
+    @pytest.mark.usefixtures('clean_schemes')
     def test_registered_schemes(self):
         """
         Test case to verify the behavior of registered coding schemes.
@@ -175,22 +170,22 @@ class TestFlatScheme(TestCase):
         - The name of the instantiated FlatScheme object matches the registered coding scheme.
         """
 
-        self.assertSetEqual(CodingScheme.available_schemes(), set())
+        assert CodingScheme.available_schemes() == set()
         count = 0
         for setup in (setup_cprd, setup_icd):
             setup()
-            self.assertGreater(len(CodingScheme.available_schemes()), count)
+            assert len(CodingScheme.available_schemes()) > count
             count = len(CodingScheme.available_schemes())
 
         for registered_scheme in CodingScheme.available_schemes():
             scheme = FlatScheme.from_name(registered_scheme)
-            self.assertIsInstance(scheme, FlatScheme)
-            self.assertEqual(scheme.name, registered_scheme)
+            assert isinstance(scheme, FlatScheme)
+            assert scheme.name == registered_scheme
 
-    @parameterized.expand(
-        [(CodingSchemeConfig('p_codes'), [1], {'1': 'one'}),
-         (CodingSchemeConfig('p_desc'), ['1'], {1: 'one'}),
-         (CodingSchemeConfig('p_desc'), ['1'], {'1': 5})])
+    @pytest.mark.parametrize("config, codes, desc",
+                             [(CodingSchemeConfig('problematic_codes'), [1], {'1': 'one'}),
+                              (CodingSchemeConfig('problematic_desc'), ['1'], {1: 'one'}),
+                              (CodingSchemeConfig('problematic_desc'), ['1'], {'1': 5})])
     def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
         """
         Test for type error handling in the FlatScheme constructor.
@@ -199,13 +194,13 @@ class TestFlatScheme(TestCase):
         The code and description types should be strings, not integers. The test expects an AssertionError
         or KeyError to be raised.
         """
-        with self.assertRaises((AssertionError, KeyError)):
+        with pytest.raises((AssertionError, KeyError)):
             FlatScheme(config=config, codes=codes, desc=desc)
 
-    @parameterized.expand([
-        (CodingSchemeConfig('p_codes'), ['1', '3'], {'1': 'one'}),
-        (CodingSchemeConfig('p_desc'), ['3'], {'3': 'three', '1': 'one'}),
-        (CodingSchemeConfig('p_duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'})
+    @pytest.mark.parametrize("config, codes, desc", [
+        (CodingSchemeConfig('problematic_desc'), ['1', '3'], {'1': 'one'}),
+        (CodingSchemeConfig('problematic_desc'), ['3'], {'3': 'three', '1': 'one'}),
+        (CodingSchemeConfig('duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'})
     ])
     def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
         """
@@ -216,67 +211,65 @@ class TestFlatScheme(TestCase):
         codes should be unique, and mapping should be correct and 1-to-1.
         FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
         """
-        with self.assertRaises((AssertionError, KeyError)):
+        with pytest.raises((AssertionError, KeyError)):
             FlatScheme(config=config, codes=codes, desc=desc)
 
-    def test_codes(self):
+    def test_codes(self, primitive_flat_scheme_kwarg):
         """
         Test the initialization and retrieval of codes in the FlatScheme class.
 
-        This method iterates over a list of scheme keyword arguments and performs the following steps:
-        1. Initializes a FlatScheme object with the provided keyword arguments.
-        2. Registers the scheme using the `register_scheme` method of the FlatScheme class.
-        3. Retrieves the scheme using the `from_name` method of the FlatScheme class.
-        4. Asserts that the retrieved scheme's codes match the provided keyword arguments' codes.
+        This method performs the following steps:
+        1. Registers the scheme using the `register_scheme` method of the FlatScheme class.
+        2. Retrieves the scheme using the `from_name` method of the FlatScheme class.
+        3. Asserts that the retrieved scheme's codes match the provided keyword arguments' codes.
 
         This test ensures that the codes are properly initialized and can be retrieved correctly.
 
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme(scheme)
-            self.assertEqual(FlatScheme.from_name(scheme.config.name).codes, scheme_kwargs['codes'])
+        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
+        FlatScheme.register_scheme(scheme)
+        assert FlatScheme.from_name(primitive_flat_scheme_kwarg['config'].name).codes == primitive_flat_scheme_kwarg[
+            'codes']
 
-    def test_desc(self):
+    def test_desc(self, primitive_flat_scheme_kwarg):
         """
         Test the initialization and description of the FlatScheme.
 
         Same as the test_codes method, but for the description.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            FlatScheme.register_scheme(scheme)
-            self.assertEqual(FlatScheme.from_name(scheme.config.name).desc, scheme_kwargs['desc'])
+        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
+        FlatScheme.register_scheme(scheme)
+        assert FlatScheme.from_name(primitive_flat_scheme_kwarg['config'].name).desc == primitive_flat_scheme_kwarg[
+            'desc']
 
-    def test_name(self):
+    def test_name(self, primitive_flat_scheme_kwarg):
         """
         Test case to verify if the name attribute of the FlatScheme instance
         matches the name attribute specified in the scheme configuration.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            self.assertEqual(scheme.name, scheme_kwargs['config'].name)
+        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
+        FlatScheme.register_scheme(scheme)
+        assert scheme.name == primitive_flat_scheme_kwarg['config'].name
 
-    def test_index2code(self):
+    def test_index2code(self, primitive_flat_scheme):
         """
         Test the index to code mapping in the coding scheme.
 
         It tests if the index to code mapping is correct and respects the codes order.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            self.assertTrue(all(c == scheme.codes[i] for i, c in scheme.index2code.items()))
 
-    def test_index2desc(self):
+        assert all(c == primitive_flat_scheme.codes[i] for i, c in primitive_flat_scheme.index2code.items())
+
+    def test_index2code(self, primitive_flat_scheme):
         """
         Test the mapping of index to description in the coding scheme.
 
         Iterates over the scheme_kwargs and creates a FlatScheme object using each set of keyword arguments.
         Then, it checks if the description for each code in the scheme matches the description obtained from the index.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            self.assertTrue(all(desc == scheme.desc[scheme.codes[i]] for i, desc in scheme.index2desc.items()))
+
+        assert all(desc == primitive_flat_scheme.desc[primitive_flat_scheme.codes[i]] for i, desc in
+                   primitive_flat_scheme.index2desc.items())
 
     def test_search_regex(self):
         """
@@ -287,14 +280,16 @@ class TestFlatScheme(TestCase):
         search_regex method. It asserts the expected results for each search operation.
 
         """
-        scheme = FlatScheme(CodingSchemeConfig('p_codes'),
+        # Arrange
+        scheme = FlatScheme(CodingSchemeConfig('simple_searchable'),
                             codes=['1', '3'],
                             desc={'1': 'one', '3': 'pancreatic cAnCeR'})
-        self.assertSetEqual(scheme.search_regex('cancer'), {'3'})
-        self.assertSetEqual(scheme.search_regex('one'), {'1'})
-        self.assertSetEqual(scheme.search_regex('pancreatic'), {'3'})
-        self.assertSetEqual(scheme.search_regex('cAnCeR'), {'3'})
-        self.assertSetEqual(scheme.search_regex('x'), set())
+        # Act & Assert
+        assert scheme.search_regex('cancer') == {'3'}
+        assert scheme.search_regex('one') == {'1'}
+        assert scheme.search_regex('pancreatic') == {'3'}
+        assert scheme.search_regex('cAnCeR') == {'3'}
+        assert scheme.search_regex('x') == set()
 
     # def test_mapper_to(self):
     #     self.fail()
@@ -308,7 +303,7 @@ class TestFlatScheme(TestCase):
     # def test_supported_targets(self):
     #     self.fail()
 
-    def test_as_dataframe(self):
+    def test_as_dataframe(self, primitive_flat_scheme):
         """
         Test the `as_dataframe` method of the FlatScheme class.
 
@@ -317,22 +312,12 @@ class TestFlatScheme(TestCase):
         are 'code' and 'desc'. It also verifies if the scheme object is equal to a new FlatScheme object created with the
         same configuration, codes, descriptions, and index.
         """
-        for scheme_kwargs in self.schemes_kwargs:
-            scheme = FlatScheme(**scheme_kwargs)
-            df = scheme.as_dataframe()
-            self.assertSetEqual(set(df.index), set(scheme.index.values()))
-            self.assertSetEqual(set(df.columns), {'code', 'desc'})
-            codes = df.code.tolist()
-            desc = df.set_index('code')['desc'].to_dict()
-            index = dict(zip(df.code, df.index))
-            self.assertEqual(scheme, FlatScheme(config=scheme.config, codes=codes, desc=desc))
-
-    def tearDown(self):
-        CodingScheme.unregister_schemes()
-        CodingScheme.unregister_scheme_loaders()
-        OutcomeExtractor.unregister_schemes()
-        OutcomeExtractor.unregister_scheme_loaders()
-
+        df = primitive_flat_scheme.as_dataframe()
+        assert set(df.index) == set(primitive_flat_scheme.index.values())
+        assert set(df.columns) == {'code', 'desc'}
+        codes = df.code.tolist()
+        desc = df.set_index('code')['desc'].to_dict()
+        assert primitive_flat_scheme == FlatScheme(config=primitive_flat_scheme.config, codes=codes, desc=desc)
 
 # class TestCommonCodingSchemes:
 #     def setUp(self):
@@ -419,6 +404,3 @@ class TestFlatScheme(TestCase):
 #                     m.log_uncovered_source_codes(
 #                         f'{log_dir}/{m}_uncovered_source.json')
 #
-
-if __name__ == '__main__':
-    main_test()

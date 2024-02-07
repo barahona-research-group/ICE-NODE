@@ -709,7 +709,6 @@ class MIMICIVSQL(Module):
         Create a dataset scheme from the given selection of variables.
 
         Args:
-
             gender_selection: A dataframe containing the `gender`s to generate the new scheme. If None, all supported items will be used.
             ethnicity_selection: A dataframe containing the `ethnicity`s to generate the new scheme. If None, all supported items will be used.
             dx_discharge_selection: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:

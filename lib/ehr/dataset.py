@@ -20,8 +20,6 @@ from ..utils import write_config, load_config
 
 
 class TableConfig(Config):
-    name: str
-
     @property
     def alias_dict(self) -> Dict[str, str]:
         return {k: v for k, v in self.as_dict().items() if k.endswith('_alias')}
@@ -101,7 +99,7 @@ class StaticTableConfig(SubjectLinkedTableConfig):
 
 
 class AdmissionTimestampedMultiColumnTableConfig(TimestampedMultiColumnTableConfig, AdmissionLinkedTableConfig):
-    pass
+    name: str
 
 
 class AdmissionTimestampedCodedValueTableConfig(TimestampedCodedValueTableConfig, AdmissionLinkedTableConfig):

@@ -1,10 +1,9 @@
-import unittest
 from typing import List
 from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
-from parameterized import parameterized
+import pytest
 
 from lib.ehr.pipeline import DatasetTransformation, DatasetPipeline, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
@@ -12,13 +11,25 @@ from lib.ehr.pipeline import DatasetTransformation, DatasetPipeline, SampleSubje
     ObsIQROutlierRemover, ObsAdaptiveScaler, InputScaler
 
 
-class TestDatasetTransformation(unittest.TestCase):
+class TestDatasetTransformation:
 
-    def test_additional_parameters(self):
+    @pytest.mark.parametrize('cls, params', [
+        (SampleSubjects, {'n_subjects': 10, 'seed': 0, 'offset': 5}),
+        (CastTimestamps, {}),
+        (FilterUnsupportedCodes, {}),
+        (SetAdmissionRelativeTimes, {}),
+        (SetCodeIntegerIndices, {}),
+        (SetIndex, {}),
+        (ProcessOverlappingAdmissions, {'merge': False}),
+        (FilterClampTimestampsToAdmissionInterval, {}),
+        (FilterInvalidInputRatesSubjects, {}),
+        (ICUInputRateUnitConversion, {'conversion_table': pd.DataFrame()}),
+        (ObsIQROutlierRemover, {'outlier_q1': 0.0, 'outlier_q2': 0.0,
+                                'outlier_iqr_scale': 0.0, 'outlier_z1': 0.0,
+                                'outlier_z2': 0.0, 'transformer_key': 'key'})])
+    def test_additional_parameters(self, cls, params):
         # Test that additional_parameters returns dict without name
-        transformation = DatasetTransformation()
-        transformation.param1 = 'value1'
-        self.assertEqual(transformation.additional_parameters, {'param1': 'value1'})
+        assert cls(name='test', **params).additional_parameters == params
 
     def test_report(self):
         # Test that report adds item to aux['report']

@@ -9,7 +9,6 @@ from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
 from ._coding_scheme_cprd import setup_cprd
 from ._coding_scheme_icd import setup_icd
 from ._dataset_mimic3 import MIMIC3Dataset
-from ._dataset_mimic4 import MIMIC4Dataset, MIMIC4ICUDataset
 
 from .concepts import (Admission, Patient, InpatientObservables,
                        InpatientInterventions, AggregateRepresentation,

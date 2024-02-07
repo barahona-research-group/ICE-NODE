@@ -97,6 +97,7 @@ class CodingScheme(Module):
             cls._load_schemes[name]()
 
         return cls._schemes[name]
+    
 
     @classmethod
     def register_scheme(cls, scheme: CodingScheme) -> None:
@@ -276,6 +277,8 @@ class CodingScheme(Module):
             },
             index=index,
         )
+
+
 
 
 class FlatScheme(CodingScheme):
