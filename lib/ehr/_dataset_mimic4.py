@@ -35,7 +35,8 @@ class CodedSQLTableConfig(SQLTableConfig, CodedTableConfig):
     space_query: str = field(kw_only=True)
 
 
-class AdmissionTimestampedMultiColumnSQLTableConfig(SQLTableConfig, AdmissionTimestampedMultiColumnTableConfig):
+class AdmissionTimestampedMultiColumnSQLTableConfig(SQLTableConfig,
+                                                    AdmissionTimestampedMultiColumnTableConfig):
     admission_id_alias: str = 'admission_id'
     time_alias: str = 'time'
 
@@ -1037,8 +1038,7 @@ class MIMICIVSQL(Module):
 #             yield (adm_id, InpatientObservables.empty(obs_dim))
 #
 
-ADMISSIONS_CONF = AdmissionSQLTableConfig(name="admissions",
-                                          query=(r"""
+ADMISSIONS_CONF = AdmissionSQLTableConfig(query=(r"""
 select hadm_id as {admission_id_alias}, 
 subject_id as {subject_id_alias},
 admittime as {admission_time_alias},
@@ -1046,8 +1046,7 @@ dischtime as {discharge_time_alias}
 from mimiciv_hosp.admissions 
 """))
 
-STATIC_CONF = StaticSQLTableConfig(name="static",
-                                   query=(r"""
+STATIC_CONF = StaticSQLTableConfig(query=(r"""
 select 
 p.subject_id as {subject_id_alias},
 p.gender as {gender_alias},
@@ -1070,8 +1069,7 @@ select distinct race as {race_alias} from mimiciv_hosp.admissions
 where race is not null
 """))
 
-DX_DISCHARGE_CONF = AdmissionMixedICDSQLTableConfig(name="dx_discharge",
-                                                    query=(r"""
+DX_DISCHARGE_CONF = AdmissionMixedICDSQLTableConfig(query=(r"""
 select hadm_id as {admission_id_alias}, 
         icd_code as {icd_code_alias}, 
         icd_version as {icd_version_alias}
@@ -1213,8 +1211,7 @@ inner join mimiciv_icu.icustays as icu
  on icu.stay_id = gcs.stay_id
 """))
 
-OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(name="obs",
-                                                                components=[
+OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
                                                                     RENAL_OUT_CONF,
                                                                     RENAL_CREAT_CONF,
                                                                     RENAL_AKI_CONF,
@@ -1230,8 +1227,7 @@ OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(name="obs",
 
 ## Inputs - Canonicalise
 
-ICU_INPUT_CONF = RatedInputSQLTableConfig(name="int_input",
-                                          query=(r"""
+ICU_INPUT_CONF = RatedInputSQLTableConfig(query=(r"""
 select
     a.hadm_id as {admission_id_alias}
     , inp.itemid as {code_alias}
@@ -1260,8 +1256,7 @@ group by di.itemid
 """))
 
 ## Procedures - Canonicalise and Refine
-ICU_PROC_CONF = IntervalICUProcedureSQLTableConfig(name="int_proc_icu",
-                                                   query=(r"""
+ICU_PROC_CONF = IntervalICUProcedureSQLTableConfig(query=(r"""
 select a.hadm_id as {admission_id_alias}
     , pe.itemid as {code_alias}
     , pe.starttime as {start_time_alias}
@@ -1284,8 +1279,7 @@ where di.itemid is not null
 group by di.itemid
 """))
 
-HOSP_PROC_CONF = AdmissionIntervalBasedMixedICDTableConfig(name="int_proc_icd",
-                                                           query=(r"""
+HOSP_PROC_CONF = AdmissionIntervalBasedMixedICDTableConfig(query=(r"""
 select pi.hadm_id as {admission_id_alias}
 , (pi.chartdate)::timestamp as {start_time_alias}
 , (pi.chartdate + interval '1 hour')::timestamp as {end_time_alias}

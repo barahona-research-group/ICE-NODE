@@ -15,7 +15,7 @@ import pandas as pd
 
 from .coding_scheme import (CodingScheme, OutcomeExtractor)
 from .concepts import (DemographicVectorConfig)
-from ..base import Config, Module
+from ..base import Config, Module, Data
 from ..utils import write_config, load_config
 
 
@@ -99,7 +99,7 @@ class StaticTableConfig(SubjectLinkedTableConfig):
 
 
 class AdmissionTimestampedMultiColumnTableConfig(TimestampedMultiColumnTableConfig, AdmissionLinkedTableConfig):
-    name: str
+    name: str = field(kw_only=True)
 
 
 class AdmissionTimestampedCodedValueTableConfig(TimestampedCodedValueTableConfig, AdmissionLinkedTableConfig):
@@ -191,7 +191,7 @@ class DatasetTablesConfig(Config):
         return {k: v.code_alias for k, v in self.__dict__.items() if isinstance(v, CodedTableConfig)}
 
 
-class DatasetTables(Module):
+class DatasetTables(Data):
     static: pd.DataFrame
     admissions: pd.DataFrame
     dx_discharge: Optional[pd.DataFrame] = None
@@ -209,26 +209,53 @@ class DatasetTables(Module):
         }
 
     def save(self, path: Union[str, Path], overwrite: bool):
+        if Path(path).exists():
+            if overwrite:
+                Path(path).unlink()
+            else:
+                raise RuntimeError(f'File {path} already exists.')
+
         for name, df in self.tables_dict.items():
             filepath = Path(path)
-            if filepath.exists():
-                if overwrite:
-                    filepath.unlink()
-                else:
-                    raise RuntimeError(f'File {path} already exists.')
+
+            # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
+            # https://github.com/PyTables/PyTables/issues/592
+            # So we add a dummy row to the empty dataframes before saving.
+            if df.empty:
+                df = df.copy()
+                df.loc[0] = df.dtypes
+                df.loc[1] = None
 
             df.to_hdf(filepath, key=name, format='table')
 
     @staticmethod
     def load(path: Union[str, Path]) -> DatasetTables:
-        with pd.HDFStore(path) as store:
-            return DatasetTables(**{k: store[k] for k in store.keys()})
+        with pd.HDFStore(path, mode='r') as store:
+
+            tables = {k.split('/')[1]: store[k] for k in store.keys()}
+            for k in tables:
+
+                if len(tables[k]) == 2 and all(tables[k].loc[1].isnull()):
+                    # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
+                    # https://github.com/PyTables/PyTables/issues/592
+                    # So we add a dummy row to the empty dataframes before saving.
+                    tables[k] = tables[k].drop(axis=[0, 1]).astype(tables[k].iloc[0].to_dict())
+
+            return DatasetTables(**tables)
+
+    def equals(self, other: DatasetTables) -> bool:
+        return all(
+            self.__dict__[k].equals(other.__dict__[k])
+            for k in self.__dict__.keys()
+            if isinstance(self.__dict__[k], pd.DataFrame)
+        )
 
 
 class DatasetSchemeConfig(Config):
     ethnicity: str
     gender: str
-    dx_discharge: str
+    dx_discharge: Optional[str]
+    obs: Optional[str] = None
     icu_procedures: Optional[str] = None
     hosp_procedures: Optional[str] = None
     icu_inputs: Optional[str] = None
@@ -259,7 +286,8 @@ class DatasetScheme(Module):
     config: DatasetSchemeConfig
     ethnicity: CodingScheme
     gender: CodingScheme
-    dx_discharge: CodingScheme
+    dx_discharge: Optional[CodingScheme] = None
+    obs: Optional[CodingScheme] = None
     icu_procedures: Optional[CodingScheme] = None
     hosp_procedures: Optional[CodingScheme] = None
     icu_inputs: Optional[CodingScheme] = None

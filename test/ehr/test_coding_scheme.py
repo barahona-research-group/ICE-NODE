@@ -154,10 +154,7 @@ class TestFlatScheme:
             with pytest.raises(AssertionError):
                 FlatScheme.register_scheme(mutated_scheme)
 
-    @pytest.mark.skipif(
-        os.environ.get('TEST_REGISTERED_SCHEMES', False) is False and os.environ.get('TEST_HEAVY', False) is False,
-        reason='Skipping test_registered_schemes. Runs only when TEST_REGISTERED_SCHEMES is set to'
-               'True or TEST_HEAVY is set to True.')
+    @pytest.mark.expensive_test
     @pytest.mark.usefixtures('clean_schemes')
     def test_registered_schemes(self):
         """
