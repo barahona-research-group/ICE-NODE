@@ -224,7 +224,10 @@ class DatasetTables(Data):
             if df.empty:
                 df = df.copy()
                 df.loc[0] = df.dtypes
-                df.loc[1] = None
+                df.loc[1] = df.index.dtype
+                df.loc[2] = df.index.name
+                df.loc[3] = 'DUMMY_ROW'
+                df = df.astype(str)
 
             df.to_hdf(filepath, key=name, format='table')
 
@@ -232,14 +235,19 @@ class DatasetTables(Data):
     def load(path: Union[str, Path]) -> DatasetTables:
         with pd.HDFStore(path, mode='r') as store:
 
-            tables = {k.split('/')[1]: store[k] for k in store.keys()}
+            tables = {k.split('/')[1]: store[k] for k in store.keys() if not k.endswith('_dtypes')}
             for k in tables:
 
-                if len(tables[k]) == 2 and all(tables[k].loc[1].isnull()):
+                if len(tables[k]) == 4 and all(tables[k].loc[3] == 'DUMMY_ROW'):
                     # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
                     # https://github.com/PyTables/PyTables/issues/592
                     # So we add a dummy row to the empty dataframes before saving.
-                    tables[k] = tables[k].drop(axis=[0, 1]).astype(tables[k].iloc[0].to_dict())
+                    dt = tables[k].iloc[0].to_dict()
+                    idx_dt = tables[k].iloc[1, 0]
+                    idx_name = tables[k].iloc[2, 0]
+                    tables[k] = tables[k].drop(index=[0, 1, 2, 3]).astype(dt)
+                    tables[k].index = tables[k].index.astype(idx_dt)
+                    tables[k].index.name = idx_name
 
             return DatasetTables(**tables)
 

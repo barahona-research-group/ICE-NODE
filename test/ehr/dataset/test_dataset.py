@@ -106,131 +106,20 @@ class TestDatasetTables:
         assert set(dataset_tables.tables_dict.keys()) == set(k for k in all_tables_keys
                                                              if getattr(dataset_tables, k) is not None)
 
+    @pytest.mark.expensive_test
     def test_save_load(self, dataset_tables: DatasetTables, tmpdir: str):
         dataset_tables.save(f'{tmpdir}/test.h5', overwrite=False)
         loaded = DatasetTables.load(f'{tmpdir}/test.h5')
+
         assert loaded.equals(dataset_tables)
 
+    @pytest.mark.expensive_test
     def test_load_overwrite(self, dataset_tables: DatasetTables, tmpdir: str):
         dataset_tables.save(f'{tmpdir}/test.h5', overwrite=False)
         dataset_tables.save(f'{tmpdir}/test.h5', overwrite=True)
         with pytest.raises(RuntimeError):
             dataset_tables.save(f'{tmpdir}/test.h5', overwrite=False)
 
-#     def test_assert_consistent_aliases(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         config._assert_consistent_aliases()
-#
-#         # Assert
-#         # No assertion, just validate no exceptions
-#         self.fail()
-#
-#     def test_table_config_dict(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.table_config_dict
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(v, TableConfig) for v in result.values()))
-#         self.fail()
-#
-#     def test_timestamped_table_config_dict(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.timestamped_table_config_dict
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(v, TimestampedTableConfig) for v in result.values()))
-#         self.fail()
-#
-#     def test_interval_based_table_config_dict(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.interval_based_table_config_dict
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(v, IntervalBasedTableConfig) for v in result.values()))
-#         self.fail()
-#
-#     def test_indices(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.indices
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(k, str) and isinstance(v, str) for k, v in result.items()))
-#         self.fail()
-#
-#     def test_time_cols(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.time_cols
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(k, str) and isinstance(v, tuple) for k, v in result.items()))
-#         self.fail()
-#
-#     def test_code_column(self):
-#         # Arrange
-#         config = DatasetTablesConfig()
-#
-#         # Act
-#         result = config.code_column
-#
-#         # Assert
-#         self.assertIsInstance(result, dict)
-#         self.assertGreater(len(result), 0)
-#         self.assertTrue(all(isinstance(k, str) and isinstance(v, str) for k, v in result.items()))
-#
-#         self.fail()
-#
-#
-# class TestDatasetTables(unittest.TestCase):
-#
-#     def test_tables_dict_property(self):
-#         tables = DatasetTables(static=None, admissions=None)
-#         self.assertEqual(tables.tables_dict, {})
-#         self.fail()
-#
-#     def test_save(self):
-#         tables = DatasetTables(static=None, admissions=None)
-#         tables.save('test.h5', overwrite=True)
-#         loaded = DatasetTables.load('test.h5')
-#         self.assertEqual(loaded.static, None)
-#         self.assertEqual(loaded.admissions, None)
-#         self.fail()
-#
-#     def test_load(self):
-#         tables = DatasetTables(static=None, admissions=None)
-#         tables.save('test.h5', overwrite=True)
-#         loaded = DatasetTables.load('test.h5')
-#         self.assertIsInstance(loaded, DatasetTables)
-#
-#         self.fail()
-#
 #
 # class TestDataset(unittest.TestCase):
 #
