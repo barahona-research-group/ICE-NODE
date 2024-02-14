@@ -487,6 +487,10 @@ class Dataset(Module):
         splits = np.searchsorted(probs, splits)
         return [a.tolist() for a in np.split(subject_ids, splits)]
 
+    def equals(self, other: 'Dataset'):
+        return self.config == other.config and self.tables.equals(other.tables) and self.scheme == other.scheme and \
+            self.core_pipeline_report.equals(other.core_pipeline_report)
+
     def save(self, path: Union[str, Path], overwrite: bool = False):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

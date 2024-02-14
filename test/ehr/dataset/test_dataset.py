@@ -6,7 +6,7 @@ import pytest
 
 from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
-from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme
+from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, Dataset
 
 
 @pytest.fixture(params=[('x_id_alias', 'y_id_alias'), tuple()])
@@ -227,71 +227,25 @@ class TestDatasetScheme:
         # scheme = DatasetScheme(config=dataset_scheme_config)
         # assert scheme.demographic_size == 3
 
-#
-# class TestDataset(unittest.TestCase):
-#
-#     def test_setup_core_pipeline(self):
-#         # Arrange
-#         config = None # DatasetConfig object
-#         dataset = Dataset(config, None)
-#
-#         # Act
-#         pipeline = dataset._setup_core_pipeline(config)
-#
-#         # Assert
-#         self.assertIsNotNone(pipeline)
-#         self.assertIsInstance(pipeline, DatasetPipeline)
-#         self.fail()
-#
-#     def test_execute_pipeline(self):
-#         # Arrange
-#         dataset = Dataset(None, None)
-#         dataset.core_pipeline_report = pd.DataFrame()
-#
-#         # Act
-#         updated_dataset = dataset.execute_pipeline()
-#
-#         # Assert
-#         self.assertTrue(updated_dataset.config.pipeline_executed)
-#         self.assertIsInstance(updated_dataset.core_pipeline_report, pd.DataFrame)
-#         self.fail()
-#
-#     def test_random_splits_default(self):
-#         # Arrange
-#         dataset = Dataset(None, None)
-#         dataset.subject_ids = [1, 2, 3]
-#
-#         # Act
-#         splits = dataset.random_splits([0.6, 0.2, 0.2])
-#
-#         # Assert
-#         self.assertEqual(len(splits), 3)
-#         self.assertAlmostEqual(len(splits[0]), 2)
-#         self.assertAlmostEqual(len(splits[1]), 1)
-#         self.assertAlmostEqual(len(splits[2]), 1)
-#         self.fail()
-#
-#     def test_random_splits_custom_ids(self):
-#         # Arrange
-#         dataset = Dataset(None, None)
-#         subject_ids = [1, 2, 3, 4]
-#
-#         # Act
-#         splits = dataset.random_splits([0.5, 0.5], subject_ids=subject_ids)
-#
-#         # Assert
-#         self.assertEqual(len(splits), 2)
-#         self.assertAlmostEqual(len(splits[0]), 2)
-#         self.assertAlmostEqual(len(splits[1]), 2)
-#
-#         self.fail()
-#
-#
-#
-# class MockTable:
-#     pass
-#
-#
-#
-# if __name__ == '__main__':
-#     unittest.main()
+
+class TestDataset:
+
+    def test_save_load(self, dataset: Dataset, tmpdir: str):
+        pass
+        # dataset.save(f'{tmpdir}/test.h5', overwrite=False)
+        # loaded = Dataset.load(f'{tmpdir}/test.h5')
+        #
+        # assert loaded.equals(dataset)
+
+    def test_load_overwrite(self, dataset: Dataset, tmpdir: str):
+        pass
+        # dataset.save(f'{tmpdir}/test.h5', overwrite=False)
+        # dataset.save(f'{tmpdir}/test.h5', overwrite=True)
+        # with pytest.raises(RuntimeError):
+        #     dataset.save(f'{tmpdir}/test.h5', overwrite=False)
+
+    def test_simple_pipeline(self, dataset: Dataset):
+        pass
+
+    def test_random_split(self):
+        pass
