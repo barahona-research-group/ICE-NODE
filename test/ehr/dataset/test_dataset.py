@@ -1,10 +1,12 @@
-import os
-from typing import Tuple
+import itertools
+from typing import Tuple, Dict
 
 import equinox as eqx
 import pytest
 
-from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables
+from lib.ehr import CodingScheme
+from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
+from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme
 
 
 @pytest.fixture(params=[('x_id_alias', 'y_id_alias'), tuple()])
@@ -119,6 +121,111 @@ class TestDatasetTables:
         dataset_tables.save(f'{tmpdir}/test.h5', overwrite=True)
         with pytest.raises(RuntimeError):
             dataset_tables.save(f'{tmpdir}/test.h5', overwrite=False)
+
+
+@pytest.fixture(params=[{'dx_discharge': 2, 'obs': 2, 'icu_procedures': 1, 'icu_inputs': 1, 'hosp_procedures': 2}, {}])
+def dataset_scheme_targets(dataset_scheme_config, request) -> Dict[str, Tuple[str]]:
+    """
+    Make different schemes where the input schemes can be mapped to.
+    """
+
+    targets = {}
+    for space, n_targets in request.param.items():
+        source_scheme = CodingScheme.from_name(getattr(dataset_scheme_config, space))
+        target_schemes = []
+        for i in range(n_targets):
+            target_name = f'{source_scheme.name}_target_{i}'
+            target_codes = [f'{c}_target_{i}' for c in source_scheme.codes]
+            target_desc = dict(zip(target_codes, target_codes))
+
+            map_config = CodeMapConfig(source_scheme=source_scheme.name,
+                                       target_scheme=target_name,
+                                       mapped_to_dag_space=False)
+            map_data = {c: {c_target} for c, c_target in zip(source_scheme.codes, target_codes)}
+            CodingScheme.register_scheme(FlatScheme(config=CodingSchemeConfig(name=target_name),
+                                                    codes=target_codes,
+                                                    desc=target_desc))
+            CodeMap.register_map(source_scheme.name,
+                                 target_name,
+                                 CodeMap(map_config, map_data))
+            target_schemes.append(target_name)
+        targets[space] = tuple(target_schemes)
+    return targets
+
+
+def traverse_all_targets(dataset_scheme_target: Dict[str, Tuple[str]]):
+    default_target_config = {}
+    for space, targets in dataset_scheme_target.items():
+        if len(targets) == 0:
+            continue
+        elif len(targets) == 1:
+            default_target_config[space] = targets[0]
+
+    comb_space_names = list(sorted(k for k, v in dataset_scheme_target.items() if len(v) > 1))
+    comb_space = [dataset_scheme_target[name] for name in comb_space_names]
+    target_combinations = []
+    for comb in itertools.product(*comb_space):
+        target_conf = default_target_config.copy()
+        for i, space in enumerate(comb_space_names):
+            target_conf[space] = comb[i]
+        target_combinations.append(target_conf)
+    return target_combinations
+
+
+@pytest.fixture
+def cleanup_dataset_scheme_targets(dataset_scheme_config, dataset_scheme_targets) -> None:
+    yield  # The following code is run after the test.
+    # Clean up
+    for space, target_names in dataset_scheme_targets.items():
+        source_scheme = CodingScheme.from_name(getattr(dataset_scheme_config, space))
+        for target_name in target_names:
+            CodingScheme.deregister_scheme(target_name)
+            CodeMap.deregister_map(source_scheme.name, target_name)
+
+
+class TestDatasetScheme:
+
+    def test_scheme_dict(self, dataset_scheme_config: DatasetSchemeConfig):
+        scheme = DatasetScheme(config=dataset_scheme_config)
+
+        for space, scheme_name in dataset_scheme_config.as_dict().items():
+            assert hasattr(scheme, space)
+            if scheme_name is not None:
+                assert isinstance(getattr(scheme, space), CodingScheme)
+
+    @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
+    def test_supported_target_schemes_options(self, dataset_scheme_config: DatasetSchemeConfig,
+                                              dataset_scheme_targets: Dict[str, Tuple[str]]):
+        scheme = DatasetScheme(config=dataset_scheme_config)
+        supported_target_schemes = scheme.supported_target_scheme_options
+
+        for space, targets in supported_target_schemes.items():
+            support_set = set(dataset_scheme_targets.get(space, set()))
+            if getattr(scheme, space) is not None:
+                support_set.add(getattr(scheme, space).name)
+
+            assert set(targets) == support_set
+
+    @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
+    def test_make_target_scheme(self, dataset_scheme_config: DatasetSchemeConfig,
+                                dataset_scheme_targets: Dict[str, str]):
+        for target_config in traverse_all_targets(dataset_scheme_targets):
+            scheme = DatasetScheme(config=dataset_scheme_config)
+            target_scheme = scheme.make_target_scheme(**target_config)
+            assert isinstance(target_scheme, DatasetScheme)
+            for space, target_name in target_config.items():
+                assert isinstance(getattr(target_scheme, space), CodingScheme)
+                assert getattr(target_scheme, space).name == target_name
+
+            if scheme.dx_discharge is not None and target_scheme.dx_discharge is not None:
+                assert isinstance(scheme.dx_mapper(target_scheme), CodeMap)
+            if scheme.ethnicity is not None and target_scheme.ethnicity is not None:
+                assert isinstance(scheme.ethnicity_mapper(target_scheme), CodeMap)
+
+    def test_demographic_size(self, dataset_scheme_config: DatasetSchemeConfig):
+        pass
+        # scheme = DatasetScheme(config=dataset_scheme_config)
+        # assert scheme.demographic_size == 3
 
 #
 # class TestDataset(unittest.TestCase):

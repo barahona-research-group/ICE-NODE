@@ -97,7 +97,6 @@ class CodingScheme(Module):
             cls._load_schemes[name]()
 
         return cls._schemes[name]
-    
 
     @classmethod
     def register_scheme(cls, scheme: CodingScheme) -> None:
@@ -137,6 +136,14 @@ class CodingScheme(Module):
         Unregister all scheme loaders.
         """
         cls._load_schemes = {}
+
+    @classmethod
+    def deregister_scheme(cls, name: str):
+        """
+        Deregister a scheme by its name.
+        """
+        if name in cls._schemes:
+            del cls._schemes[name]
 
     @classmethod
     def available_schemes(cls) -> Set[str]:
@@ -259,7 +266,7 @@ class CodingScheme(Module):
 
     @property
     def supported_targets(self):
-        return tuple(t for s, t in CodeMap._load_maps.keys() if s == self.name)
+        return tuple(t for s, t in set(CodeMap._load_maps.keys()) | set(CodeMap._maps.keys()) if s == self.name)
 
     def as_dataframe(self):
         """
@@ -277,8 +284,6 @@ class CodingScheme(Module):
             },
             index=index,
         )
-
-
 
 
 class FlatScheme(CodingScheme):
@@ -1052,14 +1057,6 @@ class CodeMap(Module):
         self._source_scheme = CodingScheme.from_name(config.source_scheme)
         self._target_scheme = CodingScheme.from_name(config.target_scheme)
 
-        self._source_index = self._source_scheme.index
-        self._target_index = self._target_scheme.index
-        self._target_desc = self._target_scheme.desc
-
-        if config.source_scheme != config.target_scheme and config.mapped_to_dag_space:
-            self._t_index = self._target_scheme.dag_index
-            self._t_desc = self._target_scheme.dag_desc
-
     @classmethod
     def register_map(cls, source_scheme: str, target_scheme: str, mapper: CodeMap):
         """
@@ -1071,6 +1068,18 @@ class CodeMap(Module):
             mapper (CodeMap): the CodeMap instance.
         """
         cls._maps[(source_scheme, target_scheme)] = mapper
+
+    @classmethod
+    def deregister_map(cls, source_scheme: str, target_scheme: str):
+        """
+        Deregisters a CodeMap.
+
+        Args:
+            source_scheme (str): the source coding scheme.
+            target_scheme (str): the target coding scheme.
+        """
+        if (source_scheme, target_scheme) in cls._maps:
+            del cls._maps[(source_scheme, target_scheme)]
 
     @classmethod
     def register_chained_map(cls, s_scheme: str, inter_scheme: str, t_scheme: str):
@@ -1146,6 +1155,15 @@ class CodeMap(Module):
         """
         return len(self) > 0
 
+    def __len__(self):
+        """
+        Returns the number of supported codes in the CodeMap.
+
+        Returns:
+            int: the number of supported codes in the CodeMap.
+        """
+        return len(self._data)
+
     @property
     def target_index(self):
         """
@@ -1154,7 +1172,9 @@ class CodeMap(Module):
         Returns:
             dict: the target coding scheme index.
         """
-        return self._target_index
+        if self.config.mapped_to_dag_space and self._source_scheme.name != self._target_scheme.name:
+            return self._target_scheme.dag_index
+        return self._target_scheme.index
 
     @property
     def target_desc(self):
@@ -1164,20 +1184,22 @@ class CodeMap(Module):
         Returns:
             dict: the target coding scheme description.
         """
-        return self._target_desc
+        if self.config.mapped_to_dag_space and self._source_scheme.name != self._target_scheme.name:
+            return self._target_scheme.dag_desc
+        return self._target_scheme.desc
 
     @property
-    def source_index(self):
+    def source_index(self) -> dict:
         """
         Returns the source coding scheme index.
 
         Returns:
             dict: the source coding scheme index.
         """
-        return self._source_index
+        return self._source_scheme.index
 
     @property
-    def source_scheme(self):
+    def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
         """
         Returns the source coding scheme.
 
@@ -1187,7 +1209,7 @@ class CodeMap(Module):
         return self._source_scheme
 
     @property
-    def target_scheme(self):
+    def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
         """
         Returns the target coding scheme.
 
@@ -1197,7 +1219,7 @@ class CodeMap(Module):
         return self._target_scheme
 
     @property
-    def mapped_to_dag_space(self):
+    def mapped_to_dag_space(self) -> bool:
         """
         Returns True if the CodeMap is mapped to DAG space, False otherwise.
 
@@ -1207,7 +1229,7 @@ class CodeMap(Module):
         return self.config.mapped_to_dag_space
 
     @classmethod
-    def has_mapper(cls, source_scheme: str, target_scheme: str):
+    def has_mapper(cls, source_scheme: str, target_scheme: str) -> bool:
         """
         Returns True if a mapper exists for the given source and target coding schemes, False otherwise.
 

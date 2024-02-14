@@ -5,6 +5,7 @@ import json
 import os
 import zipfile
 from typing import Optional
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -115,18 +116,29 @@ def array_hasnan(arr):
     return jnp.any(jnp.isnan(arr) | jnp.isinf(arr))
 
 
-def translate_path(path):
+def translate_path(path, relative_to: Optional[str] = None):
     """Translate a filesystem path by replacing environment 
-    variables with their values.
+    variables with their values. If relative_to is specified,
+    and path is a relative path to nonexistent file, then the
+    path is interpreted as relative to this path.
 
     Parameters:
         path: Filesystem path to translate.
-
+        relative_to: if specified, and path is a relative path to nonexistent file, then the path is
+            interpreted as relative to this path.
     Returns:
         Absolute, expanded, translated path.
     """
     assert isinstance(path, str), "Path must be a string."
-    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+
+    path = os.path.expandvars(os.path.expanduser(path))
+
+    if relative_to is not None:
+        relative_to = translate_path(relative_to)
+    if relative_to is not None and not os.path.isabs(path) and not os.path.exists(path):
+        path = os.path.join(relative_to, path)
+
+    return os.path.abspath(path)
 
 
 def append_params_to_zip(model, params_name, zipfile_fname):
@@ -172,13 +184,8 @@ def load_config(config_file, relative_to: Optional[str] = None):
     Returns:
         The deserialized JSON contents of the configuration file.
     """
-    if relative_to is not None:
-        relative_to = translate_path(relative_to)
-    config_file = translate_path(config_file)
-
-    if relative_to is not None and not os.path.isabs(config_file) and not os.path.exists(config_file):
-        config_file = os.path.join(relative_to, config_file)
-    with open(translate_path(config_file)) as json_file:
+    config_file = translate_path(config_file, relative_to=relative_to)
+    with open(config_file) as json_file:
         return json.load(json_file)
 
 

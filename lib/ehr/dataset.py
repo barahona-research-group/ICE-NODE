@@ -330,11 +330,10 @@ class DatasetScheme(Module):
             att_t_scheme = getattr(target, attr)
 
             assert att_s_scheme.mapper_to(
-                att_t_scheme
+                att_t_scheme.name
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
 
     def make_target_scheme_config(self, **kwargs):
-        assert 'outcome' in kwargs, "Outcome must be specified"
         return self.config.update(**kwargs)
 
     def make_target_scheme(self, config=None, **kwargs):
@@ -364,7 +363,7 @@ class DatasetScheme(Module):
     @property
     def supported_target_scheme_options(self):
         supported_attr_targets = {
-            k: (getattr(self, k).__class__.__name__,) +
+            k: (getattr(self, k).name,) +
                getattr(self, k).supported_targets
             for k in self.scheme_dict if k != 'outcome'
         }
