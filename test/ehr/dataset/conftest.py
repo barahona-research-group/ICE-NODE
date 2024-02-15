@@ -1,5 +1,5 @@
 import random
-from typing import List
+from typing import List, Tuple, Dict
 
 import numpy as np
 import pandas as pd
@@ -9,7 +9,9 @@ from lib.ehr import CodingScheme, FlatScheme, \
     CodingSchemeConfig
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
-    DatasetTablesConfig, DatasetSchemeConfig, DatasetTables
+    DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
+    AbstractDatasetPipelineConfig
+from lib.ehr.pipeline import SetIndex
 
 DATASET_SCOPE = "function"
 
@@ -338,7 +340,7 @@ def _sample_proc_dataframe(admissions_df: pd.DataFrame,
     relative_end = np.random.uniform(low=relative_start,
                                      high=df['los'].values, size=n)
 
-    df[c_end] = df[c_start] + pd.to_timedelta(relative_end, unit='H')
+    df[c_end] = df[c_admittime] + pd.to_timedelta(relative_end, unit='H')
     return df[[c_admission, c_code, c_start, c_end]]
 
 
@@ -458,27 +460,13 @@ def dataset_scheme_config(ethnicity_scheme: str,
                                hosp_procedures=hosp_proc_scheme)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[1, 100])
-def n_subjects(request):
-    return request.param
-
-
-@pytest.fixture(scope=DATASET_SCOPE, params=[0, 1, 100])
-def n_admission_per_subject(request):
-    return request.param
-
-
-@pytest.fixture(scope=DATASET_SCOPE, params=[0, 1, 100])
-def n_per_admission(request):
-    return request.param
-
-
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
+                                             (50, 0, 0), (50, 10, 0), (50, 10, 10)],
+                ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,
-                   n_subjects: int,
-                   n_admission_per_subject: int,
-                   n_per_admission: int) -> DatasetTables:
+                   request) -> DatasetTables:
+    n_subjects, n_admission_per_subject, n_per_admission = request.param
     subjects_df = sample_subjects_dataframe(dataset_tables_config.static,
                                             dataset_scheme_config.ethnicity,
                                             dataset_scheme_config.gender,
@@ -518,3 +506,42 @@ def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                          icu_procedures=icu_proc_df,
                          hosp_procedures=hosp_proc_df,
                          icu_inputs=icu_inputs_df)
+
+
+class NaiveDataset(Dataset):
+
+    @classmethod
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return Pipeline(config=config.pipeline, transformations=[])
+
+
+class Pipeline(AbstractDatasetPipeline):
+
+    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
+        for transformation in self.transformations:
+            dataset, _ = transformation(dataset, {'report': []})
+        return dataset, {'report': pd.DataFrame({'action': ['*']})}
+
+
+
+
+@pytest.fixture
+def dataset_config(dataset_scheme_config, dataset_tables_config):
+    return DatasetConfig(scheme=dataset_scheme_config, tables=dataset_tables_config,
+                         pipeline=AbstractDatasetPipelineConfig())
+
+
+@pytest.fixture
+def dataset(dataset_config, dataset_tables):
+    return NaiveDataset(config=dataset_config, tables=dataset_tables)
+
+class IndexedDataset(Dataset):
+
+    @classmethod
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return Pipeline(config=config.pipeline, transformations=[SetIndex()])
+
+
+@pytest.fixture
+def indexed_dataset(dataset_config, dataset_tables):
+    return IndexedDataset(config=dataset_config, tables=dataset_tables)

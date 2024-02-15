@@ -59,7 +59,7 @@ class Experiment(Module):
         ]
         return dataset.random_splits(p_splits,
                                      random_seed=self.prng_seed,
-                                     balanced=self.config.split.balanced)
+                                     balance=self.config.split.balanced)
 
     def load_dataset(self, dataset_config):
         return load_dataset(config=dataset_config)

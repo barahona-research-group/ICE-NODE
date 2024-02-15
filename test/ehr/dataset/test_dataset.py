@@ -1,12 +1,17 @@
 import itertools
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
+from unittest import mock
 
 import equinox as eqx
+import pandas as pd
 import pytest
 
-from lib.ehr import CodingScheme
+from lib.ehr import CodingScheme, DatasetConfig
 from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
-from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, Dataset
+from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
+    Dataset, AbstractDatasetPipeline
+from lib.ehr.pipeline import SetIndex
+from test.ehr.dataset.conftest import NaiveDataset, Pipeline, IndexedDataset
 
 
 @pytest.fixture(params=[('x_id_alias', 'y_id_alias'), tuple()])
@@ -228,24 +233,89 @@ class TestDatasetScheme:
         # assert scheme.demographic_size == 3
 
 
+
+
+
 class TestDataset:
 
-    def test_save_load(self, dataset: Dataset, tmpdir: str):
-        pass
-        # dataset.save(f'{tmpdir}/test.h5', overwrite=False)
-        # loaded = Dataset.load(f'{tmpdir}/test.h5')
-        #
-        # assert loaded.equals(dataset)
+    def test_execute_pipeline(self, dataset: Dataset):
+        assert isinstance(dataset.core_pipeline, AbstractDatasetPipeline)
+        assert dataset.core_pipeline_report.equals(pd.DataFrame())
+        assert dataset.config.pipeline_executed is False
 
-    def test_load_overwrite(self, dataset: Dataset, tmpdir: str):
-        pass
-        # dataset.save(f'{tmpdir}/test.h5', overwrite=False)
-        # dataset.save(f'{tmpdir}/test.h5', overwrite=True)
-        # with pytest.raises(RuntimeError):
-        #     dataset.save(f'{tmpdir}/test.h5', overwrite=False)
+        dataset2 = dataset.execute_pipeline()
+        # Because we use identity pipeline, the dataset tables should be the same
+        # but the new dataset should have a different report (metadata).
+        assert not dataset2.equals(dataset) and dataset2.tables.equals(dataset.tables)
+        assert dataset2.core_pipeline_report.equals(pd.DataFrame({'action': ['*']}))
+        assert dataset2.config.pipeline_executed is True
 
-    def test_simple_pipeline(self, dataset: Dataset):
-        pass
+        with mock.patch('logging.warning') as mocker:
+            dataset3 = dataset2.execute_pipeline()
+            assert dataset3.equals(dataset2)
+            mocker.assert_called_once_with("Pipeline has already been executed. Doing nothing.")
 
-    def test_random_split(self):
-        pass
+    def test_subject_ids(self, dataset_config: DatasetConfig, dataset_tables: DatasetTables):
+        naive_dataset = NaiveDataset(config=dataset_config, tables=dataset_tables)
+        indexed_dataset = IndexedDataset(config=dataset_config, tables=dataset_tables)
+
+        with pytest.raises(AssertionError):
+            naive_dataset.subject_ids
+        with pytest.raises(AssertionError):
+            indexed_dataset.subject_ids
+
+        naive_dataset = naive_dataset.execute_pipeline()
+        indexed_dataset = indexed_dataset.execute_pipeline()
+        with pytest.raises(AssertionError):
+            naive_dataset.subject_ids
+
+        assert set(indexed_dataset.subject_ids) == set(indexed_dataset.tables.static.index.unique())
+
+    @pytest.mark.expensive_test
+    @pytest.mark.parametrize('overwrite', [True, False])
+    @pytest.mark.parametrize('execute_pipeline', [True, False])
+    def test_save_load(self, dataset: NaiveDataset, tmpdir: str, execute_pipeline: bool, overwrite: bool):
+        raw_dataset = dataset
+        if execute_pipeline:
+            dataset = dataset.execute_pipeline()
+
+        dataset.save(f'{tmpdir}/test_dataset', overwrite=False)
+        if overwrite:
+            dataset.save(f'{tmpdir}/test_dataset', overwrite=True)
+
+        with pytest.raises(RuntimeError):
+            dataset.save(f'{tmpdir}/test_dataset', overwrite=False)
+
+        loaded = type(dataset).load(f'{tmpdir}/test_dataset')
+        assert loaded.equals(dataset)
+        if execute_pipeline:
+            assert not loaded.equals(raw_dataset)
+            assert loaded.equals(raw_dataset.execute_pipeline())
+
+    @pytest.mark.parametrize('splits', [[0.1], [0.4, 0.8, 0.9], [0.3, 0.5, 0.7, 0.9], [0.5, 0.2]])
+    @pytest.mark.parametrize('balance', ['subjects', 'admissions', 'admissions_intervals', 'unsupported'])
+    def test_random_split(self, indexed_dataset: IndexedDataset, splits: List[float], balance: str):
+        dataset = indexed_dataset.execute_pipeline()
+        subjects = dataset.subject_ids
+        skip = False
+        if balance not in ('subjects', 'admissions', 'admissions_intervals'):
+            with pytest.raises(AssertionError):
+                dataset.random_splits(splits, balance=balance)
+            skip = True
+        if sorted(splits) != splits:
+            with pytest.raises(AssertionError):
+                dataset.random_splits(splits, balance=balance)
+            skip = True
+        if len(subjects) == 0:
+            with pytest.raises(AssertionError):
+                dataset.random_splits(splits, balance=balance)
+            skip = True
+        if balance in ('admissions', 'admissions_intervals') and len(dataset.tables.admissions) == 0:
+            with pytest.raises(AssertionError):
+                dataset.random_splits(splits, balance=balance)
+            skip = True
+        if skip:
+            return
+
+        subject_splits = dataset.random_splits(splits, balance=balance)
+        assert set.union(*list(map(set, subject_splits))) == set(subjects)

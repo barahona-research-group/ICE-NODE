@@ -7,7 +7,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List
+from typing import Dict, Optional, Union, Tuple, List, Any
 
 import equinox as eqx
 import numpy as np
@@ -34,7 +34,7 @@ class TableConfig(Config):
 
     @property
     def time_cols(self) -> Tuple[str, ...]:
-        return tuple(v for k, v in self.alias_dict.items() if 'time' in k or 'date' in k)
+        return tuple(v for k, v in self.alias_dict.items() if 'time' in k or 'date' in k )
 
     @property
     def coded_cols(self) -> Tuple[str, ...]:
@@ -185,6 +185,7 @@ class DatasetTablesConfig(Config):
             for k, v in self.__dict__.items()
             if isinstance(v, TableConfig) and len(v.time_cols) > 0
         }
+
 
     @property
     def code_column(self) -> Dict[str, str]:
@@ -372,9 +373,11 @@ class DatasetScheme(Module):
         return supported_attr_targets
 
 
-class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
+class AbstractDatasetTransformation(eqx.Module):
+    name: str = None
+
     @abstractmethod
-    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
         pass
 
 
@@ -382,10 +385,18 @@ class AbstractDatasetPipelineConfig(Config):
     pass
 
 
+class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
+    transformations: List[AbstractDatasetTransformation]
+
+    @abstractmethod
+    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
+        pass
+
+
 class DatasetConfig(Config):
     scheme: DatasetSchemeConfig
     tables: DatasetTablesConfig
-    dataset_pipeline: AbstractDatasetPipelineConfig
+    pipeline: AbstractDatasetPipelineConfig
     pipeline_executed: bool = False
 
 
@@ -410,15 +421,14 @@ class Dataset(Module):
     tables: DatasetTables
     scheme: DatasetScheme
     core_pipeline: AbstractDatasetPipeline
-    core_pipeline_report: pd.DataFrame = pd.DataFrame()
+    core_pipeline_report: pd.DataFrame
 
     def __init__(self, config: DatasetConfig, tables: DatasetTables):
         super().__init__(config=config)
         self.tables = tables
         self.scheme = DatasetScheme(config=config.scheme)
         self.core_pipeline = self._setup_core_pipeline(config)
-        self.secondary_pipelines_config = []
-        self.secondary_pipelines_report = []
+        self.core_pipeline_report = pd.DataFrame()
 
     @classmethod
     @abstractmethod
@@ -442,16 +452,23 @@ class Dataset(Module):
     @cached_property
     def subject_ids(self):
         assert self.config.pipeline_executed, "Pipeline must be executed first."
+        assert self.tables.static.index.name == self.config.tables.static.subject_id_alias, \
+            f"Index name of static table must be {self.config.tables.static.subject_id_alias}."
         return self.tables.static.index.unique()
 
     def random_splits(self,
                       splits: List[float],
                       subject_ids: Optional[List[str]] = None,
                       random_seed: int = 42,
-                      balanced: str = 'subjects',
-                      ignore_first_admission: bool = False):
+                      balance: str = 'subjects',
+                      discount_first_admission: bool = False):
+        assert list(splits) == sorted(splits), "Splits must be sorted."
+        assert balance in ('subjects', 'admissions',
+                            'admissions_intervals'), "Balanced must be'subjects', 'admissions', or 'admissions_intervals'."
         if subject_ids is None:
             subject_ids = self.subject_ids
+        assert len(subject_ids) > 0, "No subjects in the dataset."
+
         subject_ids = sorted(subject_ids)
 
         random.Random(random_seed).shuffle(subject_ids)
@@ -461,17 +478,20 @@ class Dataset(Module):
 
         admissions = self.tables.admissions[self.tables.admissions[c_subject_id].isin(subject_ids)]
 
-        if balanced == 'subjects':
+        if balance == 'subjects':
             probs = (np.ones(len(subject_ids)) / len(subject_ids)).cumsum()
 
-        elif balanced == 'admissions':
+        elif balance == 'admissions':
+            assert len(admissions) > 0, "No admissions in the dataset."
             n_admissions = admissions.groupby(c_subject_id).size()
-            if ignore_first_admission:
+            if discount_first_admission:
                 n_admissions = n_admissions - 1
             p_admissions = n_admissions.loc[subject_ids] / n_admissions.sum()
             probs = p_admissions.values.cumsum()
 
-        elif balanced == 'admissions_intervals':
+        elif balance == 'admissions_intervals':
+            assert len(admissions) > 0, "No admissions in the dataset."
+
             c_admittime = self.config.tables.admissions.admission_time_alias
             c_dischtime = self.config.tables.admissions.discharge_time_alias
 
@@ -482,7 +502,7 @@ class Dataset(Module):
             p_subject_intervals = subject_intervals_sum.loc[subject_ids] / subject_intervals_sum.sum()
             probs = p_subject_intervals.values.cumsum()
         else:
-            raise ValueError(f'Unknown balanced option: {balanced}')
+            raise ValueError(f'Unknown balanced option: {balance}')
 
         splits = np.searchsorted(probs, splits)
         return [a.tolist() for a in np.split(subject_ids, splits)]
@@ -503,18 +523,19 @@ class Dataset(Module):
         if config_path.exists():
             if overwrite:
                 config_path.unlink()
-        else:
-            raise RuntimeError(f'File {config_path} already exists.')
-        write_config(self.config.to_dict(), config_path)
+            else:
+                raise RuntimeError(f'File {config_path} already exists.')
+        write_config(self.config.to_dict(), str(config_path))
 
     @classmethod
     def load(cls, path: Union[str, Path]):
         path = Path(path)
         tables = DatasetTables.load(path.with_suffix('.tables.h5'))
-        config = DatasetConfig.from_dict(load_config(path.with_suffix('.config.json')))
+        config = DatasetConfig.from_dict(load_config(str(path.with_suffix('.config.json'))))
         dataset = cls(config=config, tables=tables)
         with pd.HDFStore(path.with_suffix('.pipeline.h5')) as store:
-            return eqx.tree_at(lambda x: x.core_pipeline_report, dataset, store['report'])
+            report = store['report'] if 'report' in store else pd.DataFrame()
+            return eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
 
 # TODO: 31 Jan 2024:
 #  - [x] change from_fit to __init__().fit()

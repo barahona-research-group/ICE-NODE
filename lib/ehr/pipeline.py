@@ -4,14 +4,15 @@ import logging
 import random
 from abc import abstractmethod, ABCMeta
 from collections import defaultdict
-from typing import Dict, Optional, Tuple, List, Any, Callable
+from dataclasses import field
+from typing import Dict, Optional, Tuple, List, Any, Callable, Union
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
 from .dataset import TimestampedTableConfig, IntervalBasedTableConfig, Dataset, AdmissionLinkedTableConfig, \
-    AbstractDatasetPipelineConfig, AbstractDatasetPipeline
+    AbstractDatasetTransformation, AbstractDatasetPipelineConfig, AbstractDatasetPipeline
 from ..base import Config, Module
 
 SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
@@ -28,14 +29,14 @@ class ReportAttributes(Config):
     additional_parameters: Dict[str, Any] = None
 
 
-class DatasetTransformation(Module):
+class DatasetTransformation(AbstractDatasetTransformation):
     name: str = None
 
     @property
     def additional_parameters(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k != 'name' or not k.startswith('_')}
+        return {k: v for k, v in self.__dict__.items() if k != 'name' and not k.startswith('_')}
 
-    def report(self, aux: Dict[str, Any], **kwargs):
+    def report(self, aux: Dict[str, Any], **kwargs) -> None:
         if aux.get('report') is None:
             aux['report'] = []
         additional_params_str = ', '.join([f"{k}={v}" for k, v in self.additional_parameters.items()])
@@ -43,8 +44,13 @@ class DatasetTransformation(Module):
                                               additional_parameters=additional_params_str,
                                               **kwargs))
 
-    def synchronize_index(self, dataset: Dataset, indexed_table_name: str,
-                          index_name: str, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+    def reporter(self) -> Callable:
+        return self.report
+
+    @staticmethod
+    def synchronize_index(dataset: Dataset, indexed_table_name: str,
+                          index_name: str, aux: Dict[str, Any],
+                          report: Callable) -> Tuple[Dataset, Dict[str, Any]]:
         tables_dict = dataset.tables.tables_dict
 
         target_tables = {  # tables that have admission_id as column
@@ -59,13 +65,15 @@ class DatasetTransformation(Module):
             n1 = len(table)
             table = table[table[index_name].isin(index)]
             n2 = len(table)
-            self.report(aux, table=table_name, column=index_name, before=n1, after=n2, value_type='count',
-                        operation='sync_index')
-            tables = eqx.tree_at(lambda x: getattr(tables, table_name), tables, table)
+            report(aux, table=table_name, column=index_name, before=n1, after=n2, value_type='count',
+                   operation='sync_index')
+            tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), aux
 
-    def filter_no_admission_subjects(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+    @staticmethod
+    def filter_no_admission_subjects(dataset: Dataset, aux: Dict[str, Any],
+                                     report: Callable) -> Tuple[Dataset, Dict[str, Any]]:
         static = dataset.tables.static
         admissions = dataset.tables.admissions
         c_subject = dataset.config.tables.static.subject_id_alias
@@ -73,24 +81,35 @@ class DatasetTransformation(Module):
         n1 = len(static)
         static = static.drop(no_admission_subjects, axis='index')
         n2 = len(static)
-        self.report(aux, table='static', column=c_subject, before=n1, after=n2, value_type='count',
-                    operation='filter_no_admission_subjects')
+        report(aux, table='static', column=c_subject, before=n1, after=n2, value_type='count',
+               operation='filter_no_admission_subjects')
         return eqx.tree_at(lambda x: x.tables.static, dataset, static), aux
 
-    def synchronize_admissions(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
-        dataset, aux = self.synchronize_index(dataset, 'admissions',
-                                              dataset.config.tables.admissions.admission_id_alias, aux)
-        return self.filter_no_admission_subjects(dataset, aux)
+    @classmethod
+    def synchronize_admissions(cls, dataset: Dataset, aux: Dict[str, Any],
+                               reporter: Callable) -> Tuple[Dataset, Dict[str, Any]]:
+        dataset, aux = cls.synchronize_index(dataset, 'admissions',
+                                             dataset.config.tables.admissions.admission_id_alias, aux,
+                                             reporter)
+        return cls.filter_no_admission_subjects(dataset, aux, reporter)
 
-    def synchronize_subjects(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+    @classmethod
+    def synchronize_subjects(cls, dataset: Dataset, aux: Dict[str, Any],
+                             reporter: Callable) -> Tuple[Dataset, Dict[str, Any]]:
         # Synchronizing subjects might entail synchronizing admissions, so we need to call it first
-        dataset, aux = self.synchronize_index(dataset, 'static',
-                                              dataset.config.tables.static.subject_id_alias, aux)
-        return self.synchronize_admissions(dataset, aux)
+        dataset, aux = cls.synchronize_index(dataset, 'static',
+                                             dataset.config.tables.static.subject_id_alias, aux, reporter)
+        return cls.synchronize_admissions(dataset, aux, reporter)
 
     @abstractmethod
     def __call__(self, dataset: Dataset, auxiliary) -> Tuple[Dataset, Dict[str, Any]]:
         pass
+
+
+class DatasetPipelineConfig(AbstractDatasetPipelineConfig):
+    overlapping_admissions: str = 'merge'
+    sample: Optional[int] = None
+    offset: Optional[int] = 0
 
 
 class DatasetPipeline(AbstractDatasetPipeline):
@@ -119,16 +138,10 @@ class DatasetPipeline(AbstractDatasetPipeline):
         return dataset, auxiliary
 
 
-class DatasetPipelineConfig(AbstractDatasetPipelineConfig):
-    overlapping_admissions: str = 'merge'
-    sample: Optional[int] = None
-    offset: Optional[int] = 0
-
-
 class SampleSubjects(DatasetTransformation):
-    n_subjects: int
-    seed: Optional[int]
-    offset: int
+    n_subjects: int = field(kw_only=True)
+    seed: Optional[int] = None
+    offset: int = 0
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         static = dataset.tables.static
@@ -137,17 +150,16 @@ class SampleSubjects(DatasetTransformation):
         assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
 
         rng = random.Random(self.seed)
-        subjects = static.index.unique()
-        subjects = subjects.tolist()
+        subjects = static.index.unique().tolist()
         rng.shuffle(subjects)
         subjects = subjects[self.offset:self.offset + self.n_subjects]
         n1 = len(static)
-        static = static[static[c_subject_id].isin(subjects)]
+        static = static.loc[subjects]
         n2 = len(static)
-        self.report(aux, table='static', column=c_subject_id, before=n1, after=n2, value_type='count',
+        self.report(aux, table='static', column='index', before=n1, after=n2, value_type='count',
                     operation='sample')
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return self.synchronize_subjects(dataset, aux)
+        return self.synchronize_subjects(dataset, aux, self.reporter())
 
 
 class CastTimestamps(DatasetTransformation):
@@ -215,13 +227,17 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
                           right_index=True,
                           how='left')
             for time_col in time_cols:
-                df = df.assign(time_col=(df[time_col] - df[c_admittime]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
+
+                df = df.assign(
+                    **{time_col: (df[time_col] - df[c_admittime]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER})
+
                 self.report(aux, table=table_name, column=time_col, before=table[time_col].dtype,
                             after=df[time_col].dtype,
                             value_type='dtype', operation='set_admission_relative_times')
 
             df = df[table.columns]
             dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, df)
+
         return dataset, aux
 
 
@@ -246,7 +262,7 @@ class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
         self.report(aux, table='static', column=c_subject, value_type='count', operation='filter',
                     before=n_before, after=n_after)
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return self.synchronize_subjects(dataset, aux)
+        return self.synchronize_subjects(dataset, aux, self.reporter())
 
 
 class SetCodeIntegerIndices(DatasetTransformation):
@@ -288,7 +304,8 @@ class SetIndex(DatasetTransformation):
 
 
 class ProcessOverlappingAdmissions(DatasetTransformation):
-    merge: bool  # if True, merge overlapping admissions. Otherwise, remove overlapping admissions.
+    merge: bool = field(
+        kw_only=True)  # if True, merge overlapping admissions. Otherwise, remove overlapping admissions.
 
     def map_admission_ids(self, dataset: Dataset, aux: Dict[str, Any], sub2sup: Dict[str, str]) -> Tuple[
         Dataset, Dict[str, Any]]:
@@ -308,7 +325,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             n2 = table[c_admission_id].nunique()
             self.report(aux, table=table_name, column=c_admission_id, before=n1, after=n2, value_type='nunique',
                         operation='map_admission_id')
-            tables = eqx.tree_at(lambda x: getattr(tables, table_name), tables, table)
+            tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), aux
 
@@ -328,17 +345,22 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         subject_admissions['prev_dischtime_cummax'] = subject_admissions['prev_dischtime'].cummax()
 
         # Get corresponding index of the maximum discharge time up to the current admission.
-        lambda_fn = lambda x: subject_admissions[subject_admissions['prev_dischtime_cummax'] == x].first_valid_index()
+        lambda_fn = lambda x: subject_admissions[subject_admissions[c_dischtime] == x].first_valid_index()
         subject_admissions['prev_dischtime_cummax_idx'] = subject_admissions['prev_dischtime_cummax'].map(lambda_fn)
 
         # Drop admissions with admittime after the prev_max discharge time. No overlaps with preceding admissions.
         # Note: this line needs to come after adding 'prev_dischtime_cummax_idx' column.
         subject_admissions = subject_admissions[
-            subject_admissions[c_admittime] > subject_admissions['prev_dischtime_cummax']]
+            subject_admissions[c_admittime] <= subject_admissions['prev_dischtime_cummax']]
         subject_admissions = subject_admissions[subject_admissions['prev_dischtime_cummax_idx'].notnull()]
 
         # New admissions mappings.
-        return subject_admissions['prev_dischtime_cummax_idx'].to_dict()
+        child2parent = subject_admissions['prev_dischtime_cummax_idx'].to_dict()
+        # Recursively map parents to further ancestors until the root admission.
+        while len(set(child2parent.values()).intersection(child2parent.keys())) > 0:
+            child2parent = {k: child2parent.get(v, v) for k, v in child2parent.items()}
+
+        return child2parent
 
     def _merge_overlapping_admissions(self,
                                       dataset: Dataset, aux: Dict[str, Any],
@@ -399,7 +421,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
                         before=n1, after=n2)
             dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
             # Step 4: synchronize subjects
-            return self.synchronize_subjects(dataset, aux)
+            return self.synchronize_subjects(dataset, aux, self.reporter())
 
 
 class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
@@ -499,11 +521,11 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
                     before=n1, after=n2,
                     operation='filter_invalid_input_rates_subjects')
 
-        return self.synchronize_subjects(dataset, aux)
+        return self.synchronize_subjects(dataset, aux, self.reporter())
 
 
 class ICUInputRateUnitConversion(DatasetTransformation):
-    conversion_table: pd.DataFrame
+    conversion_table: pd.DataFrame = field(kw_only=True)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         c_code = dataset.config.tables.icu_inputs.code_alias
@@ -540,17 +562,36 @@ class ICUInputRateUnitConversion(DatasetTransformation):
         return dataset, aux
 
 
+class RandomSplits(DatasetTransformation):
+    splits: List[float] = field(kw_only=True)
+    splits_key: str = field(kw_only=True)
+    seed: Optional[int] = None
+    balance: str = 'subjects'
+    discount_first_admission: bool = False
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        aux[self.splits_key] = dataset.random_splits(splits=self.splits,
+                                                     random_seed=self.seed,
+                                                     balance=self.balance,
+                                                     discount_first_admission=self.discount_first_admission)
+        self.report(aux, table='static', column=None, value_type='splits',
+                    operation=f'aux["{self.splits_key}"]<-dataset.random_splits',
+                    before=(len(dataset.tables.static),),
+                    after=tuple(len(x) for x in aux[self.splits_key]))
+        return dataset, aux
+
+
 class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
+    splits_key: str = field(kw_only=True)
+    training_split_index: Union[int, List[str]] = 0
     fitted_processor: str = 'obs_outlier_remover'
-    training_subject_ids: Optional[List[str]] = None
     fit_only: bool = False
     transformer_key: str = ''  # to be retrieved from aux.
 
     def get_training_split(self, aux: Dict[str, Any]) -> List[str]:
-        assert self.training_subject_ids is not None or 'splits' in aux, "Training subject ids cannot be retrieved." \
-                                                                         "Either set training_subject_ids or run the " \
-                                                                         "pipeline with a split transformation before."
-        return self.training_subject_ids or aux['splits'][0]
+        assert self.splits_key in aux, "Training subject ids cannot be retrieved." \
+                                       "{self.splits_key} not found in aux."
+        return aux[self.splits_key][self.training_split_index]
 
     def get_admission_ids(self, dataset: Dataset, aux: Dict[str, Any]) -> List[str]:
         c_subject_id = dataset.config.tables.static.subject_id_alias
