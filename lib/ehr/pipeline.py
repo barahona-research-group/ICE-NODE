@@ -307,7 +307,9 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
     merge: bool = field(
         kw_only=True)  # if True, merge overlapping admissions. Otherwise, remove overlapping admissions.
 
-    def map_admission_ids(self, dataset: Dataset, aux: Dict[str, Any], sub2sup: Dict[str, str]) -> Tuple[
+    @staticmethod
+    def map_admission_ids(dataset: Dataset, aux: Dict[str, Any], sub2sup: Dict[str, str],
+                          reporter: Callable) -> Tuple[
         Dataset, Dict[str, Any]]:
         tables_dict = dataset.tables.tables_dict
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
@@ -323,7 +325,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             n1 = table[c_admission_id].nunique()
             table = table.assign(c_admission_id=table[c_admission_id].map(sub2sup))
             n2 = table[c_admission_id].nunique()
-            self.report(aux, table=table_name, column=c_admission_id, before=n1, after=n2, value_type='nunique',
+            reporter(aux, table=table_name, column=c_admission_id, before=n1, after=n2, value_type='nunique',
                         operation='map_admission_id')
             tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
@@ -362,9 +364,10 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
         return child2parent
 
-    def _merge_overlapping_admissions(self,
+    @classmethod
+    def _merge_overlapping_admissions(cls,
                                       dataset: Dataset, aux: Dict[str, Any],
-                                      sub2sup: Dict[str, str]) -> Tuple[Dataset, Dict[str, Any]]:
+                                      sub2sup: Dict[str, str], reporter: Callable) -> Tuple[Dataset, Dict[str, Any]]:
         admissions = dataset.tables.admissions
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
         c_dischtime = dataset.config.tables.admissions.discharge_time_alias

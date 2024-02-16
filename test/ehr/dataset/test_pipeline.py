@@ -184,6 +184,46 @@ def test_set_relative_times(indexed_dataset: Dataset):
             assert table[col].min() >= 0
             assert all(table[col] <= table['los_hours'])
 
+@pytest.fixture
+def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
+    if len(indexed_dataset.tables.admissions) == 0:
+        pytest.skip("No admissions table found in dataset.")
+    admissions = indexed_dataset.tables.admissions.copy()
+    first_admission_i = admissions.index[0]
+    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
+    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
+    admittime = admissions.loc[first_admission_i, c_admittime]
+    dischtime = admissions.loc[first_admission_i, c_dischtime]
+    admissions.loc[first_admission_i, c_admittime] = dischtime
+    admissions.loc[first_admission_i, c_dischtime] = admittime
+    return eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
+
+def test_filter_subjects_negative_admission_length(indexed_dataset_first_negative_admission: Dataset):
+    dataset0 = indexed_dataset_first_negative_admission
+    admissions0 = dataset0.tables.admissions
+
+    dataset1, _ = FilterSubjectsNegativeAdmissionLength()(dataset0, {})
+    admissions1 = dataset1.tables.admissions
+    c_admittime = dataset1.config.tables.admissions.admission_time_alias
+    c_dischtime = dataset1.config.tables.admissions.discharge_time_alias
+
+
+    assert admissions0.shape[0] == admissions1.shape[0] + 1
+    assert admissions0.loc[admissions0.index[0], c_admittime] > admissions0.loc[admissions0.index[0], c_dischtime]
+    assert admissions0.index[0] not in admissions1.index
+    # Also assert synchronization.
+
+
+def set_code_integer_indices(indexed_dataset: Dataset):
+    dataset, _ = SetCodeIntegerIndices()(indexed_dataset, {})
+    for table_name, code_col in dataset.config.tables.code_column.items():
+        table = getattr(dataset.tables, table_name)
+        scheme = getattr(dataset.scheme, table_name).code_scheme
+        assert table[code_col].dtype == int
+        assert all(table[code_col].isin(scheme.codes.index.values()))
+
+
+
 
 def generate_admissions_from_pattern(pattern: List[str]) -> pd.DataFrame:
     if len(pattern) == 0:
