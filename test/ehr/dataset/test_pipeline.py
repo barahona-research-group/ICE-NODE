@@ -12,7 +12,7 @@ from lib.ehr import Dataset
 from lib.ehr.pipeline import DatasetTransformation, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
-    ObsIQROutlierRemover, RandomSplits
+    ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths
 from test.ehr.dataset.conftest import IndexedDataset
 
 
@@ -184,6 +184,7 @@ def test_set_relative_times(indexed_dataset: Dataset):
             assert table[col].min() >= 0
             assert all(table[col] <= table['los_hours'])
 
+
 @pytest.fixture
 def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
@@ -198,15 +199,15 @@ def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
     admissions.loc[first_admission_i, c_dischtime] = admittime
     return eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
 
+
 def test_filter_subjects_negative_admission_length(indexed_dataset_first_negative_admission: Dataset):
     dataset0 = indexed_dataset_first_negative_admission
     admissions0 = dataset0.tables.admissions
 
-    dataset1, _ = FilterSubjectsNegativeAdmissionLength()(dataset0, {})
+    dataset1, _ = FilterSubjectsNegativeAdmissionLengths()(dataset0, {})
     admissions1 = dataset1.tables.admissions
     c_admittime = dataset1.config.tables.admissions.admission_time_alias
     c_dischtime = dataset1.config.tables.admissions.discharge_time_alias
-
 
     assert admissions0.shape[0] == admissions1.shape[0] + 1
     assert admissions0.loc[admissions0.index[0], c_admittime] > admissions0.loc[admissions0.index[0], c_dischtime]
@@ -221,8 +222,6 @@ def set_code_integer_indices(indexed_dataset: Dataset):
         scheme = getattr(dataset.scheme, table_name).code_scheme
         assert table[code_col].dtype == int
         assert all(table[code_col].isin(scheme.codes.index.values()))
-
-
 
 
 def generate_admissions_from_pattern(pattern: List[str]) -> pd.DataFrame:
@@ -282,7 +281,56 @@ def test_overlapping_cases(admission_pattern, expected_out):
     assert sup2sub == expected_out
 
 
-def test_map_admission_ids(indexed_dataset: Dataset):
+@pytest.fixture
+def admission_ids_map(indexed_dataset: Dataset):
+    if len(indexed_dataset.tables.admissions) < 10:
+        pytest.skip("Not enough admissions for the test in dataset.")
+    index = indexed_dataset.tables.admissions.index
+    return {
+        index[1]: index[0],
+        index[2]: index[0],
+        index[3]: index[0],
+        index[5]: index[4],
+        index[6]: index[4],
+    }
+
+
+def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str, str]):
     # Assert no data loss from records.
     # Assert children admissions are mapped in records and removed from admissions.
-    pass
+    dataset, _ = ProcessOverlappingAdmissions._merge_overlapping_admissions(indexed_dataset, {},
+                                                                            admission_ids_map,
+                                                                            lambda *args, **kwargs: None)
+    admissions0 = indexed_dataset.tables.admissions
+    admissions1 = dataset.tables.admissions
+
+    assert len(admissions0) == len(admissions1) + len(admission_ids_map)
+    assert set(admissions1.index).issubset(set(admissions0.index))
+
+    c_admission_id = dataset.config.tables.admissions.admission_id_alias
+    for table_name, table in dataset.tables.tables_dict.items():
+        table0 = getattr(indexed_dataset.tables, table_name)
+        if c_admission_id in table.columns:
+            assert len(table) == len(table0)
+            assert set(table[c_admission_id]) - set(admissions1.index.values) == set()
+            assert set(table0[c_admission_id]) - set(admissions0.index.values) == set()
+            assert set(table[c_admission_id]) - set(table0[c_admission_id]) == set()
+
+
+def test_merge_overlapping_admissions(indexed_dataset: Dataset):
+    if len(indexed_dataset.tables.admissions) == 0:
+        pytest.skip("No admissions in dataset.")
+    admissions = indexed_dataset.tables.admissions
+    c_subject_id = indexed_dataset.config.tables.admissions.subject_id_alias
+    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
+    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
+
+    sub2sup = {adm_id: super_adm_id for _, subject_adms in admissions.groupby(c_subject_id)
+               for adm_id, super_adm_id in ProcessOverlappingAdmissions._collect_overlaps(subject_adms,
+                                                                                          c_admittime,
+                                                                                          c_dischtime).items()}
+
+    if len(sub2sup) == 0:
+        pytest.skip("No overlapping admissions in dataset.")
+
+    assert False

@@ -227,7 +227,6 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
                           right_index=True,
                           how='left')
             for time_col in time_cols:
-
                 df = df.assign(
                     **{time_col: (df[time_col] - df[c_admittime]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER})
 
@@ -309,8 +308,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
     @staticmethod
     def map_admission_ids(dataset: Dataset, aux: Dict[str, Any], sub2sup: Dict[str, str],
-                          reporter: Callable) -> Tuple[
-        Dataset, Dict[str, Any]]:
+                          reporter: Callable) -> Tuple[Dataset, Dict[str, Any]]:
         tables_dict = dataset.tables.tables_dict
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
 
@@ -323,10 +321,10 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         tables = dataset.tables
         for table_name, table in target_tables.items():
             n1 = table[c_admission_id].nunique()
-            table = table.assign(c_admission_id=table[c_admission_id].map(sub2sup))
+            table[c_admission_id] = table[c_admission_id].map(lambda i: sub2sup.get(i, i))
             n2 = table[c_admission_id].nunique()
             reporter(aux, table=table_name, column=c_admission_id, before=n1, after=n2, value_type='nunique',
-                        operation='map_admission_id')
+                     operation='map_admission_id')
             tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), aux
@@ -389,12 +387,12 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         admissions = admissions.drop(list(sub2sup.keys()), axis='index')
         n2 = len(admissions)
         dataset = eqx.tree_at(lambda x: x.tables.admissions, dataset, admissions)
-        self.report(aux, table='admissions', column=c_admission_id, value_type='count',
-                    operation='merge_overlapping_admissions',
-                    before=n1, after=n2)
+        reporter(aux, table='admissions', column=c_admission_id, value_type='count',
+                 operation='merge_overlapping_admissions',
+                 before=n1, after=n2)
 
         # Step 4: update admission ids in other tables.
-        return self.map_admission_ids(dataset, aux, sub2sup)
+        return cls.map_admission_ids(dataset, aux, sub2sup, reporter)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         admissions = dataset.tables.admissions
@@ -411,7 +409,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         if self.merge:
             # Step 3: Extend discharge time of super admissions, remove sub-admissions,
             # and update admission ids in other tables.
-            return self._merge_overlapping_admissions(dataset, aux, sub2sup)
+            return self._merge_overlapping_admissions(dataset, aux, sub2sup, self.reporter())
         else:
             # Step 3: Collect subjects with at least one overlapping admission and remove them entirely.
             subject_ids = admissions.loc[sub2sup.keys(), c_subject_id].unique()
