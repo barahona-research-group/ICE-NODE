@@ -1267,3 +1267,11 @@ class Patients(Module):
         else:
             _np = np
         return [_np.ones_like(a.outcome.vec, dtype=bool) for a in adms]
+
+## TODO:
+# [ ] Three modes of temporal EHR access:
+#   - [ ] Discharge timestamps access.
+#   - [ ] Interval-based access.
+#   - [ ] Timestamp-based access.
+
+

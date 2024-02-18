@@ -333,4 +333,141 @@ def test_merge_overlapping_admissions(indexed_dataset: Dataset):
     if len(sub2sup) == 0:
         pytest.skip("No overlapping admissions in dataset.")
 
+    merged_dataset, _ = ProcessOverlappingAdmissions(merge=True)(indexed_dataset, {})
+    filtered_dataset, _ = ProcessOverlappingAdmissions(merge=False)(indexed_dataset, {})
+    admissions0 = indexed_dataset.tables.admissions
+    admissions_m = merged_dataset.tables.admissions
+    admissions_f = filtered_dataset.tables.admissions
+
+    assert len(admissions0) == len(admissions_m) + len(sub2sup)
+    assert len(admissions_m) > len(admissions_f)
+
+    c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
+    for table_name, table0 in indexed_dataset.tables.tables_dict.items():
+        table_m = getattr(merged_dataset.tables, table_name)
+        table_f = getattr(filtered_dataset.tables, table_name)
+
+        if c_admission_id in table0.columns and len(table0) > 0:
+            assert len(table_m) == len(table0)
+            assert set(table_m[c_admission_id]) - set(admissions_m.index.values) == set()
+            assert set(table0[c_admission_id]) - set(admissions0.index.values) == set()
+            assert set(table_m[c_admission_id]) - set(table0[c_admission_id]) == set()
+            assert len(table_f) <= len(table0)
+            assert set(table_f[c_admission_id]).intersection(set(sub2sup.keys()) | set(sub2sup.values())) == set()
+
+
+@pytest.fixture
+def shifted_timestamps_dataset(indexed_dataset: Dataset):
+    if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):
+        pytest.skip("No temporal data in dataset.")
+
+    admissions = indexed_dataset.tables.admissions
+
+    c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
+    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
+    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
+    admission_id = admissions.index[0]
+    admittime = admissions.loc[admission_id, c_admittime]
+    dischtime = admissions.loc[admission_id, c_dischtime]
+    if 'obs' in indexed_dataset.tables.tables_dict:
+        c_time = indexed_dataset.config.tables.obs.time_alias
+
+        obs = indexed_dataset.tables.obs.copy()
+        admission_obs = obs[obs[c_admission_id] == admission_id]
+        if len(admission_obs) > 0:
+            obs.loc[admission_obs.index[0], c_time] = dischtime + pd.Timedelta(days=1)
+        if len(admission_obs) > 1:
+            obs.loc[admission_obs.index[1], c_time] = admittime + pd.Timedelta(days=-1)
+        indexed_dataset = eqx.tree_at(lambda x: x.tables.obs, indexed_dataset, obs)
+    for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
+        if k in indexed_dataset.tables.tables_dict:
+            c_starttime = getattr(indexed_dataset.config.tables, k).start_time_alias
+            c_endtime = getattr(indexed_dataset.config.tables, k).end_time_alias
+            procedures = getattr(indexed_dataset.tables, k).copy()
+
+            admission_procedures = procedures[procedures[c_admission_id] == admission_id]
+            if len(admission_procedures) > 0:
+                procedures.loc[admission_procedures.index[0], c_starttime] = admittime + pd.Timedelta(days=-1)
+                procedures.loc[admission_procedures.index[0], c_endtime] = dischtime + pd.Timedelta(days=1)
+
+            if len(admission_procedures) > 1:
+                procedures.loc[admission_procedures.index[1], c_starttime] = dischtime + pd.Timedelta(days=1)
+                procedures.loc[admission_procedures.index[1], c_endtime] = dischtime + pd.Timedelta(days=2)
+
+            if len(admission_procedures) > 2:
+                procedures.loc[admission_procedures.index[2], c_starttime] = admittime + pd.Timedelta(days=-2)
+                procedures.loc[admission_procedures.index[2], c_endtime] = admittime + pd.Timedelta(days=-1)
+
+            indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, k), indexed_dataset, procedures)
+
+    return indexed_dataset
+
+
+def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Dataset):
+    fixed_dataset, _ = FilterClampTimestampsToAdmissionInterval()(shifted_timestamps_dataset, {})
+    admissions = shifted_timestamps_dataset.tables.admissions
+
+    c_admission_id = shifted_timestamps_dataset.config.tables.admissions.admission_id_alias
+    c_admittime = shifted_timestamps_dataset.config.tables.admissions.admission_time_alias
+    c_dischtime = shifted_timestamps_dataset.config.tables.admissions.discharge_time_alias
+    admission_id = admissions.index[0]
+    admittime = admissions.loc[admission_id, c_admittime]
+    dischtime = admissions.loc[admission_id, c_dischtime]
+
+    if 'obs' in shifted_timestamps_dataset.tables.tables_dict:
+        c_time = shifted_timestamps_dataset.config.tables.obs.time_alias
+
+        obs0 = shifted_timestamps_dataset.tables.obs
+        obs1 = fixed_dataset.tables.obs
+
+        admission_obs0 = obs0[obs0[c_admission_id] == admission_id]
+        admission_obs1 = obs1[obs1[c_admission_id] == admission_id]
+        if len(admission_obs0) > 0:
+            assert len(admission_obs0) > len(admission_obs1)
+            assert not admission_obs0[c_time].between(admittime, dischtime).all()
+            assert admission_obs1[c_time].between(admittime, dischtime).all()
+
+    for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
+        if k in shifted_timestamps_dataset.tables.tables_dict:
+            c_starttime = getattr(shifted_timestamps_dataset.config.tables, k).start_time_alias
+            c_endtime = getattr(shifted_timestamps_dataset.config.tables, k).end_time_alias
+            procedures0 = getattr(shifted_timestamps_dataset.tables, k)
+            procedures1 = getattr(fixed_dataset.tables, k)
+
+            admission_procedures0 = procedures0[procedures0[c_admission_id] == admission_id]
+            admission_procedures1 = procedures1[procedures1[c_admission_id] == admission_id]
+            if len(admission_procedures0) > 0:
+                assert len(admission_procedures0) >= len(admission_procedures1)
+                assert admission_procedures1[c_starttime].between(admittime, dischtime).all()
+                assert admission_procedures1[c_endtime].between(admittime, dischtime).all()
+
+            if len(admission_procedures0) > 1:
+                assert len(admission_procedures0) > len(admission_procedures1)
+
+
+def test_filter_invalid_input_rates_subjects(indexed_dataset: Dataset):
+    assert False
+
+
+def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset):
+    assert False
+
+
+def test_random_splits(indexed_dataset: Dataset):
+    assert False
+
+
+def test_obs_iqr_outlier_remover(indexed_dataset: Dataset):
+    assert False
+
+
+def test_obs_zscore_scaler(indexed_dataset: Dataset):
+    assert False
+
+
+def test_obs_minmax_scaler(indexed_dataset: Dataset):
+    assert False
+
+
+def test_obs_adaptive_scaler(indexed_dataset: Dataset):
     assert False
