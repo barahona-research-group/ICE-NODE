@@ -5,7 +5,7 @@ import random
 from abc import abstractmethod, ABCMeta
 from collections import defaultdict
 from dataclasses import field
-from typing import Dict, Optional, Tuple, List, Any, Callable, Union
+from typing import Dict, Optional, Tuple, List, Any, Callable, Union, ClassVar, Type
 
 import equinox as eqx
 import numpy as np
@@ -31,6 +31,8 @@ class ReportAttributes(Config):
 
 class DatasetTransformation(AbstractDatasetTransformation):
     name: str = None
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = tuple()
+    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = tuple()
 
     @property
     def additional_parameters(self) -> Dict[str, Any]:
@@ -115,6 +117,24 @@ class DatasetPipelineConfig(AbstractDatasetPipelineConfig):
 class DatasetPipeline(AbstractDatasetPipeline):
     transformations: List[DatasetTransformation]
 
+    def __init__(self, transformations: List[DatasetTransformation]):
+        super().__init__(config=Config())
+        self.transformations = transformations
+        self._validate_transformation_sequence()
+
+    def _validate_transformation_sequence(self):
+        applied_set = set()
+        for t in self.transformations:
+            if t.name in applied_set:
+                raise ValueError(f"Transformation {t.name} applied more than once.")
+            applied_set.add(t.name)
+            for d in t.dependencies:
+                assert any(isinstance(x, d) for x in applied_set), \
+                    f"Transformation {t.name} depends on {d.__name__} which was not applied before."
+            for b in t.blockers:
+                assert all(not isinstance(x, b) for x in applied_set), \
+                    f"Transformation {t.name} is blocked by {b.__name__} which was applied before."
+
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, Any]]:
         auxiliary = {'report': []}
         current_report_list = []
@@ -138,10 +158,28 @@ class DatasetPipeline(AbstractDatasetPipeline):
         return dataset, auxiliary
 
 
+class SetIndex(DatasetTransformation):
+    name: str = 'SetIndex'
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        tables_dict = dataset.tables.tables_dict
+        for indexed_table_name, index_name in dataset.config.tables.indices.items():
+            table = tables_dict[indexed_table_name]
+            index1 = table.index.name
+            table = table.set_index(index_name)
+            index2 = table.index.name
+            self.report(aux, table=indexed_table_name, column=index_name, before=index1, after=index2,
+                        value_type='index_name',
+                        operation='set_index')
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, indexed_table_name), dataset, table)
+        return dataset, aux
+
+
 class SampleSubjects(DatasetTransformation):
     n_subjects: int = field(kw_only=True)
     seed: Optional[int] = None
     offset: int = 0
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex,)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         static = dataset.tables.static
@@ -187,23 +225,9 @@ class CastTimestamps(DatasetTransformation):
         return eqx.tree_at(lambda x: x.tables, dataset, tables), aux
 
 
-class FilterUnsupportedCodes(DatasetTransformation):
-
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        tables_dict = dataset.tables.tables_dict
-        for table_name, code_column in dataset.config.tables.code_column.items():
-            table = tables_dict[table_name]
-            coding_scheme = getattr(dataset.scheme, table_name)
-            n1 = len(table)
-            table = table[table[code_column].isin(coding_scheme.codes)]
-            n2 = len(table)
-            self.report(aux, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
-                        operation='filter')
-            dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, table)
-        return dataset, aux
-
-
 class SetAdmissionRelativeTimes(DatasetTransformation):
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (CastTimestamps, SetIndex)
+
     @staticmethod
     def temporal_admission_linked_table(dataset: Dataset, table_name: str) -> bool:
         conf = getattr(dataset.config.tables, table_name)
@@ -242,6 +266,7 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
 
 class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
     name: str = 'FilterSubjectsNegativeAdmissionLengths'
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (CastTimestamps, SetIndex)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         c_subject = dataset.config.tables.static.subject_id_alias
@@ -279,32 +304,34 @@ class SetCodeIntegerIndices(DatasetTransformation):
             self.report(aux, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
                         operation='filter_unsupported_codes')
             self.report(aux, table=table_name, column=code_column, before=dtype1, after=dtype2, value_type='dtype',
-                        operation='set_index')
+                        operation='code_integer_index')
 
             dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, table)
         return dataset, aux
 
 
-class SetIndex(DatasetTransformation):
-    name: str = 'SetIndex'
+class FilterUnsupportedCodes(DatasetTransformation):
+    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices,)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         tables_dict = dataset.tables.tables_dict
-        for indexed_table_name, index_name in dataset.config.tables.indices.items():
-            table = tables_dict[indexed_table_name]
-            index1 = table.index.name
-            table = table.set_index(index_name)
-            index2 = table.index.name
-            self.report(aux, table=indexed_table_name, column=index_name, before=index1, after=index2,
-                        value_type='index_name',
-                        operation='set_index')
-            dataset = eqx.tree_at(lambda x: getattr(x.tables, indexed_table_name), dataset, table)
+        for table_name, code_column in dataset.config.tables.code_column.items():
+            table = tables_dict[table_name]
+            coding_scheme = getattr(dataset.scheme, table_name)
+            n1 = len(table)
+            table = table[table[code_column].isin(coding_scheme.codes)]
+            n2 = len(table)
+            self.report(aux, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
+                        operation='filter')
+            dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, table)
         return dataset, aux
 
 
 class ProcessOverlappingAdmissions(DatasetTransformation):
     merge: bool = field(
         kw_only=True)  # if True, merge overlapping admissions. Otherwise, remove overlapping admissions.
+
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps,)
 
     @staticmethod
     def map_admission_ids(dataset: Dataset, aux: Dict[str, Any], sub2sup: Dict[str, str],
@@ -426,6 +453,8 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
 
 class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps,)
+    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetAdmissionRelativeTimes,)
 
     def _filter_timestamped_tables(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
         timestamped_tables_conf = dataset.config.tables.timestamped_table_config_dict
@@ -489,44 +518,9 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
         return self._filter_interval_based_tables(dataset, aux)
 
 
-class FilterInvalidInputRatesSubjects(DatasetTransformation):
-
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
-        c_subject_id = dataset.config.tables.admissions.subject_id_alias
-
-        icu_inputs = dataset.tables.icu_inputs
-        static = dataset.tables.static
-        admissions = dataset.tables.admissions
-
-        nan_input_rates = icu_inputs[icu_inputs[c_normalized_amount_per_hour].isnull()]
-        n_nan_inputs = len(nan_input_rates)
-        nan_adm_ids = nan_input_rates[c_admission_id].unique()
-        n_nan_adms = len(nan_adm_ids)
-
-        nan_subject_ids = admissions[admissions.index.isin(nan_adm_ids)][c_subject_id].unique()
-        n_nan_subjects = len(nan_subject_ids)
-
-        self.report(aux, table=('icu_inputs', 'admissions', 'static'),
-                    column=(c_normalized_amount_per_hour, c_admission_id, c_subject_id),
-                    value_type='nan_counts',
-                    before=(n_nan_inputs, n_nan_adms, n_nan_subjects),
-                    after=None,
-                    operation='filter_invalid_input_rates_subjects')
-
-        n1 = len(static)
-        static = static[~static[c_subject_id].isin(nan_subject_ids)]
-        n2 = len(static)
-        self.report(aux, table='static', column=c_subject_id, value_type='count',
-                    before=n1, after=n2,
-                    operation='filter_invalid_input_rates_subjects')
-
-        return self.synchronize_subjects(dataset, aux, self.reporter())
-
-
 class ICUInputRateUnitConversion(DatasetTransformation):
     conversion_table: pd.DataFrame = field(kw_only=True)
+    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices,)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         c_code = dataset.config.tables.icu_inputs.code_alias
@@ -563,12 +557,51 @@ class ICUInputRateUnitConversion(DatasetTransformation):
         return dataset, aux
 
 
+class FilterInvalidInputRatesSubjects(DatasetTransformation):
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, ICUInputRateUnitConversion)
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        c_subject_id = dataset.config.tables.admissions.subject_id_alias
+
+        icu_inputs = dataset.tables.icu_inputs
+        static = dataset.tables.static
+        admissions = dataset.tables.admissions
+
+        nan_input_rates = icu_inputs[icu_inputs[c_normalized_amount_per_hour].isnull()]
+        n_nan_inputs = len(nan_input_rates)
+        nan_adm_ids = nan_input_rates[c_admission_id].unique()
+        n_nan_adms = len(nan_adm_ids)
+
+        nan_subject_ids = admissions[admissions.index.isin(nan_adm_ids)][c_subject_id].unique()
+        n_nan_subjects = len(nan_subject_ids)
+
+        self.report(aux, table=('icu_inputs', 'admissions', 'static'),
+                    column=(c_normalized_amount_per_hour, c_admission_id, c_subject_id),
+                    value_type='nan_counts',
+                    before=(n_nan_inputs, n_nan_adms, n_nan_subjects),
+                    after=None,
+                    operation='filter_invalid_input_rates_subjects')
+
+        n1 = len(static)
+        static = static[~static.index.isin(nan_subject_ids)]
+        n2 = len(static)
+        self.report(aux, table='static', column=c_subject_id, value_type='count',
+                    before=n1, after=n2,
+                    operation='filter_invalid_input_rates_subjects')
+        dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
+        return self.synchronize_subjects(dataset, aux, self.reporter())
+
+
 class RandomSplits(DatasetTransformation):
     splits: List[float] = field(kw_only=True)
     splits_key: str = field(kw_only=True)
     seed: Optional[int] = None
     balance: str = 'subjects'
     discount_first_admission: bool = False
+
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
         aux[self.splits_key] = dataset.random_splits(splits=self.splits,
@@ -588,6 +621,7 @@ class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
     fitted_processor: str = 'obs_outlier_remover'
     fit_only: bool = False
     transformer_key: str = ''  # to be retrieved from aux.
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex)
 
     def get_training_split(self, aux: Dict[str, Any]) -> List[str]:
         assert self.splits_key in aux, "Training subject ids cannot be retrieved." \
@@ -600,7 +634,7 @@ class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
         admissions = dataset.tables.admissions[[c_subject_id]]
         assert c_admission_id in admissions.index.names, f"Column {c_admission_id} not found in admissions table index."
         training_subject_ids = self.get_training_split(aux)
-        return admissions[admissions[c_subject_id].isin(training_subject_ids)][c_admission_id].unique()
+        return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique()
 
 
 class ObsIQROutlierRemover(TrainableTransformation):

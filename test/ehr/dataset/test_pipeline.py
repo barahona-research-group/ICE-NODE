@@ -341,6 +341,7 @@ def test_merge_overlapping_admissions(indexed_dataset: Dataset):
 
     assert len(admissions0) == len(admissions_m) + len(sub2sup)
     assert len(admissions_m) > len(admissions_f)
+    assert len(merged_dataset.tables.static) > len(filtered_dataset.tables.static)
 
     c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
     for table_name, table0 in indexed_dataset.tables.tables_dict.items():
@@ -445,8 +446,40 @@ def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Data
                 assert len(admission_procedures0) > len(admission_procedures1)
 
 
-def test_filter_invalid_input_rates_subjects(indexed_dataset: Dataset):
-    assert False
+@pytest.fixture
+def nan_inputs_dataset(indexed_dataset: Dataset):
+    if 'icu_inputs' not in indexed_dataset.tables.tables_dict or len(indexed_dataset.tables.icu_inputs) == 0:
+        pytest.skip("No ICU inputs in dataset.")
+    c_rate = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    c_admission_id = indexed_dataset.config.tables.icu_inputs.admission_id_alias
+    icu_inputs = indexed_dataset.tables.icu_inputs.copy()
+    admission_id = icu_inputs.iloc[0][c_admission_id]
+    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_rate] = np.nan
+    return eqx.tree_at(lambda x: x.tables.icu_inputs, indexed_dataset, icu_inputs)
+
+
+def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
+    fixed_dataset, _ = FilterInvalidInputRatesSubjects()(nan_inputs_dataset, {})
+    icu_inputs0 = nan_inputs_dataset.tables.icu_inputs
+    admissions0 = nan_inputs_dataset.tables.admissions
+    static0 = nan_inputs_dataset.tables.static
+
+    icu_inputs1 = fixed_dataset.tables.icu_inputs
+    admissions1 = fixed_dataset.tables.admissions
+    static1 = fixed_dataset.tables.static
+
+    c_rate = nan_inputs_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    c_admission_id = nan_inputs_dataset.config.tables.icu_inputs.admission_id_alias
+    c_subject_id = nan_inputs_dataset.config.tables.admissions.subject_id_alias
+    admission_id = icu_inputs0.iloc[0][c_admission_id]
+    subject_id = static0[static0.index == admissions0.loc[admission_id, c_subject_id]].index[0]
+    subject_admissions = admissions0[admissions0[c_subject_id] == subject_id]
+
+    assert not subject_id in static1.index
+    assert not subject_admissions.index.isin(admissions1.index).all()
+    assert not subject_admissions.index.isin(icu_inputs1[c_admission_id]).all()
+    assert icu_inputs0[c_rate].isna().any()
+    assert not icu_inputs1[c_rate].isna().any()
 
 
 def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset):

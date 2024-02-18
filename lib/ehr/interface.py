@@ -1269,9 +1269,17 @@ class Patients(Module):
         return [_np.ones_like(a.outcome.vec, dtype=bool) for a in adms]
 
 ## TODO:
-# [ ] Three modes of temporal EHR access:
+# [ ] Four modes of temporal EHR access:
 #   - [ ] Discharge timestamps access.
 #   - [ ] Interval-based access.
 #   - [ ] Timestamp-based access.
+#   - [ ] Time-binning.
 
 
+## TODO:
+# Roadmap:
+# [ ] Add support for FHIR resources.
+# [ ] Add support for medication and prescriptions.
+# [ ] Add support for referrals and locations.
+# [ ] Add examples folder.
+# [ ] Add support for process-mining models.
