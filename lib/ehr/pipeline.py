@@ -528,27 +528,28 @@ class ICUInputRateUnitConversion(DatasetTransformation):
         c_start_time = dataset.config.tables.icu_inputs.start_time_alias
         c_end_time = dataset.config.tables.icu_inputs.end_time_alias
         c_amount_unit = dataset.config.tables.icu_inputs.amount_unit_alias
-        c_amount_per_hour = dataset.config.tables.icu_inputs.derived_amount_per_hour
+        c_normalized_amount = dataset.config.tables.icu_inputs.derived_normalized_amount
         c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
         c_universal_unit = dataset.config.tables.icu_inputs.derived_universal_unit
         c_normalization_factor = dataset.config.tables.icu_inputs.derived_unit_normalization_factor
         icu_inputs = dataset.tables.icu_inputs
+
+        _derived_columns = [c_normalized_amount, c_normalized_amount_per_hour, c_universal_unit, c_normalization_factor]
         assert (c in icu_inputs.columns for c in [c_code, c_amount, c_amount_unit]), \
             f"Some columns in: {c_code}, {c_amount}, {c_amount_unit}, not found in icu_inputs table"
-        assert c_amount_per_hour not in icu_inputs.columns and c_normalized_amount_per_hour not in icu_inputs.columns, \
-            f"Column {c_amount_per_hour} or {c_normalized_amount_per_hour} already exists in icu_inputs table"
-        assert (c in self.conversion_table for c in [c_code, c_amount_unit, c_universal_unit,
-                                                     c_normalization_factor]), \
-            f"Some columns in: {', '.join([c_code, c_amount_unit, c_universal_unit, c_normalization_factor])}, not " \
+        assert all(c not in icu_inputs.columns for c in _derived_columns), \
+            f"Some of these columns [{', '.join(_derived_columns)}] already exists in icu_inputs table"
+        assert (c in self.conversion_table for c in _derived_columns[2:]), \
+            f"Some columns in: {', '.join(_derived_columns[2:])}, not " \
             "found in the conversion table"
 
         df = pd.merge(icu_inputs, self.conversion_table, how='left',
                       on=[c_code, c_amount_unit])
+
         delta_hours = ((df[c_end_time] - df[c_start_time]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
-        df[c_amount_per_hour] = df[c_amount] / delta_hours
-        df[c_normalized_amount_per_hour] = df[c_amount_per_hour] * df[c_normalization_factor]
-        df = df[icu_inputs.columns + [c_amount_per_hour, c_normalized_amount_per_hour,
-                                      c_universal_unit, c_normalization_factor]]
+        df[c_normalized_amount] = df[c_amount] * df[c_normalization_factor]
+        df[c_normalized_amount_per_hour] = df[c_normalized_amount] / delta_hours
+        df = df[icu_inputs.columns.tolist() + _derived_columns]
         dataset = eqx.tree_at(lambda x: x.tables.icu_inputs, dataset, df)
         self.report(aux, table='icu_inputs', column=None,
                     value_type='columns', operation='new_columns',
@@ -561,7 +562,7 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
     dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, ICUInputRateUnitConversion)
 
     def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        c_rate = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
         c_subject_id = dataset.config.tables.admissions.subject_id_alias
 
@@ -569,7 +570,7 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         static = dataset.tables.static
         admissions = dataset.tables.admissions
 
-        nan_input_rates = icu_inputs[icu_inputs[c_normalized_amount_per_hour].isnull()]
+        nan_input_rates = icu_inputs[icu_inputs[c_rate].isnull()]
         n_nan_inputs = len(nan_input_rates)
         nan_adm_ids = nan_input_rates[c_admission_id].unique()
         n_nan_adms = len(nan_adm_ids)
@@ -578,7 +579,7 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         n_nan_subjects = len(nan_subject_ids)
 
         self.report(aux, table=('icu_inputs', 'admissions', 'static'),
-                    column=(c_normalized_amount_per_hour, c_admission_id, c_subject_id),
+                    column=(c_rate, c_admission_id, c_subject_id),
                     value_type='nan_counts',
                     before=(n_nan_inputs, n_nan_adms, n_nan_subjects),
                     after=None,

@@ -34,7 +34,7 @@ class TableConfig(Config):
 
     @property
     def time_cols(self) -> Tuple[str, ...]:
-        return tuple(v for k, v in self.alias_dict.items() if 'time' in k or 'date' in k )
+        return tuple(v for k, v in self.alias_dict.items() if 'time' in k or 'date' in k)
 
     @property
     def coded_cols(self) -> Tuple[str, ...]:
@@ -114,10 +114,10 @@ class AdmissionIntervalBasedCodedTableConfig(IntervalBasedTableConfig, CodedTabl
 class RatedInputTableConfig(AdmissionIntervalBasedCodedTableConfig):
     amount_alias: str
     amount_unit_alias: str
-    derived_amount_per_hour: str
-    derived_normalized_amount_per_hour: str
     derived_unit_normalization_factor: str
     derived_universal_unit: str
+    derived_normalized_amount: str
+    derived_normalized_amount_per_hour: str
 
 
 class DatasetTablesConfig(Config):
@@ -185,7 +185,6 @@ class DatasetTablesConfig(Config):
             for k, v in self.__dict__.items()
             if isinstance(v, TableConfig) and len(v.time_cols) > 0
         }
-
 
     @property
     def code_column(self) -> Dict[str, str]:
@@ -464,7 +463,7 @@ class Dataset(Module):
                       discount_first_admission: bool = False):
         assert list(splits) == sorted(splits), "Splits must be sorted."
         assert balance in ('subjects', 'admissions',
-                            'admissions_intervals'), "Balanced must be'subjects', 'admissions', or 'admissions_intervals'."
+                           'admissions_intervals'), "Balanced must be'subjects', 'admissions', or 'admissions_intervals'."
         if subject_ids is None:
             subject_ids = self.subject_ids
         assert len(subject_ids) > 0, "No subjects in the dataset."

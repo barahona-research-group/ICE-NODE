@@ -94,7 +94,7 @@ class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
     end_time_alias: str = 'end_time'
     code_alias: str = 'code'
     description_alias: str = 'description'
-    derived_amount_per_hour: str = 'derived_amount_per_hour'
+    derived_normalized_amount: str = 'derived_normalized_amount'
     derived_universal_unit: str = 'derived_universal_unit'
     derived_unit_normalization_factor: str = 'derived_unit_normalization_factor'
     derived_normalized_amount_per_hour: str = 'derived_normalized_amount_per_hour'

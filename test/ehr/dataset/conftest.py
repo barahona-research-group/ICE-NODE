@@ -227,8 +227,8 @@ def icu_input_amount_unit_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_amount_per_hour'])
-def icu_input_derived_amount_per_hour(request):
+@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_normalized_amount'])
+def icu_input_derived_normalized_amount(request):
     return request.param
 
 
@@ -252,7 +252,7 @@ def icu_input_table_config(admission_table_config: AdmissionTableConfig,
                            icu_input_code_alias: str,
                            icu_input_code_desc_alias: str, icu_input_start_time_alias: str,
                            icu_input_end_time_alias: str, icu_input_amount_alias: str, icu_input_amount_unit_alias: str,
-                           icu_input_derived_amount_per_hour: str, icu_input_derived_normalized_amount_per_hour: str,
+                           icu_input_derived_normalized_amount: str, icu_input_derived_normalized_amount_per_hour: str,
                            icu_input_derived_unit_normalization_factor: str,
                            icu_input_derived_universal_unit: str) -> RatedInputTableConfig:
     return RatedInputTableConfig(admission_id_alias=admission_table_config.admission_id_alias,
@@ -262,7 +262,7 @@ def icu_input_table_config(admission_table_config: AdmissionTableConfig,
                                  end_time_alias=icu_input_end_time_alias,
                                  amount_alias=icu_input_amount_alias,
                                  amount_unit_alias=icu_input_amount_unit_alias,
-                                 derived_amount_per_hour=icu_input_derived_amount_per_hour,
+                                 derived_normalized_amount=icu_input_derived_normalized_amount,
                                  derived_normalized_amount_per_hour=icu_input_derived_normalized_amount_per_hour,
                                  derived_unit_normalization_factor=icu_input_derived_unit_normalization_factor,
                                  derived_universal_unit=icu_input_derived_universal_unit)
@@ -352,17 +352,8 @@ def sample_icu_inputs_dataframe(admissions_df: pd.DataFrame,
     df = _sample_proc_dataframe(admissions_df, admission_table_config, table_config, icu_input_scheme, n)
     c_amount = table_config.amount_alias
     c_unit = table_config.amount_unit_alias
-    c_derived_amount_per_hour = table_config.derived_amount_per_hour
-    c_derived_normalized_amount_per_hour = table_config.derived_normalized_amount_per_hour
-    c_derived_unit_normalization_factor = table_config.derived_unit_normalization_factor
-    c_derived_universal_unit = table_config.derived_universal_unit
-
     df[c_amount] = np.random.uniform(low=0, high=1000, size=n)
-    df[c_unit] = random.choices(['mg', 'g', 'kg'], k=n)
-    df[c_derived_amount_per_hour] = np.random.uniform(low=0, high=1000, size=n)
-    df[c_derived_normalized_amount_per_hour] = np.random.uniform(low=0, high=1000, size=n)
-    df[c_derived_unit_normalization_factor] = np.random.uniform(low=0, high=1000, size=n)
-    df[c_derived_universal_unit] = random.choices(['mg', 'g', 'kg'], k=n)
+    df[c_unit] = random.choices(['mg', 'g', 'kg', 'cm', 'dose', 'ml'], k=n)
     return df
 
 
@@ -523,8 +514,6 @@ class Pipeline(AbstractDatasetPipeline):
         return dataset, {'report': pd.DataFrame({'action': ['*']})}
 
 
-
-
 @pytest.fixture
 def dataset_config(dataset_scheme_config, dataset_tables_config):
     return DatasetConfig(scheme=dataset_scheme_config, tables=dataset_tables_config,
@@ -534,6 +523,7 @@ def dataset_config(dataset_scheme_config, dataset_tables_config):
 @pytest.fixture
 def dataset(dataset_config, dataset_tables):
     return NaiveDataset(config=dataset_config, tables=dataset_tables)
+
 
 class IndexedDataset(Dataset):
 

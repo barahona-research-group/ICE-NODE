@@ -447,14 +447,69 @@ def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Data
 
 
 @pytest.fixture
+def unit_converter_table(indexed_dataset: Dataset):
+    if 'icu_inputs' not in indexed_dataset.tables.tables_dict or len(indexed_dataset.tables.icu_inputs) == 0:
+        pytest.skip("No ICU inputs in dataset.")
+    c_code = indexed_dataset.config.tables.icu_inputs.code_alias
+    c_amount_unit = indexed_dataset.config.tables.icu_inputs.amount_unit_alias
+    c_norm_factor = indexed_dataset.config.tables.icu_inputs.derived_unit_normalization_factor
+    c_universal_unit = indexed_dataset.config.tables.icu_inputs.derived_universal_unit
+    icu_inputs = indexed_dataset.tables.icu_inputs
+
+    table = pd.DataFrame(columns=[c_code, c_amount_unit],
+                         data=[(code, unit) for code, unit in
+                               icu_inputs.groupby([c_code, c_amount_unit]).groups.keys()])
+
+    for code, df in table.groupby(c_code):
+        units = df[c_amount_unit].unique()
+        universal_unit = np.random.choice(units, size=1)[0]
+        norm_factor = 1
+        if len(units) > 1:
+            norm_factor = np.random.choice([1e-3, 100, 10, 1e3], size=len(units))
+            norm_factor = np.where(units == universal_unit, 1, norm_factor)
+        table.loc[df.index, c_norm_factor] = norm_factor
+        table.loc[df.index, c_universal_unit] = universal_unit
+
+    return table
+
+
+def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter_table: pd.DataFrame):
+    fixed_dataset, _ = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
+    icu_inputs0 = indexed_dataset.tables.icu_inputs
+    icu_inputs1 = fixed_dataset.tables.icu_inputs
+    c_code = indexed_dataset.config.tables.icu_inputs.code_alias
+    c_amount = indexed_dataset.config.tables.icu_inputs.amount_alias
+    c_amount_unit = indexed_dataset.config.tables.icu_inputs.amount_unit_alias
+    c_norm_factor = indexed_dataset.config.tables.icu_inputs.derived_unit_normalization_factor
+    c_universal_unit = indexed_dataset.config.tables.icu_inputs.derived_universal_unit
+    c_norm_amount = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount
+    c_rate = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    _derived_cols = [c_norm_amount, c_rate, c_norm_factor, c_universal_unit]
+    assert all(c not in icu_inputs0.columns for c in _derived_cols)
+    assert all(c in icu_inputs1.columns for c in _derived_cols)
+
+    # For every (code, unit) pair, a unique normalization factor and universal unit is assigned.
+    for (code, unit), inputs_df in icu_inputs1.groupby([c_code, c_amount_unit]):
+        ctable = unit_converter_table[(unit_converter_table[c_code] == code)]
+        ctable = ctable[ctable[c_amount_unit] == unit]
+
+        norm_factor = ctable[c_norm_factor].iloc[0]
+        universal_unit = ctable[c_universal_unit].iloc[0]
+
+        assert inputs_df[c_universal_unit].unique() == universal_unit
+        assert inputs_df[c_norm_factor].unique() == norm_factor
+        assert inputs_df[c_norm_amount].equals(inputs_df[c_amount] * norm_factor)
+
+
+@pytest.fixture
 def nan_inputs_dataset(indexed_dataset: Dataset):
     if 'icu_inputs' not in indexed_dataset.tables.tables_dict or len(indexed_dataset.tables.icu_inputs) == 0:
         pytest.skip("No ICU inputs in dataset.")
-    c_rate = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    c_amount = indexed_dataset.config.tables.icu_inputs.amount_alias
     c_admission_id = indexed_dataset.config.tables.icu_inputs.admission_id_alias
     icu_inputs = indexed_dataset.tables.icu_inputs.copy()
     admission_id = icu_inputs.iloc[0][c_admission_id]
-    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_rate] = np.nan
+    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_amount] = np.nan
     return eqx.tree_at(lambda x: x.tables.icu_inputs, indexed_dataset, icu_inputs)
 
 
@@ -468,7 +523,7 @@ def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
     admissions1 = fixed_dataset.tables.admissions
     static1 = fixed_dataset.tables.static
 
-    c_rate = nan_inputs_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    c_amount = nan_inputs_dataset.config.tables.icu_inputs.amount_alias
     c_admission_id = nan_inputs_dataset.config.tables.icu_inputs.admission_id_alias
     c_subject_id = nan_inputs_dataset.config.tables.admissions.subject_id_alias
     admission_id = icu_inputs0.iloc[0][c_admission_id]
@@ -478,12 +533,8 @@ def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
     assert not subject_id in static1.index
     assert not subject_admissions.index.isin(admissions1.index).all()
     assert not subject_admissions.index.isin(icu_inputs1[c_admission_id]).all()
-    assert icu_inputs0[c_rate].isna().any()
-    assert not icu_inputs1[c_rate].isna().any()
-
-
-def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset):
-    assert False
+    assert icu_inputs0[c_amount].isna().any()
+    assert not icu_inputs1[c_amount].isna().any()
 
 
 def test_random_splits(indexed_dataset: Dataset):
