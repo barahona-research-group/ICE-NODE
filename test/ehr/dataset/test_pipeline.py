@@ -1,7 +1,7 @@
 import random
 import string
 from collections import defaultdict
-from typing import List, Tuple, Set, Dict
+from typing import List, Tuple, Set, Dict, Type
 
 import equinox as eqx
 import numpy as np
@@ -12,8 +12,8 @@ from lib.ehr import Dataset
 from lib.ehr.pipeline import DatasetTransformation, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
-    ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths
-from test.ehr.dataset.conftest import IndexedDataset
+    ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths, CodedValueScaler, ObsAdaptiveScaler, \
+    InputScaler, TrainableTransformation, DatasetPipeline
 
 
 @pytest.mark.parametrize('cls, params', [
@@ -29,7 +29,7 @@ from test.ehr.dataset.conftest import IndexedDataset
     (ICUInputRateUnitConversion, {'conversion_table': pd.DataFrame()}),
     (RandomSplits, {'splits': [0.5], 'splits_key': 'splits', 'seed': 0, 'balance': 'subjects',
                     'discount_first_admission': False}),
-    (ObsIQROutlierRemover, {'fit_only': False, 'fitted_processor': 'x',
+    (ObsIQROutlierRemover, {'fit_only': False,
                             'splits_key': 'splits', 'training_split_index': 0,
                             'outlier_q1': 0.0, 'outlier_q2': 0.0,
                             'outlier_iqr_scale': 0.0, 'outlier_z1': 0.0,
@@ -39,14 +39,10 @@ def test_additional_parameters(cls, params):
     assert cls(name='test', **params).additional_parameters == params
 
 
-@pytest.fixture
-def indexed_dataset(dataset_config, dataset_tables):
-    return IndexedDataset(config=dataset_config, tables=dataset_tables).execute_pipeline()
-
-
 def test_synchronize_index_subjects(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     c_subject_id = indexed_dataset.config.tables.subject_id_alias
     sample_subject_id = indexed_dataset.tables.admissions[c_subject_id].iloc[0]
@@ -64,6 +60,7 @@ def test_synchronize_index_subjects(indexed_dataset: Dataset):
 def test_synchronize_index_admissions(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     c_admission_id = indexed_dataset.config.tables.admission_id_alias
     sample_admission_id = indexed_dataset.tables.admissions.index[0]
@@ -85,6 +82,7 @@ def test_synchronize_index_admissions(indexed_dataset: Dataset):
 def test_filter_no_admissions_subjects(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     c_subject_id = indexed_dataset.config.tables.subject_id_alias
     sample_subject_id = indexed_dataset.tables.admissions[c_subject_id].iloc[0]
@@ -99,6 +97,8 @@ def test_filter_no_admissions_subjects(indexed_dataset: Dataset):
 
 @pytest.mark.parametrize('seed', [0, 1])
 def test_sample_subjects(indexed_dataset: Dataset, seed: int):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     if len(indexed_dataset.tables.static) <= 1:
         pytest.skip("Only one subject in dataset.")
     if len(indexed_dataset.tables.admissions) == 0:
@@ -117,6 +117,8 @@ def test_sample_subjects(indexed_dataset: Dataset, seed: int):
 
 @pytest.fixture
 def indexed_dataset_str_timestamps(indexed_dataset: Dataset):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     for table_name, time_cols in indexed_dataset.config.tables.time_cols.items():
         if len(time_cols) == 0:
             continue
@@ -142,6 +144,8 @@ def test_cast_timestamps(indexed_dataset_str_timestamps: Dataset):
 def indexed_dataset_unsupported_codes(indexed_dataset: Dataset):
     if all(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.code_column.keys()):
         pytest.skip("No coded tables or they are all empty.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     unsupported_codes = {}
     for table_name, code_col in indexed_dataset.config.tables.code_column.items():
         table = indexed_dataset.tables.tables_dict[table_name]
@@ -163,6 +167,8 @@ def test_filter_unsupported_codes(indexed_dataset_unsupported_codes: Tuple[Datas
 def test_set_relative_times(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0 or len(indexed_dataset.tables.obs) == 0:
         pytest.skip("No admissions table found in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     dataset, _ = SetAdmissionRelativeTimes()(indexed_dataset, {})
 
     admissions = indexed_dataset.tables.admissions.copy()
@@ -189,6 +195,8 @@ def test_set_relative_times(indexed_dataset: Dataset):
 def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     admissions = indexed_dataset.tables.admissions.copy()
     first_admission_i = admissions.index[0]
     c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
@@ -203,25 +211,32 @@ def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
 def test_filter_subjects_negative_admission_length(indexed_dataset_first_negative_admission: Dataset):
     dataset0 = indexed_dataset_first_negative_admission
     admissions0 = dataset0.tables.admissions
+    static0 = dataset0.tables.static
 
     dataset1, _ = FilterSubjectsNegativeAdmissionLengths()(dataset0, {})
     admissions1 = dataset1.tables.admissions
+    static1 = dataset1.tables.static
     c_admittime = dataset1.config.tables.admissions.admission_time_alias
     c_dischtime = dataset1.config.tables.admissions.discharge_time_alias
 
-    assert admissions0.shape[0] == admissions1.shape[0] + 1
+    assert admissions0.shape[0] > admissions1.shape[0]
+    assert static0.shape[0] == static1.shape[0] + 1
+
     assert admissions0.loc[admissions0.index[0], c_admittime] > admissions0.loc[admissions0.index[0], c_dischtime]
+    assert any(admissions0[c_admittime] > admissions0[c_dischtime])
+    assert all(admissions1[c_admittime] <= admissions1[c_dischtime])
     assert admissions0.index[0] not in admissions1.index
-    # Also assert synchronization.
 
 
-def set_code_integer_indices(indexed_dataset: Dataset):
+def test_set_code_integer_indices(indexed_dataset: Dataset):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     dataset, _ = SetCodeIntegerIndices()(indexed_dataset, {})
     for table_name, code_col in dataset.config.tables.code_column.items():
         table = getattr(dataset.tables, table_name)
-        scheme = getattr(dataset.scheme, table_name).code_scheme
+        scheme = getattr(dataset.scheme, table_name)
         assert table[code_col].dtype == int
-        assert all(table[code_col].isin(scheme.codes.index.values()))
+        assert all(table[code_col].isin(scheme.index.values()))
 
 
 def generate_admissions_from_pattern(pattern: List[str]) -> pd.DataFrame:
@@ -283,6 +298,8 @@ def test_overlapping_cases(admission_pattern, expected_out):
 
 @pytest.fixture
 def admission_ids_map(indexed_dataset: Dataset):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     if len(indexed_dataset.tables.admissions) < 10:
         pytest.skip("Not enough admissions for the test in dataset.")
     index = indexed_dataset.tables.admissions.index
@@ -296,6 +313,8 @@ def admission_ids_map(indexed_dataset: Dataset):
 
 
 def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str, str]):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     # Assert no data loss from records.
     # Assert children admissions are mapped in records and removed from admissions.
     dataset, _ = ProcessOverlappingAdmissions._merge_overlapping_admissions(indexed_dataset, {},
@@ -320,6 +339,8 @@ def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str
 def test_merge_overlapping_admissions(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions in dataset.")
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     admissions = indexed_dataset.tables.admissions
     c_subject_id = indexed_dataset.config.tables.admissions.subject_id_alias
     c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
@@ -361,6 +382,8 @@ def test_merge_overlapping_admissions(indexed_dataset: Dataset):
 def shifted_timestamps_dataset(indexed_dataset: Dataset):
     if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):
         pytest.skip("No temporal data in dataset.")
+
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     admissions = indexed_dataset.tables.admissions
 
@@ -447,14 +470,14 @@ def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Data
 
 
 @pytest.fixture
-def unit_converter_table(indexed_dataset: Dataset):
-    if 'icu_inputs' not in indexed_dataset.tables.tables_dict or len(indexed_dataset.tables.icu_inputs) == 0:
+def unit_converter_table(dataset_config, dataset_tables):
+    if 'icu_inputs' not in dataset_tables.tables_dict or len(dataset_tables.icu_inputs) == 0:
         pytest.skip("No ICU inputs in dataset.")
-    c_code = indexed_dataset.config.tables.icu_inputs.code_alias
-    c_amount_unit = indexed_dataset.config.tables.icu_inputs.amount_unit_alias
-    c_norm_factor = indexed_dataset.config.tables.icu_inputs.derived_unit_normalization_factor
-    c_universal_unit = indexed_dataset.config.tables.icu_inputs.derived_universal_unit
-    icu_inputs = indexed_dataset.tables.icu_inputs
+    c_code = dataset_config.tables.icu_inputs.code_alias
+    c_amount_unit = dataset_config.tables.icu_inputs.amount_unit_alias
+    c_norm_factor = dataset_config.tables.icu_inputs.derived_unit_normalization_factor
+    c_universal_unit = dataset_config.tables.icu_inputs.derived_universal_unit
+    icu_inputs = dataset_tables.icu_inputs
 
     table = pd.DataFrame(columns=[c_code, c_amount_unit],
                          data=[(code, unit) for code, unit in
@@ -474,6 +497,8 @@ def unit_converter_table(indexed_dataset: Dataset):
 
 
 def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter_table: pd.DataFrame):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
     fixed_dataset, _ = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
     icu_inputs0 = indexed_dataset.tables.icu_inputs
     icu_inputs1 = fixed_dataset.tables.icu_inputs
@@ -502,15 +527,25 @@ def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter
 
 
 @pytest.fixture
-def nan_inputs_dataset(indexed_dataset: Dataset):
-    if 'icu_inputs' not in indexed_dataset.tables.tables_dict or len(indexed_dataset.tables.icu_inputs) == 0:
+def preprocessed_dataset(indexed_dataset, unit_converter_table):
+    conv = ICUInputRateUnitConversion(conversion_table=unit_converter_table)
+    transformations = [SetIndex(), conv, SetCodeIntegerIndices()]
+    return eqx.tree_at(lambda x: x.core_pipeline.transformations, indexed_dataset, transformations).execute_pipeline()
+
+
+@pytest.fixture
+def nan_inputs_dataset(preprocessed_dataset: Dataset):
+    if 'icu_inputs' not in preprocessed_dataset.tables.tables_dict or len(preprocessed_dataset.tables.icu_inputs) == 0:
         pytest.skip("No ICU inputs in dataset.")
-    c_amount = indexed_dataset.config.tables.icu_inputs.amount_alias
-    c_admission_id = indexed_dataset.config.tables.icu_inputs.admission_id_alias
-    icu_inputs = indexed_dataset.tables.icu_inputs.copy()
+
+    preprocessed_dataset = preprocessed_dataset.execute_pipeline()
+
+    c_rate = preprocessed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+    c_admission_id = preprocessed_dataset.config.tables.icu_inputs.admission_id_alias
+    icu_inputs = preprocessed_dataset.tables.icu_inputs.copy()
     admission_id = icu_inputs.iloc[0][c_admission_id]
-    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_amount] = np.nan
-    return eqx.tree_at(lambda x: x.tables.icu_inputs, indexed_dataset, icu_inputs)
+    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_rate] = np.nan
+    return eqx.tree_at(lambda x: x.tables.icu_inputs, preprocessed_dataset, icu_inputs)
 
 
 def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
@@ -523,7 +558,7 @@ def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
     admissions1 = fixed_dataset.tables.admissions
     static1 = fixed_dataset.tables.static
 
-    c_amount = nan_inputs_dataset.config.tables.icu_inputs.amount_alias
+    c_rate = nan_inputs_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
     c_admission_id = nan_inputs_dataset.config.tables.icu_inputs.admission_id_alias
     c_subject_id = nan_inputs_dataset.config.tables.admissions.subject_id_alias
     admission_id = icu_inputs0.iloc[0][c_admission_id]
@@ -533,25 +568,167 @@ def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
     assert not subject_id in static1.index
     assert not subject_admissions.index.isin(admissions1.index).all()
     assert not subject_admissions.index.isin(icu_inputs1[c_admission_id]).all()
-    assert icu_inputs0[c_amount].isna().any()
-    assert not icu_inputs1[c_amount].isna().any()
+    assert icu_inputs0[c_rate].isna().any()
+    assert not icu_inputs1[c_rate].isna().any()
 
 
-def test_random_splits(indexed_dataset: Dataset):
-    assert False
+@pytest.mark.parametrize('splits', [[0.5], [0.2, 0.5, 0.7], [0.1, 0.2, 0.3, 0.4, 0.5]])
+def test_random_splits(indexed_dataset: Dataset, splits: List[float]):
+    indexed_dataset = indexed_dataset.execute_pipeline()
+
+    if len(indexed_dataset.tables.admissions) == 0 or len(splits) >= len(indexed_dataset.subject_ids):
+        pytest.skip("No admissions in dataset or splits requested exceeds the number of subjects.")
+
+    _, aux_subjs = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='subjects',
+                                discount_first_admission=False)(indexed_dataset, {})
+    _, aux_adms = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='admissions',
+                               discount_first_admission=False)(indexed_dataset, {})
+    _, aux_los = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='admissions_intervals',
+                              discount_first_admission=False)(indexed_dataset, {})
+
+    for aux in (aux_subjs, aux_adms, aux_los):
+        assert len(aux['splits']) == len(splits) + 1
+        # No overlaps.
+        assert sum(len(v) for v in aux['splits']) == len(indexed_dataset.subject_ids)
+        assert set.union(*[set(v) for v in aux['splits']]) == set(indexed_dataset.subject_ids)
+
+    # # test proportionality
+    # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
+    # is not appropriate.
+    splits_proportions = [p1 - p0 for p0, p1 in zip([0] + splits, splits + [1])]
+    n_adms = lambda subjects: sum(indexed_dataset.subjects_n_admissions.loc[subjects])
+    total_los = lambda subjects: sum(indexed_dataset.subjects_intervals_sum.loc[subjects])
+    p_threshold = 1 / len(indexed_dataset.subject_ids)
+    for i in range(len(splits_proportions)):
+        for j in range(i + 1, len(splits_proportions)):
+            if abs(splits_proportions[i] - splits_proportions[j]) < p_threshold:
+                assert abs(len(aux_subjs['splits'][i]) - len(aux_subjs['splits'][j])) <= 1
+            elif splits_proportions[i] > splits_proportions[j]:
+                assert len(aux_subjs['splits'][i]) >= len(aux_subjs['splits'][j])
+                assert n_adms(aux_adms['splits'][i]) >= n_adms(aux_adms['splits'][j])
+                assert total_los(aux_los['splits'][i]) >= total_los(aux_los['splits'][j])
+            else:
+                assert len(aux_subjs['splits'][i]) <= len(aux_subjs['splits'][j])
+                assert n_adms(aux_adms['splits'][i]) <= n_adms(aux_adms['splits'][j])
+                assert total_los(aux_los['splits'][i]) <= total_los(aux_los['splits'][j])
 
 
-def test_obs_iqr_outlier_remover(indexed_dataset: Dataset):
-    assert False
+@pytest.mark.parametrize('fit_only', [True, False])
+@pytest.mark.parametrize('use_float16', [True, False])
+@pytest.mark.parametrize('scaler', [('obs', ObsAdaptiveScaler), ('icu_inputs', InputScaler)])
+def test_trainable_transformer(preprocessed_dataset: Dataset, use_float16: bool, fit_only: bool,
+                               scaler: Tuple[str, Type[TrainableTransformation]]):
+    if len(preprocessed_dataset.tables.static) < 5 or len(getattr(preprocessed_dataset.tables, scaler[0])) == 0:
+        pytest.skip("Not enough subjects in dataset or no data to scale.")
+    table_name, scaler_class = scaler
+    scaler_name = f'{table_name}_scaler'
+
+    with pytest.raises(AssertionError):
+        scaler_class(use_float16=use_float16, transformer_key=scaler_name,
+                     fit_only=fit_only, splits_key='splits',
+                     training_split_index=0)(preprocessed_dataset, {})
+
+    aux = {'splits': [preprocessed_dataset.subject_ids[:3], preprocessed_dataset.subject_ids[3:]]}
+    transformer = scaler_class(use_float16=use_float16, transformer_key=scaler_name,
+                               splits_key='splits',
+                               fit_only=fit_only,
+                               training_split_index=0)
+
+    assert isinstance(transformer, TrainableTransformation)
+    assert transformer.fit_only == fit_only
+    assert transformer.transformer_key == scaler_name
+
+    scaled_ds, aux = transformer(preprocessed_dataset, aux)
+    scaler = aux[scaler_name]
+    assert scaler is not None
+    assert isinstance(scaler, CodedValueScaler)
+    assert scaler.table(scaled_ds) is getattr(scaled_ds.tables, table_name)
+    assert scaler.table(preprocessed_dataset) is getattr(preprocessed_dataset.tables, table_name)
+    assert scaler.use_float16 == use_float16
+
+    table0 = scaler.table(preprocessed_dataset)
+    table1 = scaler.table(scaled_ds)
+    c_value = scaler.value_column(scaled_ds)
+    c_code = scaler.code_column(scaled_ds)
+    assert c_value in table1.columns
+    assert c_code in table1.columns
+    if fit_only:
+        assert table1 is table0
+        assert table1[c_value].dtype == scaler.original_dtype
+    else:
+        assert table1 is not table0
+
+        if use_float16:
+            assert table1[c_value].dtype == np.float16
+        else:
+            assert table1[c_value].dtype == table0[c_value].dtype
 
 
-def test_obs_zscore_scaler(indexed_dataset: Dataset):
-    assert False
+# def test_obs_minmax_scaler(int_indexed_dataset: Dataset):
+#     assert False
+#
+#
+# def test_obs_adaptive_scaler(int_indexed_dataset: Dataset):
+#     assert False
+#
+#
+# def test_obs_iqr_outlier_remover(indexed_dataset: Dataset):
+#     assert False
 
 
-def test_obs_minmax_scaler(indexed_dataset: Dataset):
-    assert False
-
-
-def test_obs_adaptive_scaler(indexed_dataset: Dataset):
-    assert False
+@pytest.mark.parametrize('illegal_transformation_sequence', [
+    (SetIndex(), SetCodeIntegerIndices(), SetIndex()),  # No duplicates.
+    (SetIndex(), SetCodeIntegerIndices(), SetCodeIntegerIndices()),  # No duplicates.
+    (SampleSubjects(n_subjects=1),),  # Needs SetIndex before.
+    # SetAdmissionRelativeTimes() needs SetIndex, CastTimestamps before.
+    (SetAdmissionRelativeTimes(),),
+    (SetIndex(), SetAdmissionRelativeTimes()),
+    (CastTimestamps(), SetAdmissionRelativeTimes()),
+    # FilterSubjectsNegativeAdmissionLengths() needs SetIndex, CastTimestamps before.
+    (FilterSubjectsNegativeAdmissionLengths(),),
+    (SetIndex(), FilterSubjectsNegativeAdmissionLengths()),
+    (CastTimestamps(), FilterSubjectsNegativeAdmissionLengths()),
+    # FilterUnsupportedCodes() blocked by SetCodeIntegerIndices before.
+    (SetCodeIntegerIndices(), FilterUnsupportedCodes(),),
+    # ProcessOverlappingAdmissions() needs SetIndex, CastTimestamps before.
+    (ProcessOverlappingAdmissions(merge=True),),
+    (SetIndex(), ProcessOverlappingAdmissions(merge=True)),
+    (CastTimestamps(), ProcessOverlappingAdmissions(merge=True)),
+    # FilterClampTimestampsToAdmissionInterval() needs SetIndex, CastTimestamps before.
+    # Blocked by SetAdmissionRelativeTimes
+    (FilterClampTimestampsToAdmissionInterval(),),
+    (SetIndex(), FilterClampTimestampsToAdmissionInterval()),
+    (CastTimestamps(), FilterClampTimestampsToAdmissionInterval()),
+    (SetIndex(), CastTimestamps(), SetAdmissionRelativeTimes(), FilterClampTimestampsToAdmissionInterval()),
+    # ICUInputRateUnitConversion() is blocked by SetCodeIntegerIndices.
+    (SetCodeIntegerIndices(), ICUInputRateUnitConversion(conversion_table=None),),
+    # FilterInvalidInputRatesSubjects() needs SetIndex, ICUInputRateUnitConversion before.
+    (FilterInvalidInputRatesSubjects(),),
+    (SetIndex(), FilterInvalidInputRatesSubjects()),
+    (ICUInputRateUnitConversion(conversion_table=None), FilterInvalidInputRatesSubjects()),
+    # RandomSplits() needs SetIndex, CastTimestamps before.
+    (RandomSplits(splits=[0.5], splits_key=''),),
+    (SetIndex(), RandomSplits(splits=[0.5], splits_key='')),
+    (CastTimestamps(), RandomSplits(splits=[0.5], splits_key='')),
+    # ObsIQROutlierRemover(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices before.
+    (ObsIQROutlierRemover(splits_key=''),),
+    (RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+    (SetIndex(), ObsIQROutlierRemover(splits_key='')),
+    (SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
+    (SetIndex(), SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
+    (SetIndex(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+    (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+    # ObsAdaptiveScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
+    # ObsIQROutlierRemover before.
+    (ObsAdaptiveScaler(splits_key=''),),
+    (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
+    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
+    # InputScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
+    # ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects before.
+    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''),
+     ICUInputRateUnitConversion(conversion_table=None), InputScaler(splits_key='')),
+    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), FilterInvalidInputRatesSubjects(),
+     InputScaler(splits_key=''))])
+def test_pipeline_transformers_sequence(illegal_transformation_sequence: List[DatasetTransformation]):
+    with pytest.raises(AssertionError):
+        DatasetPipeline(transformations=illegal_transformation_sequence)

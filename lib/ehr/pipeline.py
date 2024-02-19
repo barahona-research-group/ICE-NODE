@@ -13,7 +13,7 @@ import pandas as pd
 
 from .dataset import TimestampedTableConfig, IntervalBasedTableConfig, Dataset, AdmissionLinkedTableConfig, \
     AbstractDatasetTransformation, AbstractDatasetPipelineConfig, AbstractDatasetPipeline
-from ..base import Config, Module
+from ..base import Config
 
 SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
 
@@ -125,15 +125,14 @@ class DatasetPipeline(AbstractDatasetPipeline):
     def _validate_transformation_sequence(self):
         applied_set = set()
         for t in self.transformations:
-            if t.name in applied_set:
-                raise ValueError(f"Transformation {t.name} applied more than once.")
-            applied_set.add(t.name)
+            assert type(t) not in map(type, applied_set), f"Transformation {type(t).__name__} applied more than once."
+            applied_set.add(t)
             for d in t.dependencies:
                 assert any(isinstance(x, d) for x in applied_set), \
-                    f"Transformation {t.name} depends on {d.__name__} which was not applied before."
+                    f"Transformation {type(t)} depends on {d.__name__} which was not applied before."
             for b in t.blockers:
                 assert all(not isinstance(x, b) for x in applied_set), \
-                    f"Transformation {t.name} is blocked by {b.__name__} which was applied before."
+                    f"Transformation {type(t)} is blocked by {b.__name__} which was applied before."
 
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, Any]]:
         auxiliary = {'report': []}
@@ -272,12 +271,13 @@ class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
         c_subject = dataset.config.tables.static.subject_id_alias
         c_admittime = dataset.config.tables.admissions.admission_time_alias
         c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+        admissions = dataset.tables.admissions
+
         # assert dtypes are datetime64[ns]
-        assert dataset.tables.static[c_admittime].dtype == 'datetime64[ns]' and \
-               dataset.tables.static[c_dischtime].dtype == 'datetime64[ns]', \
+        assert admissions[c_admittime].dtype == 'datetime64[ns]' and \
+               admissions[c_dischtime].dtype == 'datetime64[ns]', \
             f'{c_admittime} and {c_dischtime} must be datetime64[ns]'
 
-        admissions = dataset.tables.admissions
         static = dataset.tables.static
         neg_los_subjects = admissions[admissions[c_dischtime] < admissions[c_admittime]][c_subject].unique()
         n_before = len(static)
@@ -297,7 +297,7 @@ class SetCodeIntegerIndices(DatasetTransformation):
             coding_scheme = getattr(dataset.scheme, table_name)
             dtype1 = table[code_column].dtype
             n1 = len(table)
-            table = table.assign(code_column=table[code_column].map(coding_scheme.index))
+            table = table.assign(**{code_column: table[code_column].map(coding_scheme.index)})
             table = table[table[code_column].notnull()].astype({code_column: int})
             dtype2 = table[code_column].dtype
             n2 = len(table)
@@ -616,109 +616,7 @@ class RandomSplits(DatasetTransformation):
         return dataset, aux
 
 
-class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
-    splits_key: str = field(kw_only=True)
-    training_split_index: Union[int, List[str]] = 0
-    fitted_processor: str = 'obs_outlier_remover'
-    fit_only: bool = False
-    transformer_key: str = ''  # to be retrieved from aux.
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex)
-
-    def get_training_split(self, aux: Dict[str, Any]) -> List[str]:
-        assert self.splits_key in aux, "Training subject ids cannot be retrieved." \
-                                       "{self.splits_key} not found in aux."
-        return aux[self.splits_key][self.training_split_index]
-
-    def get_admission_ids(self, dataset: Dataset, aux: Dict[str, Any]) -> List[str]:
-        c_subject_id = dataset.config.tables.static.subject_id_alias
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
-        admissions = dataset.tables.admissions[[c_subject_id]]
-        assert c_admission_id in admissions.index.names, f"Column {c_admission_id} not found in admissions table index."
-        training_subject_ids = self.get_training_split(aux)
-        return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique()
-
-
-class ObsIQROutlierRemover(TrainableTransformation):
-    outlier_q1: float = 0.25
-    outlier_q2: float = 0.75
-    outlier_iqr_scale: float = 1.5
-    outlier_z1: float = -2.5
-    outlier_z2: float = 2.5
-    transformer_key: str = 'obs_outlier_remover'
-
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        remover = IQROutlierRemover(table=lambda x: x.config.tables.obs,
-                                    code_column=lambda x: x.config.tables.obs.code_alias,
-                                    value_column=lambda x: x.config.tables.obs.value_alias,
-                                    outlier_q1=self.outlier_q1,
-                                    outlier_q2=self.outlier_q2,
-                                    outlier_iqr_scale=self.outlier_iqr_scale,
-                                    outlier_z1=self.outlier_z1,
-                                    outlier_z2=self.outlier_z2).fit(dataset, self.get_admission_ids(dataset, aux))
-        aux[self.transformer_key] = remover
-
-        if self.fit_only:
-            return dataset, aux
-
-        n1 = len(dataset.tables.obs)
-        # TODO: report specific removals stats for each code.
-        dataset = remover(dataset)
-        n2 = len(dataset.tables.obs)
-        self.report(aux, table='obs', column=None, value_type='count',
-                    operation='filter', before=n1, after=n2)
-        return dataset, aux
-
-
-class ObsAdaptiveScaler(TrainableTransformation):
-    transformer_key = 'obs_scaler'
-
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        scaler = AdaptiveScaler(table=lambda x: x.config.tables.obs,
-                                code_column=lambda x: x.config.tables.obs.code_alias,
-                                value_column=lambda x: x.config.tables.obs.value_alias).fit(dataset,
-                                                                                            self.get_admission_ids(
-                                                                                                dataset, aux))
-
-        aux[self.transformer_key] = scaler
-
-        if self.fit_only:
-            return dataset, aux
-
-        dtype1 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
-        dataset = scaler(dataset)
-        dtype2 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
-        self.report(aux, table='obs', column=dataset.config.tables.obs.value_alias,
-                    value_type='dtype',
-                    operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
-                    before=dtype1, after=dtype2)
-        return dataset, aux
-
-
-class InputScaler(TrainableTransformation):
-    transformer_key: str = 'icu_inputs_scaler'
-
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
-        code_column = lambda x: x.config.tables.icu_inputs.code_alias
-        value_column = lambda x: x.config.tables.icu_inputs.derived_normalized_amount_per_hour
-        scaler = MaxScaler(table=lambda x: x.config.tables.icu_inputs,
-                           code_column=code_column,
-                           value_column=value_column).fit(dataset, self.get_admission_ids(dataset, aux))
-        aux[self.transformer_key] = scaler
-
-        if self.fit_only:
-            return dataset, aux
-
-        dtype1 = dataset.tables.icu_inputs[value_column(dataset)].dtype
-        dataset = scaler(dataset)
-        dtype2 = dataset.tables.icu_inputs[value_column(dataset)].dtype
-        self.report(aux, table='icu_inputs', column=dataset.config.tables.obs.value_alias,
-                    value_type='dtype',
-                    operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
-                    before=dtype1, after=dtype2)
-        return dataset, aux
-
-
-class CodedValueProcessor(Module):
+class CodedValueProcessor((eqx.Module)):
     code_column: Callable[[Dataset], str]
     value_column: Callable[[Dataset], str]
     table: Callable[[Dataset], pd.DataFrame]
@@ -763,8 +661,8 @@ class CodedValueScaler(CodedValueProcessor):
 
 
 class ZScoreScaler(CodedValueScaler):
-    mean: pd.Series
-    std: pd.Series
+    mean: pd.Series = field(default_factory=lambda: pd.Series())
+    std: pd.Series = field(default_factory=lambda: pd.Series())
 
     @property
     def original_dtype(self) -> np.dtype:
@@ -802,14 +700,14 @@ class ZScoreScaler(CodedValueScaler):
 
 
 class MaxScaler(CodedValueScaler):
-    max_val: pd.Series
+    max_val: pd.Series = field(default_factory=lambda: pd.Series())
 
     @property
     def original_dtype(self) -> np.dtype:
         return self.max_val.dtype
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        df = self.table(dataset)
+        df = self.table(dataset).copy()
         c_value = self.value_column(dataset)
         c_code = self.code_column(dataset)
 
@@ -839,24 +737,23 @@ class MaxScaler(CodedValueScaler):
     def _extract_stats(self, df: pd.DataFrame, c_code: str, c_value: str) -> Dict[str, pd.Series]:
         stat = df.groupby(c_code).apply(
             lambda x: pd.Series({
-                'min': x[c_value].min(),
                 'max': x[c_value].max()
             }))
-        return dict(min_val=stat['min'], max_val=stat['max'])
+        return dict(max_val=stat['max'])
 
 
 class AdaptiveScaler(CodedValueScaler):
-    max_val: pd.Series
-    min_val: pd.Series
-    mean: pd.Series
-    std: pd.Series
+    max_val: pd.Series = field(default_factory=lambda: pd.Series())
+    min_val: pd.Series = field(default_factory=lambda: pd.Series())
+    mean: pd.Series = field(default_factory=lambda: pd.Series())
+    std: pd.Series = field(default_factory=lambda: pd.Series())
 
     @property
     def original_dtype(self) -> np.dtype:
         return self.max_val.dtype
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        df = self.table(dataset)
+        df = self.table(dataset).copy()
         c_value = self.value_column(dataset)
         c_code = self.code_column(dataset)
 
@@ -914,8 +811,8 @@ class IQROutlierRemover(CodedValueProcessor):
     outlier_iqr_scale: float
     outlier_z1: float
     outlier_z2: float
-    min_val: pd.Series
-    max_val: pd.Series
+    min_val: pd.Series = field(default_factory=lambda: pd.Series())
+    max_val: pd.Series = field(default_factory=lambda: pd.Series())
 
     def __call__(self, dataset: Dataset) -> Dataset:
         table = self.table(dataset)
@@ -947,3 +844,112 @@ class IQROutlierRemover(CodedValueProcessor):
         stat['out_z2'] = stat['mu'] + self.outlier_z2 * stat['sigma']
         return dict(min_val=np.minimum(q['out_q1'], stat['out_z1']),
                     max_val=np.maximum(q['out_q2'], stat['out_z2']))
+
+
+class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
+    splits_key: str = field(kw_only=True)
+    training_split_index: Union[int, List[str]] = 0
+    fit_only: bool = False
+    transformer_key: str = ''  # to be retrieved from aux.
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices)
+
+    def get_training_split(self, aux: Dict[str, Any]) -> List[str]:
+        assert self.splits_key in aux, "Training subject ids cannot be retrieved." \
+                                       "{self.splits_key} not found in aux."
+        return aux[self.splits_key][self.training_split_index]
+
+    def get_admission_ids(self, dataset: Dataset, aux: Dict[str, Any]) -> List[str]:
+        c_subject_id = dataset.config.tables.static.subject_id_alias
+        c_admission_id = dataset.config.tables.admissions.admission_id_alias
+        admissions = dataset.tables.admissions[[c_subject_id]]
+        assert c_admission_id in admissions.index.names, f"Column {c_admission_id} not found in admissions table index."
+        training_subject_ids = self.get_training_split(aux)
+        return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique()
+
+
+class ObsIQROutlierRemover(TrainableTransformation):
+    outlier_q1: float = 0.25
+    outlier_q2: float = 0.75
+    outlier_iqr_scale: float = 1.5
+    outlier_z1: float = -2.5
+    outlier_z2: float = 2.5
+    transformer_key: str = 'obs_outlier_remover'
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        remover = IQROutlierRemover(table=lambda x: x.tables.obs,
+                                    code_column=lambda x: x.config.tables.obs.code_alias,
+                                    value_column=lambda x: x.config.tables.obs.value_alias,
+                                    outlier_q1=self.outlier_q1,
+                                    outlier_q2=self.outlier_q2,
+                                    outlier_iqr_scale=self.outlier_iqr_scale,
+                                    outlier_z1=self.outlier_z1,
+                                    outlier_z2=self.outlier_z2).fit(dataset, self.get_admission_ids(dataset, aux))
+        aux[self.transformer_key] = remover
+
+        if self.fit_only:
+            return dataset, aux
+
+        n1 = len(dataset.tables.obs)
+        # TODO: report specific removals stats for each code.
+        dataset = remover(dataset)
+        n2 = len(dataset.tables.obs)
+        self.report(aux, table='obs', column=None, value_type='count',
+                    operation='filter', before=n1, after=n2)
+        return dataset, aux
+
+
+class ObsAdaptiveScaler(TrainableTransformation):
+    transformer_key = 'obs_scaler'
+    use_float16: bool = True
+    dependencies = (ObsIQROutlierRemover, RandomSplits, SetIndex, SetCodeIntegerIndices)
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        scaler = AdaptiveScaler(table=lambda x: x.tables.obs,
+                                code_column=lambda x: x.config.tables.obs.code_alias,
+                                value_column=lambda x: x.config.tables.obs.value_alias,
+                                use_float16=self.use_float16).fit(dataset,
+                                                                  self.get_admission_ids(
+                                                                      dataset, aux))
+
+        aux[self.transformer_key] = scaler
+
+        if self.fit_only:
+            return dataset, aux
+
+        dtype1 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
+        dataset = scaler(dataset)
+        dtype2 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
+        self.report(aux, table='obs', column=dataset.config.tables.obs.value_alias,
+                    value_type='dtype',
+                    operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
+                    before=dtype1, after=dtype2)
+        return dataset, aux
+
+
+class InputScaler(TrainableTransformation):
+    transformer_key: str = 'icu_inputs_scaler'
+    use_float16: bool = True
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices,
+                                                                       ICUInputRateUnitConversion,
+                                                                       FilterInvalidInputRatesSubjects)
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        code_column = lambda x: x.config.tables.icu_inputs.code_alias
+        value_column = lambda x: x.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        scaler = MaxScaler(table=lambda x: x.tables.icu_inputs,
+                           code_column=code_column,
+                           value_column=value_column,
+                           use_float16=self.use_float16).fit(dataset, self.get_admission_ids(dataset, aux))
+        aux[self.transformer_key] = scaler
+
+        if self.fit_only:
+            return dataset, aux
+
+        dtype1 = dataset.tables.icu_inputs[value_column(dataset)].dtype
+        dataset = scaler(dataset)
+        dtype2 = dataset.tables.icu_inputs[value_column(dataset)].dtype
+        self.report(aux, table='icu_inputs', column=dataset.config.tables.obs.value_alias,
+                    value_type='dtype',
+                    operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
+                    before=dtype1, after=dtype2)
+        return dataset, aux

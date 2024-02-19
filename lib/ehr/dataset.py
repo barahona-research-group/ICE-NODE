@@ -455,6 +455,22 @@ class Dataset(Module):
             f"Index name of static table must be {self.config.tables.static.subject_id_alias}."
         return self.tables.static.index.unique()
 
+    @cached_property
+    def subjects_intervals_sum(self) -> pd.Series:
+        c_admittime = self.config.tables.admissions.admission_time_alias
+        c_dischtime = self.config.tables.admissions.discharge_time_alias
+        c_subject_id = self.config.tables.admissions.subject_id_alias
+        admissions = self.tables.admissions
+        interval = (admissions[c_dischtime] - admissions[c_admittime]).dt.total_seconds()
+        admissions = admissions.assign(interval=interval)
+        return admissions.groupby(c_subject_id)['interval'].sum()
+
+    @cached_property
+    def subjects_n_admissions(self) -> pd.Series:
+        c_subject_id = self.config.tables.admissions.subject_id_alias
+        admissions = self.tables.admissions
+        return admissions.groupby(c_subject_id).size()
+
     def random_splits(self,
                       splits: List[float],
                       subject_ids: Optional[List[str]] = None,
@@ -482,26 +498,24 @@ class Dataset(Module):
 
         elif balance == 'admissions':
             assert len(admissions) > 0, "No admissions in the dataset."
-            n_admissions = admissions.groupby(c_subject_id).size()
+            n_admissions = self.subjects_n_admissions.loc[subject_ids]
             if discount_first_admission:
                 n_admissions = n_admissions - 1
-            p_admissions = n_admissions.loc[subject_ids] / n_admissions.sum()
+            p_admissions = n_admissions / n_admissions.sum()
             probs = p_admissions.values.cumsum()
 
         elif balance == 'admissions_intervals':
             assert len(admissions) > 0, "No admissions in the dataset."
-
-            c_admittime = self.config.tables.admissions.admission_time_alias
-            c_dischtime = self.config.tables.admissions.discharge_time_alias
-
-            interval = (admissions[c_dischtime] - admissions[c_admittime]).dt.total_seconds()
-            admissions = admissions.assign(interval=interval)
-            subject_intervals_sum = admissions.groupby(c_subject_id)['interval'].sum()
-
-            p_subject_intervals = subject_intervals_sum.loc[subject_ids] / subject_intervals_sum.sum()
+            subjects_intervals_sum = self.subjects_intervals_sum.loc[subject_ids]
+            p_subject_intervals = subjects_intervals_sum / subjects_intervals_sum.sum()
             probs = p_subject_intervals.values.cumsum()
         else:
             raise ValueError(f'Unknown balanced option: {balance}')
+
+        # Deal with edge cases where the splits are exactly the same as the probabilities.
+        for i in range(len(splits)):
+            if any(abs(probs - splits[i]) < 1e-6):
+                splits[i] = splits[i] + 1e-6
 
         splits = np.searchsorted(probs, splits)
         return [a.tolist() for a in np.split(subject_ids, splits)]

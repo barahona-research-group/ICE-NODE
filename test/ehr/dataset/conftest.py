@@ -1,6 +1,7 @@
 import random
 from typing import List, Tuple, Dict
 
+import equinox as eqx
 import numpy as np
 import pandas as pd
 import pytest
@@ -499,19 +500,19 @@ def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                          icu_inputs=icu_inputs_df)
 
 
-class NaiveDataset(Dataset):
-
-    @classmethod
-    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return Pipeline(config=config.pipeline, transformations=[])
-
-
 class Pipeline(AbstractDatasetPipeline):
 
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
         for transformation in self.transformations:
             dataset, _ = transformation(dataset, {'report': []})
         return dataset, {'report': pd.DataFrame({'action': ['*']})}
+
+
+class NaiveDataset(Dataset):
+
+    @classmethod
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return Pipeline(config=config.pipeline, transformations=[])
 
 
 @pytest.fixture
@@ -525,13 +526,6 @@ def dataset(dataset_config, dataset_tables):
     return NaiveDataset(config=dataset_config, tables=dataset_tables)
 
 
-class IndexedDataset(Dataset):
-
-    @classmethod
-    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return Pipeline(config=config.pipeline, transformations=[SetIndex()])
-
-
 @pytest.fixture
-def indexed_dataset(dataset_config, dataset_tables):
-    return IndexedDataset(config=dataset_config, tables=dataset_tables)
+def indexed_dataset(dataset):
+    return eqx.tree_at(lambda x: x.core_pipeline.transformations, dataset, [SetIndex()])
