@@ -3,7 +3,7 @@ import pandas as pd
 from lib.ehr import DatasetConfig
 from lib.ehr import resources_dir
 from lib.ehr.dataset import AbstractDatasetPipeline, Dataset, AbstractDatasetPipelineConfig, DatasetTables
-from lib.ehr.example_datasets.mimic4 import MIMICIVSQL, MIMICIVSQLConfig, MIMICIVDatasetScheme
+from lib.ehr.example_datasets.mimic4 import MIMICIVSQLTablesInterface, MIMICIVSQLTablesConfig, MIMICIVDatasetScheme
 from lib.ehr.pipeline import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
@@ -16,7 +16,7 @@ class MIMIC4DatasetPipelineConfig(AbstractDatasetPipelineConfig):
 
 class MIMIC4DatasetConfig(DatasetConfig):
     pipeline: MIMIC4DatasetPipelineConfig
-    sql: MIMICIVSQLConfig
+    tables: MIMICIVSQLTablesConfig
     resources_dir: str = "mimic4_aki_study"
     scheme_prefix: str = "mimic4_aki"
 
@@ -28,12 +28,12 @@ class MIMIC4Dataset(Dataset):
 
     @staticmethod
     def load_icu_inputs_conversion_table(config: MIMIC4DatasetConfig) -> pd.DataFrame:
-        return pd.read_csv(resources_dir(config.resources_dir) / "icu_inputs_conversion_table.csv")
+        return pd.read_csv(resources_dir(config.resources_dir, "icu_inputs_conversion_table.csv"))
 
     @staticmethod
     def load_dataset_scheme(config: MIMIC4DatasetConfig) -> MIMICIVDatasetScheme:
-        sql = MIMICIVSQL(config.sql)
-        load_df = lambda path: pd.read_csv(resources_dir(config.resources_dir) / "scheme" / path)
+        sql = MIMICIVSQLTablesInterface(config.tables)
+        load_df = lambda path: pd.read_csv(resources_dir(config.resources_dir, "scheme", path))
         return sql.dataset_scheme_from_selection(
             name_prefix=config.scheme_prefix,
             ethnicity=load_df("ethnicity.csv"),
@@ -47,7 +47,7 @@ class MIMIC4Dataset(Dataset):
 
     @classmethod
     def load_tables(cls, config: MIMIC4DatasetConfig) -> DatasetTables:
-        sql = MIMICIVSQL(config.sql)
+        sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.load_tables(cls.load_dataset_scheme(config))
 
     def _setup_core_pipeline(cls, config: MIMIC4DatasetConfig) -> AbstractDatasetPipeline:

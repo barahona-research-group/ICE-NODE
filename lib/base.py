@@ -103,6 +103,7 @@ class Config(eqx.Module):
                 return x
 
         config_class = cls._class_registry.get(config.pop("_type"), config_class)
+        assert config_class is not None, f"No config class registered for {config['_type']}"
         kwargs = {k: kwargs[k] for k in set(kwargs) & set(config)}
         return config_class(**({k: _concretise(v) for k, v in config.items()} | kwargs))
 
@@ -245,6 +246,7 @@ class Data(eqx.Module):
 
         to_device() - Copy arrays in module to device.
     """
+
     def to_cpu(self):
         arrs, others = eqx.partition(self, eqx.is_array)
         arrs = jtu.tree_map(lambda a: np.array(a), arrs)

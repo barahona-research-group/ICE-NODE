@@ -979,3 +979,283 @@ class InputScaler(TrainableTransformation):
                     operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                     before=dtype1, after=dtype2)
         return dataset, aux
+
+
+#     def subject_info_extractor(self, subject_ids, target_scheme):
+#
+#         static_df = self.df['static']
+#         c_gender = self.colname["static"].gender
+#         c_anchor_year = self.colname["static"].anchor_year
+#         c_anchor_age = self.colname["static"].anchor_age
+#         c_eth = self.colname["static"].ethnicity
+#
+#         static_df = static_df.loc[subject_ids]
+#         gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
+#         subject_gender = gender.to_dict()
+#
+#         anchor_date = pd.to_datetime(static_df[c_anchor_year],
+#                                      format='%Y').dt.normalize()
+#         anchor_age = static_df[c_anchor_age].map(
+#             lambda y: pd.DateOffset(years=-y))
+#         dob = anchor_date + anchor_age
+#         subject_dob = dict(zip(static_df.index.values, dob))
+#         subject_eth = dict()
+#         eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
+#         for subject_id in static_df.index.values:
+#             eth_code = eth_mapper.map_codeset(
+#                 [static_df.loc[subject_id, c_eth]])
+#             subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
+#
+#         return subject_dob, subject_gender, subject_eth
+#
+#     def dx_codes_extractor(self, admission_ids_list, target_scheme):
+#         c_adm_id = self.colname["dx_discharge"].admission_id
+#         c_code = self.colname["dx_discharge"].code
+#         c_version = self.colname["dx_discharge"].version
+#
+#         df = self.df["dx_discharge"]
+#         df = df[df[c_adm_id].isin(admission_ids_list)]
+#         codes_df = {
+#             adm_id: codes_df
+#             for adm_id, codes_df in df.groupby(c_adm_id)
+#         }
+#         empty_vector = target_scheme.dx_discharge.empty_vector()
+#
+#         dx_mapper = self.scheme.dx_mapper(target_scheme)
+#
+#         def _extract_codes(adm_id):
+#             _codes_df = codes_df.get(adm_id)
+#             if _codes_df is None:
+#                 return (adm_id, empty_vector)
+#
+#             vec = empty_vector
+#             for version, version_df in _codes_df.groupby(c_version):
+#                 mapper = dx_mapper[str(version)]
+#                 codeset = mapper.map_codeset(version_df[c_code])
+#                 vec = vec.union(mapper.codeset2vec(codeset))
+#             return (adm_id, vec)
+#
+#         return map(_extract_codes, admission_ids_list)
+#
+#
+# class MIMIC4ICUDataset(Dataset):
+#
+#     @classmethod
+#     def _setup_core_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
+#         raise NotImplementedError("Not implemented")
+#
+#     def to_subjects(self,
+#                     subject_ids: List[int],
+#                     num_workers: int,
+#                     demographic_vector_config: DemographicVectorConfig,
+#                     leading_observable_config: LeadingObservableExtractorConfig,
+#                     target_scheme: MIMIC4ICUDatasetScheme,
+#                     time_binning: Optional[int] = None,
+#                     **kwargs):
+#
+#         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
+#             subject_ids, target_scheme)
+#         admission_ids = self.adm_extractor(subject_ids)
+#         adm_ids_list = sum(map(list, admission_ids.values()), [])
+#         logging.debug('Extracting dx_discharge codes...')
+#         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
+#         logging.debug('[DONE] Extracting dx_discharge codes')
+#         logging.debug('Extracting dx_discharge codes history...')
+#         dx_codes_history = dict(
+#             self.dx_codes_history_extractor(dx_codes, admission_ids,
+#                                             target_scheme))
+#         logging.debug('[DONE] Extracting dx_discharge codes history')
+#         logging.debug('Extracting outcome...')
+#         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
+#         logging.debug('[DONE] Extracting outcome')
+#         logging.debug('Extracting procedures...')
+#         procedures = dict(self.procedure_extractor(adm_ids_list))
+#         logging.debug('[DONE] Extracting procedures')
+#         logging.debug('Extracting inputs...')
+#         inputs = dict(self.inputs_extractor(adm_ids_list))
+#         logging.debug('[DONE] Extracting inputs')
+#         logging.debug('Extracting observables...')
+#         observables = dict(
+#             self.observables_extractor(adm_ids_list, num_workers))
+#
+#         if time_binning is not None:
+#             observables = dict((k, v.time_binning(time_binning))
+#                                for k, v in observables.items())
+#
+#         logging.debug('[DONE] Extracting observables')
+#
+#         logging.debug('Compiling admissions...')
+#         c_admittime = self.colname['adm'].admittime
+#         c_dischtime = self.colname['adm'].dischtime
+#         c_adm_interval = self.colname['adm'].adm_interval
+#         adf = self.df['adm']
+#         adm_dates = dict(
+#             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
+#         adm_interval = dict(zip(adf.index, adf[c_adm_interval]))
+#         proc_repr = AggregateRepresentation(self.scheme.int_proc,
+#                                             target_scheme.int_proc)
+#
+#         leading_obs_extractor = LeadingObservableExtractor(leading_observable_config)
+#
+#         def gen_admission(i):
+#             interventions = InpatientInterventions(
+#                 proc=procedures[i],
+#                 input_=inputs[i],
+#                 adm_interval=adm_interval[i])
+#
+#             obs = observables[i]
+#             lead_obs = leading_obs_extractor(obs)
+#
+#             if time_binning is None:
+#                 interventions = interventions.segment_proc(proc_repr)
+#                 interventions = interventions.segment_input()
+#                 lead_obs = lead_obs.segment(interventions.t_sep)
+#                 obs = obs.segment(interventions.t_sep)
+#
+#             return Admission(admission_id=i,
+#                              admission_dates=adm_dates[i],
+#                              dx_codes=dx_codes[i],
+#                              dx_codes_history=dx_codes_history[i],
+#                              outcome=outcome[i],
+#                              observables=obs,
+#                              leading_observable=lead_obs,
+#                              interventions=interventions)
+#
+#         def _gen_subject(subject_id):
+#
+#             _admission_ids = admission_ids[subject_id]
+#             # for subject_id, subject_admission_ids in admission_ids.items():
+#             _admission_ids = sorted(_admission_ids,
+#                                     key=lambda aid: adm_dates[aid][0])
+#
+#             static_info = StaticInfo(
+#                 date_of_birth=subject_dob[subject_id],
+#                 gender=subject_gender[subject_id],
+#                 ethnicity=subject_eth[subject_id],
+#                 demographic_vector_config=demographic_vector_config)
+#
+#             with ThreadPoolExecutor(max_workers=num_workers) as executor:
+#                 admissions = list(executor.map(gen_admission, _admission_ids))
+#             return Patient(subject_id=subject_id,
+#                            admissions=admissions,
+#                            static_info=static_info)
+#
+#         return list(map(_gen_subject, subject_ids))
+#
+#     def procedure_extractor(self, admission_ids_list):
+#         c_adm_id = self.colname["int_proc"].admission_id
+#         c_code_index = self.colname["int_proc"].code_source_index
+#         c_start_time = self.colname["int_proc"].start_time
+#         c_end_time = self.colname["int_proc"].end_time
+#         df = self.df["int_proc"]
+#         df = df[df[c_adm_id].isin(admission_ids_list)]
+#
+#         def group_fun(x):
+#             return pd.Series({
+#                 0: x[c_code_index].to_numpy(),
+#                 1: x[c_start_time].to_numpy(),
+#                 2: x[c_end_time].to_numpy()
+#             })
+#
+#         grouped = df.groupby(c_adm_id).apply(group_fun)
+#         adm_arr = grouped.index.tolist()
+#         input_size = len(self.scheme.int_proc)
+#         for i in adm_arr:
+#             yield (i,
+#                    InpatientInput(index=grouped.loc[i, 0],
+#                                   rate=np.ones_like(grouped.loc[i, 0],
+#                                                     dtype=bool),
+#                                   starttime=grouped.loc[i, 1],
+#                                   endtime=grouped.loc[i, 2],
+#                                   size=input_size))
+#
+#         for adm_id in set(admission_ids_list) - set(adm_arr):
+#             yield (adm_id, InpatientInput.empty(input_size))
+#
+#     def inputs_extractor(self, admission_ids_list):
+#         c_adm_id = self.colname["int_input"].admission_id
+#         c_start_time = self.colname["int_input"].start_time
+#         c_end_time = self.colname["int_input"].end_time
+#         c_rate = self.colname["int_input"].rate
+#         c_code_index = self.colname["int_input"].code_source_index
+#
+#         df = self.df["int_input"]
+#         df = df[df[c_adm_id].isin(admission_ids_list)]
+#
+#         def group_fun(x):
+#             return pd.Series({
+#                 0: x[c_code_index].to_numpy(),
+#                 1: x[c_rate].to_numpy(),
+#                 2: x[c_start_time].to_numpy(),
+#                 3: x[c_end_time].to_numpy()
+#             })
+#
+#         grouped = df.groupby(c_adm_id).apply(group_fun)
+#         adm_arr = grouped.index.tolist()
+#         input_size = len(self.scheme.int_input)
+#         for i in adm_arr:
+#             yield (i,
+#                    InpatientInput(index=grouped.loc[i, 0],
+#                                   rate=grouped.loc[i, 1],
+#                                   starttime=grouped.loc[i, 2],
+#                                   endtime=grouped.loc[i, 3],
+#                                   size=input_size))
+#         for adm_id in set(admission_ids_list) - set(adm_arr):
+#             yield (adm_id, InpatientInput.empty(input_size))
+#
+#     def observables_extractor(self, admission_ids_list, num_workers):
+#         c_adm_id = self.colname["obs"].admission_id
+#         c_time = self.colname["obs"].timestamp
+#         c_value = self.colname["obs"].value
+#         c_code_index = self.colname["obs"].code_source_index
+#
+#         df = self.df["obs"][[c_adm_id, c_time, c_value, c_code_index]]
+#         logging.debug("obs: filter adms")
+#         df = df[df[c_adm_id].isin(admission_ids_list)]
+#
+#         obs_dim = len(self.scheme.obs)
+#
+#         def ret_put(a, *args):
+#             np.put(a, *args)
+#             return a
+#
+#         def val_mask(x):
+#             idx = x[c_code_index]
+#             val = ret_put(np.zeros(obs_dim, dtype=np.float16), idx, x[c_value])
+#             mask = ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
+#             adm_id = x.index[0]
+#             time = x[c_time].iloc[0]
+#             return pd.Series({0: adm_id, 1: time, 2: val, 3: mask})
+#
+#         def gen_observation(val_mask):
+#             time = val_mask[1].to_numpy()
+#             value = val_mask[2]
+#             mask = val_mask[3]
+#             mask = np.vstack(mask.values).reshape((len(time), obs_dim))
+#             value = np.vstack(value.values).reshape((len(time), obs_dim))
+#             return InpatientObservables(time=time, value=value, mask=mask)
+#
+#         def partition_fun(part_df):
+#             g = part_df.groupby([c_adm_id, c_time], sort=True, as_index=False)
+#             return g.apply(val_mask).groupby(0).apply(gen_observation)
+#
+#         logging.debug("obs: dasking")
+#         df = df.set_index(c_adm_id)
+#         df = dd.from_pandas(df, npartitions=12, sort=True)
+#         logging.debug("obs: groupby")
+#         obs_obj_df = df.map_partitions(partition_fun, meta=(None, object))
+#         logging.debug("obs: undasking")
+#         obs_obj_df = obs_obj_df.compute()
+#         logging.debug("obs: extract")
+#
+#         collected_adm_ids = obs_obj_df.index.tolist()
+#         assert len(collected_adm_ids) == len(set(collected_adm_ids)), \
+#             "Duplicate admission ids in obs"
+#
+#         for adm_id, obs in obs_obj_df.items():
+#             yield (adm_id, obs)
+#
+#         logging.debug("obs: empty")
+#         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
+#             yield (adm_id, InpatientObservables.empty(obs_dim))
+#

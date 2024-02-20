@@ -2,7 +2,7 @@
 data structures to support conversion between CCS and ICD9."""
 
 from __future__ import annotations
-
+import os
 import logging
 import re
 from abc import abstractmethod
@@ -14,10 +14,11 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from . import resources_dir
 from ..base import Config, Module, Data
 from ..utils import load_config
 
+def resources_dir(*subdir) -> str:
+    return os.path.join(os.path.dirname(__file__), "resources", *subdir)
 
 class CodesVector(Data):
     """

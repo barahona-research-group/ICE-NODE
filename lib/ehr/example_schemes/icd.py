@@ -11,9 +11,7 @@ from typing import Set, Dict, List, Union, Any
 import pandas as pd
 
 from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
-                                   _RSC_DIR, CodeMapConfig, CodeMap, OutcomeExtractor)
-
-_CCS_DIR = os.path.join(_RSC_DIR, "CCS")
+                                   CodeMapConfig, CodeMap, OutcomeExtractor, resources_dir)
 
 
 class ICD:
@@ -75,7 +73,7 @@ class ICD:
     @staticmethod
     def load_conv_table(s_scheme: ICD, t_scheme: ICD,
                         conv_fname: str) -> Dict[str, Union[pd.DataFrame, str, Set[str]]]:
-        df = pd.read_csv(os.path.join(_RSC_DIR, conv_fname),
+        df = pd.read_csv(resources_dir("CCS", conv_fname),
                          sep='\s+',
                          dtype=str,
                          names=['source', 'target', 'meta'])
@@ -179,7 +177,7 @@ class DxICD10(ICD):
     @staticmethod
     def distill_icd10_xml(filename: str, hierarchical: bool = True) -> Dict[str, Any]:
         # https://www.cdc.gov/nchs/icd/Comprehensive-Listing-of-ICD-10-CM-Files.htm
-        _ICD10_FILE = os.path.join(_RSC_DIR, filename)
+        _ICD10_FILE = resources_dir(filename)
         with gzip.open(_ICD10_FILE, 'r') as f:
             tree = ET.parse(f)
         root = tree.getroot()
@@ -282,7 +280,7 @@ class PrICD10(ICD):
 
     @staticmethod
     def distill_icd10_xml(filename: str, hierarchical: bool = True) -> Dict[str, Any]:
-        _ICD10_FILE = os.path.join(_RSC_DIR, filename)
+        _ICD10_FILE = resources_dir(filename)
 
         with gzip.open(_ICD10_FILE, 'rt') as f:
             desc = {
@@ -375,7 +373,7 @@ class DxICD9(HierarchicalICDScheme):
     @staticmethod
     def icd9_columns() -> Dict[str, List[str]]:
         # https://bioportal.bioontology.org/ontologies/HOM-ICD9
-        ICD9CM_FILE = os.path.join(_RSC_DIR, 'HOM-ICD9.csv.gz')
+        ICD9CM_FILE = resources_dir('HOM-ICD9.csv.gz')
         df = pd.read_csv(ICD9CM_FILE, dtype=str)
         df = df.fillna('')
 
@@ -494,7 +492,7 @@ class CCS(HierarchicalScheme):
 
     @classmethod
     def ccs_columns(cls, icd9_scheme: ICD) -> Dict[str, List[str]]:
-        df = pd.read_csv(os.path.join(_CCS_DIR, cls._SCHEME_FILE), dtype=str)
+        df = pd.read_csv(resources_dir("CCS", cls._SCHEME_FILE), dtype=str)
         icd_cname = '\'ICD-9-CM CODE\''
 
         df[icd_cname] = df[icd_cname].apply(lambda l: l.strip('\'').strip())
@@ -643,7 +641,7 @@ class FlatCCS(FlatScheme):
 
     @classmethod
     def flatccs_columns(cls, icd9_scheme: ICD) -> Dict[str, List[str]]:
-        filepath = os.path.join(_CCS_DIR, cls._SCHEME_FILE)
+        filepath = resources_dir("CCS", cls._SCHEME_FILE)
         df = pd.read_csv(filepath, skiprows=[0, 2], dtype=str)
         icd9_cname = '\'ICD-9-CM CODE\''
         cat_cname = '\'CCS CATEGORY\''

@@ -19,7 +19,7 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
                              TableConfig, CodedTableConfig, AdmissionTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
-                             DatasetTables)
+                             DatasetTables, DatasetConfig)
 from lib.ehr.example_schemes.icd import ICDScheme
 
 warnings.filterwarnings('error',
@@ -113,9 +113,10 @@ class SQLTable(Module):
     @staticmethod
     def _coerce_columns_to_str(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
         # TODO: test this method.
+        is_str = pd.api.types.is_string_dtype
         # coerce to integers then fix as strings.
-        int_dtypes = {k: int for k in columns if k in df.columns}
-        str_dtypes = {k: str for k in columns if k in df.columns}
+        int_dtypes = {k: int for k in columns if k in df.columns if not is_str(df.dtypes[k])}
+        str_dtypes = {k: str for k in columns if k in df.columns if not is_str(df.dtypes[k])}
         return df.astype(int_dtypes).astype(str_dtypes)
 
     def _coerce_id_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -201,18 +202,24 @@ class CategoricalSQLTable(SQLTable):
 
     config: CodedSQLTableConfig
 
+    def _coerce_code_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Some of the integer codes in the database when downloaded are stored as floats or integers.
+        A fix is to coerce them to integers then fix as strings.
+        """
+        return self._coerce_columns_to_str(df, self.config.coded_cols)
+
     def space(self, engine: Engine):
         query = self.config.space_query.format(**self.config.alias_dict)
-        return self._coerce_id_to_str(pd.read_sql(query, engine,
-                                                  coerce_float=False))
+        return self._coerce_code_to_str(self._coerce_id_to_str(pd.read_sql(query, engine, coerce_float=False)))
 
 
 class ObservablesSQLTable(SQLTable):
-    # TODO: Document this class.
+    # TODO: Document this class.mimi
 
     config: AdmissionTimestampedCodedValueSQLTableConfig
 
-    def __cal__(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
+    def __call__(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         # TODO: test this method with a mock engine.
         dfs = []
         c_code = self.config.code_alias
@@ -303,6 +310,17 @@ class MixedICDSQLTable(CategoricalSQLTable):
                                      supported_space=self.space(engine),
                                      icd_version_selection=icd_version_selection,
                                      c_version=c_version, c_code=c_code, c_desc=c_desc)
+
+    def _coerce_version_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Some of the integer codes in the database when downloaded are stored as floats or integers.
+        A fix is to coerce them to integers then fix as strings.
+        """
+        return self._coerce_columns_to_str(df, (self.config.icd_version_alias,))
+
+    def space(self, engine: Engine) -> pd.DataFrame:
+        df = super().space(engine)
+        return self._coerce_version_to_str(df)
 
 
 class CodedSQLTable(CategoricalSQLTable):
@@ -506,7 +524,7 @@ class MixedICDScheme(FlatScheme):
                             columns=columns)
 
 
-class MIMICIVSQLConfig(DatasetTablesConfig):
+class MIMICIVSQLTablesConfig(DatasetTablesConfig):
     # TODO: Document this class.
 
     host: str
@@ -515,14 +533,14 @@ class MIMICIVSQLConfig(DatasetTablesConfig):
     password: str
     dbname: str
 
-    static_table: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF)
-    admissions_table: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF)
-    dx_discharge_table: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF)
-    obs_table: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG)
-    icu_procedures_table: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROC_CONF)
-    icu_inputs_table: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUT_CONF)
-    hosp_procedures_table: AdmissionIntervalBasedMixedICDTableConfig = field(
-        default_factory=lambda: HOSP_PROC_CONF)
+    static: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF, kw_only=True)
+    admissions: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF, kw_only=True)
+    dx_discharge: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF, kw_only=True)
+    obs: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG, kw_only=True)
+    icu_procedures: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROC_CONF, kw_only=True)
+    icu_inputs: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUT_CONF, kw_only=True)
+    hosp_procedures: AdmissionIntervalBasedMixedICDTableConfig = field(default_factory=lambda: HOSP_PROC_CONF,
+                                                                       kw_only=True)
 
 
 class MIMICIVDatasetScheme(DatasetScheme):
@@ -535,15 +553,35 @@ class MIMICIVDatasetScheme(DatasetScheme):
     icu_inputs: Optional[FlatScheme] = None
 
 
-class MIMICIVSQL(Module):
+class MIMICIVSQLConfig(DatasetConfig):
+    tables: MIMICIVSQLTablesConfig
+
+
+class MIMICIVSQLTablesInterface(Module):
     # TODO: Document this class.
 
-    config: MIMICIVSQLConfig
+    config: MIMICIVSQLTablesConfig
 
     def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(
             f'postgresql+psycopg2://{self.config.user}:{self.config.password}@'
             f'{self.config.host}:{self.config.port}/{self.config.dbname}')
+
+    def register_gender_scheme(self, name: str,
+                               gender_selection: Optional[pd.DataFrame]):
+        """
+        TODO: document me.
+        """
+        table = StaticSQLTable(self.config.static)
+        return table.register_gender_scheme(name, self.create_engine(), gender_selection)
+
+    def register_ethnicity_scheme(self, name: str,
+                                  ethnicity_selection: Optional[pd.DataFrame]):
+        """
+        TODO: document me.
+        """
+        table = StaticSQLTable(self.config.static)
+        return table.register_ethnicity_scheme(name, self.create_engine(), ethnicity_selection)
 
     def register_obs_scheme(self, name: str,
                             attributes_selection: Optional[pd.DataFrame]):
@@ -559,7 +597,7 @@ class MIMICIVSQL(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = ObservablesSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs)
         return table.register_scheme(name, self.create_engine(), attributes_selection)
 
     def register_icu_input_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
@@ -624,65 +662,75 @@ class MIMICIVSQL(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = MixedICDSQLTable(self.config.dx_discharge_table)
+        table = MixedICDSQLTable(self.config.dx_discharge)
         return table.register_scheme(name, self.create_engine(), {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
                                      icd_version_selection)
 
     @cached_property
+    def supported_gender(self) -> pd.DataFrame:
+        table = StaticSQLTable(self.config.static)
+        return table.gender_space(self.create_engine())
+
+    @cached_property
+    def supported_ethnicity(self) -> pd.DataFrame:
+        table = StaticSQLTable(self.config.static)
+        return table.ethnicity_space(self.create_engine())
+
+    @cached_property
     def supported_obs_variables(self) -> pd.DataFrame:
-        table = ObservablesSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_icu_procedures(self) -> pd.DataFrame:
-        table = CodedSQLTable(self.config.icu_procedures_table)
+        table = CodedSQLTable(self.config.icu_procedures)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_icu_inputs(self) -> pd.DataFrame:
-        table = CodedSQLTable(self.config.icu_inputs_table)
+        table = CodedSQLTable(self.config.icu_inputs)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_hosp_procedures(self) -> pd.DataFrame:
-        table = MixedICDSQLTable(self.config.hosp_procedures_table)
+        table = MixedICDSQLTable(self.config.hosp_procedures)
         return table.space(self.create_engine())
 
     @cached_property
     def supported_dx_discharge(self) -> pd.DataFrame:
-        table = MixedICDSQLTable(self.config.dx_discharge_table)
+        table = MixedICDSQLTable(self.config.dx_discharge)
         return table.space(self.create_engine())
 
     def _extract_static_table(self, engine: Engine) -> pd.DataFrame:
-        table = StaticSQLTable(self.config.static_table)
+        table = StaticSQLTable(self.config.static)
         return table(engine)
 
     def _extract_admissions_table(self, engine: Engine) -> pd.DataFrame:
-        table = SQLTable(self.config.admissions_table)
+        table = SQLTable(self.config.admissions)
         return table(engine)
 
     def _extract_dx_discharge_table(self, engine: Engine, dx_discharge_scheme: MixedICDScheme) -> pd.DataFrame:
-        table = MixedICDSQLTable(self.config.dx_discharge_table)
+        table = MixedICDSQLTable(self.config.dx_discharge)
         dataframe = table(engine)
-        c_icd_version = self.config.dx_discharge_table.icd_version_alias
-        c_icd_code = self.config.dx_discharge_table.icd_code_alias
+        c_icd_version = self.config.dx_discharge.icd_version_alias
+        c_icd_code = self.config.dx_discharge.icd_code_alias
         return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version)
 
     def _extract_obs_table(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
-        table = ObservablesSQLTable(self.config.obs_table)
+        table = ObservablesSQLTable(self.config.obs)
         return table(engine, obs_scheme)
 
     def _extract_icu_procedures_table(self, engine: Engine, icu_procedure_scheme: FlatScheme) -> pd.DataFrame:
-        table = SQLTable(self.config.icu_procedures_table)
-        c_code = self.config.icu_procedures_table.code_alias
+        table = SQLTable(self.config.icu_procedures)
+        c_code = self.config.icu_procedures.code_alias
         dataframe = table(engine)
         dataframe = dataframe[dataframe[c_code].isin(icu_procedure_scheme.codes)]
         dataframe[c_code] = dataframe[c_code]
         return dataframe.reset_index(drop=True)
 
     def _extract_icu_inputs_table(self, engine: Engine, icu_input_scheme: FlatScheme) -> pd.DataFrame:
-        table = CodedSQLTable(self.config.icu_inputs_table)
-        c_code = self.config.icu_inputs_table.code_alias
+        table = CodedSQLTable(self.config.icu_inputs)
+        c_code = self.config.icu_inputs.code_alias
         dataframe = table(engine)
         dataframe = dataframe[dataframe[c_code].isin(icu_input_scheme.codes)]
         dataframe[c_code] = dataframe[c_code]
@@ -690,10 +738,10 @@ class MIMICIVSQL(Module):
 
     def _extract_hosp_procedures_table(self, engine: Engine,
                                        procedure_icd_scheme: MixedICDScheme) -> pd.DataFrame:
-        table = MixedICDSQLTable(self.config.hosp_procedures_table)
-        c_icd_code = self.config.hosp_procedures_table.icd_code_alias
-        c_icd_version = self.config.hosp_procedures_table.icd_version_alias
-        c_code = self.config.hosp_procedures_table.code_alias
+        table = MixedICDSQLTable(self.config.hosp_procedures)
+        c_icd_code = self.config.hosp_procedures.icd_code_alias
+        c_icd_version = self.config.hosp_procedures.icd_version_alias
+        c_code = self.config.hosp_procedures.code_alias
         dataframe = table(engine)
         return procedure_icd_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version, c_code)
 
@@ -758,285 +806,6 @@ class MIMICIVSQL(Module):
     def __call__(self):
         return self
 
-
-#     def subject_info_extractor(self, subject_ids, target_scheme):
-#
-#         static_df = self.df['static']
-#         c_gender = self.colname["static"].gender
-#         c_anchor_year = self.colname["static"].anchor_year
-#         c_anchor_age = self.colname["static"].anchor_age
-#         c_eth = self.colname["static"].ethnicity
-#
-#         static_df = static_df.loc[subject_ids]
-#         gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
-#         subject_gender = gender.to_dict()
-#
-#         anchor_date = pd.to_datetime(static_df[c_anchor_year],
-#                                      format='%Y').dt.normalize()
-#         anchor_age = static_df[c_anchor_age].map(
-#             lambda y: pd.DateOffset(years=-y))
-#         dob = anchor_date + anchor_age
-#         subject_dob = dict(zip(static_df.index.values, dob))
-#         subject_eth = dict()
-#         eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
-#         for subject_id in static_df.index.values:
-#             eth_code = eth_mapper.map_codeset(
-#                 [static_df.loc[subject_id, c_eth]])
-#             subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
-#
-#         return subject_dob, subject_gender, subject_eth
-#
-#     def dx_codes_extractor(self, admission_ids_list, target_scheme):
-#         c_adm_id = self.colname["dx_discharge"].admission_id
-#         c_code = self.colname["dx_discharge"].code
-#         c_version = self.colname["dx_discharge"].version
-#
-#         df = self.df["dx_discharge"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#         codes_df = {
-#             adm_id: codes_df
-#             for adm_id, codes_df in df.groupby(c_adm_id)
-#         }
-#         empty_vector = target_scheme.dx_discharge.empty_vector()
-#
-#         dx_mapper = self.scheme.dx_mapper(target_scheme)
-#
-#         def _extract_codes(adm_id):
-#             _codes_df = codes_df.get(adm_id)
-#             if _codes_df is None:
-#                 return (adm_id, empty_vector)
-#
-#             vec = empty_vector
-#             for version, version_df in _codes_df.groupby(c_version):
-#                 mapper = dx_mapper[str(version)]
-#                 codeset = mapper.map_codeset(version_df[c_code])
-#                 vec = vec.union(mapper.codeset2vec(codeset))
-#             return (adm_id, vec)
-#
-#         return map(_extract_codes, admission_ids_list)
-#
-#
-# class MIMIC4ICUDataset(Dataset):
-#
-#     @classmethod
-#     def _setup_core_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
-#         raise NotImplementedError("Not implemented")
-#
-#     def to_subjects(self,
-#                     subject_ids: List[int],
-#                     num_workers: int,
-#                     demographic_vector_config: DemographicVectorConfig,
-#                     leading_observable_config: LeadingObservableExtractorConfig,
-#                     target_scheme: MIMIC4ICUDatasetScheme,
-#                     time_binning: Optional[int] = None,
-#                     **kwargs):
-#
-#         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
-#             subject_ids, target_scheme)
-#         admission_ids = self.adm_extractor(subject_ids)
-#         adm_ids_list = sum(map(list, admission_ids.values()), [])
-#         logging.debug('Extracting dx_discharge codes...')
-#         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
-#         logging.debug('[DONE] Extracting dx_discharge codes')
-#         logging.debug('Extracting dx_discharge codes history...')
-#         dx_codes_history = dict(
-#             self.dx_codes_history_extractor(dx_codes, admission_ids,
-#                                             target_scheme))
-#         logging.debug('[DONE] Extracting dx_discharge codes history')
-#         logging.debug('Extracting outcome...')
-#         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
-#         logging.debug('[DONE] Extracting outcome')
-#         logging.debug('Extracting procedures...')
-#         procedures = dict(self.procedure_extractor(adm_ids_list))
-#         logging.debug('[DONE] Extracting procedures')
-#         logging.debug('Extracting inputs...')
-#         inputs = dict(self.inputs_extractor(adm_ids_list))
-#         logging.debug('[DONE] Extracting inputs')
-#         logging.debug('Extracting observables...')
-#         observables = dict(
-#             self.observables_extractor(adm_ids_list, num_workers))
-#
-#         if time_binning is not None:
-#             observables = dict((k, v.time_binning(time_binning))
-#                                for k, v in observables.items())
-#
-#         logging.debug('[DONE] Extracting observables')
-#
-#         logging.debug('Compiling admissions...')
-#         c_admittime = self.colname['adm'].admittime
-#         c_dischtime = self.colname['adm'].dischtime
-#         c_adm_interval = self.colname['adm'].adm_interval
-#         adf = self.df['adm']
-#         adm_dates = dict(
-#             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
-#         adm_interval = dict(zip(adf.index, adf[c_adm_interval]))
-#         proc_repr = AggregateRepresentation(self.scheme.int_proc,
-#                                             target_scheme.int_proc)
-#
-#         leading_obs_extractor = LeadingObservableExtractor(leading_observable_config)
-#
-#         def gen_admission(i):
-#             interventions = InpatientInterventions(
-#                 proc=procedures[i],
-#                 input_=inputs[i],
-#                 adm_interval=adm_interval[i])
-#
-#             obs = observables[i]
-#             lead_obs = leading_obs_extractor(obs)
-#
-#             if time_binning is None:
-#                 interventions = interventions.segment_proc(proc_repr)
-#                 interventions = interventions.segment_input()
-#                 lead_obs = lead_obs.segment(interventions.t_sep)
-#                 obs = obs.segment(interventions.t_sep)
-#
-#             return Admission(admission_id=i,
-#                              admission_dates=adm_dates[i],
-#                              dx_codes=dx_codes[i],
-#                              dx_codes_history=dx_codes_history[i],
-#                              outcome=outcome[i],
-#                              observables=obs,
-#                              leading_observable=lead_obs,
-#                              interventions=interventions)
-#
-#         def _gen_subject(subject_id):
-#
-#             _admission_ids = admission_ids[subject_id]
-#             # for subject_id, subject_admission_ids in admission_ids.items():
-#             _admission_ids = sorted(_admission_ids,
-#                                     key=lambda aid: adm_dates[aid][0])
-#
-#             static_info = StaticInfo(
-#                 date_of_birth=subject_dob[subject_id],
-#                 gender=subject_gender[subject_id],
-#                 ethnicity=subject_eth[subject_id],
-#                 demographic_vector_config=demographic_vector_config)
-#
-#             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-#                 admissions = list(executor.map(gen_admission, _admission_ids))
-#             return Patient(subject_id=subject_id,
-#                            admissions=admissions,
-#                            static_info=static_info)
-#
-#         return list(map(_gen_subject, subject_ids))
-#
-#     def procedure_extractor(self, admission_ids_list):
-#         c_adm_id = self.colname["int_proc"].admission_id
-#         c_code_index = self.colname["int_proc"].code_source_index
-#         c_start_time = self.colname["int_proc"].start_time
-#         c_end_time = self.colname["int_proc"].end_time
-#         df = self.df["int_proc"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#         def group_fun(x):
-#             return pd.Series({
-#                 0: x[c_code_index].to_numpy(),
-#                 1: x[c_start_time].to_numpy(),
-#                 2: x[c_end_time].to_numpy()
-#             })
-#
-#         grouped = df.groupby(c_adm_id).apply(group_fun)
-#         adm_arr = grouped.index.tolist()
-#         input_size = len(self.scheme.int_proc)
-#         for i in adm_arr:
-#             yield (i,
-#                    InpatientInput(index=grouped.loc[i, 0],
-#                                   rate=np.ones_like(grouped.loc[i, 0],
-#                                                     dtype=bool),
-#                                   starttime=grouped.loc[i, 1],
-#                                   endtime=grouped.loc[i, 2],
-#                                   size=input_size))
-#
-#         for adm_id in set(admission_ids_list) - set(adm_arr):
-#             yield (adm_id, InpatientInput.empty(input_size))
-#
-#     def inputs_extractor(self, admission_ids_list):
-#         c_adm_id = self.colname["int_input"].admission_id
-#         c_start_time = self.colname["int_input"].start_time
-#         c_end_time = self.colname["int_input"].end_time
-#         c_rate = self.colname["int_input"].rate
-#         c_code_index = self.colname["int_input"].code_source_index
-#
-#         df = self.df["int_input"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#         def group_fun(x):
-#             return pd.Series({
-#                 0: x[c_code_index].to_numpy(),
-#                 1: x[c_rate].to_numpy(),
-#                 2: x[c_start_time].to_numpy(),
-#                 3: x[c_end_time].to_numpy()
-#             })
-#
-#         grouped = df.groupby(c_adm_id).apply(group_fun)
-#         adm_arr = grouped.index.tolist()
-#         input_size = len(self.scheme.int_input)
-#         for i in adm_arr:
-#             yield (i,
-#                    InpatientInput(index=grouped.loc[i, 0],
-#                                   rate=grouped.loc[i, 1],
-#                                   starttime=grouped.loc[i, 2],
-#                                   endtime=grouped.loc[i, 3],
-#                                   size=input_size))
-#         for adm_id in set(admission_ids_list) - set(adm_arr):
-#             yield (adm_id, InpatientInput.empty(input_size))
-#
-#     def observables_extractor(self, admission_ids_list, num_workers):
-#         c_adm_id = self.colname["obs"].admission_id
-#         c_time = self.colname["obs"].timestamp
-#         c_value = self.colname["obs"].value
-#         c_code_index = self.colname["obs"].code_source_index
-#
-#         df = self.df["obs"][[c_adm_id, c_time, c_value, c_code_index]]
-#         logging.debug("obs: filter adms")
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#         obs_dim = len(self.scheme.obs)
-#
-#         def ret_put(a, *args):
-#             np.put(a, *args)
-#             return a
-#
-#         def val_mask(x):
-#             idx = x[c_code_index]
-#             val = ret_put(np.zeros(obs_dim, dtype=np.float16), idx, x[c_value])
-#             mask = ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
-#             adm_id = x.index[0]
-#             time = x[c_time].iloc[0]
-#             return pd.Series({0: adm_id, 1: time, 2: val, 3: mask})
-#
-#         def gen_observation(val_mask):
-#             time = val_mask[1].to_numpy()
-#             value = val_mask[2]
-#             mask = val_mask[3]
-#             mask = np.vstack(mask.values).reshape((len(time), obs_dim))
-#             value = np.vstack(value.values).reshape((len(time), obs_dim))
-#             return InpatientObservables(time=time, value=value, mask=mask)
-#
-#         def partition_fun(part_df):
-#             g = part_df.groupby([c_adm_id, c_time], sort=True, as_index=False)
-#             return g.apply(val_mask).groupby(0).apply(gen_observation)
-#
-#         logging.debug("obs: dasking")
-#         df = df.set_index(c_adm_id)
-#         df = dd.from_pandas(df, npartitions=12, sort=True)
-#         logging.debug("obs: groupby")
-#         obs_obj_df = df.map_partitions(partition_fun, meta=(None, object))
-#         logging.debug("obs: undasking")
-#         obs_obj_df = obs_obj_df.compute()
-#         logging.debug("obs: extract")
-#
-#         collected_adm_ids = obs_obj_df.index.tolist()
-#         assert len(collected_adm_ids) == len(set(collected_adm_ids)), \
-#             "Duplicate admission ids in obs"
-#
-#         for adm_id, obs in obs_obj_df.items():
-#             yield (adm_id, obs)
-#
-#         logging.debug("obs: empty")
-#         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
-#             yield (adm_id, InpatientObservables.empty(obs_dim))
-#
 
 ADMISSIONS_CONF = AdmissionSQLTableConfig(query=(r"""
 select hadm_id as {admission_id_alias}, 
@@ -1103,10 +872,10 @@ RENAL_AKI_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
                                                                query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias} 
 from (select hadm_id, charttime, aki_stage_smoothed, 
-    case when aki_stage_smoothed = 1 then 1 else 0 end as aki_binary from mimiciv_derived.kdigo_stages)
+    case when aki_stage_smoothed = 0 then 0 else 1 end as aki_binary from mimiciv_derived.kdigo_stages)
     """))
 
-SOFA_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
+SOFA_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="sofa",
                                                           attributes=["sofa_24hours"],
                                                           query=(r"""
 select hadm_id {admission_id_alias}, {attributes}, s.endtime {time_alias} 
@@ -1211,6 +980,65 @@ inner join mimiciv_icu.icustays as icu
  on icu.stay_id = gcs.stay_id
 """))
 
+# Intracranial pressure
+ICP_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="icp",
+                                                         attributes=['icp'],
+                                                         query=(r"""
+select icu.hadm_id {admission_id_alias}, {attributes}, icp.charttime {time_alias}
+from mimiciv_derived.icp as icp
+where hadm_id is not null
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = icp.stay_id
+"""))
+
+# Inflammation
+INFLAMMATION_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="inflammation",
+                                                                  attributes=['crp'],
+                                                                  query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.inflammation
+where hadm_id is not null
+"""))
+
+# Coagulation
+COAGULATION_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="coagulation",
+                                                                 attributes=['pt', 'ptt', 'inr', 'd_dimer',
+                                                                             'fibrinogen', 'thrombin'],
+                                                                 query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.coagulation
+where hadm_id is not null
+"""))
+
+# Blood differential
+BLOOD_DIFF_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_diff",
+                                                                attributes=['neutrophils', 'lymphocytes', 'monocytes',
+                                                                            'eosinophils', 'basophils',
+                                                                            'atypical_lymphocytes',
+                                                                            'bands', 'immature_granulocytes',
+                                                                            'metamyelocytes',
+                                                                            'nrbc',
+                                                                            'basophils_abs', 'eosinophils_abs',
+                                                                            'lymphocytes_abs',
+                                                                            'monocytes_abs', 'neutrophils_abs'],
+                                                                query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.blood_differential
+where hadm_id is not null
+"""))
+
+# Enzymes
+ENZYMES_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="enzymes",
+                                                             attributes=['ast', 'alt', 'alp', 'ld_ldh', 'ck_cpk',
+                                                                         'ck_mb',
+                                                                         'amylase', 'ggt', 'bilirubin_direct',
+                                                                         'bilirubin_total', 'bilirubin_indirect'],
+                                                             query=(r"""
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.enzyme
+where hadm_id is not null
+"""))
+
 OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
     RENAL_OUT_CONF,
     RENAL_CREAT_CONF,
@@ -1222,7 +1050,12 @@ OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
     WEIGHT_CONF,
     CBC_CONF,
     VITAL_CONF,
-    GCS_CONF
+    GCS_CONF,
+    ICP_CONF,
+    INFLAMMATION_CONF,
+    COAGULATION_CONF,
+    BLOOD_DIFF_CONF,
+    ENZYMES_CONF
 ])
 
 ## Inputs - Canonicalise
@@ -1234,7 +1067,6 @@ select
     , inp.starttime as {start_time_alias}
     , inp.endtime as {end_time_alias}
     , di.label as {description_alias}
-    , inp.rate  as {rate_alias}
     , inp.amount as {amount_alias}
     , inp.rateuom as {rate_unit_alias}
     , inp.amountuom as {amount_unit_alias}

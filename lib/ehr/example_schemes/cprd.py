@@ -6,10 +6,10 @@ from typing import Set, Dict, List
 import pandas as pd
 
 from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
-                                   CodeMap, CodeMapConfig,
-                                   _RSC_DIR, SchemeWithMissing, Ethnicity, OutcomeExtractor)
+                                   CodeMap, CodeMapConfig, resources_dir,
+                                   SchemeWithMissing, Ethnicity, OutcomeExtractor)
 
-_CPRD_LTC_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
+_CPRD_LTC_FILE = resources_dir('CPRD_212_LTC_ALL.csv.gz')
 ETH16_CODE_CNAME = 'eth16'
 ETH5_CODE_CNAME = 'eth5'
 ETH16_DESC_CNAME = 'eth16_desc'
@@ -114,7 +114,7 @@ class DxLTC9809FlatMedcodes(FlatScheme):
 
     @classmethod
     def from_file(cls, name: str = 'dx_cprd_ltc9809', filepath: str = _CPRD_LTC_FILE):
-        filepath = os.path.join(_RSC_DIR, filepath)
+        filepath = resources_dir(filepath)
         df = pd.read_csv(filepath, dtype=str)
 
         medcode_cname = 'medcodeid'
@@ -146,7 +146,7 @@ class DxLTC9809FlatMedcodes(FlatScheme):
 
 
 def register_cprd_ethnicity(name, eth_code_colname, eth_desc_colname):
-    filepath = os.path.join(_RSC_DIR, ETH_SCHEME_FILE)
+    filepath = resources_dir(ETH_SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     desc = dict()
     for eth_code, eth_df in df.groupby(eth_code_colname):
@@ -169,7 +169,7 @@ def register_cprd_ethnicity_scheme_loaders():
 
 
 def register_cprd_eth_mapping():
-    filepath = os.path.join(_RSC_DIR, ETH_SCHEME_FILE)
+    filepath = resources_dir(ETH_SCHEME_FILE)
     df = pd.read_csv(filepath, dtype=str)
     data = df.set_index(ETH16_CODE_CNAME)[ETH5_CODE_CNAME].to_dict()
     CodeMap.register_map('eth_cprd_16', 'eth_cprd_5', CodeMap(CodeMapConfig('eth_cprd_16', 'eth_cprd_5'), data=data))
