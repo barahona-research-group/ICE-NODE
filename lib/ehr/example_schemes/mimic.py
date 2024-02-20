@@ -217,26 +217,7 @@
 #                                           desc=desc))
 #
 #
-# def register_mimic_eth_mapping(s_scheme: str, t_scheme: str, filename: str,
-#                                s_colname: str, t_colname: str):
-#     """
-#     Register the mapping between two ethnicity coding schemes using a CSV file.
-#
-#     Args:
-#         s_scheme (str): the source coding scheme.
-#         t_scheme (str): the target coding scheme.
-#         filename (str): the name of the CSV file containing the mapping.
-#         s_colname (str): the column name in the CSV file representing the source codes.
-#         t_colname (str): the column name in the CSV file representing the target codes.
-#
-#     Returns:
-#         None
-#     """
-#     filepath = os.path.join(_RSC_DIR, filename)
-#     df = pd.read_csv(filepath, dtype=str)
-#     mapper = df.groupby(s_colname)[t_colname].apply(set).to_dict()
-#     CodeMap.register_map(s_scheme, t_scheme, CodeMap(CodeMapConfig(s_scheme, t_scheme), mapper))
-#
+
 #
 # def register_mimic4proc_mapping(s_scheme: str,
 #                                 t_scheme: str):

@@ -6,20 +6,21 @@ import warnings
 from collections import defaultdict
 from dataclasses import field
 from functools import cached_property
-from typing import Dict, List, Optional, Iterable
+from typing import Dict, List, Optional, Iterable, Tuple
 
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import Engine
 
-from lib.base import Module
-from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap)
+from lib.base import Module, Config
+from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodingScheme, Ethnicity,
+                                   CodeMapConfig)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
                              TableConfig, CodedTableConfig, AdmissionTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
-                             DatasetTables, DatasetConfig)
+                             DatasetTables, DatasetConfig, DatasetSchemeConfig)
 from lib.ehr.example_schemes.icd import ICDScheme
 
 warnings.filterwarnings('error',
@@ -195,6 +196,21 @@ class StaticSQLTable(SQLTable):
                                                     code_selection=ethnicity_selection,
                                                     c_code=self.config.race_alias,
                                                     c_desc=self.config.race_alias)
+
+    def register_ethnicity_map(self, table: pd.DataFrame, s_scheme: str, t_scheme: str):
+        df = table.astype(str)
+        c_ethnicity = self.config.race_alias
+        c_t_ethnicity = f'target_{c_ethnicity}'
+
+        target_codes = df[c_t_ethnicity].unique().tolist()
+        target_config = CodingSchemeConfig(t_scheme)
+        CodingScheme.register_scheme(Ethnicity(config=target_config,
+                                               codes=sorted(target_codes),
+                                               desc=dict(zip(target_codes,
+                                                             target_codes))))
+        mapper = df.groupby(c_ethnicity)[c_t_ethnicity].apply(set).to_dict()
+        CodeMap.register_map(s_scheme, t_scheme, CodeMap(CodeMapConfig(s_scheme, t_scheme),
+                                                         mapper))
 
 
 class CategoricalSQLTable(SQLTable):
@@ -543,6 +559,22 @@ class MIMICIVSQLTablesConfig(DatasetTablesConfig):
                                                                        kw_only=True)
 
 
+class MIMICIVDatasetSchemeMapsFiles(Config):
+    prefix: Optional[Tuple[str]] = ("map",)
+    ethnicity: Optional[str] = 'ethnicity.csv'
+    icu_inputs: Optional[str] = 'icu_inputs.csv'
+    icu_procedures: Optional[str] = 'icu_procedures.csv'
+    hosp_procedures: Optional[str] = 'hosp_procedures.csv'
+
+
+class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
+    name_prefix: str = ''
+    resources_dir: str = ''
+    map_files: MIMICIVDatasetSchemeMapsFiles = field(default_factory=lambda: MIMICIVDatasetSchemeMapsFiles(),
+                                                     kw_only=True)
+    icu_inputs_uom_normalization: Optional[Tuple[str]] = ("uom_normalization", "icu_inputs.csv")
+
+
 class MIMICIVDatasetScheme(DatasetScheme):
     ethnicity: FlatScheme
     gender: FlatScheme
@@ -555,6 +587,7 @@ class MIMICIVDatasetScheme(DatasetScheme):
 
 class MIMICIVSQLConfig(DatasetConfig):
     tables: MIMICIVSQLTablesConfig
+    scheme: MIMICIVDatasetSchemeConfig
 
 
 class MIMICIVSQLTablesInterface(Module):
@@ -600,7 +633,7 @@ class MIMICIVSQLTablesInterface(Module):
         table = ObservablesSQLTable(self.config.obs)
         return table.register_scheme(name, self.create_engine(), attributes_selection)
 
-    def register_icu_input_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
+    def register_icu_inputs_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
         """
         From the given selection of ICU input items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU inputs. If `code_selection` is None,
@@ -616,7 +649,7 @@ class MIMICIVSQLTablesInterface(Module):
         table = CodedSQLTable(self.config.icu_inputs_table)
         return table.register_scheme(name, self.create_engine(), code_selection)
 
-    def register_icu_procedure_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
+    def register_icu_procedures_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
         """
         From the given selection of ICU procedure items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU procedures. If `code_selection` is None,
@@ -632,7 +665,7 @@ class MIMICIVSQLTablesInterface(Module):
         table = CodedSQLTable(self.config.icu_procedures_table)
         return table.register_scheme(name, self.create_engine(), code_selection)
 
-    def register_hosp_procedure_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
+    def register_hosp_procedures_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
         """
         From the given selection of hospital procedure items `icd_version_selection`, generate a new scheme.
 
@@ -745,36 +778,32 @@ class MIMICIVSQLTablesInterface(Module):
         dataframe = table(engine)
         return procedure_icd_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version, c_code)
 
-    def dataset_scheme_from_selection(
-            self, name_prefix: str,
-            gender: Optional[pd.DataFrame] = None,
-            ethnicity: Optional[pd.DataFrame] = None,
-            dx_discharge: Optional[pd.DataFrame] = None,
-            obs: Optional[pd.DataFrame] = None,
-            icu_inputs: Optional[pd.DataFrame] = None,
-            icu_procedures: Optional[pd.DataFrame] = None,
-            hosp_procedures: Optional[pd.DataFrame] = None) -> MIMICIVDatasetScheme:
+    def dataset_scheme_from_selection(self, config: MIMICIVDatasetSchemeConfig) -> MIMICIVDatasetScheme:
         """
-        Create a dataset scheme from the given selection of variables.
-
-        Args:
-            gender: A dataframe containing the `gender`s to generate the new scheme. If None, all supported items will be used.
-            ethnicity: A dataframe containing the `ethnicity`s to generate the new scheme. If None, all supported items will be used.
-            dx_discharge: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
-                - icd_version: The version of the ICD.
-                - icd_code: The ICD code.
-            obs: A dictionary of observation table names and their corresponding attributes.
-                If None, all supported variables will be used.
-            icu_inputs: A dataframe containing the `code`s to generate the new scheme. If None, all supported items will be used.
-            icu_procedures: A dataframe containing the `code`s of choice. If None, all supported items will be used.
-            hosp_procedures: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
-                - icd_version: The version of the ICD.
-                - icd_code: The ICD code.
-
+        Create a dataset scheme from the given config.
+        TODO: document me.
         Returns:
             (CodingScheme.DatasetScheme) A new scheme that is also registered in the current runtime.
         """
-        pass
+        load_df = lambda path: pd.read_csv(resources_dir(config.resources_dir, "selection", path))
+
+        return MIMICIVDatasetScheme(
+            config=config,
+            gender=self.register_gender_scheme(f"{config.name_prefix}.gender", load_df("gender.csv")),
+            ethnicity=self.register_ethnicity_scheme(f"{config.name_prefix}.ethnicity", load_df("ethnicity.csv")),
+            dx_discharge=self.register_dx_discharge_scheme(f"{config.name_prefix}.dx_discharge",
+                                                           load_df("dx_discharge.csv")),
+            obs=self.register_obs_scheme(f"{config.name_prefix}.obs", load_df("obs.csv")),
+            icu_inputs=self.register_icu_inputs_scheme(f"{config.name_prefix}.icu_inputs", load_df("icu_inputs.csv")),
+            icu_procedures=self.register_icu_procedures_scheme(f"{config.name_prefix}.icu_procedures",
+                                                               load_df("icu_procedures.csv")),
+            hosp_procedures=self.register_hosp_procedures_scheme(
+                f"{config.name_prefix}.hosp_procedures",
+                load_df("hosp_procedures.csv")))
+
+    def load_maps(self, config: MIMICIVSQLConfig, dataset_scheme: MIMICIVDatasetScheme) -> None:
+        # Load
+        assert False
 
     def load_tables(self, dataset_scheme: MIMICIVDatasetScheme) -> DatasetTables:
         if dataset_scheme.obs is not None:

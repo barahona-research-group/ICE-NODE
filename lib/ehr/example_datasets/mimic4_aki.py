@@ -1,57 +1,84 @@
+from typing import Optional, Tuple
+
 import pandas as pd
 
-from lib.ehr import DatasetConfig
 from lib.ehr import resources_dir
-from lib.ehr.dataset import AbstractDatasetPipeline, Dataset, AbstractDatasetPipelineConfig, DatasetTables
-from lib.ehr.example_datasets.mimic4 import MIMICIVSQLTablesInterface, MIMICIVSQLTablesConfig, MIMICIVDatasetScheme
+from lib.ehr.coding_scheme import CodeMap, CodeMapConfig, Ethnicity, CodingScheme, CodingSchemeConfig
+from lib.ehr.dataset import AbstractDatasetPipeline, Dataset, AbstractDatasetPipelineConfig, DatasetTables, \
+    DatasetSchemeConfig
+from lib.ehr.example_datasets.mimic4 import MIMICIVSQLTablesInterface, MIMICIVSQLTablesConfig, MIMICIVDatasetScheme, \
+    MIMICIVSQLConfig, MIMICIVDatasetSchemeMapsFiles
 from lib.ehr.pipeline import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
     FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes
 
 
-class MIMIC4DatasetPipelineConfig(AbstractDatasetPipelineConfig):
+class MIMICIVDatasetPipelineConfig(AbstractDatasetPipelineConfig):
     overlap_merge: bool
 
 
-class MIMIC4DatasetConfig(DatasetConfig):
-    pipeline: MIMIC4DatasetPipelineConfig
+class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
+    prefix: str = 'mimic4_study_aki'
+    map_files: MIMICIVDatasetSchemeMapsFiles = MIMICIVDatasetSchemeMapsFiles()
+    icu_inputs_uom_normalization: Optional[Tuple[str]] = ("uom_normalization", "icu_inputs.csv")
+
+
+class MIMICIVDatasetConfig(MIMICIVSQLConfig):
+    pipeline: MIMICIVDatasetPipelineConfig
     tables: MIMICIVSQLTablesConfig
-    resources_dir: str = "mimic4_aki_study"
-    scheme_prefix: str = "mimic4_aki"
+    scheme: MIMICIVDatasetSchemeConfig
 
 
-class MIMIC4Dataset(Dataset):
+class MIMICIVDataset(Dataset):
+    scheme: MIMICIVDatasetScheme
 
-    def __init__(self, config: MIMIC4DatasetConfig, tables: DatasetTables):
+    def __init__(self, config: MIMICIVDatasetConfig, tables: DatasetTables):
+        self.scheme = self.load_dataset_scheme(config)
+        self.load_maps(config, self.scheme)
         super().__init__(config, tables)
 
     @staticmethod
-    def load_icu_inputs_conversion_table(config: MIMIC4DatasetConfig) -> pd.DataFrame:
-        return pd.read_csv(resources_dir(config.resources_dir, "icu_inputs_conversion_table.csv"))
+    def load_icu_inputs_conversion_table(config: MIMICIVDatasetConfig) -> pd.DataFrame:
+        df = pd.read_csv(resources_dir(config.scheme.prefix, *config.scheme.icu_inputs_uom_normalization), dtype=str)
+        c_icu_inputs = config.tables.icu_inputs
+        c_universal_uom = c_icu_inputs.derived_universal_unit
+        c_code = c_icu_inputs.code_alias
+        c_unit = c_icu_inputs.amount_unit_alias
+        c_normalization = c_icu_inputs.derived_unit_normalization_factor
+        df = df.astype({c_normalization: float})
+
+        columns = [c_code, c_unit, c_normalization]
+        assert all(c in df.columns for c in columns), \
+            f"Columns {columns} not found in icu_inputs.csv"
+
+        if c_universal_uom not in df.columns:
+            df[c_universal_uom] = ''
+            for (code, uom), uom_df in df.groupby([c_code, c_unit]):
+                # Select the first unit associated with 1.0 as a normalization factor.
+                index = uom_df[uom_df[c_normalization] == 1.0].first_valid_index()
+                assert index is not None, f"No unit associated with 1.0 normalization factor for code {code} and unit {uom}"
+                df.loc[uom_df.index, c_universal_uom] = uom_df.loc[index, c_unit]
+        return df
 
     @staticmethod
-    def load_dataset_scheme(config: MIMIC4DatasetConfig) -> MIMICIVDatasetScheme:
+    def load_dataset_scheme(config: MIMICIVDatasetConfig) -> MIMICIVDatasetScheme:
         sql = MIMICIVSQLTablesInterface(config.tables)
-        load_df = lambda path: pd.read_csv(resources_dir(config.resources_dir, "scheme", path))
-        return sql.dataset_scheme_from_selection(
-            name_prefix=config.scheme_prefix,
-            ethnicity=load_df("ethnicity.csv"),
-            gender=load_df("gender.csv"),
-            dx_discharge=load_df("dx_discharge.csv"),
-            obs=load_df("obs.csv"),
-            icu_procedures=load_df("icu_procedures.csv"),
-            icu_inputs=load_df("icu_inputs.csv"),
-            hosp_procedures=load_df("hosp_procedures.csv")
-        )
+        return sql.dataset_scheme_from_selection(config=config.scheme)
+
+    @staticmethod
+    def load_maps(config: MIMICIVDatasetConfig, dataset_scheme: MIMICIVDatasetScheme) -> None:
+        sql = MIMICIVSQLTablesInterface(config.tables)
+        return sql.load_maps(config, dataset_scheme)
 
     @classmethod
-    def load_tables(cls, config: MIMIC4DatasetConfig) -> DatasetTables:
+    def load_tables(cls, config: MIMICIVDatasetConfig) -> DatasetTables:
         sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.load_tables(cls.load_dataset_scheme(config))
 
-    def _setup_core_pipeline(cls, config: MIMIC4DatasetConfig) -> AbstractDatasetPipeline:
+    def _setup_core_pipeline(cls, config: MIMICIVDatasetConfig) -> AbstractDatasetPipeline:
         pconfig = config.pipeline
+        conversion_table = cls.load_icu_inputs_conversion_table(config)
         pipeline = [
             SetIndex(),
             SelectSubjectsWithObservation(name='select_with_aki_info',
@@ -61,9 +88,11 @@ class MIMIC4Dataset(Dataset):
             FilterSubjectsNegativeAdmissionLengths(),
             FilterClampTimestampsToAdmissionInterval(),
             FilterUnsupportedCodes(),
-            ICUInputRateUnitConversion(conversion_table=cls.load_icu_inputs_conversion_table()),
+            ICUInputRateUnitConversion(conversion_table=conversion_table),
             FilterInvalidInputRatesSubjects(),
             SetCodeIntegerIndices(),
             SetAdmissionRelativeTimes()
         ]
         return AbstractDatasetPipeline(transformations=pipeline)
+
+
