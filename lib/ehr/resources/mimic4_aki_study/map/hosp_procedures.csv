@@ -1,0 +1,38 @@
+,icd_code,icd_version,description,target_code,target_description
+0,0W9G3ZZ,10,"Drainage of Peritoneal Cavity, Percutaneous Approach",group_0,abdomin_drain
+1,0F798DZ,10,"Dilation of Common Bile Duct with Intraluminal Device, Via Natural or Artificial Opening Endoscopic",group_1,bileduct_proc
+2,021209W,10,"Bypass Coronary Artery, Three Arteries from Aorta with Autologous Venous Tissue, Open Approach",group_2,bypass_art
+3,021009W,10,"Bypass Coronary Artery, One Artery from Aorta with Autologous Venous Tissue, Open Approach",group_2,bypass_art
+4,021109W,10,"Bypass Coronary Artery, Two Arteries from Aorta with Autologous Venous Tissue, Open Approach",group_2,bypass_art
+5,02100Z9,10,"Bypass Coronary Artery, One Artery from Left Internal Mammary, Open Approach",group_2,bypass_art
+6,0B113F4,10,"Bypass Trachea to Cutaneous with Tracheostomy Device, Percutaneous Approach",group_3,bypass_trachea
+7,0BH17EZ,10,"Insertion of Endotracheal Airway into Trachea, Via Natural or Artificial Opening",group_3,bypass_trachea
+8,3E04305,10,"Introduction of Other Antineoplastic into Central Vein, Percutaneous Approach",group_4,cancer_drug
+9,5A1D90Z,10,"Performance of Urinary Filtration, Continuous, Greater than 18 hours Per Day",group_5,dialysis
+10,5A1D70Z,10,"Performance of Urinary Filtration, Intermittent, Less than 6 Hours Per Day",group_5,dialysis
+11,5A1D60Z,10,"Performance of Urinary Filtration, Multiple",group_5,dialysis
+12,3E0H76Z,10,"Introduction of Nutritional Substance into Lower GI, Via Natural or Artificial Opening",group_6,gi_nutrition
+13,3E0G76Z,10,"Introduction of Nutritional Substance into Upper GI, Via Natural or Artificial Opening",group_6,gi_nutrition
+14,0DH63UZ,10,"Insertion of Feeding Device into Stomach, Percutaneous Approach",group_6,gi_nutrition
+15,0W3P8ZZ,10,"Control Bleeding in Gastrointestinal Tract, Via Natural or Artificial Opening Endoscopic",group_7,gitract_bleed_ctrl
+16,0JH606Z,10,"Insertion of Pacemaker, Dual Chamber into Chest Subcutaneous Tissue and Fascia, Open Approach",group_8,heart_device
+17,02H633Z,10,"Insertion of Infusion Device into Right Atrium, Percutaneous Approach",group_8,heart_device
+18,02HK3JZ,10,"Insertion of Pacemaker Lead into Right Ventricle, Percutaneous Approach",group_8,heart_device
+19,02H63JZ,10,"Insertion of Pacemaker Lead into Right Atrium, Percutaneous Approach",group_8,heart_device
+20,02HV33Z,10,"Insertion of Infusion Device into Superior Vena Cava, Percutaneous Approach",group_8,heart_device
+21,3E0436Z,10,"Introduction of Nutritional Substance into Central Vein, Percutaneous Approach",group_9,ivf
+22,0JH63XZ,10,"Insertion of Tunneled Vascular Access Device into Chest Subcutaneous Tissue and Fascia, Percutaneous Approach",group_9,ivf
+23,5A12012,10,"Performance of Cardiac Output, Single, Manual",group_10,perf_cadiac
+24,5A1221Z,10,"Performance of Cardiac Output, Continuous",group_11,perf_cardiac
+25,5A1223Z,10,"Performance of Cardiac Pacing, Continuous",group_11,perf_cardiac
+26,0W9930Z,10,"Drainage of Right Pleural Cavity with Drainage Device, Percutaneous Approach",group_12,pleuralcavity_drain
+27,0W9B30Z,10,"Drainage of Left Pleural Cavity with Drainage Device, Percutaneous Approach",group_12,pleuralcavity_drain
+28,5A2204Z,10,"Restoration of Cardiac Rhythm, Single",group_13,resuscitation_cardioversion_defibrillation
+29,02UG0JZ,10,"Supplement Mitral Valve with Synthetic Substitute, Open Approach",group_14,valve_proc
+30,02RF08Z,10,"Replacement of Aortic Valve with Zooplastic Tissue, Open Approach",group_14,valve_proc
+31,5A1935Z,10,"Respiratory Ventilation, Less than 24 Consecutive Hours",group_15,ventilation
+32,5A1945Z,10,"Respiratory Ventilation, 24-96 Consecutive Hours",group_15,ventilation
+33,5A1955Z,10,"Respiratory Ventilation, Greater than 96 Consecutive Hours",group_15,ventilation
+34,06BQ4ZZ,10,"Excision of Left Saphenous Vein, Percutaneous Endoscopic Approach",group_16,vessel_proc
+35,06BP4ZZ,10,"Excision of Right Saphenous Vein, Percutaneous Endoscopic Approach",group_16,vessel_proc
+36,03BC4ZZ,10,"Excision of Left Radial Artery, Percutaneous Endoscopic Approach",group_16,vessel_proc

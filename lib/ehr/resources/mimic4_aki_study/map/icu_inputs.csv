@@ -1,0 +1,473 @@
+,code,description,target_code,target_description,aggregation,dose_impact
+0,227529,ACD-A Citrate (1000ml),group_0,ACD-A Citrate,sum,Y
+1,227528,ACD-A Citrate (500ml),group_0,ACD-A Citrate,sum,Y
+2,221261,Abciximab (Reopro),group_1,Abciximab,or,N
+3,228315,Acetaminophen-IV,group_2,Acetaminophen-IV,or,N
+4,228315,Acetaminophen-IV,group_2,Acetaminophen-IV,or,N
+5,228315,Acetaminophen-IV,group_2,Acetaminophen-IV,or,N
+6,229057,Acetylcysteine,group_3,Acetylcysteine,or,N
+7,229057,Acetylcysteine,group_3,Acetylcysteine,or,N
+8,221282,Adenosine,group_4,Adenosine,or,N
+9,220862,Albumin 25%,group_5,Albumin 25%,w_sum,Y
+10,220864,Albumin 5%,group_5,Albumin 25%,w_sum,Y
+11,221319,Alteplase (TPA),group_6,Alteplase (TPA),or,N
+12,225838,Ambisome,group_7,Ambisome,or,N
+13,225838,Ambisome,group_7,Ambisome,or,N
+14,225840,Amikacin,group_8,Amikacin,or,N
+15,225840,Amikacin,group_8,Amikacin,or,N
+16,225948,Amino Acids,group_9,Amino Acids,or,N
+17,225948,Amino Acids,group_9,Amino Acids,or,N
+18,229058,Aminocaproic acid (Amicar),group_10,Aminocaproic acid (Amicar),or,N
+19,229058,Aminocaproic acid (Amicar),group_10,Aminocaproic acid (Amicar),or,N
+20,221342,Aminophylline,group_11,Aminophylline,or,N
+21,221347,Amiodarone,group_12,Amiodarone,or,N
+22,229654,Amiodarone 450/250,group_12,Amiodarone,or,N
+23,228339,Amiodarone 600/500,group_12,Amiodarone,or,N
+24,225842,Ampicillin,group_13,Ampicillin,or,N
+25,225842,Ampicillin,group_13,Ampicillin,or,N
+26,225842,Ampicillin,group_13,Ampicillin,or,N
+27,225843,Ampicillin/Sulbactam (Unasyn),group_14,Ampicillin/Sulbactam (Unasyn),or,N
+28,225843,Ampicillin/Sulbactam (Unasyn),group_14,Ampicillin/Sulbactam (Unasyn),or,N
+29,229709,Angiotensin II (Giapreza),group_15,Angiotensin II (Giapreza),or,N
+30,229764,Angiotensin II (Giapreza),group_15,Angiotensin II (Giapreza),or,N
+31,225147,Argatroban,group_16,Argatroban,or,N
+32,225844,Atovaquone,group_17,Atovaquone,or,N
+33,225844,Atovaquone,group_17,Atovaquone,or,N
+34,221393,Atropine,group_18,Atropine,or,N
+35,225845,Azithromycin,group_19,Azithromycin,or,N
+36,225845,Azithromycin,group_19,Azithromycin,or,N
+37,225845,Azithromycin,group_19,Azithromycin,or,N
+38,225866,Erythromycin,group_19,Azithromycin,or,N
+39,225866,Erythromycin,group_19,Azithromycin,or,N
+40,225847,Aztreonam,group_20,Aztreonam,or,N
+41,225847,Aztreonam,group_20,Aztreonam,or,N
+42,225847,Aztreonam,group_20,Aztreonam,or,N
+43,225899,Bactrim (SMX/TMP),group_21,Bactrim (SMX/TMP),or,N
+44,225899,Bactrim (SMX/TMP),group_21,Bactrim (SMX/TMP),or,N
+45,225970,Beneprotein,group_22,Beneprotein,or,Y
+46,225970,Beneprotein,group_22,Beneprotein,or,Y
+47,225970,Beneprotein,group_22,Beneprotein,or,Y
+48,225970,Beneprotein,group_22,Beneprotein,or,Y
+49,229583,Beneprotein.,group_22,Beneprotein,or,Y
+50,225148,Bivalirudin (Angiomax),group_23,Bivalirudin (Angiomax),or,N
+51,229781,Bivalirudin (Angiomax) (Impella),group_23,Bivalirudin (Angiomax),or,N
+52,227977,Boost Glucose Control (1/2),group_24,Boost Glucose Control,or,Y
+53,227976,Boost Glucose Control (1/4),group_24,Boost Glucose Control,or,Y
+54,227978,Boost Glucose Control (3/4),group_24,Boost Glucose Control,or,Y
+55,227979,Boost Glucose Control (Full),group_24,Boost Glucose Control,or,Y
+56,229639,Bumetanide (Bumex),group_25,Bumetanide (Bumex),sum,Y
+57,229618,Calcium Chloride,group_26,Calcium Chloride,or,Y
+58,229618,Calcium Chloride,group_26,Calcium Chloride,or,Y
+59,229618,Calcium Chloride,group_26,Calcium Chloride,or,Y
+60,221456,Calcium Gluconate,group_27,Calcium Gluconate,or,Y
+61,229640,Calcium Gluconate (Bolus),group_27,Calcium Gluconate,or,Y
+62,227525,Calcium Gluconate (CRRT),group_27,Calcium Gluconate,or,Y
+63,227525,Calcium Gluconate (CRRT),group_27,Calcium Gluconate,or,Y
+64,225912,Carafate (Sucralfate),group_28,Carafate (Sucralfate),or,N
+65,225912,Carafate (Sucralfate),group_28,Carafate (Sucralfate),or,N
+66,225912,Carafate (Sucralfate),group_28,Carafate (Sucralfate),or,N
+67,225848,Caspofungin,group_29,Caspofungin,or,N
+68,225848,Caspofungin,group_29,Caspofungin,or,N
+69,225850,Cefazolin,group_30,Cefazolin,or,N
+70,225850,Cefazolin,group_30,Cefazolin,or,N
+71,225850,Cefazolin,group_30,Cefazolin,or,N
+72,225851,Cefepime,group_31,Cefepime,or,N
+73,225851,Cefepime,group_31,Cefepime,or,N
+74,225851,Cefepime,group_31,Cefepime,or,N
+75,225851,Cefepime,group_31,Cefepime,or,N
+76,229587,Ceftaroline,group_32,Ceftaroline,or,N
+77,229587,Ceftaroline,group_32,Ceftaroline,or,N
+78,229587,Ceftaroline,group_32,Ceftaroline,or,N
+79,225853,Ceftazidime,group_33,Ceftazidime,or,N
+80,225853,Ceftazidime,group_33,Ceftazidime,or,N
+81,225853,Ceftazidime,group_33,Ceftazidime,or,N
+82,225855,Ceftriaxone,group_34,Ceftriaxone,or,N
+83,225855,Ceftriaxone,group_34,Ceftriaxone,or,N
+84,225855,Ceftriaxone,group_34,Ceftriaxone,or,N
+85,221555,Cisatracurium,group_35,Cisatracurium,or,N
+86,221555,Cisatracurium,group_35,Cisatracurium,or,N
+87,227526,Citrate,group_36,Citrate,or,N
+88,229234,Clevidipine (Cleviprex),group_37,Clevidipine (Cleviprex),or,N
+89,225860,Clindamycin,group_38,Clindamycin,or,N
+90,225860,Clindamycin,group_38,Clindamycin,or,N
+91,225862,Colistin,group_39,Colistin,or,N
+92,225862,Colistin,group_39,Colistin,or,N
+93,225913,Coumadin (Warfarin),group_40,Coumadin (Warfarin),or,N
+94,225913,Coumadin (Warfarin),group_40,Coumadin (Warfarin),or,N
+95,225913,Coumadin (Warfarin),group_40,Coumadin (Warfarin),or,N
+96,225171,Cryoprecipitate,group_41,Cryoprecipitate,sum,Y
+97,227534,Cyclosporine,group_42,Cyclosporine,or,N
+98,225823,D5 1/2NS,group_43,D5,w_sum,Y
+99,225823,D5 1/2NS,group_43,D5,w_sum,Y
+100,225941,D5 1/4NS,group_43,D5,w_sum,Y
+101,225827,D5LR,group_43,D5,w_sum,Y
+102,225825,D5NS,group_43,D5,w_sum,Y
+103,225825,D5NS,group_43,D5,w_sum,Y
+104,225863,Daptomycin,group_44,Daptomycin,or,N
+105,225863,Daptomycin,group_44,Daptomycin,or,N
+106,225150,Dexmedetomidine (Precedex),group_45,Dexmedetomidine (Precedex),or,N
+107,225150,Dexmedetomidine (Precedex),group_45,Dexmedetomidine (Precedex),or,N
+108,229420,Dexmedetomidine (Precedex),group_45,Dexmedetomidine (Precedex),or,N
+109,229420,Dexmedetomidine (Precedex),group_45,Dexmedetomidine (Precedex),or,N
+110,225795,Dextran 40,group_46,Dextran,sum,Y
+111,220950,Dextrose 10%,group_47,Dextrose,w_sum,Y
+112,228140,Dextrose 20%,group_47,Dextrose,w_sum,Y
+113,228141,Dextrose 30%,group_47,Dextrose,w_sum,Y
+114,228142,Dextrose 40%,group_47,Dextrose,w_sum,Y
+115,220949,Dextrose 5%,group_47,Dextrose,w_sum,Y
+116,220952,Dextrose 50%,group_47,Dextrose,w_sum,Y
+117,225947,Dextrose PN,group_47,Dextrose,w_sum,Y
+118,225947,Dextrose PN,group_47,Dextrose,w_sum,Y
+119,221623,Diazepam (Valium),group_48,Diazepam (Valium),or,N
+120,229069,Digoxin (Lanoxin),group_49,Digoxin (Lanoxin),or,N
+121,229069,Digoxin (Lanoxin),group_49,Digoxin (Lanoxin),or,N
+122,229069,Digoxin (Lanoxin),group_49,Digoxin (Lanoxin),or,N
+123,227689,Dilantin,group_50,Dilantin,or,N
+124,227689,Dilantin,group_50,Dilantin,or,N
+125,221468,Diltiazem,group_51,Diltiazem,or,N
+126,221468,Diltiazem,group_51,Diltiazem,or,N
+127,221653,Dobutamine,group_52,Dobutamine,or,N
+128,221662,Dopamine,group_53,Dopamine,w_sum,N
+129,221712,Ketamine,group_53,Dopamine,w_sum,N
+130,225833,Thiamine,group_53,Dopamine,w_sum,N
+131,225833,Thiamine,group_53,Dopamine,w_sum,N
+132,225833,Thiamine,group_53,Dopamine,w_sum,N
+133,225865,Doxycycline,group_54,Doxycycline,w_sum,N
+134,225865,Doxycycline,group_54,Doxycycline,w_sum,N
+135,229064,Tigecycline,group_54,Doxycycline,w_sum,N
+136,229064,Tigecycline,group_54,Doxycycline,w_sum,N
+137,221689,Drotrecogin (Xigris),group_55,Drotrecogin (Xigris),or,N
+138,228355,Enlive (Full),group_56,Enlive (Full),or,N
+139,225906,Enoxaparin (Lovenox),group_57,Enoxaparin (Lovenox),or,N
+140,225906,Enoxaparin (Lovenox),group_57,Enoxaparin (Lovenox),or,N
+141,225906,Enoxaparin (Lovenox),group_57,Enoxaparin (Lovenox),or,N
+142,226875,Ensure (3/4),group_58,Ensure,w_sum,Y
+143,225937,Ensure (Full),group_58,Ensure,w_sum,Y
+144,226877,Ensure Plus (Full),group_58,Ensure,w_sum,Y
+145,221289,Epinephrine,group_59,Epinephrine,sum,Y
+146,221289,Epinephrine,group_59,Epinephrine,sum,Y
+147,229617,Epinephrine.,group_59,Epinephrine,sum,Y
+148,229617,Epinephrine.,group_59,Epinephrine,sum,Y
+149,229760,Epoprostenol (Veletri),group_60,Epoprostenol (Veletri),or,N
+150,225151,Eptifibatide (Integrilin),group_61,Eptifibatide (Integrilin),or,N
+151,229061,Ertapenem sodium (Invanz),group_62,Ertapenem sodium (Invanz),or,N
+152,229061,Ertapenem sodium (Invanz),group_62,Ertapenem sodium (Invanz),or,N
+153,221429,Esmolol,group_63,Esmolol,or,N
+154,221429,Esmolol,group_63,Esmolol,or,N
+155,229615,Esomeprazole (Nexium),group_64,Esomeprazole (Nexium),or,N
+156,229615,Esomeprazole (Nexium),group_64,Esomeprazole (Nexium),or,N
+157,225868,Ethambutol,group_65,Ethambutol,or,N
+158,221733,Factor VIII,group_66,Factor VIII,or,N
+159,221733,Factor VIII,group_66,Factor VIII,or,N
+160,225914,Factor VIIa,group_66,Factor VIII,or,N
+161,225914,Factor VIIa,group_66,Factor VIII,or,N
+162,225914,Factor VIIa,group_66,Factor VIII,or,N
+163,225914,Factor VIIa,group_66,Factor VIII,or,N
+164,225907,Famotidine (Pepcid),group_67,Famotidine (Pepcid),or,N
+165,225907,Famotidine (Pepcid),group_67,Famotidine (Pepcid),or,N
+166,225907,Famotidine (Pepcid),group_67,Famotidine (Pepcid),or,N
+167,221744,Fentanyl,group_68,Fentanyl,or,N
+168,221744,Fentanyl,group_68,Fentanyl,or,N
+169,225942,Fentanyl (Concentrate),group_68,Fentanyl,or,N
+170,225942,Fentanyl (Concentrate),group_68,Fentanyl,or,N
+171,229574,Fiber Supplement (i.e. Banana Flakes),group_69,Fiber Supplement (i.e. Banana Flakes),or,N
+172,227698,Fibersource HN (1/2),group_70,Fibersource HN (1/2),w_sum,Y
+173,227699,Fibersource HN (1/4),group_70,Fibersource HN (1/2),w_sum,Y
+174,227696,Fibersource HN (3/4),group_70,Fibersource HN (1/2),w_sum,Y
+175,227695,Fibersource HN (Full),group_70,Fibersource HN (1/2),w_sum,Y
+176,225869,Fluconazole,group_71,Fluconazole,or,N
+177,225869,Fluconazole,group_71,Fluconazole,or,N
+178,225905,Voriconazole,group_71,Fluconazole,or,N
+179,225905,Voriconazole,group_71,Fluconazole,or,N
+180,225832,Folic Acid,group_72,Folic Acid,or,N
+181,225832,Folic Acid,group_72,Folic Acid,or,N
+182,225832,Folic Acid,group_72,Folic Acid,or,N
+183,225908,Fondaparinux,group_73,Fondaparinux,or,N
+184,225871,Foscarnet,group_74,Foscarnet,or,N
+185,227690,Fosphenytoin,group_75,Fosphenytoin,or,N
+186,227690,Fosphenytoin,group_75,Fosphenytoin,or,N
+187,227690,Fosphenytoin,group_75,Fosphenytoin,or,N
+188,225797,Free Water,group_76,Free Water,sum,Y
+189,220970,Fresh Frozen Plasma,group_77,Fresh Frozen Plasma,sum,Y
+190,221794,Furosemide (Lasix),group_78,Furosemide (Lasix),w_sum,Y
+191,221794,Furosemide (Lasix),group_78,Furosemide (Lasix),w_sum,Y
+192,228340,Furosemide (Lasix) 250/50,group_78,Furosemide (Lasix),w_sum,Y
+193,226453,GT Flush,group_79,GT Flush,or,N
+194,226453,GT Flush,group_79,GT Flush,or,N
+195,225799,Gastric Meds,group_80,Gastric Meds,or,N
+196,225799,Gastric Meds,group_80,Gastric Meds,or,N
+197,225875,Gentamicin,group_81,Gentamicin,or,N
+198,225875,Gentamicin,group_81,Gentamicin,or,N
+199,228356,Glucerna (1/2),group_82,Glucerna,w_sum,Y
+200,228359,Glucerna (Full),group_82,Glucerna,w_sum,Y
+201,229013,Glucerna 1.2 (Full),group_82,Glucerna,w_sum,Y
+202,229295,Glucerna 1.5 (Full),group_82,Glucerna,w_sum,Y
+203,229070,Glycopyrolate (Robinul),group_83,Glycopyrolate (Robinul),or,N
+204,229070,Glycopyrolate (Robinul),group_83,Glycopyrolate (Robinul),or,N
+205,229070,Glycopyrolate (Robinul),group_83,Glycopyrolate (Robinul),or,N
+206,221824,Haloperidol (Haldol),group_84,Haloperidol (Haldol),or,N
+207,225152,Heparin Sodium,group_85,Heparin Sodium,or,N
+208,229597,Heparin Sodium (Impella),group_85,Heparin Sodium,or,N
+209,225975,Heparin Sodium (Prophylaxis),group_85,Heparin Sodium,or,N
+210,225975,Heparin Sodium (Prophylaxis),group_85,Heparin Sodium,or,N
+211,225174,Hetastarch (Hespan) 6%,group_86,Hetastarch (Hespan),sum,Y
+212,221828,Hydralazine,group_87,Hydralazine,or,N
+213,225167,Hydrochloric Acid - HCL,group_88,Hydrochloric Acid - HCL,or,N
+214,221833,Hydromorphone (Dilaudid),group_89,Hydromorphone (Dilaudid),or,N
+215,221833,Hydromorphone (Dilaudid),group_89,Hydromorphone (Dilaudid),or,N
+216,221833,Hydromorphone (Dilaudid),group_89,Hydromorphone (Dilaudid),or,N
+217,227530,IV Immune Globulin (IVIG),group_90,IV Immune Globulin (IVIG),or,N
+218,225876,Imipenem/Cilastatin,group_91,Imipenem/Cilastatin,or,N
+219,225876,Imipenem/Cilastatin,group_91,Imipenem/Cilastatin,or,N
+220,226023,Impact (1/2),group_92,Impact,w_sum,Y
+221,226020,Impact (1/4),group_92,Impact,w_sum,Y
+222,226022,Impact (3/4),group_92,Impact,w_sum,Y
+223,221207,Impact (Full),group_92,Impact,w_sum,Y
+224,226027,Impact with Fiber (1/2),group_92,Impact,w_sum,Y
+225,226024,Impact with Fiber (1/4),group_92,Impact,w_sum,Y
+226,226026,Impact with Fiber (3/4),group_92,Impact,w_sum,Y
+227,225928,Impact with Fiber (Full),group_92,Impact,w_sum,Y
+228,223257,Insulin - 70/30,group_93,Insulin,w_sum,Y
+229,223260,Insulin - Glargine,group_93,Insulin,w_sum,Y
+230,223262,Insulin - Humalog,group_93,Insulin,w_sum,Y
+231,223261,Insulin - Humalog 75/25,group_93,Insulin,w_sum,Y
+232,223259,Insulin - NPH,group_93,Insulin,w_sum,Y
+233,229299,Insulin - Novolog,group_93,Insulin,w_sum,Y
+234,223258,Insulin - Regular,group_93,Insulin,w_sum,Y
+235,229619,Insulin - U500,group_93,Insulin,w_sum,Y
+236,225877,Isoniazid,group_94,Isoniazid,or,N
+237,228131,Isosource 1.5 (1/2),group_95,Isosource,w_sum,Y
+238,228132,Isosource 1.5 (1/4),group_95,Isosource,w_sum,Y
+239,228133,Isosource 1.5 (2/3),group_95,Isosource,w_sum,Y
+240,228134,Isosource 1.5 (3/4),group_95,Isosource,w_sum,Y
+241,228135,Isosource 1.5 (Full),group_95,Isosource,w_sum,Y
+242,227692,Isuprel,group_96,Isuprel,or,N
+243,229010,Jevity 1.2 (Full),group_97,Jevity,w_sum,Y
+244,229011,Jevity 1.5 (Full),group_97,Jevity,w_sum,Y
+245,225834,K Phos,group_98,K Phos,w_sum,Y
+246,225835,Na Phos,group_98,K Phos,w_sum,Y
+247,227522,KCL (Bolus),group_99,KCL (Bolus),w_sum,Y
+248,227536,KCl (CRRT),group_99,KCL (Bolus),w_sum,Y
+249,227536,KCl (CRRT),group_99,KCL (Bolus),w_sum,Y
+250,227691,Keflex,group_100,Keflex,or,N
+251,227691,Keflex,group_100,Keflex,or,N
+252,229072,Ketorolac (Toradol),group_101,Ketorolac (Toradol),or,N
+253,225828,LR,group_102,LR,sum,Y
+254,225828,LR,group_102,LR,sum,Y
+255,225153,Labetalol,group_103,Labetalol,or,N
+256,225153,Labetalol,group_103,Labetalol,or,N
+257,225909,Lansoprazole (Prevacid),group_104,Lansoprazole (Prevacid),or,N
+258,225909,Lansoprazole (Prevacid),group_104,Lansoprazole (Prevacid),or,N
+259,221892,Lepirudin,group_105,Lepirudin,or,N
+260,228316,Levetiracetam (Keppra),group_106,Levetiracetam (Keppra),or,N
+261,228316,Levetiracetam (Keppra),group_106,Levetiracetam (Keppra),or,N
+262,228316,Levetiracetam (Keppra),group_106,Levetiracetam (Keppra),or,N
+263,225945,Lidocaine,group_107,Lidocaine,or,N
+264,225881,Linezolid,group_108,Linezolid,or,N
+265,225881,Linezolid,group_108,Linezolid,or,N
+266,225969,Lipids (additive),group_109,Lipids (additive),or,N
+267,227090,Lipids 10%,group_109,Lipids (additive),or,N
+268,225801,Lipids 20%,group_109,Lipids (additive),or,N
+269,221385,Lorazepam (Ativan),group_110,Lorazepam (Ativan),or,N
+270,222011,Magnesium Sulfate,group_111,Magnesium Sulfate,or,N
+271,222011,Magnesium Sulfate,group_111,Magnesium Sulfate,or,N
+272,222011,Magnesium Sulfate,group_111,Magnesium Sulfate,or,N
+273,227523,Magnesium Sulfate (Bolus),group_111,Magnesium Sulfate,or,N
+274,227524,Magnesium Sulfate (OB-GYN),group_111,Magnesium Sulfate,or,N
+275,227531,Mannitol,group_112,Mannitol,or,N
+276,227531,Mannitol,group_112,Mannitol,or,N
+277,225973,Meperidine (Demerol),group_113,Meperidine (Demerol),or,N
+278,225883,Meropenem,group_114,Meropenem,or,N
+279,225883,Meropenem,group_114,Meropenem,or,N
+280,225883,Meropenem,group_114,Meropenem,or,N
+281,227520,Methadone Hydrochloride,group_115,Methadone Hydrochloride,or,N
+282,225974,Metoprolol,group_116,Metoprolol,or,N
+283,225974,Metoprolol,group_116,Metoprolol,or,N
+284,225884,Metronidazole,group_117,Metronidazole,or,N
+285,225884,Metronidazole,group_117,Metronidazole,or,N
+286,225884,Metronidazole,group_117,Metronidazole,or,N
+287,225884,Metronidazole,group_117,Metronidazole,or,N
+288,225885,Micafungin,group_118,Micafungin,or,N
+289,225885,Micafungin,group_118,Micafungin,or,N
+290,225885,Micafungin,group_118,Micafungin,or,N
+291,221668,Midazolam (Versed),group_119,Midazolam (Versed),or,N
+292,221986,Milrinone,group_120,Milrinone,or,N
+293,225154,Morphine Sulfate,group_121,Morphine Sulfate,or,N
+294,225830,Multivitamins,group_122,Multivitamins,or,N
+295,225830,Multivitamins,group_122,Multivitamins,or,N
+296,229062,Mycophenolate mofetil (Cellcept),group_123,Mycophenolate mofetil (Cellcept),or,N
+297,225159,NaCl 0.45%,group_124,NaCl,w_sum,Y
+298,225158,NaCl 0.9%,group_124,NaCl,w_sum,Y
+299,225158,NaCl 0.9%,group_124,NaCl,w_sum,Y
+300,228341,NaCl 23.4%,group_124,NaCl,w_sum,Y
+301,225161,NaCl 3% (Hypertonic Saline),group_124,NaCl,w_sum,Y
+302,225888,Nafcillin,group_125,Nafcillin,or,N
+303,225888,Nafcillin,group_125,Nafcillin,or,N
+304,225888,Nafcillin,group_125,Nafcillin,or,N
+305,225888,Nafcillin,group_125,Nafcillin,or,N
+306,222021,Naloxone (Narcan),group_126,Naloxone (Narcan),or,N
+307,222021,Naloxone (Narcan),group_126,Naloxone (Narcan),or,N
+308,222021,Naloxone (Narcan),group_126,Naloxone (Narcan),or,N
+309,229071,Neostigmine (Prostigmin),group_127,Neostigmine (Prostigmin),or,N
+310,228348,Nepro (1/2),group_128,Nepro (1/2),w_sum,Y
+311,228351,Nepro (Full),group_128,Nepro (1/2),w_sum,Y
+312,222037,Nesiritide,group_129,Nesiritide,or,N
+313,222042,Nicardipine,group_130,Nicardipine,or,N
+314,229624,Nicardipine 40mg/200,group_130,Nicardipine,or,N
+315,222056,Nitroglycerin,group_131,Nitroglycerin,or,N
+316,222051,Nitroprusside,group_132,Nitroprusside,or,N
+317,221906,Norepinephrine,group_133,Norepinephrine,sum,Y
+318,227973,NovaSource Renal (1/2),group_134,NovaSource Renal,w_sum,Y
+319,227974,NovaSource Renal (3/4),group_134,NovaSource Renal,w_sum,Y
+320,227975,NovaSource Renal (Full),group_134,NovaSource Renal,w_sum,Y
+321,226019,Nutren 2.0 (1/2),group_135,Nutren,w_sum,Y
+322,226016,Nutren 2.0 (1/4),group_135,Nutren,w_sum,Y
+323,226017,Nutren 2.0 (2/3),group_135,Nutren,w_sum,Y
+324,227518,Nutren 2.0 (3/4),group_135,Nutren,w_sum,Y
+325,225931,Nutren 2.0 (Full),group_135,Nutren,w_sum,Y
+326,226882,Nutren Pulmonary (1/2),group_135,Nutren,w_sum,Y
+327,226881,Nutren Pulmonary (3/4),group_135,Nutren,w_sum,Y
+328,226880,Nutren Pulmonary (Full),group_135,Nutren,w_sum,Y
+329,226031,Nutren Renal (1/2),group_135,Nutren,w_sum,Y
+330,226028,Nutren Renal (1/4),group_135,Nutren,w_sum,Y
+331,226030,Nutren Renal (3/4),group_135,Nutren,w_sum,Y
+332,221036,Nutren Renal (Full),group_135,Nutren,w_sum,Y
+333,226370,OR Autologous Blood Intake,group_136,OR Autologous Blood Intake,sum,Y
+334,226372,OR Cell Saver Intake,group_137,OR Cell Saver Intake,sum,Y
+335,226365,OR Colloid Intake,group_138,OR Colloid Intake,w_sum,Y
+336,226376,PACU Colloid Intake,group_138,OR Colloid Intake,w_sum,Y
+337,226371,OR Cryoprecipitate Intake,group_139,OR Cryoprecipitate Intake,sum,Y
+338,226364,OR Crystalloid Intake,group_140,OR Crystalloid Intake,w_sum,Y
+339,226364,OR Crystalloid Intake,group_140,OR Crystalloid Intake,w_sum,Y
+340,226375,PACU Crystalloid Intake,group_140,OR Crystalloid Intake,w_sum,Y
+341,226375,PACU Crystalloid Intake,group_140,OR Crystalloid Intake,w_sum,Y
+342,226367,OR FFP Intake,group_141,OR FFP Intake,w_sum,Y
+343,226367,OR FFP Intake,group_141,OR FFP Intake,w_sum,Y
+344,226367,OR FFP Intake,group_141,OR FFP Intake,w_sum,Y
+345,227072,PACU FFP Intake,group_141,OR FFP Intake,w_sum,Y
+346,226368,OR Packed RBC Intake,group_142,OR Packed RBC Intake,w_sum,Y
+347,226368,OR Packed RBC Intake,group_142,OR Packed RBC Intake,w_sum,Y
+348,227070,PACU Packed RBC Intake,group_142,OR Packed RBC Intake,w_sum,Y
+349,226369,OR Platelet Intake,group_143,OR Platelet Intake,w_sum,Y
+350,227071,PACU Platelet Intake,group_143,OR Platelet Intake,w_sum,Y
+351,225155,Octreotide,group_144,Octreotide,or,N
+352,225155,Octreotide,group_144,Octreotide,or,N
+353,227694,Omeprazole (Prilosec),group_145,Omeprazole (Prilosec),or,N
+354,227694,Omeprazole (Prilosec),group_145,Omeprazole (Prilosec),or,N
+355,229616,Ondansetron (Zofran),group_146,Ondansetron (Zofran),or,N
+356,229616,Ondansetron (Zofran),group_146,Ondansetron (Zofran),or,N
+357,225993,Optisource,group_147,Optisource,or,N
+358,229297,Osmolite 1.5 (Full),group_148,Osmolite 1.5 (Full),sum,Y
+359,226377,PACU PO Intake,group_149,PACU PO Intake,w_sum,Y
+360,226452,PO Intake,group_149,PACU PO Intake,w_sum,Y
+361,226452,PO Intake,group_149,PACU PO Intake,w_sum,Y
+362,226452,PO Intake,group_149,PACU PO Intake,w_sum,Y
+363,225168,Packed Red Blood Cells,group_150,Packed Red Blood Cells,sum,Y
+364,229063,Pamidronate,group_151,Pamidronate,or,N
+365,225910,Pantoprazole (Protonix),group_152,Pantoprazole (Protonix),or,N
+366,225910,Pantoprazole (Protonix),group_152,Pantoprazole (Protonix),or,N
+367,225910,Pantoprazole (Protonix),group_152,Pantoprazole (Protonix),or,N
+368,225890,Penicillin G potassium,group_153,Penicillin G potassium,or,N
+369,225890,Penicillin G potassium,group_153,Penicillin G potassium,or,N
+370,225156,Pentobarbital,group_154,Pentobarbital,or,N
+371,226039,Peptamen 1.5 (1/2),group_155,Peptamen,w_sum,Y
+372,226036,Peptamen 1.5 (1/4),group_155,Peptamen,w_sum,Y
+373,226038,Peptamen 1.5 (3/4),group_155,Peptamen,w_sum,Y
+374,225930,Peptamen 1.5 (Full),group_155,Peptamen,w_sum,Y
+375,228383,Peptamen Bariatric (Full),group_155,Peptamen,w_sum,Y
+376,225920,Peripheral Parenteral Nutrition,group_156,Peripheral Parenteral Nutrition,sum,Y
+377,221749,Phenylephrine,group_157,Phenylephrine,w_sum,Y
+378,229632,Phenylephrine (200/250),group_157,Phenylephrine,w_sum,Y
+379,229630,Phenylephrine (50/250),group_157,Phenylephrine,w_sum,Y
+380,225892,Piperacillin,group_158,Piperacillin,or,N
+381,225892,Piperacillin,group_158,Piperacillin,or,N
+382,225892,Piperacillin,group_158,Piperacillin,or,N
+383,225893,Piperacillin/Tazobactam (Zosyn),group_158,Piperacillin,or,N
+384,225893,Piperacillin/Tazobactam (Zosyn),group_158,Piperacillin,or,N
+385,225893,Piperacillin/Tazobactam (Zosyn),group_158,Piperacillin,or,N
+386,227532,Plasma Pheresis,group_159,Plasma Pheresis,sum,Y
+387,225170,Platelets,group_160,Platelets,sum,Y
+388,225166,Potassium Chloride,group_161,Potassium Chloride,sum,Y
+389,225166,Potassium Chloride,group_161,Potassium Chloride,sum,Y
+390,225929,ProBalance (Full),group_162,ProBalance (Full),sum,Y
+391,222151,Procainamide,group_163,Procainamide,or,N
+392,225915,Profilnine,group_164,Profilnine,or,N
+393,229009,Promote (Full),group_165,Promote,w_sum,Y
+394,229014,Promote with Fiber (Full),group_165,Promote,w_sum,Y
+395,229014,Promote with Fiber (Full),group_165,Promote,w_sum,Y
+396,222168,Propofol,group_166,Propofol,or,N
+397,222168,Propofol,group_166,Propofol,or,N
+398,229068,Protamine sulfate,group_167,Protamine sulfate,or,N
+399,228360,Pulmocare (1/2),group_168,Pulmocare,w_sum,Y
+400,228361,Pulmocare (1/4),group_168,Pulmocare,w_sum,Y
+401,228363,Pulmocare (Full),group_168,Pulmocare,w_sum,Y
+402,225895,Pyrazinamide,group_169,Pyrazinamide,or,N
+403,225896,Quinine,group_170,Quinine,or,N
+404,222190,Ranitidine,group_171,Ranitidine,or,N
+405,225911,Ranitidine (Prophylaxis),group_171,Ranitidine,or,N
+406,225911,Ranitidine (Prophylaxis),group_171,Ranitidine,or,N
+407,226047,Replete (1/2),group_172,Replete,w_sum,Y
+408,226044,Replete (1/4),group_172,Replete,w_sum,Y
+409,226045,Replete (2/3),group_172,Replete,w_sum,Y
+410,226046,Replete (3/4),group_172,Replete,w_sum,Y
+411,225935,Replete (Full),group_172,Replete,w_sum,Y
+412,226051,Replete with Fiber (1/2),group_172,Replete,w_sum,Y
+413,226048,Replete with Fiber (1/4),group_172,Replete,w_sum,Y
+414,226049,Replete with Fiber (2/3),group_172,Replete,w_sum,Y
+415,226050,Replete with Fiber (3/4),group_172,Replete,w_sum,Y
+416,225936,Replete with Fiber (Full),group_172,Replete,w_sum,Y
+417,225991,Resource Fruit Beverage,group_173,Resource Fruit Beverage,sum,Y
+418,225898,Rifampin,group_174,Rifampin,or,N
+419,225898,Rifampin,group_174,Rifampin,or,N
+420,229233,Rocuronium,group_175,Rocuronium,or,N
+421,222062,Vecuronium,group_175,Rocuronium,or,N
+422,226000,Chocolate Scandi Shake (mixed),group_176,Shake,sum,Y
+423,225995,Mighty Shake (Chocolate),group_176,Shake,sum,Y
+424,225994,Mighty Shake (Vanilla/Strawberry),group_176,Shake,sum,Y
+425,225996,Mighty Shake (no sugar added),group_176,Shake,sum,Y
+426,226002,Vanilla Lactose Free Scandi Shake (mixed),group_176,Shake,sum,Y
+427,229861,Sodium Acetate.,group_177,Sodium Acetate,sum,Y
+428,220995,Sodium Bicarbonate 8.4%,group_178,Sodium Bicarbonate,sum,Y
+429,220995,Sodium Bicarbonate 8.4%,group_178,Sodium Bicarbonate,sum,Y
+430,227533,Sodium Bicarbonate 8.4% (Amp),group_178,Sodium Bicarbonate,sum,Y
+431,225943,Solution,group_179,Solution,sum,Y
+432,225944,Sterile Water,group_180,Sterile Water,sum,Y
+433,225916,TPN w/ Lipids,group_181,TPN w/ Lipids,sum,Y
+434,225917,TPN without Lipids,group_182,TPN without Lipids,sum,Y
+435,228003,Tamiflu,group_183,Tamiflu,or,N
+436,228003,Tamiflu,group_183,Tamiflu,or,N
+437,225157,Tirofiban (Aggrastat),group_184,Tirofiban (Aggrastat),or,N
+438,225902,Tobramycin,group_185,Tobramycin,or,N
+439,225902,Tobramycin,group_185,Tobramycin,or,N
+440,229066,Treprostinil (Remodulin),group_186,Treprostinil (Remodulin),or,N
+441,229066,Treprostinil (Remodulin),group_186,Treprostinil (Remodulin),or,N
+442,228364,Two Cal HN (1/2),group_187,Two Cal HN,w_sum,Y
+443,228367,Two Cal HN (Full),group_187,Two Cal HN,w_sum,Y
+444,225798,Vancomycin,group_188,Vancomycin,or,N
+445,225798,Vancomycin,group_188,Vancomycin,or,N
+446,225798,Vancomycin,group_188,Vancomycin,or,N
+447,225798,Vancomycin,group_188,Vancomycin,or,N
+448,222315,Vasopressin,group_189,Vasopressin,sum,Y
+449,222318,Verapamil,group_190,Verapamil,or,N
+450,229012,Vital 1.5 (Full),group_191,Vital 1.5 (Full),sum,Y
+451,229296,Vital High Protein (Full),group_192,Vital High Protein (Full),sum,Y
+452,227535,Vitamin K (Phytonadione),group_193,Vitamin K (Phytonadione),or,N
+453,227535,Vitamin K (Phytonadione),group_193,Vitamin K (Phytonadione),or,N
+454,226059,Vivonex (1/2),group_194,Vivonex,w_sum,Y
+455,226058,Vivonex (3/4),group_194,Vivonex,w_sum,Y
+456,225934,Vivonex (Full),group_194,Vivonex,w_sum,Y
+457,225837,Acyclovir,group_195,XXXcyclovir,or,N
+458,225837,Acyclovir,group_195,XXXcyclovir,or,N
+459,225837,Acyclovir,group_195,XXXcyclovir,or,N
+460,225837,Acyclovir,group_195,XXXcyclovir,or,N
+461,225873,Gancyclovir,group_195,XXXcyclovir,or,N
+462,225873,Gancyclovir,group_195,XXXcyclovir,or,N
+463,225903,Valgancyclovir,group_195,XXXcyclovir,or,N
+464,225859,Ciprofloxacin,group_196,XXXfloxacin,or,N
+465,225859,Ciprofloxacin,group_196,XXXfloxacin,or,N
+466,225859,Ciprofloxacin,group_196,XXXfloxacin,or,N
+467,225879,Levofloxacin,group_196,XXXfloxacin,or,N
+468,225879,Levofloxacin,group_196,XXXfloxacin,or,N
+469,225879,Levofloxacin,group_196,XXXfloxacin,or,N
+470,225886,Moxifloxacin,group_196,XXXfloxacin,or,N
+471,225886,Moxifloxacin,group_196,XXXfloxacin,or,N

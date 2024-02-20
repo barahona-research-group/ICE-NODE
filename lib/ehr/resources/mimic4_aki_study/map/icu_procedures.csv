@@ -1,0 +1,44 @@
+,code,description,target_code,target_description
+0,225447,Percutaneous Drain Insertion,group_0,abdomin_drain
+1,225445,Paracentesis,group_0,abdomin_drain
+2,225479,Thoracentesis,group_0,abdomin_drain
+3,225479,Thoracentesis,group_0,abdomin_drain
+4,229620,Massive Transfusion,group_1,blood_transfusion
+5,224385,Intubation,group_2,bypass_trachea
+6,225430,Cardiac Cath,group_3,cardiac_catheterization
+7,225441,Hemodialysis,group_4,dialysis
+8,225805,Peritoneal Dialysis,group_4,dialysis
+9,225441,Hemodialysis,group_4,dialysis
+10,225802,Dialysis - CRRT,group_4,dialysis
+11,229523,Subdural Drain,group_5,dural
+12,227713,Epidural Placement,group_5,dural
+13,229522,SEPS (Subdural Evacuating Port System),group_5,dural
+14,229366,Epoprostenol (Inhaled),group_6,epoprostenol
+15,229519,EVD #1,group_7,evd
+16,229520,EVD #2,group_7,evd
+17,229351,Foley Catheter,group_8,foley_cath
+18,225446,PEG Insertion,group_9,gi_device
+19,225439,Endoscopy,group_9,gi_device
+20,228169,Impella Line,group_10,iabp_or_impella
+21,224272,IABP line,group_10,iabp_or_impella
+22,228286,Intraosseous Device,group_11,intraosseous_device
+23,225204,Midline,group_12,ivf
+24,225202,Indwelling Port (PortaCath),group_12,ivf
+25,224263,Multi Lumen,group_12,ivf
+26,229516,Single Lumen,group_12,ivf
+27,224264,PICC Line,group_12,ivf
+28,229532,Indwelling Port,group_12,ivf
+29,229531,Tunneled Access Line,group_12,ivf
+30,225315,Tunneled (Hickman) Line,group_12,ivf
+31,229526,MAC,group_13,mac
+32,225449,Pericardiocentesis,group_14,pericardiocentesis
+33,227551,Plasma Pheresis.,group_15,plasmapheresis
+34,225450,Radiation Therapy,group_16,radiation_therapy
+35,225464,Cardioversion/Defibrillation,group_17,resuscitation_cardioversion_defibrillation
+36,225205,RIC,group_18,ric
+37,225448,Percutaneous Tracheostomy,group_19,trachestomy
+38,226237,Open Tracheostomy,group_19,trachestomy
+39,225203,Pheresis Catheter,group_20,vein_line
+40,224270,Dialysis Catheter,group_21,venous_catheterization
+41,225792,Invasive Ventilation,group_22,ventilation
+42,225794,Non-invasive Ventilation,group_22,ventilation

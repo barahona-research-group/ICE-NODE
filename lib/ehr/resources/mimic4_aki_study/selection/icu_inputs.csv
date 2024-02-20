@@ -1,0 +1,321 @@
+,code,description
+0,227529,ACD-A Citrate (1000ml)
+1,227528,ACD-A Citrate (500ml)
+2,221261,Abciximab (Reopro)
+3,228315,Acetaminophen-IV
+6,229057,Acetylcysteine
+8,221282,Adenosine
+9,220862,Albumin 25%
+10,220864,Albumin 5%
+11,221319,Alteplase (TPA)
+12,225838,Ambisome
+14,225840,Amikacin
+16,225948,Amino Acids
+18,229058,Aminocaproic acid (Amicar)
+20,221342,Aminophylline
+21,221347,Amiodarone
+22,229654,Amiodarone 450/250
+23,228339,Amiodarone 600/500
+24,225842,Ampicillin
+27,225843,Ampicillin/Sulbactam (Unasyn)
+29,229709,Angiotensin II (Giapreza)
+30,229764,Angiotensin II (Giapreza)
+31,225147,Argatroban
+32,225844,Atovaquone
+34,221393,Atropine
+35,225845,Azithromycin
+38,225866,Erythromycin
+40,225847,Aztreonam
+43,225899,Bactrim (SMX/TMP)
+45,225970,Beneprotein
+49,229583,Beneprotein.
+50,225148,Bivalirudin (Angiomax)
+51,229781,Bivalirudin (Angiomax) (Impella)
+52,227977,Boost Glucose Control (1/2)
+53,227976,Boost Glucose Control (1/4)
+54,227978,Boost Glucose Control (3/4)
+55,227979,Boost Glucose Control (Full)
+56,229639,Bumetanide (Bumex)
+57,229618,Calcium Chloride
+60,221456,Calcium Gluconate
+61,229640,Calcium Gluconate (Bolus)
+62,227525,Calcium Gluconate (CRRT)
+64,225912,Carafate (Sucralfate)
+67,225848,Caspofungin
+69,225850,Cefazolin
+72,225851,Cefepime
+76,229587,Ceftaroline
+79,225853,Ceftazidime
+82,225855,Ceftriaxone
+85,221555,Cisatracurium
+87,227526,Citrate
+88,229234,Clevidipine (Cleviprex)
+89,225860,Clindamycin
+91,225862,Colistin
+93,225913,Coumadin (Warfarin)
+96,225171,Cryoprecipitate
+97,227534,Cyclosporine
+98,225823,D5 1/2NS
+100,225941,D5 1/4NS
+101,225827,D5LR
+102,225825,D5NS
+104,225863,Daptomycin
+106,225150,Dexmedetomidine (Precedex)
+108,229420,Dexmedetomidine (Precedex)
+110,225795,Dextran 40
+111,220950,Dextrose 10%
+112,228140,Dextrose 20%
+113,228141,Dextrose 30%
+114,228142,Dextrose 40%
+115,220949,Dextrose 5%
+116,220952,Dextrose 50%
+117,225947,Dextrose PN
+119,221623,Diazepam (Valium)
+120,229069,Digoxin (Lanoxin)
+123,227689,Dilantin
+125,221468,Diltiazem
+127,221653,Dobutamine
+128,221662,Dopamine
+129,221712,Ketamine
+130,225833,Thiamine
+133,225865,Doxycycline
+135,229064,Tigecycline
+137,221689,Drotrecogin (Xigris)
+138,228355,Enlive (Full)
+139,225906,Enoxaparin (Lovenox)
+142,226875,Ensure (3/4)
+143,225937,Ensure (Full)
+144,226877,Ensure Plus (Full)
+145,221289,Epinephrine
+147,229617,Epinephrine.
+149,229760,Epoprostenol (Veletri)
+150,225151,Eptifibatide (Integrilin)
+151,229061,Ertapenem sodium (Invanz)
+153,221429,Esmolol
+155,229615,Esomeprazole (Nexium)
+157,225868,Ethambutol
+158,221733,Factor VIII
+160,225914,Factor VIIa
+164,225907,Famotidine (Pepcid)
+167,221744,Fentanyl
+169,225942,Fentanyl (Concentrate)
+171,229574,Fiber Supplement (i.e. Banana Flakes)
+172,227698,Fibersource HN (1/2)
+173,227699,Fibersource HN (1/4)
+174,227696,Fibersource HN (3/4)
+175,227695,Fibersource HN (Full)
+176,225869,Fluconazole
+178,225905,Voriconazole
+180,225832,Folic Acid
+183,225908,Fondaparinux
+184,225871,Foscarnet
+185,227690,Fosphenytoin
+188,225797,Free Water
+189,220970,Fresh Frozen Plasma
+190,221794,Furosemide (Lasix)
+192,228340,Furosemide (Lasix) 250/50
+193,226453,GT Flush
+195,225799,Gastric Meds
+197,225875,Gentamicin
+199,228356,Glucerna (1/2)
+200,228359,Glucerna (Full)
+201,229013,Glucerna 1.2 (Full)
+202,229295,Glucerna 1.5 (Full)
+203,229070,Glycopyrolate (Robinul)
+206,221824,Haloperidol (Haldol)
+207,225152,Heparin Sodium
+208,229597,Heparin Sodium (Impella)
+209,225975,Heparin Sodium (Prophylaxis)
+211,225174,Hetastarch (Hespan) 6%
+212,221828,Hydralazine
+213,225167,Hydrochloric Acid - HCL
+214,221833,Hydromorphone (Dilaudid)
+217,227530,IV Immune Globulin (IVIG)
+218,225876,Imipenem/Cilastatin
+220,226023,Impact (1/2)
+221,226020,Impact (1/4)
+222,226022,Impact (3/4)
+223,221207,Impact (Full)
+224,226027,Impact with Fiber (1/2)
+225,226024,Impact with Fiber (1/4)
+226,226026,Impact with Fiber (3/4)
+227,225928,Impact with Fiber (Full)
+228,223257,Insulin - 70/30
+229,223260,Insulin - Glargine
+230,223262,Insulin - Humalog
+231,223261,Insulin - Humalog 75/25
+232,223259,Insulin - NPH
+233,229299,Insulin - Novolog
+234,223258,Insulin - Regular
+235,229619,Insulin - U500
+236,225877,Isoniazid
+237,228131,Isosource 1.5 (1/2)
+238,228132,Isosource 1.5 (1/4)
+239,228133,Isosource 1.5 (2/3)
+240,228134,Isosource 1.5 (3/4)
+241,228135,Isosource 1.5 (Full)
+242,227692,Isuprel
+243,229010,Jevity 1.2 (Full)
+244,229011,Jevity 1.5 (Full)
+245,225834,K Phos
+246,225835,Na Phos
+247,227522,KCL (Bolus)
+248,227536,KCl (CRRT)
+250,227691,Keflex
+252,229072,Ketorolac (Toradol)
+253,225828,LR
+255,225153,Labetalol
+257,225909,Lansoprazole (Prevacid)
+259,221892,Lepirudin
+260,228316,Levetiracetam (Keppra)
+263,225945,Lidocaine
+264,225881,Linezolid
+266,225969,Lipids (additive)
+267,227090,Lipids 10%
+268,225801,Lipids 20%
+269,221385,Lorazepam (Ativan)
+270,222011,Magnesium Sulfate
+273,227523,Magnesium Sulfate (Bolus)
+274,227524,Magnesium Sulfate (OB-GYN)
+275,227531,Mannitol
+277,225973,Meperidine (Demerol)
+278,225883,Meropenem
+281,227520,Methadone Hydrochloride
+282,225974,Metoprolol
+284,225884,Metronidazole
+288,225885,Micafungin
+291,221668,Midazolam (Versed)
+292,221986,Milrinone
+293,225154,Morphine Sulfate
+294,225830,Multivitamins
+296,229062,Mycophenolate mofetil (Cellcept)
+297,225159,NaCl 0.45%
+298,225158,NaCl 0.9%
+300,228341,NaCl 23.4%
+301,225161,NaCl 3% (Hypertonic Saline)
+302,225888,Nafcillin
+306,222021,Naloxone (Narcan)
+309,229071,Neostigmine (Prostigmin)
+310,228348,Nepro (1/2)
+311,228351,Nepro (Full)
+312,222037,Nesiritide
+313,222042,Nicardipine
+314,229624,Nicardipine 40mg/200
+315,222056,Nitroglycerin
+316,222051,Nitroprusside
+317,221906,Norepinephrine
+318,227973,NovaSource Renal (1/2)
+319,227974,NovaSource Renal (3/4)
+320,227975,NovaSource Renal (Full)
+321,226019,Nutren 2.0 (1/2)
+322,226016,Nutren 2.0 (1/4)
+323,226017,Nutren 2.0 (2/3)
+324,227518,Nutren 2.0 (3/4)
+325,225931,Nutren 2.0 (Full)
+326,226882,Nutren Pulmonary (1/2)
+327,226881,Nutren Pulmonary (3/4)
+328,226880,Nutren Pulmonary (Full)
+329,226031,Nutren Renal (1/2)
+330,226028,Nutren Renal (1/4)
+331,226030,Nutren Renal (3/4)
+332,221036,Nutren Renal (Full)
+333,226370,OR Autologous Blood Intake
+334,226372,OR Cell Saver Intake
+335,226365,OR Colloid Intake
+336,226376,PACU Colloid Intake
+337,226371,OR Cryoprecipitate Intake
+338,226364,OR Crystalloid Intake
+340,226375,PACU Crystalloid Intake
+342,226367,OR FFP Intake
+345,227072,PACU FFP Intake
+346,226368,OR Packed RBC Intake
+348,227070,PACU Packed RBC Intake
+349,226369,OR Platelet Intake
+350,227071,PACU Platelet Intake
+351,225155,Octreotide
+353,227694,Omeprazole (Prilosec)
+355,229616,Ondansetron (Zofran)
+357,225993,Optisource
+358,229297,Osmolite 1.5 (Full)
+359,226377,PACU PO Intake
+360,226452,PO Intake
+363,225168,Packed Red Blood Cells
+364,229063,Pamidronate
+365,225910,Pantoprazole (Protonix)
+368,225890,Penicillin G potassium
+370,225156,Pentobarbital
+371,226039,Peptamen 1.5 (1/2)
+372,226036,Peptamen 1.5 (1/4)
+373,226038,Peptamen 1.5 (3/4)
+374,225930,Peptamen 1.5 (Full)
+375,228383,Peptamen Bariatric (Full)
+376,225920,Peripheral Parenteral Nutrition
+377,221749,Phenylephrine
+378,229632,Phenylephrine (200/250)
+379,229630,Phenylephrine (50/250)
+380,225892,Piperacillin
+383,225893,Piperacillin/Tazobactam (Zosyn)
+386,227532,Plasma Pheresis
+387,225170,Platelets
+388,225166,Potassium Chloride
+390,225929,ProBalance (Full)
+391,222151,Procainamide
+392,225915,Profilnine
+393,229009,Promote (Full)
+394,229014,Promote with Fiber (Full)
+396,222168,Propofol
+398,229068,Protamine sulfate
+399,228360,Pulmocare (1/2)
+400,228361,Pulmocare (1/4)
+401,228363,Pulmocare (Full)
+402,225895,Pyrazinamide
+403,225896,Quinine
+404,222190,Ranitidine
+405,225911,Ranitidine (Prophylaxis)
+407,226047,Replete (1/2)
+408,226044,Replete (1/4)
+409,226045,Replete (2/3)
+410,226046,Replete (3/4)
+411,225935,Replete (Full)
+412,226051,Replete with Fiber (1/2)
+413,226048,Replete with Fiber (1/4)
+414,226049,Replete with Fiber (2/3)
+415,226050,Replete with Fiber (3/4)
+416,225936,Replete with Fiber (Full)
+417,225991,Resource Fruit Beverage
+418,225898,Rifampin
+420,229233,Rocuronium
+421,222062,Vecuronium
+422,226000,Chocolate Scandi Shake (mixed)
+423,225995,Mighty Shake (Chocolate)
+424,225994,Mighty Shake (Vanilla/Strawberry)
+425,225996,Mighty Shake (no sugar added)
+426,226002,Vanilla Lactose Free Scandi Shake (mixed)
+427,229861,Sodium Acetate.
+428,220995,Sodium Bicarbonate 8.4%
+430,227533,Sodium Bicarbonate 8.4% (Amp)
+431,225943,Solution
+432,225944,Sterile Water
+433,225916,TPN w/ Lipids
+434,225917,TPN without Lipids
+435,228003,Tamiflu
+437,225157,Tirofiban (Aggrastat)
+438,225902,Tobramycin
+440,229066,Treprostinil (Remodulin)
+442,228364,Two Cal HN (1/2)
+443,228367,Two Cal HN (Full)
+444,225798,Vancomycin
+448,222315,Vasopressin
+449,222318,Verapamil
+450,229012,Vital 1.5 (Full)
+451,229296,Vital High Protein (Full)
+452,227535,Vitamin K (Phytonadione)
+454,226059,Vivonex (1/2)
+455,226058,Vivonex (3/4)
+456,225934,Vivonex (Full)
+457,225837,Acyclovir
+461,225873,Gancyclovir
+463,225903,Valgancyclovir
+464,225859,Ciprofloxacin
+467,225879,Levofloxacin
+470,225886,Moxifloxacin
