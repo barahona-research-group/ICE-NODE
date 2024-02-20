@@ -11,7 +11,8 @@ from .ml import trainer
 from .ml import experiment
 from .ml import evaluation
 
-from .ehr import _dataset_cprd, _dataset_mimic3, _dataset_mimic4, dataset
+from .ehr import dataset
+from .ehr.example_datasets import mimic3, cprd, mimic4
 from .ehr import interface
 from .ehr import concepts
 

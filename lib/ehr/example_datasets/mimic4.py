@@ -12,15 +12,15 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Engine
 
-from ._coding_scheme_icd import ICDScheme
-from .coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap)
-from .dataset import (DatasetScheme, StaticTableConfig,
-                      AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
-                      AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
-                      TableConfig, CodedTableConfig, AdmissionTableConfig,
-                      RatedInputTableConfig, DatasetTablesConfig,
-                      DatasetTables)
-from ..base import Module
+from lib.base import Module
+from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap)
+from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
+                             AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
+                             AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
+                             TableConfig, CodedTableConfig, AdmissionTableConfig,
+                             RatedInputTableConfig, DatasetTablesConfig,
+                             DatasetTables)
+from lib.ehr.example_schemes.icd import ICDScheme
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -699,27 +699,27 @@ class MIMICIVSQL(Module):
 
     def dataset_scheme_from_selection(
             self, name_prefix: str,
-            gender_selection: Optional[pd.DataFrame] = None,
-            ethnicity_selection: Optional[pd.DataFrame] = None,
-            dx_discharge_selection: Optional[pd.DataFrame] = None,
-            obs_selection: Optional[pd.DataFrame] = None,
-            icu_input_selection: Optional[pd.DataFrame] = None,
-            icu_procedure_selection: Optional[pd.DataFrame] = None,
-            hosp_procedure_selection: Optional[pd.DataFrame] = None):
+            gender: Optional[pd.DataFrame] = None,
+            ethnicity: Optional[pd.DataFrame] = None,
+            dx_discharge: Optional[pd.DataFrame] = None,
+            obs: Optional[pd.DataFrame] = None,
+            icu_inputs: Optional[pd.DataFrame] = None,
+            icu_procedures: Optional[pd.DataFrame] = None,
+            hosp_procedures: Optional[pd.DataFrame] = None) -> MIMICIVDatasetScheme:
         """
         Create a dataset scheme from the given selection of variables.
 
         Args:
-            gender_selection: A dataframe containing the `gender`s to generate the new scheme. If None, all supported items will be used.
-            ethnicity_selection: A dataframe containing the `ethnicity`s to generate the new scheme. If None, all supported items will be used.
-            dx_discharge_selection: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
+            gender: A dataframe containing the `gender`s to generate the new scheme. If None, all supported items will be used.
+            ethnicity: A dataframe containing the `ethnicity`s to generate the new scheme. If None, all supported items will be used.
+            dx_discharge: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
                 - icd_version: The version of the ICD.
                 - icd_code: The ICD code.
-            obs_selection: A dictionary of observation table names and their corresponding attributes.
+            obs: A dictionary of observation table names and their corresponding attributes.
                 If None, all supported variables will be used.
-            icu_input_selection: A dataframe containing the `code`s to generate the new scheme. If None, all supported items will be used.
-            icu_procedure_selection: A dataframe containing the `code`s of choice. If None, all supported items will be used.
-            hosp_procedure_selection: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
+            icu_inputs: A dataframe containing the `code`s to generate the new scheme. If None, all supported items will be used.
+            icu_procedures: A dataframe containing the `code`s of choice. If None, all supported items will be used.
+            hosp_procedures: A dataframe containing the `icd_code`s to generate the new scheme. If None, all supported items will be used. The dataframe should have the following columns:
                 - icd_version: The version of the ICD.
                 - icd_code: The ICD code.
 
@@ -728,7 +728,7 @@ class MIMICIVSQL(Module):
         """
         pass
 
-    def __call__(self, dataset_scheme: MIMICIVDatasetScheme) -> DatasetTables:
+    def load_tables(self, dataset_scheme: MIMICIVDatasetScheme) -> DatasetTables:
         if dataset_scheme.obs is not None:
             obs = self._extract_obs_table(self.create_engine(), dataset_scheme.obs)
         else:
@@ -755,10 +755,10 @@ class MIMICIVSQL(Module):
             dx_discharge=self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.dx_discharge),
             obs=obs, icu_procedures=icu_procedures, icu_inputs=icu_inputs, hosp_procedures=hosp_procedures)
 
+    def __call__(self):
+        return self
 
-#
-# class MIMIC4Dataset(Dataset):
-#
+
 #     def subject_info_extractor(self, subject_ids, target_scheme):
 #
 #         static_df = self.df['static']
@@ -1212,18 +1212,18 @@ inner join mimiciv_icu.icustays as icu
 """))
 
 OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
-                                                                    RENAL_OUT_CONF,
-                                                                    RENAL_CREAT_CONF,
-                                                                    RENAL_AKI_CONF,
-                                                                    SOFA_CONF,
-                                                                    BLOOD_GAS_CONF,
-                                                                    BLOOD_CHEMISTRY_CONF,
-                                                                    CARDIAC_MARKER_CONF,
-                                                                    WEIGHT_CONF,
-                                                                    CBC_CONF,
-                                                                    VITAL_CONF,
-                                                                    GCS_CONF
-                                                                ])
+    RENAL_OUT_CONF,
+    RENAL_CREAT_CONF,
+    RENAL_AKI_CONF,
+    SOFA_CONF,
+    BLOOD_GAS_CONF,
+    BLOOD_CHEMISTRY_CONF,
+    CARDIAC_MARKER_CONF,
+    WEIGHT_CONF,
+    CBC_CONF,
+    VITAL_CONF,
+    GCS_CONF
+])
 
 ## Inputs - Canonicalise
 

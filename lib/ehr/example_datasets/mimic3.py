@@ -8,8 +8,8 @@ from typing import Dict, List, ClassVar
 import dask.dataframe as dd
 import pandas as pd
 
-from .concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
-from .dataset import Dataset, DatasetScheme
+from lib.ehr.concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
+from lib.ehr.dataset import Dataset, DatasetScheme
 
 
 class MIMIC3Dataset(Dataset):

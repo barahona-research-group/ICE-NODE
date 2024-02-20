@@ -4,7 +4,6 @@ data structures to support conversion between CCS and ICD9."""
 from __future__ import annotations
 
 import logging
-import os
 import re
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
@@ -15,11 +14,9 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from . import resources_dir
 from ..base import Config, Module, Data
 from ..utils import load_config
-
-_DIR = os.path.dirname(__file__)
-_RSC_DIR = os.path.join(_DIR, "resources")
 
 
 class CodesVector(Data):
@@ -1644,7 +1641,7 @@ def register_gender_scheme():
                                               desc={'M': 'male', 'F': 'female'}))
 
 
-_OUTCOME_DIR = os.path.join(_RSC_DIR, 'outcome_filters')
+# _OUTCOME_DIR = os.path.join(resources_dir(), 'outcome_filters')
 
 
 class OutcomeExtractorConfig(CodingSchemeConfig):
@@ -1809,7 +1806,7 @@ class OutcomeExtractor(FlatScheme):
         """
 
         outcome_base = {
-            k: load_config(v, relative_to=_OUTCOME_DIR)['code_scheme']
+            k: load_config(v, relative_to=resources_dir('outcome_filters'))['code_scheme']
             for k, v in cls._spec_files.items()
         }
         return tuple(k for k, v in outcome_base.items()
@@ -1828,7 +1825,7 @@ class OutcomeExtractor(FlatScheme):
 
         """
 
-        conf = load_config(json_file, relative_to=_OUTCOME_DIR)
+        conf = load_config(json_file, relative_to=resources_dir('outcome_filters'))
 
         if 'exclude_branches' in conf:
             # TODO

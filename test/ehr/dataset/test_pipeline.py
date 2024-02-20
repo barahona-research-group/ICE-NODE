@@ -378,6 +378,10 @@ def test_merge_overlapping_admissions(indexed_dataset: Dataset):
             assert set(table_f[c_admission_id]).intersection(set(sub2sup.keys()) | set(sub2sup.values())) == set()
 
 
+def test_select_subjects_with_observation(indexed_dataset: Dataset):
+    assert False
+
+
 @pytest.fixture
 def shifted_timestamps_dataset(indexed_dataset: Dataset):
     if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):

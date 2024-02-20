@@ -518,6 +518,32 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
         return self._filter_interval_based_tables(dataset, aux)
 
 
+class SelectSubjectsWithObservation(DatasetTransformation):
+    code: str = field(kw_only=True)
+    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex,)
+    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices, SampleSubjects)
+
+    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, str]]:
+        c_code = dataset.config.tables.obs.code_alias
+        c_admission_id = dataset.config.tables.obs.admission_id_alias
+        c_subject = dataset.config.tables.static.subject_id_alias
+        obs = dataset.tables.obs
+
+        admission_ids = obs[obs[c_code] == self.code][c_admission_id].unique()
+        assert len(admission_ids) > 0, f'No observations for code {self.code}'
+
+        subjects = dataset.tables.admissions.loc[admission_ids, c_subject].unique()
+        static = dataset.tables.static
+        n1 = len(static)
+        static = static[static.index.isin(subjects)]
+        n2 = len(static)
+        self.report(aux, table='static', column=c_subject, value_type='count',
+                    operation=f'select_subjects(has({self.code}))',
+                    before=n1, after=n2)
+        dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
+        return self.synchronize_subjects(dataset, aux, self.reporter())
+
+
 class ICUInputRateUnitConversion(DatasetTransformation):
     conversion_table: pd.DataFrame = field(kw_only=True)
     blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices,)

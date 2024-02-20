@@ -10,8 +10,8 @@ from typing import Set, Dict, List, Union, Any
 
 import pandas as pd
 
-from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
-                            _RSC_DIR, CodeMapConfig, CodeMap, OutcomeExtractor)
+from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
+                                   _RSC_DIR, CodeMapConfig, CodeMap, OutcomeExtractor)
 
 _CCS_DIR = os.path.join(_RSC_DIR, "CCS")
 

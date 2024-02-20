@@ -5,9 +5,9 @@ from typing import Set, Dict, List
 
 import pandas as pd
 
-from .coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
-                            CodeMap, CodeMapConfig,
-                            _RSC_DIR, SchemeWithMissing, Ethnicity, OutcomeExtractor)
+from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
+                                   CodeMap, CodeMapConfig,
+                                   _RSC_DIR, SchemeWithMissing, Ethnicity, OutcomeExtractor)
 
 _CPRD_LTC_FILE = os.path.join(_RSC_DIR, 'CPRD_212_LTC_ALL.csv.gz')
 ETH16_CODE_CNAME = 'eth16'
