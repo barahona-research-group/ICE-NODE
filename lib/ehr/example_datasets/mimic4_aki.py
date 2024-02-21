@@ -66,11 +66,6 @@ class MIMICIVDataset(Dataset):
         sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.dataset_scheme_from_selection(config=config.scheme)
 
-    @staticmethod
-    def load_maps(config: MIMICIVDatasetConfig, dataset_scheme: MIMICIVDatasetScheme) -> None:
-        sql = MIMICIVSQLTablesInterface(config.tables)
-        return sql.load_maps(config, dataset_scheme)
-
     @classmethod
     def load_tables(cls, config: MIMICIVDatasetConfig) -> DatasetTables:
         sql = MIMICIVSQLTablesInterface(config.tables)
