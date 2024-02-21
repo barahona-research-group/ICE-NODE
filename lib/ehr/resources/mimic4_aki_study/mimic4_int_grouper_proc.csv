@@ -1,0 +1,257 @@
+,code,group,label
+0,v9:c14,antibiotics,Injection or infusion of oxazolidinone class of antibiotics
+1,v9:c40,vessel_proc,Procedure on single vessel
+2,v9:c41,vessel_proc,Procedure on two vessels
+3,v9:c45,vessel_proc,Insertion of one vascular stent
+4,v9:c46,vessel_proc,Insertion of two vascular stents
+5,v9:c66,vessel_proc,Percutaneous transluminal coronary angioplasty [PTCA]
+6,v9:c159,brain_lesion_destruction,Other excision or destruction of lesion or tissue of brain
+7,v10:c021009W,bypass_art,"Bypass Coronary Artery, One Artery from Aorta with Autologous Venous Tissue, Open Approach"
+8,v10:c02100Z9,bypass_art,"Bypass Coronary Artery, One Artery from Left Internal Mammary, Open Approach"
+9,v10:c021109W,bypass_art,"Bypass Coronary Artery, Two Arteries from Aorta with Autologous Venous Tissue, Open Approach"
+10,v10:c021209W,bypass_art,"Bypass Coronary Artery, Three Arteries from Aorta with Autologous Venous Tissue, Open Approach"
+11,v10:c02H633Z,heart_device,"Insertion of Infusion Device into Right Atrium, Percutaneous Approach"
+12,v10:c02H63JZ,heart_device,"Insertion of Pacemaker Lead into Right Atrium, Percutaneous Approach"
+13,v10:c02HK3JZ,heart_device,"Insertion of Pacemaker Lead into Right Ventricle, Percutaneous Approach"
+14,v10:c02HV33Z,heart_device,"Insertion of Infusion Device into Superior Vena Cava, Percutaneous Approach"
+15,v10:c02RF08Z,valve_proc,"Replacement of Aortic Valve with Zooplastic Tissue, Open Approach"
+16,v10:c02UG0JZ,valve_proc,"Supplement Mitral Valve with Synthetic Substitute, Open Approach"
+17,v9:c331,spinal_infusion,Spinal tap
+18,v9:c390,spinal_infusion,Insertion of catheter into spinal canal for infusion of therapeutic or palliative substances
+19,v10:c03BC4ZZ,vessel_proc,"Excision of Left Radial Artery, Percutaneous Endoscopic Approach"
+20,v10:c06BP4ZZ,vessel_proc,"Excision of Right Saphenous Vein, Percutaneous Endoscopic Approach"
+21,v10:c06BQ4ZZ,vessel_proc,"Excision of Left Saphenous Vein, Percutaneous Endoscopic Approach"
+22,v10:c0B113F4,bypass_trachea,"Bypass Trachea to Cutaneous with Tracheostomy Device, Percutaneous Approach"
+23,v10:c0BH17EZ,bypass_trachea,"Insertion of Endotracheal Airway into Trachea, Via Natural or Artificial Opening"
+24,v10:c0DH63UZ,gi_nutrition,"Insertion of Feeding Device into Stomach, Percutaneous Approach"
+25,v10:c0F798DZ,bileduct_proc,"Dilation of Common Bile Duct with Intraluminal Device, Via Natural or Artificial Opening Endoscopic"
+26,v10:c0JH606Z,heart_device,"Insertion of Pacemaker, Dual Chamber into Chest Subcutaneous Tissue and Fascia, Open Approach"
+27,v10:c0JH63XZ,ivf,"Insertion of Tunneled Vascular Access Device into Chest Subcutaneous Tissue and Fascia, Percutaneous Approach"
+28,v10:c0W3P8ZZ,gitract_bleed_ctrl,"Control Bleeding in Gastrointestinal Tract, Via Natural or Artificial Opening Endoscopic"
+29,v10:c0W9930Z,pleuralcavity_drain,"Drainage of Right Pleural Cavity with Drainage Device, Percutaneous Approach"
+30,v10:c0W9B30Z,pleuralcavity_drain,"Drainage of Left Pleural Cavity with Drainage Device, Percutaneous Approach"
+31,v10:c0W9G3ZZ,abdomin_drain,"Drainage of Peritoneal Cavity, Percutaneous Approach"
+32,v9:c311,bypass_trachea,Temporary tracheostomy
+33,v9:c3404,pleuralcavity_drain,Insertion of intercostal catheter for drainage
+34,v9:c3491,abdomin_drain,Thoracentesis
+35,v9:c3521,valve_proc,Open and other replacement of aortic valve with tissue graft
+36,v9:c3606,vessel_proc,Insertion of non-drug-eluting coronary artery stent(s)
+37,v9:c3607,vessel_proc,Insertion of drug-eluting coronary artery stent(s)
+38,v9:c3611,bypass_art,(Aorto)coronary bypass of one coronary artery
+39,v9:c3612,bypass_art,(Aorto)coronary bypass of two coronary arteries
+40,v9:c3613,bypass_art,(Aorto)coronary bypass of three coronary arteries
+41,v9:c3615,bypass_art,Single internal mammary-coronary artery bypass
+42,v9:c3721,cardiac_catheterization,Right heart cardiac catheterization
+43,v9:c3722,cardiac_catheterization,Left heart cardiac catheterization
+44,v9:c3723,cardiac_catheterization,Combined right and left heart cardiac catheterization
+45,v9:c3734,heart_lesion_destruction,"Excision or destruction of other lesion or tissue of heart, endovascular approach"
+46,v9:c3772,heart_device,Initial insertion of transvenous leads [electrodes] into atrium and ventricle
+47,v9:c3783,heart_device,Initial insertion of dual-chamber device
+48,v9:c387,vcf,Interruption of the vena cava
+49,v9:c3891,art_catheterization,Arterial catheterization
+50,v9:c3893,venous_catheterization,"Venous catheterization, not elsewhere classified"
+51,v9:c3895,venous_catheterization,Venous catheterization for renal dialysis
+52,v9:c3897,venous_catheterization,Central venous catheter placement with guidance
+53,v9:c3950,vessel_proc,Angioplasty of other non-coronary vessel(s)
+54,v9:c3961,extracorporeal_circulation,Extracorporeal circulation auxiliary to open heart surgery
+55,v9:c3979,vessel_proc,Other endovascular procedures on other vessels
+56,v9:c3990,vessel_proc,Insertion of non-drug-eluting peripheral (non-coronary) vessel stent(s)
+57,v9:c3995,dialysis,Hemodialysis
+58,v10:c3E04305,cancer_drug,"Introduction of Other Antineoplastic into Central Vein, Percutaneous Approach"
+59,v10:c3E0436Z,ivf,"Introduction of Nutritional Substance into Central Vein, Percutaneous Approach"
+60,v10:c3E0G76Z,gi_nutrition,"Introduction of Nutritional Substance into Upper GI, Via Natural or Artificial Opening"
+61,v10:c3E0H76Z,gi_nutrition,"Introduction of Nutritional Substance into Lower GI, Via Natural or Artificial Opening"
+62,v9:c4311,gi_device,Percutaneous [endoscopic] gastrostomy [PEG]
+63,v9:c4443,gitract_bleed_ctrl,Endoscopic control of gastric or duodenal bleeding
+64,v9:c5110,gi_proc,Endoscopic retrograde cholangiopancreatography [ERCP]
+65,v9:c5185,gi_proc,Endoscopic sphincterotomy and papillotomy
+66,v9:c5187,bileduct_proc,Endoscopic insertion of stent (tube) into bile duct
+67,v9:c5459,adhesion_lysis,Other lysis of peritoneal adhesions
+68,v9:c5491,abdomin_drain,Percutaneous abdominal drainage
+69,v10:c5A12012,perf_cadiac,"Performance of Cardiac Output, Single, Manual"
+70,v10:c5A1221Z,perf_cardiac,"Performance of Cardiac Output, Continuous"
+71,v10:c5A1223Z,perf_cardiac,"Performance of Cardiac Pacing, Continuous"
+72,v10:c5A1935Z,ventilation,"Respiratory Ventilation, Less than 24 Consecutive Hours"
+73,v10:c5A1945Z,ventilation,"Respiratory Ventilation, 24-96 Consecutive Hours"
+74,v10:c5A1955Z,ventilation,"Respiratory Ventilation, Greater than 96 Consecutive Hours"
+75,v10:c5A1D60Z,dialysis,"Performance of Urinary Filtration, Multiple"
+76,v10:c5A1D70Z,dialysis,"Performance of Urinary Filtration, Intermittent, Less than 6 Hours Per Day"
+77,v10:c5A1D90Z,dialysis,"Performance of Urinary Filtration, Continuous, Greater than 18 hours Per Day"
+78,v10:c5A2204Z,resuscitation_cardioversion_defibrillation,"Restoration of Cardiac Rhythm, Single"
+79,v9:c7935,open_reduction,"Open reduction of fracture with internal fixation, femur"
+80,v9:c8162,verteb_fusion,Fusion or refusion of 2-3 vertebrae
+81,v9:c8163,verteb_fusion,Fusion or refusion of 4-8 vertebrae
+82,v9:c8191,arthrocentesis,Arthrocentesis
+83,v9:c8622,debridement,"Excisional debridement of wound, infection, or burn"
+84,v9:c8628,debridement,"Nonexcisional debridement of wound, infection or burn"
+85,v9:c9229,radiotherapeutic,Other radiotherapeutic procedure
+86,v9:c9604,bypass_trachea,Insertion of endotracheal tube
+87,v9:c9605,bypass_trachea,Other intubation of respiratory tract
+88,v9:c966,gi_nutrition,Enteral infusion of concentrated nutritional substances
+89,v9:c9671,ventilation,Continuous invasive mechanical ventilation for less than 96 consecutive hours
+90,v9:c9672,ventilation,Continuous invasive mechanical ventilation for 96 consecutive hours or more
+91,v9:c9904,blood_transfusion,Transfusion of packed cells
+92,v9:c9910,thrombolytic_agent,Injection or infusion of thrombolytic agent
+93,v9:c9914,immunoglobulin,Injection or infusion of immunoglobulin
+94,v9:c9915,ivf,Parenteral infusion of concentrated nutritional substances
+95,v9:c9920,platelet_inhibitor,Injection or infusion of platelet inhibitor
+96,v9:c9925,cancer_drug,Injection or infusion of cancer chemotherapeutic substance
+97,v9:c9960,resuscitation_cardioversion_defibrillation,"Cardiopulmonary resuscitation, not otherwise specified"
+98,v9:c9962,resuscitation_cardioversion_defibrillation,Other electric countershock of heart
+0,14 Gauge,exclude,14 Gauge
+1,16 Gauge,exclude,16 Gauge
+2,18 Gauge,exclude,18 Gauge
+3,20 Gauge,exclude,20 Gauge
+4,22 Gauge,exclude,22 Gauge
+5,24 Gauge,exclude,24 Gauge
+6,AVA,exclude,AVA
+7,Abdominal X-Ray,exclude,Abdominal X-Ray
+8,Angiography,exclude,Angiography
+9,Arterial Line,exclude,Arterial Line
+10,Avalon/Protek Duo,exclude,Avalon/Protek Duo
+11,BAL Fluid Culture,exclude,BAL Fluid Culture
+12,Blakemore / Minnesota Tube D/C,exclude,Blakemore / Minnesota Tube D/C
+13,Blakemore / MinnesotaTube Inserted,exclude,Blakemore / MinnesotaTube Inserted
+14,Blood Cultured,exclude,Blood Cultured
+15,Brain Death,exclude,Brain Death
+16,Bronchoscopy,exclude,Bronchoscopy
+17,C-Spine Clearance,exclude,C-Spine Clearance
+18,CCO PAC,exclude,CCO PAC
+19,CRRT Filter Change,exclude,CRRT Filter Change
+20,CSF Culture,exclude,CSF Culture
+21,CT scan,exclude,CT scan
+22,Cardiac Arrest,exclude,Cardiac Arrest
+23,Cardiac Cath,cardiac_catheterization,Cardiac Cath
+24,Cardioversion/Defibrillation,resuscitation_cardioversion_defibrillation,Cardioversion/Defibrillation
+25,Cath Lab (Received),exclude,Cath Lab (Received)
+26,Cath Lab (Sent),exclude,Cath Lab (Sent)
+27,Centrimag Inflow Line,exclude,Centrimag Inflow Line
+28,Centrimag Outflow Line,exclude,Centrimag Outflow Line
+29,Cervical Spine,exclude,Cervical Spine
+30,Chest Opened,exclude,Chest Opened
+31,Chest Pain,exclude,Chest Pain
+32,Chest Tube Placed,exclude,Chest Tube Placed
+33,Chest Tube Removed,exclude,Chest Tube Removed
+34,Chest X-Ray,exclude,Chest X-Ray
+35,Colonoscopy,exclude,Colonoscopy
+36,Cordis/Introducer,exclude,Cordis/Introducer
+37,Dialysis - CRRT,dialysis,Dialysis - CRRT
+38,Dialysis Catheter,venous_catheterization,Dialysis Catheter
+39,Drain Removed,exclude,Drain Removed
+40,ECMO Inflow Line,exclude,ECMO Inflow Line
+41,ECMO Outflow Line,exclude,ECMO Outflow Line
+42,EEG,exclude,EEG
+43,EEG (Continuous),exclude,EEG (Continuous)
+44,EKG,exclude,EKG
+45,EKOS,exclude,EKOS
+46,EMG,exclude,EMG
+47,ERCP (Done in unit),exclude,ERCP (Done in unit)
+48,ERCP (Travel to),exclude,ERCP (Travel to)
+49,EVD #1,evd,EVD #1
+50,EVD #2,evd,EVD #2
+51,Endoscopy,gi_device,Endoscopy
+52,Epidural Placement,dural,Epidural Placement
+53,Epoprostenol (Inhaled),epoprostenol,Epoprostenol (Inhaled)
+54,Esophogeal Balloon,exclude,Esophogeal Balloon
+55,Extubation,exclude,Extubation
+56,Fall,exclude,Fall
+57,"Family meeting attempted, unable",exclude,"Family meeting attempted, unable"
+58,Family meeting held,exclude,Family meeting held
+59,Family met with Case Manager,exclude,Family met with Case Manager
+60,Family met with Social Worker,exclude,Family met with Social Worker
+61,Family notified of transfer,exclude,Family notified of transfer
+62,Family updated by MD,exclude,Family updated by MD
+63,Family updated by RN,exclude,Family updated by RN
+64,Fluoroscopy,exclude,Fluoroscopy
+65,Foley Catheter,foley_cath,Foley Catheter
+66,Hemodialysis,dialysis,Hemodialysis
+67,IABP line,iabp_or_impella,IABP line
+68,ICP - Camino,exclude,ICP - Camino
+69,ICP - PbtO2,exclude,ICP - PbtO2
+70,ICP Bolt Inserted,exclude,ICP Bolt Inserted
+71,ICP Catheter,exclude,ICP Catheter
+72,Impella Line,iabp_or_impella,Impella Line
+73,Indwelling Port,ivf,Indwelling Port
+74,Indwelling Port (PortaCath),ivf,Indwelling Port (PortaCath)
+75,Interventional Radiology,exclude,Interventional Radiology
+76,Intraosseous Device,intraosseous_device,Intraosseous Device
+77,Intraventricular Drain Inserted,exclude,Intraventricular Drain Inserted
+78,Intubation,bypass_trachea,Intubation
+79,Invasive Ventilation,ventilation,Invasive Ventilation
+80,Line Placement at Bedside,exclude,Line Placement at Bedside
+81,Liver Biopsy,exclude,Liver Biopsy
+82,Lumbar Drain,exclude,Lumbar Drain
+83,Lumbar Puncture,exclude,Lumbar Puncture
+84,MAC,mac,MAC
+85,Magnetic Resonance Imaging,exclude,Magnetic Resonance Imaging
+86,Massive Transfusion,blood_transfusion,Massive Transfusion
+87,Midline,ivf,Midline
+88,Multi Lumen,ivf,Multi Lumen
+89,Multi Lumen Cooling Catheter,exclude,Multi Lumen Cooling Catheter
+90,NEOB notified,exclude,NEOB notified
+91,Nasal Swab,exclude,Nasal Swab
+92,Non-invasive Ventilation,ventilation,Non-invasive Ventilation
+93,Nuclear Medicine,exclude,Nuclear Medicine
+94,Nursing Water Swallow Screening,exclude,Nursing Water Swallow Screening
+95,OR Received,exclude,OR Received
+96,OR Sent,exclude,OR Sent
+97,Open Tracheostomy,trachestomy,Open Tracheostomy
+98,PA Catheter,exclude,PA Catheter
+99,PEG Insertion,gi_device,PEG Insertion
+100,PICC Line,ivf,PICC Line
+101,Pan Culture,exclude,Pan Culture
+102,Paracentesis,abdomin_drain,Paracentesis
+103,Pelvis,exclude,Pelvis
+104,Percutaneous Drain Insertion,abdomin_drain,Percutaneous Drain Insertion
+105,Percutaneous Tracheostomy,trachestomy,Percutaneous Tracheostomy
+106,Pericardial Drain Removed,exclude,Pericardial Drain Removed
+107,Pericardiocentesis,pericardiocentesis,Pericardiocentesis
+108,Peritoneal Dialysis,dialysis,Peritoneal Dialysis
+109,Pheresis Catheter,vein_line,Pheresis Catheter
+110,Plasma Pheresis.,plasmapheresis,Plasma Pheresis.
+111,Pneumothorax,exclude,Pneumothorax
+112,Portable CT scan,exclude,Portable CT scan
+113,Portable Chest X-Ray,exclude,Portable Chest X-Ray
+114,Presep Catheter,exclude,Presep Catheter
+115,RIC,ric,RIC
+116,Radiation Therapy,radiation_therapy,Radiation Therapy
+117,Rectal Swab,exclude,Rectal Swab
+118,Respiratory Arrest,exclude,Respiratory Arrest
+119,SEPS (Subdural Evacuating Port System),dural,SEPS (Subdural Evacuating Port System)
+120,Sheath (Arterial),exclude,Sheath (Arterial)
+121,Sheath (Venous),exclude,Sheath (Venous)
+122,Single Lumen,ivf,Single Lumen
+123,Small Bore Nasal Enteral Tube Placement,exclude,Small Bore Nasal Enteral Tube Placement
+124,Speech and Swallow Evaluation,exclude,Speech and Swallow Evaluation
+125,Sputum Culture,exclude,Sputum Culture
+126,Stool Culture,exclude,Stool Culture
+127,Subdural Drain,dural,Subdural Drain
+128,Surgical Procedure at Bedside,exclude,Surgical Procedure at Bedside
+129,TLS Clearance,exclude,TLS Clearance
+130,TLS Spine,exclude,TLS Spine
+131,Tandem Heart Inflow Line,exclude,Tandem Heart Inflow Line
+132,Tandem Heart Outflow Line,exclude,Tandem Heart Outflow Line
+133,Temporary Pacemaker Wires Discontinued,exclude,Temporary Pacemaker Wires Discontinued
+134,Temporary Pacemaker Wires Inserted,exclude,Temporary Pacemaker Wires Inserted
+135,Thoracentesis,abdomin_drain,Thoracentesis
+136,Trans Esophageal Echo,exclude,Trans Esophageal Echo
+137,Transcranial Doppler,exclude,Transcranial Doppler
+138,Transfer Intercampus by Ambulance,exclude,Transfer Intercampus by Ambulance
+139,Transferred to Floor,exclude,Transferred to Floor
+140,Transthoracic Echo,exclude,Transthoracic Echo
+141,Trauma line,exclude,Trauma line
+142,Travel to Radiology,exclude,Travel to Radiology
+143,Trigger Initiated,exclude,Trigger Initiated
+144,Triple Introducer,exclude,Triple Introducer
+145,Tunneled (Hickman) Line,ivf,Tunneled (Hickman) Line
+146,Tunneled Access Line,ivf,Tunneled Access Line
+147,Ultrasound,exclude,Ultrasound
+148,Unplanned Extubation (non-patient initiated),exclude,Unplanned Extubation (non-patient initiated)
+149,Unplanned Extubation (patient-initiated),exclude,Unplanned Extubation (patient-initiated)
+150,Unplanned Line/Catheter Removal (Non-Patient initated),exclude,Unplanned Line/Catheter Removal (Non-Patient initated)
+151,Unplanned Line/Catheter Removal (Patient Initiated),exclude,Unplanned Line/Catheter Removal (Patient Initiated)
+152,Urine Culture,exclude,Urine Culture
+153,VAC Change,exclude,VAC Change
+154,Venogram,exclude,Venogram
+155,Wound Culture,exclude,Wound Culture
+156,X-ray,exclude,X-ray
