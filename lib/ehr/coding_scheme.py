@@ -2,8 +2,9 @@
 data structures to support conversion between CCS and ICD9."""
 
 from __future__ import annotations
-import os
+
 import logging
+import os
 import re
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
@@ -17,8 +18,10 @@ import pandas as pd
 from ..base import Config, Module, Data
 from ..utils import load_config
 
+
 def resources_dir(*subdir) -> str:
     return os.path.join(os.path.dirname(__file__), "resources", *subdir)
+
 
 class CodesVector(Data):
     """
@@ -1056,7 +1059,7 @@ class CodeMap(Module):
         self._target_scheme = CodingScheme.from_name(config.target_scheme)
 
     @classmethod
-    def register_map(cls, source_scheme: str, target_scheme: str, mapper: CodeMap):
+    def register_map(cls, mapper: CodeMap):
         """
         Registers a CodeMap.
 
@@ -1065,7 +1068,7 @@ class CodeMap(Module):
             target_scheme (str): the target coding scheme.
             mapper (CodeMap): the CodeMap instance.
         """
-        cls._maps[(source_scheme, target_scheme)] = mapper
+        cls._maps[(mapper.config.source_scheme, mapper.config.target_scheme)] = mapper
 
     @classmethod
     def deregister_map(cls, source_scheme: str, target_scheme: str):

@@ -13,8 +13,7 @@ import sqlalchemy
 from sqlalchemy import Engine
 
 from lib.base import Module, Config
-from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodingScheme, Ethnicity,
-                                   CodeMapConfig)
+from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodeMapConfig)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
@@ -101,6 +100,222 @@ class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
     derived_normalized_amount_per_hour: str = 'derived_normalized_amount_per_hour'
 
 
+class ObservableMIMICScheme(FlatScheme):
+    # TODO: Document this class.
+
+    @classmethod
+    def from_selection(cls, name: str, obs_variables: pd.DataFrame):
+        # TODO: test this method.
+        """
+        Create a scheme from a selection of observation variables.
+
+        Args:
+            name: Name of the scheme.
+            obs_variables: A DataFrame containing the variables to include in the scheme.
+                The DataFrame should have the following columns:
+                    - table_name (index): The name of the table containing the variable.
+                    - attribute: The name of the variable.
+
+        Returns:
+            (CodingScheme.FlatScheme) A new scheme containing the variables in obs_variables.
+        """
+        obs_variables = obs_variables.sort_values(['table_name', 'attribute'])
+        # format codes to be of the form 'table_name.attribute'
+        codes = (obs_variables.index + '.' + obs_variables['attribute']).tolist()
+        desc = dict(zip(codes, codes))
+
+        return cls(CodingSchemeConfig(name),
+                   codes=codes,
+                   desc=desc)
+
+    def as_dataframe(self):
+        columns = ['code', 'desc', 'code_index', 'table_name', 'attribute']
+        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split('.')) for c in self.codes],
+                            columns=columns)
+
+
+class MixedICDScheme(FlatScheme):
+    # TODO: Document this class.
+
+    _icd_schemes: Dict[str, ICDScheme]
+    _sep: str = ':'
+
+    def __init__(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
+                 icd_schemes: Dict[str, ICDScheme], sep: str = ':'):
+        super().__init__(config, codes=codes, desc=desc)
+        self._icd_schemes = icd_schemes
+        self._sep = sep
+
+    @staticmethod
+    def fix_dots(df: pd.DataFrame, c_icd_code: str, c_icd_version: str,
+                 icd_schemes: Dict[str, ICDScheme]) -> pd.DataFrame:
+        df = df.copy()
+        for version, icd_df in df.groupby(c_icd_version):
+            scheme = icd_schemes[version]
+            df.loc[icd_df.index, c_icd_code] = \
+                icd_df[c_icd_code].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+        return df
+
+    @classmethod
+    def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
+                       icd_version_alias: str, icd_code_alias: str, description_alias: str,
+                       icd_schemes: Dict[str, str], sep: str = ':') -> MixedICDScheme:
+        # TODO: test this method.
+        icd_version_selection = icd_version_selection.sort_values([icd_version_alias, icd_code_alias])
+        icd_version_selection = icd_version_selection.drop_duplicates([icd_version_alias, icd_code_alias]).astype(str)
+        assert icd_version_selection[icd_version_alias].isin(icd_schemes).all(), \
+            f"Only {', '.join(map(lambda x: f'ICD-{x}', icd_schemes))} are expected."
+
+        # assert no duplicate (icd_code, icd_version)
+        assert icd_version_selection.groupby([icd_version_alias, icd_code_alias]).size().max() == 1, \
+            "Duplicate (icd_code, icd_version) pairs are not allowed."
+
+        icd_schemes_loaded: Dict[str, ICDScheme] = {k: ICDScheme.from_name(v) for k, v in icd_schemes.items()}
+
+        assert all(isinstance(s, ICDScheme) for s in icd_schemes_loaded.values()), \
+            "Only ICD schemes are expected."
+
+        df = cls.fix_dots(icd_version_selection, icd_code_alias, icd_version_alias,
+                          icd_schemes_loaded)
+        df['code'] = (df[icd_version_alias] + sep + df[icd_code_alias]).tolist()
+        desc = df.set_index('code')[description_alias].to_dict()
+
+        return MixedICDScheme(config=CodingSchemeConfig(name),
+                              codes=df['code'].tolist(),
+                              desc=desc,
+                              icd_schemes=icd_schemes_loaded,
+                              sep=sep)
+
+    def mixedcode_format_table(self, table: pd.DataFrame, icd_code_alias: str,
+                               icd_version_alias: str, code_alias: str) -> pd.DataFrame:
+        # TODO: test this method.
+        """
+        Format a table with mixed codes to the ICD version:icd_code format and filter out codes that are not in the scheme.
+        """
+        assert icd_version_alias in table.columns, f"Column {icd_version_alias} not found."
+        assert icd_code_alias in table.columns, f"Column {icd_code_alias} not found."
+        assert table[icd_version_alias].isin(self._icd_schemes).all(), \
+            f"Only ICD version {list(self._icd_schemes.keys())} are expected."
+
+        table = self.fix_dots(table, icd_code_alias, icd_version_alias, self._icd_schemes)
+
+        # the version:icd_code format.
+        table[code_alias] = table[icd_version_alias] + self._sep + table[icd_code_alias]
+
+        # filter out codes that are not in the scheme.
+        return table[table[code_alias].isin(self.codes)].reset_index(drop=True)
+
+    def generate_maps(self):
+        """
+        Register the mappings between the Mixed ICD scheme and the individual ICD scheme.
+        For example, if the current `MixedICD` is mixing ICD-9 and ICD-10,
+        then register the two mappings between this scheme and ICD-9 and ICD-10 separately.
+        This assumes that the current runtime has already registered mappings
+        between the individual ICD schemes.
+        """
+
+        # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
+        mixed2pure_maps = {}
+        lost_codes = []
+        dataframe = self.as_dataframe()
+        for pure_version, pure_scheme in self._icd_schemes.items():
+            # mixed2pure has the form {mixed_code: {icd}}.
+            mixed2pure = defaultdict(set)
+            for mixed_version, mixed_version_df in dataframe.groupby('icd_version'):
+                icd2mixed = mixed_version_df.set_index('icd_code')['code'].to_dict()
+                icd2mixed = {icd: mixed_code for icd, mixed_code in icd2mixed.items() if icd in pure_scheme.codes}
+                assert len(icd2mixed) > 0, "No mapping between the mixed and pure ICD schemes was found."
+                if mixed_version == pure_version:
+                    mixed2pure.update({c: {icd} for icd, c in icd2mixed.items()})
+                else:
+                    # if mixed_version != pure_version, then retrieve
+                    # the mapping between ICD-{mixed_version} and ICD-{pure_version}
+                    pure_map = CodeMap.get_mapper(self._icd_schemes[mixed_version].name,
+                                                  self._icd_schemes[pure_version].name)
+
+                    for icd, mixed_code in icd2mixed.items():
+                        if icd in pure_map:
+                            mixed2pure[mixed_code].update(pure_map[icd])
+                        else:
+                            lost_codes.append(mixed_code)
+
+            mixed2pure_maps[pure_version] = mixed2pure
+        # register the mapping between the mixed and pure ICD schemes.
+        for pure_version, mixed2pure in mixed2pure_maps.items():
+            pure_scheme = self._icd_schemes[pure_version]
+            conf = CodeMapConfig(source_scheme=self.name, target_scheme=pure_scheme.name)
+            CodeMap.register_map(CodeMap(conf, mixed2pure))
+
+        lost_df = dataframe[dataframe['code'].isin(lost_codes)]
+        if len(lost_df) > 0:
+            logging.warning(f"Lost {len(lost_df)} codes when generating the mapping between the Mixed ICD"
+                            "scheme and the individual ICD scheme.")
+            logging.warning(lost_df.to_string().replace('\n', '\n\t'))
+
+    def register_maps_loaders(self):
+        """
+        Register the lazy-loading of mapping between the Mixed ICD scheme and the individual ICD scheme.
+        """
+        for pure_version, pure_scheme in self._icd_schemes.items():
+            CodeMap.register_map_loader(self.name, pure_scheme.name, self.generate_maps)
+
+    def register_map(self, target_name: str, mapping: pd.DataFrame,
+                     c_code: str, c_icd_code: str, c_icd_version: str,
+                     c_target_code: str, c_target_desc: str) -> None:
+        """
+        Register a mapping between the current Mixed ICD scheme and a target scheme.
+        """
+        # TODO: test this method.
+        mapping = self.fix_dots(mapping.astype(str), c_icd_code, c_icd_version, self._icd_schemes)
+        mapping[c_code] = (mapping[c_icd_version] + self._sep + mapping[c_icd_code]).tolist()
+        mapping = mapping[mapping[c_code].isin(self.codes)]
+        assert len(mapping) > 0, "No mapping between the Mixed ICD scheme and the target scheme was found."
+        tcodes = sorted(mapping[c_target_code].drop_duplicates().tolist())
+        tdesc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
+        FlatScheme.register(FlatScheme(CodingSchemeConfig(target_name), codes=tcodes, desc=tdesc))
+
+        mapping = mapping[[c_code, c_target_code]].astype(str)
+        mapping = mapping[mapping[c_code].isin(self.codes) & mapping[c_target_code].isin(tcodes)]
+        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
+        CodeMap.register_map(CodeMap(CodeMapConfig(self.name, target_name), mapping))
+
+    def as_dataframe(self):
+        columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
+        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split(self._sep)) for c in self.codes],
+                            columns=columns)
+
+
+class AggregatedICUInputsScheme(FlatScheme):
+    aggregation: Dict[str, str]
+
+    def __init__(self, config: CodingSchemeConfig, codes: List[str],
+                 desc: Dict[str, str],
+                 aggregation: Dict[str, str]):
+        super().__init__(config, codes=codes, desc=desc)
+        self.aggregation = aggregation
+
+    @staticmethod
+    def register_aggregated_scheme(scheme: FlatScheme, target_name: Optional[str], mapping: Optional[pd.DataFrame],
+                                   c_code: str, c_target_code: str, c_target_desc: str,
+                                   c_target_aggregation: str) -> FlatScheme:
+        """
+        Register a target scheme and its mapping.
+        """
+
+        tscheme_conf = CodingSchemeConfig(target_name)
+        tcodes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
+        tdesc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
+        tagg = mapping.set_index(c_target_code)[c_target_aggregation].to_dict()
+        tscheme = AggregatedICUInputsScheme(tscheme_conf, codes=tcodes, desc=tdesc, aggregation=tagg)
+        AggregatedICUInputsScheme.register_scheme(tscheme)
+
+        mapping = mapping[[c_code, c_target_code]].astype(str)
+        mapping = mapping[mapping[c_code].isin(scheme.codes) & mapping[c_target_code].isin(tscheme.codes)]
+        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
+        CodeMap.register_map(CodeMap(CodeMapConfig(scheme.name, tscheme.name), mapping))
+        return tscheme
+
+
 class AdmissionIntervalBasedMixedICDTableConfig(AdmissionMixedICDSQLTableConfig,
                                                 AdmissionIntervalBasedCodedTableConfig):
     start_time_alias: str = 'start_time'
@@ -131,86 +346,6 @@ class SQLTable(Module):
         query = self.config.query.format(**self.config.alias_dict)
         return self._coerce_id_to_str(pd.read_sql(query, engine,
                                                   coerce_float=False))
-
-
-class TimestampedMultiColumnSQLTable(SQLTable):
-    # TODO: Document this class.
-
-    config: AdmissionTimestampedMultiColumnSQLTableConfig
-
-    def __call__(self, engine: Engine, attributes: List[str]) -> pd.DataFrame:
-        assert len(set(attributes)) == len(attributes), f"Duplicate attributes {attributes}"
-        assert all(a in self.config.attributes for a in attributes), \
-            f"Some attributes {attributes} not in {self.config.attributes}"
-        query = self.config.query.format(attributes=','.join(attributes),
-                                         **self.config.alias_dict)
-        return self._coerce_id_to_str(pd.read_sql(query, engine,
-                                                  coerce_float=False))
-
-    def space(self, engine: Engine):
-        space = pd.DataFrame([(self.config.name, a) for a in self.config.attributes],
-                             columns=['table_name', 'attribute'])
-        return space.set_index('table_name', drop=True).sort_values('attribute').sort_index()
-
-
-class StaticSQLTable(SQLTable):
-    # TODO: Document this class.
-
-    config: StaticSQLTableConfig
-
-    def __call__(self, engine: Engine):
-        query = self.config.query.format(**self.config.alias_dict)
-        df = self._coerce_id_to_str(pd.read_sql(query, engine,
-                                                coerce_float=False))
-
-        anchor_date = pd.to_datetime(df[self.config.anchor_year_alias],
-                                     format='%Y').dt.normalize()
-        anchor_age = df[self.config.anchor_age_alias].map(
-            lambda y: pd.DateOffset(years=-y))
-        df[self.config.date_of_birth_alias] = anchor_date + anchor_age
-
-        return df
-
-    def gender_space(self, engine: Engine):
-        query = self.config.gender_space_query.format(**self.config.alias_dict)
-        return pd.read_sql(query, engine)
-
-    def ethnicity_space(self, engine: Engine):
-        query = self.config.race_space_query.format(**self.config.alias_dict)
-        return pd.read_sql(query, engine)
-
-    def register_gender_scheme(self, name: str,
-                               engine: Engine,
-                               gender_selection: Optional[pd.DataFrame]):
-        return CodedSQLTableConfig._register_scheme(name=name,
-                                                    supported_space=self.gender_space(engine),
-                                                    code_selection=gender_selection,
-                                                    c_code=self.config.gender_alias,
-                                                    c_desc=self.config.gender_alias)
-
-    def register_ethnicity_scheme(self, name: str,
-                                  engine: Engine,
-                                  ethnicity_selection: Optional[pd.DataFrame]):
-        return CodedSQLTableConfig._register_scheme(name=name,
-                                                    supported_space=self.ethnicity_space(engine),
-                                                    code_selection=ethnicity_selection,
-                                                    c_code=self.config.race_alias,
-                                                    c_desc=self.config.race_alias)
-
-    def register_ethnicity_map(self, table: pd.DataFrame, s_scheme: str, t_scheme: str):
-        df = table.astype(str)
-        c_ethnicity = self.config.race_alias
-        c_t_ethnicity = f'target_{c_ethnicity}'
-
-        target_codes = df[c_t_ethnicity].unique().tolist()
-        target_config = CodingSchemeConfig(t_scheme)
-        CodingScheme.register_scheme(Ethnicity(config=target_config,
-                                               codes=sorted(target_codes),
-                                               desc=dict(zip(target_codes,
-                                                             target_codes))))
-        mapper = df.groupby(c_ethnicity)[c_t_ethnicity].apply(set).to_dict()
-        CodeMap.register_map(s_scheme, t_scheme, CodeMap(CodeMapConfig(s_scheme, t_scheme),
-                                                         mapper))
 
 
 class CategoricalSQLTable(SQLTable):
@@ -318,14 +453,23 @@ class MixedICDSQLTable(CategoricalSQLTable):
     def register_scheme(self, name: str,
                         engine: Engine,
                         icd_schemes: Dict[str, str],
-                        icd_version_selection: Optional[pd.DataFrame]) -> MixedICDScheme:
+                        icd_version_selection: Optional[pd.DataFrame],
+                        target_name: Optional[str] = None,
+                        mapping: Optional[pd.DataFrame] = None) -> MixedICDScheme:
         c_version = self.config.icd_version_alias
         c_code = self.config.icd_code_alias
         c_desc = self.config.description_alias
-        return self._register_scheme(name=name, icd_schemes=icd_schemes,
-                                     supported_space=self.space(engine),
-                                     icd_version_selection=icd_version_selection,
-                                     c_version=c_version, c_code=c_code, c_desc=c_desc)
+        scheme = self._register_scheme(name=name, icd_schemes=icd_schemes,
+                                       supported_space=self.space(engine),
+                                       icd_version_selection=icd_version_selection,
+                                       c_version=c_version, c_code=c_code, c_desc=c_desc)
+
+        if target_name is not None and mapping is not None:
+            scheme.register_map(target_name, mapping,
+                                c_code=c_code, c_icd_code=c_code, c_icd_version=c_version,
+                                c_target_code=f'target_{c_code}',
+                                c_target_desc=f'target_{c_desc}')
+        return scheme
 
     def _coerce_version_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -344,8 +488,8 @@ class CodedSQLTable(CategoricalSQLTable):
 
     config: CodedSQLTableConfig
 
-    @classmethod
-    def _register_scheme(cls, name: str,
+    @staticmethod
+    def _register_scheme(name: str,
                          supported_space: pd.DataFrame,
                          code_selection: Optional[pd.DataFrame],
                          c_code: str, c_desc: str) -> FlatScheme:
@@ -365,6 +509,23 @@ class CodedSQLTable(CategoricalSQLTable):
         FlatScheme.register_scheme(scheme)
         return scheme
 
+    def register_target_scheme(self, target_name: Optional[str], mapping: pd.DataFrame,
+                               c_code: str, c_target_code: str, c_target_desc: str) -> FlatScheme:
+        """
+        Register a target scheme and its mapping.
+        """
+        tscheme_conf = CodingSchemeConfig(target_name)
+        tcodes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
+        tdesc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
+        tscheme = FlatScheme(tscheme_conf, codes=tcodes, desc=tdesc)
+        FlatScheme.register_scheme(tscheme)
+
+        mapping = mapping[[c_code, c_target_code]].astype(str)
+        mapping = mapping[mapping[c_code].isin(self.codes) & mapping[c_target_code].isin(tscheme.codes)]
+        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
+        CodeMap.register_map(CodeMap(CodeMapConfig(self.name, tscheme.name), mapping))
+        return tscheme
+
     def register_scheme(self, name: str,
                         engine: Engine, code_selection: Optional[pd.DataFrame]) -> FlatScheme:
         return self._register_scheme(name=name, supported_space=self.space(engine),
@@ -372,172 +533,86 @@ class CodedSQLTable(CategoricalSQLTable):
                                      c_desc=self.config.description_alias)
 
 
-class ObservableMIMICScheme(FlatScheme):
+class TimestampedMultiColumnSQLTable(SQLTable):
     # TODO: Document this class.
 
-    @classmethod
-    def from_selection(cls, name: str, obs_variables: pd.DataFrame):
-        # TODO: test this method.
-        """
-        Create a scheme from a selection of observation variables.
+    config: AdmissionTimestampedMultiColumnSQLTableConfig
 
-        Args:
-            name: Name of the scheme.
-            obs_variables: A DataFrame containing the variables to include in the scheme.
-                The DataFrame should have the following columns:
-                    - table_name (index): The name of the table containing the variable.
-                    - attribute: The name of the variable.
+    def __call__(self, engine: Engine, attributes: List[str]) -> pd.DataFrame:
+        assert len(set(attributes)) == len(attributes), f"Duplicate attributes {attributes}"
+        assert all(a in self.config.attributes for a in attributes), \
+            f"Some attributes {attributes} not in {self.config.attributes}"
+        query = self.config.query.format(attributes=','.join(attributes),
+                                         **self.config.alias_dict)
+        return self._coerce_id_to_str(pd.read_sql(query, engine,
+                                                  coerce_float=False))
 
-        Returns:
-            (CodingScheme.FlatScheme) A new scheme containing the variables in obs_variables.
-        """
-        obs_variables = obs_variables.sort_values(['table_name', 'attribute'])
-        # format codes to be of the form 'table_name.attribute'
-        codes = (obs_variables.index + '.' + obs_variables['attribute']).tolist()
-        desc = dict(zip(codes, codes))
-
-        return cls(CodingSchemeConfig(name),
-                   codes=codes,
-                   desc=desc)
-
-    def as_dataframe(self):
-        columns = ['code', 'desc', 'code_index', 'table_name', 'attribute']
-        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split('.')) for c in self.codes],
-                            columns=columns)
+    def space(self, engine: Engine):
+        space = pd.DataFrame([(self.config.name, a) for a in self.config.attributes],
+                             columns=['table_name', 'attribute'])
+        return space.set_index('table_name', drop=True).sort_values('attribute').sort_index()
 
 
-class MixedICDScheme(FlatScheme):
+class StaticSQLTable(SQLTable):
     # TODO: Document this class.
 
-    _icd_schemes: Dict[str, ICDScheme]
-    _sep: str = ':'
+    config: StaticSQLTableConfig
 
-    def __init__(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
-                 icd_schemes: Dict[str, ICDScheme], sep: str = ':'):
-        super().__init__(config, codes=codes, desc=desc)
-        self._icd_schemes = icd_schemes
-        self._sep = sep
+    def __call__(self, engine: Engine):
+        query = self.config.query.format(**self.config.alias_dict)
+        df = self._coerce_id_to_str(pd.read_sql(query, engine,
+                                                coerce_float=False))
 
-    @classmethod
-    def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
-                       icd_version_alias: str, icd_code_alias: str, description_alias: str,
-                       icd_schemes: Dict[str, str], sep: str = ':') -> MixedICDScheme:
-        # TODO: test this method.
-        icd_version_selection = icd_version_selection.sort_values([icd_version_alias, icd_code_alias])
-        icd_version_selection = icd_version_selection.drop_duplicates([icd_version_alias, icd_code_alias]).astype(str)
-        assert icd_version_selection[icd_version_alias].isin(icd_schemes).all(), \
-            f"Only {', '.join(map(lambda x: f'ICD-{x}', icd_schemes))} are expected."
+        anchor_date = pd.to_datetime(df[self.config.anchor_year_alias],
+                                     format='%Y').dt.normalize()
+        anchor_age = df[self.config.anchor_age_alias].map(
+            lambda y: pd.DateOffset(years=-y))
+        df[self.config.date_of_birth_alias] = anchor_date + anchor_age
 
-        # assert no duplicate (icd_code, icd_version)
-        assert icd_version_selection.groupby([icd_version_alias, icd_code_alias]).size().max() == 1, \
-            "Duplicate (icd_code, icd_version) pairs are not allowed."
+        return df
 
-        icd_schemes_loaded: Dict[str, ICDScheme] = {k: ICDScheme.from_name(v) for k, v in icd_schemes.items()}
+    def gender_space(self, engine: Engine):
+        query = self.config.gender_space_query.format(**self.config.alias_dict)
+        return pd.read_sql(query, engine)
 
-        assert all(isinstance(s, ICDScheme) for s in icd_schemes_loaded.values()), \
-            "Only ICD schemes are expected."
+    def ethnicity_space(self, engine: Engine):
+        query = self.config.race_space_query.format(**self.config.alias_dict)
+        return pd.read_sql(query, engine)
 
-        for version, icd_df in icd_version_selection.groupby(icd_version_alias):
-            scheme = icd_schemes_loaded[version]
-            icd_version_selection.loc[icd_df.index, icd_code_alias] = \
-                icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+    def register_gender_scheme(self, name: str,
+                               engine: Engine,
+                               gender_selection: Optional[pd.DataFrame],
+                               target_name: Optional[str] = None,
+                               mapping: Optional[pd.DataFrame] = None):
+        scheme = CodedSQLTable._register_scheme(name=name,
+                                                supported_space=self.gender_space(engine),
+                                                code_selection=gender_selection,
+                                                c_code=self.config.gender_alias,
+                                                c_desc=self.config.gender_alias)
+        if target_name is not None and mapping is not None:
+            scheme.register_target_scheme(target_name, mapping,
+                                          c_code=self.config.gender_alias,
+                                          c_target_code=f'target_{self.config.gender_alias}',
+                                          c_target_desc=f'target_{self.config.gender_alias}')
+        return scheme
 
-        codes = (icd_version_selection[icd_version_alias] + sep + icd_version_selection[icd_code_alias]).tolist()
-        df = icd_version_selection.copy()
-        df['code'] = codes
-        desc = df.set_index('code')[description_alias].to_dict()
+    def register_ethnicity_scheme(self, name: str,
+                                  engine: Engine,
+                                  ethnicity_selection: Optional[pd.DataFrame],
+                                  target_name: Optional[str] = None,
+                                  mapping: Optional[pd.DataFrame] = None):
+        scheme = CodedSQLTable._register_scheme(name=name,
+                                                supported_space=self.ethnicity_space(engine),
+                                                code_selection=ethnicity_selection,
+                                                c_code=self.config.race_alias,
+                                                c_desc=self.config.race_alias)
 
-        return MixedICDScheme(config=CodingSchemeConfig(name),
-                              codes=codes,
-                              desc=desc,
-                              icd_schemes=icd_schemes_loaded,
-                              sep=sep)
-
-    def mixedcode_format_table(self, table: pd.DataFrame, icd_code_alias: str,
-                               icd_version_alias: str, code_alias: str) -> pd.DataFrame:
-        # TODO: test this method.
-        """
-        Format a table with mixed codes to the ICD version:icd_code format and filter out codes that are not in the scheme.
-        """
-        table = table.copy()
-        assert icd_version_alias in table.columns, f"Column {icd_version_alias} not found."
-        assert icd_code_alias in table.columns, f"Column {icd_code_alias} not found."
-        assert table[icd_version_alias].isin(self._icd_schemes).all(), \
-            f"Only ICD version {list(self._icd_schemes.keys())} are expected."
-
-        for version, icd_df in table.groupby(icd_version_alias):
-            scheme = self._icd_schemes[str(version)]
-            # Remove dots and spaces and then add them back.
-            fixed_icd = icd_df[icd_code_alias].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
-            table.loc[icd_df.index, icd_code_alias] = fixed_icd
-
-        # the version:icd_code format.
-        table[code_alias] = table[icd_version_alias] + self._sep + table[icd_code_alias]
-
-        # filter out codes that are not in the scheme.
-        return table[table[code_alias].isin(self.codes)].reset_index(drop=True)
-
-    def generate_maps(self):
-        """
-        Register the mappings between the Mixed ICD scheme and the individual ICD scheme.
-        For example, if the current `MixedICD` is mixing ICD-9 and ICD-10,
-        then register the two mappings between this scheme and ICD-9 and ICD-10 separately.
-        This assumes that the current runtime has already registered mappings
-        between the individual ICD schemes.
-        """
-
-        # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
-        mixed2pure_maps = {}
-        lost_codes = []
-        dataframe = self.as_dataframe()
-        for pure_version, pure_scheme in self._icd_schemes.items():
-            # mixed2pure has the form {mixed_code: {icd}}.
-            mixed2pure = defaultdict(set)
-            for mixed_version, mixed_version_df in dataframe.groupby('icd_version'):
-                icd2mixed = mixed_version_df.set_index('icd_code')['code'].to_dict()
-                icd2mixed = {icd: mixed_code for icd, mixed_code in icd2mixed.items() if icd in pure_scheme.codes}
-                assert len(icd2mixed) > 0, "No mapping between the mixed and pure ICD schemes was found."
-                if mixed_version == pure_version:
-                    mixed2pure.update({c: {icd} for icd, c in icd2mixed.items()})
-                else:
-                    # if mixed_version != pure_version, then retrieve
-                    # the mapping between ICD-{mixed_version} and ICD-{pure_version}
-                    pure_map = CodeMap.get_mapper(self._icd_schemes[mixed_version].name,
-                                                  self._icd_schemes[pure_version].name)
-
-                    for icd, mixed_code in icd2mixed.items():
-                        if icd in pure_map:
-                            mixed2pure[mixed_code].update(pure_map[icd])
-                        else:
-                            lost_codes.append(mixed_code)
-
-            mixed2pure_maps[pure_version] = mixed2pure
-        # register the mapping between the mixed and pure ICD schemes.
-        for pure_version, mixed2pure in mixed2pure_maps.items():
-            pure_scheme = self._icd_schemes[pure_version]
-            conf = CodingSchemeConfig(self.name, pure_scheme.name)
-
-            CodeMap.register_map(self.name,
-                                 pure_scheme.name,
-                                 CodeMap(conf, mixed2pure))
-
-        lost_df = dataframe[dataframe['code'].isin(lost_codes)]
-        if len(lost_df) > 0:
-            logging.warning(f"Lost {len(lost_df)} codes when generating the mapping between the Mixed ICD"
-                            "scheme and the individual ICD scheme.")
-            logging.warning(lost_df.to_string().replace('\n', '\n\t'))
-
-    def register_maps_loaders(self):
-        """
-        Register the lazy-loading of mapping between the Mixed ICD scheme and the individual ICD scheme.
-        """
-        for pure_version, pure_scheme in self._icd_schemes.items():
-            CodeMap.register_map_loader(self.name, pure_scheme.name, self.generate_maps)
-
-    def as_dataframe(self):
-        columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
-        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split(self._sep)) for c in self.codes],
-                            columns=columns)
+        if target_name is not None and mapping is not None:
+            scheme.register_target_scheme(target_name, mapping,
+                                          c_code=self.config.race_alias,
+                                          c_target_code=f'target_{self.config.race_alias}',
+                                          c_target_desc=f'target_{self.config.race_alias}')
+        return scheme
 
 
 class MIMICIVSQLTablesConfig(DatasetTablesConfig):
@@ -552,7 +627,8 @@ class MIMICIVSQLTablesConfig(DatasetTablesConfig):
     static: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF, kw_only=True)
     admissions: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF, kw_only=True)
     dx_discharge: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF, kw_only=True)
-    obs: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG, kw_only=True)
+    obs: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG,
+                                                              kw_only=True)
     icu_procedures: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROC_CONF, kw_only=True)
     icu_inputs: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUT_CONF, kw_only=True)
     hosp_procedures: AdmissionIntervalBasedMixedICDTableConfig = field(default_factory=lambda: HOSP_PROC_CONF,
@@ -601,20 +677,26 @@ class MIMICIVSQLTablesInterface(Module):
             f'{self.config.host}:{self.config.port}/{self.config.dbname}')
 
     def register_gender_scheme(self, name: str,
-                               gender_selection: Optional[pd.DataFrame]):
+                               gender_selection: Optional[pd.DataFrame],
+                               target_name: Optional[str] = None,
+                               mapping: Optional[pd.DataFrame] = None):
         """
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_gender_scheme(name, self.create_engine(), gender_selection)
+        return table.register_gender_scheme(name, self.create_engine(), gender_selection,
+                                            target_name, mapping)
 
     def register_ethnicity_scheme(self, name: str,
-                                  ethnicity_selection: Optional[pd.DataFrame]):
+                                  ethnicity_selection: Optional[pd.DataFrame],
+                                  target_name: Optional[str] = None,
+                                  mapping: Optional[pd.DataFrame] = None):
         """
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_ethnicity_scheme(name, self.create_engine(), ethnicity_selection)
+        return table.register_ethnicity_scheme(name, self.create_engine(), ethnicity_selection,
+                                               target_name, mapping)
 
     def register_obs_scheme(self, name: str,
                             attributes_selection: Optional[pd.DataFrame]):
@@ -633,7 +715,9 @@ class MIMICIVSQLTablesInterface(Module):
         table = ObservablesSQLTable(self.config.obs)
         return table.register_scheme(name, self.create_engine(), attributes_selection)
 
-    def register_icu_inputs_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
+    def register_icu_inputs_scheme(self, name: str, code_selection: Optional[pd.DataFrame],
+                                   target_name: Optional[str] = None, mapping: Optional[pd.DataFrame] = None,
+                                   c_aggregation: Optional[str] = None):
         """
         From the given selection of ICU input items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU inputs. If `code_selection` is None,
@@ -646,10 +730,19 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = CodedSQLTable(self.config.icu_inputs_table)
-        return table.register_scheme(name, self.create_engine(), code_selection)
+        table = CodedSQLTable(self.config.icu_inputs)
+        scheme = table.register_scheme(name, self.create_engine(), code_selection)
+        if target_name is not None and mapping is not None and c_aggregation is not None:
+            AggregatedICUInputsScheme.register_aggregated_scheme(
+                scheme, target_name, mapping,
+                c_code=self.config.icu_inputs.code_alias,
+                c_target_code=f'target_{self.config.icu_inputs.code_alias}',
+                c_target_desc=f'target_{self.config.icu_inputs.description_alias}',
+                c_target_aggregation=c_aggregation)
+        return scheme
 
-    def register_icu_procedures_scheme(self, name: str, code_selection: Optional[pd.DataFrame]):
+    def register_icu_procedures_scheme(self, name: str, code_selection: Optional[pd.DataFrame],
+                                       target_name: Optional[str] = None, mapping: Optional[pd.DataFrame] = None):
         """
         From the given selection of ICU procedure items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU procedures. If `code_selection` is None,
@@ -662,10 +755,17 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = CodedSQLTable(self.config.icu_procedures_table)
-        return table.register_scheme(name, self.create_engine(), code_selection)
+        table = CodedSQLTable(self.config.icu_procedures)
+        scheme = table.register_scheme(name, self.create_engine(), code_selection)
+        if target_name is not None and mapping is not None:
+            table.register_target_scheme(target_name, mapping,
+                                         c_code=self.config.icu_procedures.code_alias,
+                                         c_target_code=f'target_{self.config.icu_procedures.code_alias}',
+                                         c_target_desc=f'target_{self.config.icu_procedures.description_alias}')
+        return scheme
 
-    def register_hosp_procedures_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
+    def register_hosp_procedures_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame],
+                                        target_name: Optional[str] = None, mapping: Optional[pd.DataFrame] = None):
         """
         From the given selection of hospital procedure items `icd_version_selection`, generate a new scheme.
 
@@ -678,9 +778,12 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        table = MixedICDSQLTable(self.config.hosp_procedures_table)
-        return table.register_scheme(name, self.create_engine(), {'9': 'pr_icd9', '10': 'pr_flat_icd10'},
-                                     icd_version_selection)
+        table = MixedICDSQLTable(self.config.hosp_procedures)
+        return table.register_scheme(name=name,
+                                     engine=self.create_engine(),
+                                     icd_schemes={'9': 'pr_icd9', '10': 'pr_flat_icd10'},
+                                     icd_version_selection=icd_version_selection,
+                                     target_name=target_name, mapping=mapping)
 
     def register_dx_discharge_scheme(self, name: str, icd_version_selection: Optional[pd.DataFrame]):
         """
@@ -785,25 +888,42 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.DatasetScheme) A new scheme that is also registered in the current runtime.
         """
-        load_df = lambda path: pd.read_csv(resources_dir(config.resources_dir, "selection", path))
 
-        return MIMICIVDatasetScheme(
-            config=config,
-            gender=self.register_gender_scheme(f"{config.name_prefix}.gender", load_df("gender.csv")),
-            ethnicity=self.register_ethnicity_scheme(f"{config.name_prefix}.ethnicity", load_df("ethnicity.csv")),
-            dx_discharge=self.register_dx_discharge_scheme(f"{config.name_prefix}.dx_discharge",
-                                                           load_df("dx_discharge.csv")),
-            obs=self.register_obs_scheme(f"{config.name_prefix}.obs", load_df("obs.csv")),
-            icu_inputs=self.register_icu_inputs_scheme(f"{config.name_prefix}.icu_inputs", load_df("icu_inputs.csv")),
-            icu_procedures=self.register_icu_procedures_scheme(f"{config.name_prefix}.icu_procedures",
-                                                               load_df("icu_procedures.csv")),
-            hosp_procedures=self.register_hosp_procedures_scheme(
-                f"{config.name_prefix}.hosp_procedures",
-                load_df("hosp_procedures.csv")))
+        def selection(path: str) -> pd.DataFrame:
+            return pd.read_csv(resources_dir(config.resources_dir, "selection", path))
 
-    def load_maps(self, config: MIMICIVSQLConfig, dataset_scheme: MIMICIVDatasetScheme) -> None:
-        # Load
-        assert False
+        def mapping(path: str) -> Optional[pd.DataFrame]:
+            try:
+                return pd.read_csv(resources_dir(config.resources_dir, "map", path))
+            except FileNotFoundError:
+                return
+
+        gender = self.register_gender_scheme(f"{config.name_prefix}.gender", selection("gender.csv"),
+                                             target_name=f"{config.name_prefix}.target_gender",
+                                             mapping=mapping("gender.csv"))
+
+        ethnicity = self.register_ethnicity_scheme(f"{config.name_prefix}.ethnicity", selection("ethnicity.csv"),
+                                                   target_name=f"{config.name_prefix}.target_ethnicity",
+                                                   mapping=mapping("ethnicity.csv"))
+
+        dx_discharge = self.register_dx_discharge_scheme(f"{config.name_prefix}.dx_discharge",
+                                                         selection("dx_discharge.csv"))
+        obs = self.register_obs_scheme(f"{config.name_prefix}.obs", selection("obs.csv"))
+        icu_inputs = self.register_icu_inputs_scheme(f"{config.name_prefix}.icu_inputs",
+                                                     selection("icu_inputs.csv"))
+        icu_procedures = self.register_icu_procedures_scheme(f"{config.name_prefix}.icu_procedures",
+                                                             selection("icu_procedures.csv"))
+        hosp_procedures = self.register_hosp_procedures_scheme(f"{config.name_prefix}.hosp_procedures",
+                                                               selection("hosp_procedures.csv"))
+
+        return MIMICIVDatasetScheme(config=config,
+                                    gender=gender,
+                                    ethnicity=ethnicity,
+                                    dx_discharge=dx_discharge,
+                                    obs=obs,
+                                    icu_inputs=icu_inputs,
+                                    icu_procedures=icu_procedures,
+                                    hosp_procedures=hosp_procedures)
 
     def load_tables(self, dataset_scheme: MIMICIVDatasetScheme) -> DatasetTables:
         if dataset_scheme.obs is not None:
@@ -931,7 +1051,8 @@ where hadm_id is not null
 """))
 
 BLOOD_CHEMISTRY_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_chemistry",
-                                                                     attributes=['albumin', 'globulin', 'total_protein',
+                                                                     attributes=['albumin', 'globulin',
+                                                                                 'total_protein',
                                                                                  'aniongap', 'bicarbonate', 'bun',
                                                                                  'calcium', 'chloride',
                                                                                  'creatinine', 'glucose', 'sodium',
@@ -976,7 +1097,8 @@ inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
 """))
 
 CBC_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="cbc",
-                                                         attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc', 'mcv',
+                                                         attributes=['hematocrit', 'hemoglobin', 'mch', 'mchc',
+                                                                     'mcv',
                                                                      'platelet',
                                                                      'rbc', 'rdw', 'wbc'],
                                                          query=(r"""
@@ -1041,7 +1163,8 @@ where hadm_id is not null
 
 # Blood differential
 BLOOD_DIFF_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_diff",
-                                                                attributes=['neutrophils', 'lymphocytes', 'monocytes',
+                                                                attributes=['neutrophils', 'lymphocytes',
+                                                                            'monocytes',
                                                                             'eosinophils', 'basophils',
                                                                             'atypical_lymphocytes',
                                                                             'bands', 'immature_granulocytes',
