@@ -671,13 +671,13 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     def uom_normalization_file(self) -> pd.DataFrame:
         return pd.read_csv(resources_dir(self.resources_dir, *self.icu_inputs_uom_normalization))
 
-    def print_configuration_layout_disk(self):
+    def print_expected_configuration_layout_disk(self):
         raise NotImplementedError()
 
-    def create_empty_configuration_layout_disk(self):
+    def generate_empty_configuration_layout_disk(self):
         raise NotImplementedError()
 
-    def scan_layout_disk(self):
+    def check_configuration_layout_disk(self):
         raise NotImplementedError()
 
     def selection_file(self, path: str) -> pd.DataFrame:
