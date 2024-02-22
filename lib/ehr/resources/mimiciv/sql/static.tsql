@@ -1,0 +1,12 @@
+select
+p.subject_id as {subject_id_alias},
+p.gender as {gender_alias},
+a.race as {race_alias},
+p.anchor_age as {anchor_age_alias},
+p.anchor_year as {anchor_year_alias}
+from mimiciv_hosp.patients p
+left join
+(select subject_id, max(race) as race
+from mimiciv_hosp.admissions
+group by subject_id) as a
+on p.subject_id = a.subject_id

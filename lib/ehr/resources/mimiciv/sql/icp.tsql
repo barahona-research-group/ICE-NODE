@@ -1,0 +1,5 @@
+select icu.hadm_id {admission_id_alias}, {attributes}, icp.charttime {time_alias}
+from mimiciv_derived.icp as icp
+inner join mimiciv_icu.icustays as icu
+ on icu.stay_id = icp.stay_id
+where hadm_id is not null

@@ -301,17 +301,6 @@ class DatasetScheme(Module):
     icu_inputs: Optional[CodingScheme] = None
     outcome: Optional[OutcomeExtractor] = None
 
-    def __init__(self, config: DatasetSchemeConfig, **kwargs):
-        super().__init__(config=config, **kwargs)
-        config = self.config.as_dict()
-
-        if config.get('outcome'):
-            self.outcome = OutcomeExtractor.from_name(config.pop('outcome'))
-
-        for k, v in config.items():
-            if isinstance(v, str):
-                setattr(self, k, CodingScheme.from_name(v))
-
     @property
     def scheme_dict(self):
         return {

@@ -1,0 +1,4 @@
+select icu.hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.kdigo_uo as uo
+inner join mimiciv_icu.icustays icu
+on icu.stay_id = uo.stay_id

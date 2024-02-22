@@ -155,7 +155,8 @@ class CodingScheme(Module):
         """
         target_scheme_conf = CodingSchemeConfig(target_name)
         target_codes = sorted(map_table[c_target_code].drop_duplicates().astype(str).tolist())
-        target_desc = map_table.set_index(c_target_code)[c_target_desc].to_dict()
+        # drop=False in case c_target_code == c_target_desc.
+        target_desc = map_table.set_index(c_target_code, drop=False)[c_target_desc].to_dict()
         target_scheme = FlatScheme(target_scheme_conf, codes=target_codes, desc=target_desc)
         self.register_scheme(target_scheme)
 
@@ -178,7 +179,8 @@ class CodingScheme(Module):
 
             assert len(set(code_selection) - set(supported_space[c_code])) == 0, \
                 "Some item ids are not supported."
-        desc = supported_space.set_index(c_code)[c_desc].to_dict()
+        # drop=False in case c_target_code == c_target_desc.
+        desc = supported_space.set_index(c_code, drop=False)[c_desc].to_dict()
         desc = {k: v for k, v in desc.items() if k in code_selection}
         scheme = FlatScheme(CodingSchemeConfig(name),
                             codes=sorted(code_selection),

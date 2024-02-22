@@ -1,0 +1,2 @@
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.kdigo_creatinine

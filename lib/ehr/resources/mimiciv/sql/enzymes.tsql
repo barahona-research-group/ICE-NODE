@@ -1,0 +1,3 @@
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_derived.enzyme
+where hadm_id is not null

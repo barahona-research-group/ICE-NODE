@@ -1,0 +1,14 @@
+with trop as
+(
+    select specimen_id, MAX(valuenum) as troponin_t2
+    from mimiciv_hosp.labevents
+    where itemid = 51003
+    group by specimen_id
+)
+select a.hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_derived.cardiac_marker c
+  on a.hadm_id = c.hadm_id
+inner join trop
+  on c.specimen_id = trop.specimen_id
+where c.hadm_id is not null

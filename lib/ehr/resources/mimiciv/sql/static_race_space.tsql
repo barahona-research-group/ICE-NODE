@@ -1,0 +1,2 @@
+select distinct race as {race_alias} from mimiciv_hosp.admissions
+where race is not null and race!= ''

@@ -1,0 +1,3 @@
+select hadm_id {admission_id_alias}, {attributes}, charttime {time_alias}
+from (select hadm_id, charttime, aki_stage_smoothed,
+    case when aki_stage_smoothed = 0 then 0 else 1 end as aki_binary from mimiciv_derived.kdigo_stages) aki

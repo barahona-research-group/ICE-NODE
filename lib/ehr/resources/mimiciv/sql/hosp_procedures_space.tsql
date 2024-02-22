@@ -1,0 +1,6 @@
+select di.icd_code  as {icd_code_alias},
+di.icd_version as {icd_version_alias},
+max(di.long_title) as {description_alias}
+from mimiciv_hosp.d_icd_procedures di
+where di.icd_code is not null and di.icd_version is not null
+group by di.icd_code, di.icd_version

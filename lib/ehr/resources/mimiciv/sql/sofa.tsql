@@ -1,0 +1,3 @@
+select icu.hadm_id {admission_id_alias}, {attributes}, s.endtime {time_alias}
+from mimiciv_derived.sofa as s
+inner join mimiciv_icu.icustays icu on s.stay_id = icu.stay_id

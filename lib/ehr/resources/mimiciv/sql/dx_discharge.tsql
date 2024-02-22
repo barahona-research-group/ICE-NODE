@@ -1,0 +1,4 @@
+select hadm_id as {admission_id_alias},
+        icd_code as {icd_code_alias},
+        icd_version as {icd_version_alias}
+from mimiciv_hosp.diagnoses_icd

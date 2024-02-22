@@ -1,0 +1,12 @@
+select pi.hadm_id as {admission_id_alias}
+, (pi.chartdate)::timestamp as {start_time_alias}
+, (pi.chartdate + interval '1 hour')::timestamp as {end_time_alias}
+, pi.icd_code as {icd_code_alias}
+, pi.icd_version as {icd_version_alias}
+, di.long_title as {description_alias}
+FROM mimiciv_hosp.procedures_icd pi
+INNER JOIN mimiciv_hosp.d_icd_procedures di
+  ON pi.icd_version = di.icd_version
+  AND pi.icd_code = di.icd_code
+INNER JOIN mimiciv_hosp.admissions a
+  ON pi.hadm_id = a.hadm_id

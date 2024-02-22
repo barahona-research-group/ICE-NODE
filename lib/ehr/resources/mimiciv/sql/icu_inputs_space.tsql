@@ -1,0 +1,6 @@
+select di.itemid as {code_alias}, max(di.label) as {description_alias}
+from  mimiciv_icu.d_items di
+inner join mimiciv_icu.inputevents ie
+    on di.itemid = ie.itemid
+where di.itemid is not null
+group by di.itemid

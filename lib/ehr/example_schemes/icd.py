@@ -383,7 +383,7 @@ class DxICD9(HierarchicalICDScheme):
             else:
                 return cell
 
-        df = df.applymap(retain_suffix)
+        df = df.map(retain_suffix)
         df.columns = list(map(retain_suffix, df.columns))
 
         df['level'] = 0

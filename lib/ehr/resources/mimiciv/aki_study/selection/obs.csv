@@ -49,7 +49,7 @@
 47,blood_gas,fio2
 48,blood_gas,chloride
 49,blood_gas,baseexcess
-50,cardiac_marker,troponin_t
+50,cardiac_marker,troponin_t2
 51,cardiac_marker,ntprobnp
 52,cardiac_marker,ck_mb
 53,cbc,mcv

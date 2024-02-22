@@ -1,0 +1,15 @@
+select
+    a.hadm_id as {admission_id_alias}
+    , inp.itemid as {code_alias}
+    , inp.starttime as {start_time_alias}
+    , inp.endtime as {end_time_alias}
+    , di.label as {description_alias}
+    , inp.amount as {amount_alias}
+    , inp.amountuom as {amount_unit_alias}
+from mimiciv_hosp.admissions a
+inner join mimiciv_icu.icustays i
+    on a.hadm_id = i.hadm_id
+inner join mimiciv_icu.inputevents inp
+    on i.stay_id = inp.stay_id
+inner join mimiciv_icu.d_items di
+    on inp.itemid = di.itemid

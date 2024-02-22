@@ -1,0 +1,9 @@
+select icu.hadm_id {admission_id_alias}, {attributes}, w.time_bin {time_alias}
+ from (
+ (select stay_id, w.weight, w.starttime time_bin
+  from mimiciv_derived.weight_durations as w)
+ union all
+ (select stay_id, w.weight, w.endtime time_bin
+     from mimiciv_derived.weight_durations as w)
+ ) w
+inner join mimiciv_icu.icustays icu on w.stay_id = icu.stay_id
