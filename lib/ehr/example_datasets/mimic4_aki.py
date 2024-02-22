@@ -1,52 +1,49 @@
-from typing import Optional, Tuple
+from dataclasses import field
 
 import pandas as pd
 
-from lib.ehr import resources_dir
-from lib.ehr.coding_scheme import CodeMap, CodeMapConfig, Ethnicity, CodingScheme, CodingSchemeConfig
-from lib.ehr.dataset import AbstractDatasetPipeline, Dataset, AbstractDatasetPipelineConfig, DatasetTables, \
-    DatasetSchemeConfig
+from lib.ehr.dataset import AbstractDatasetPipeline, Dataset, AbstractDatasetPipelineConfig, DatasetTables
 from lib.ehr.example_datasets.mimic4 import MIMICIVSQLTablesInterface, MIMICIVSQLTablesConfig, MIMICIVDatasetScheme, \
-    MIMICIVSQLConfig, MIMICIVDatasetSchemeMapsFiles
+    MIMICIVSQLConfig, MIMICIVDatasetSchemeConfig
 from lib.ehr.pipeline import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
-    FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes
+    FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes, DatasetPipeline
 
 
 class MIMICIVDatasetPipelineConfig(AbstractDatasetPipelineConfig):
-    overlap_merge: bool
+    overlap_merge: bool = True
 
 
-class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
-    prefix: str = 'mimic4_study_aki'
-    map_files: MIMICIVDatasetSchemeMapsFiles = MIMICIVDatasetSchemeMapsFiles()
-    icu_inputs_uom_normalization: Optional[Tuple[str]] = ("uom_normalization", "icu_inputs.csv")
+class AKIMIMICIVDatasetSchemeConfig(MIMICIVDatasetSchemeConfig):
+    gender: str = 'mf_gender'
+    ethnicity: str = 'ethnicity'
+    dx_discharge: str = 'dx_mixed_icd'
+    obs: str = 'obs'
+    icu_inputs: str = 'icu_inputs'
+    icu_procedures: str = 'icu_procedures'
+    hosp_procedures: str = 'pr_mixed_icd'
+    name_prefix: str = 'mimic4_aki_study'
+    resources_dir: str = 'mimic4_aki_study'
 
 
-class MIMICIVDatasetConfig(MIMICIVSQLConfig):
-    pipeline: MIMICIVDatasetPipelineConfig
-    tables: MIMICIVSQLTablesConfig
-    scheme: MIMICIVDatasetSchemeConfig
+class AKIMIMICIVDatasetConfig(MIMICIVSQLConfig):
+    tables: MIMICIVSQLTablesConfig = field(default_factory=MIMICIVSQLTablesConfig, kw_only=True)
+    pipeline: MIMICIVDatasetPipelineConfig = MIMICIVDatasetPipelineConfig()
+    scheme: AKIMIMICIVDatasetSchemeConfig = AKIMIMICIVDatasetSchemeConfig()
 
 
 class MIMICIVDataset(Dataset):
     scheme: MIMICIVDatasetScheme
 
-    def __init__(self, config: MIMICIVDatasetConfig, tables: DatasetTables):
-        self.scheme = self.load_dataset_scheme(config)
-        self.load_maps(config, self.scheme)
-        super().__init__(config, tables)
-
     @staticmethod
-    def load_icu_inputs_conversion_table(config: MIMICIVDatasetConfig) -> pd.DataFrame:
-        df = pd.read_csv(resources_dir(config.scheme.prefix, *config.scheme.icu_inputs_uom_normalization), dtype=str)
+    def icu_inputs_uom_normalization(config: AKIMIMICIVDatasetConfig) -> pd.DataFrame:
         c_icu_inputs = config.tables.icu_inputs
         c_universal_uom = c_icu_inputs.derived_universal_unit
         c_code = c_icu_inputs.code_alias
         c_unit = c_icu_inputs.amount_unit_alias
         c_normalization = c_icu_inputs.derived_unit_normalization_factor
-        df = df.astype({c_normalization: float})
+        df = config.scheme.icu_inputs_uom_normalization_table.astype({c_normalization: float})
 
         columns = [c_code, c_unit, c_normalization]
         assert all(c in df.columns for c in columns), \
@@ -62,18 +59,19 @@ class MIMICIVDataset(Dataset):
         return df
 
     @staticmethod
-    def load_dataset_scheme(config: MIMICIVDatasetConfig) -> MIMICIVDatasetScheme:
+    def load_dataset_scheme(config: AKIMIMICIVDatasetConfig) -> MIMICIVDatasetScheme:
         sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.dataset_scheme_from_selection(config=config.scheme)
 
     @classmethod
-    def load_tables(cls, config: MIMICIVDatasetConfig) -> DatasetTables:
+    def load_tables(cls, config: AKIMIMICIVDatasetConfig, scheme: MIMICIVDatasetScheme) -> DatasetTables:
         sql = MIMICIVSQLTablesInterface(config.tables)
-        return sql.load_tables(cls.load_dataset_scheme(config))
+        return sql.load_tables(scheme)
 
-    def _setup_core_pipeline(cls, config: MIMICIVDatasetConfig) -> AbstractDatasetPipeline:
+    @classmethod
+    def _setup_core_pipeline(cls, config: AKIMIMICIVDatasetConfig) -> AbstractDatasetPipeline:
         pconfig = config.pipeline
-        conversion_table = cls.load_icu_inputs_conversion_table(config)
+        conversion_table = cls.icu_inputs_uom_normalization(config)
         pipeline = [
             SetIndex(),
             SelectSubjectsWithObservation(name='select_with_aki_info',
@@ -88,6 +86,4 @@ class MIMICIVDataset(Dataset):
             SetCodeIntegerIndices(),
             SetAdmissionRelativeTimes()
         ]
-        return AbstractDatasetPipeline(transformations=pipeline)
-
-
+        return DatasetPipeline(transformations=pipeline)

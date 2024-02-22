@@ -146,6 +146,46 @@ class CodingScheme(Module):
         if name in cls._schemes:
             del cls._schemes[name]
 
+    def register_target_scheme(self,
+                               target_name: Optional[str], map_table: pd.DataFrame,
+                               c_code: str, c_target_code: str, c_target_desc: str) -> "FlatScheme":
+        """
+        Register a target scheme and its mapping.
+        # TODO: test me.
+        """
+        target_scheme_conf = CodingSchemeConfig(target_name)
+        target_codes = sorted(map_table[c_target_code].drop_duplicates().astype(str).tolist())
+        target_desc = map_table.set_index(c_target_code)[c_target_desc].to_dict()
+        target_scheme = FlatScheme(target_scheme_conf, codes=target_codes, desc=target_desc)
+        self.register_scheme(target_scheme)
+
+        map_table = map_table[[c_code, c_target_code]].astype(str)
+        map_table = map_table[map_table[c_code].isin(self.codes) & map_table[c_target_code].isin(target_scheme.codes)]
+        mapping = map_table.groupby(c_code)[c_target_code].apply(set).to_dict()
+        CodeMap.register_map(CodeMap(CodeMapConfig(self.name, target_scheme.name), mapping))
+        return target_scheme
+
+    @staticmethod
+    def register_scheme_from_selection(name: str,
+                                       supported_space: pd.DataFrame,
+                                       code_selection: Optional[pd.DataFrame],
+                                       c_code: str, c_desc: str) -> FlatScheme:
+        # TODO: test this method.
+        if code_selection is None:
+            code_selection = supported_space[c_code].drop_duplicates().astype(str).tolist()
+        else:
+            code_selection = code_selection[c_code].drop_duplicates().astype(str).tolist()
+
+            assert len(set(code_selection) - set(supported_space[c_code])) == 0, \
+                "Some item ids are not supported."
+        desc = supported_space.set_index(c_code)[c_desc].to_dict()
+        desc = {k: v for k, v in desc.items() if k in code_selection}
+        scheme = FlatScheme(CodingSchemeConfig(name),
+                            codes=sorted(code_selection),
+                            desc=desc)
+        FlatScheme.register_scheme(scheme)
+        return scheme
+
     @classmethod
     def available_schemes(cls) -> Set[str]:
         """

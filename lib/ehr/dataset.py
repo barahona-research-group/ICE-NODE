@@ -422,12 +422,21 @@ class Dataset(Module):
     core_pipeline: AbstractDatasetPipeline
     core_pipeline_report: pd.DataFrame
 
-    def __init__(self, config: DatasetConfig, tables: DatasetTables):
+    def __init__(self, config: DatasetConfig):
         super().__init__(config=config)
-        self.tables = tables
-        self.scheme = DatasetScheme(config=config.scheme)
+        self.scheme = self.load_dataset_scheme(config)
+        self.tables = self.load_tables(config, self.scheme)
         self.core_pipeline = self._setup_core_pipeline(config)
         self.core_pipeline_report = pd.DataFrame()
+
+    @classmethod
+    def load_dataset_scheme(cls, config: DatasetConfig) -> DatasetScheme:
+        return DatasetScheme(config=config.scheme)
+
+    @classmethod
+    @abstractmethod
+    def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
+        pass
 
     @classmethod
     @abstractmethod

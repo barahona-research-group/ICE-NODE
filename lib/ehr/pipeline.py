@@ -34,6 +34,8 @@ class DatasetTransformation(AbstractDatasetTransformation):
     dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = tuple()
     blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = tuple()
 
+    # TODO: Add a global dag instead of dependencies and blockers.
+
     @property
     def additional_parameters(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if k != 'name' and not k.startswith('_')}

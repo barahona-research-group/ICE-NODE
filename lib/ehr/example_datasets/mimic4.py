@@ -302,18 +302,19 @@ class AggregatedICUInputsScheme(FlatScheme):
         Register a target scheme and its mapping.
         """
 
-        tscheme_conf = CodingSchemeConfig(target_name)
-        tcodes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
-        tdesc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
-        tagg = mapping.set_index(c_target_code)[c_target_aggregation].to_dict()
-        tscheme = AggregatedICUInputsScheme(tscheme_conf, codes=tcodes, desc=tdesc, aggregation=tagg)
-        AggregatedICUInputsScheme.register_scheme(tscheme)
+        target_scheme_conf = CodingSchemeConfig(target_name)
+        target_codes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
+        target_desc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
+        target_agg = mapping.set_index(c_target_code)[c_target_aggregation].to_dict()
+        target_scheme = AggregatedICUInputsScheme(target_scheme_conf, codes=target_codes, desc=target_desc,
+                                                  aggregation=target_agg)
+        AggregatedICUInputsScheme.register_scheme(target_scheme)
 
         mapping = mapping[[c_code, c_target_code]].astype(str)
-        mapping = mapping[mapping[c_code].isin(scheme.codes) & mapping[c_target_code].isin(tscheme.codes)]
+        mapping = mapping[mapping[c_code].isin(scheme.codes) & mapping[c_target_code].isin(target_scheme.codes)]
         mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
-        CodeMap.register_map(CodeMap(CodeMapConfig(scheme.name, tscheme.name), mapping))
-        return tscheme
+        CodeMap.register_map(CodeMap(CodeMapConfig(scheme.name, target_scheme.name), mapping))
+        return target_scheme
 
 
 class AdmissionIntervalBasedMixedICDTableConfig(AdmissionMixedICDSQLTableConfig,
@@ -488,49 +489,11 @@ class CodedSQLTable(CategoricalSQLTable):
 
     config: CodedSQLTableConfig
 
-    @staticmethod
-    def _register_scheme(name: str,
-                         supported_space: pd.DataFrame,
-                         code_selection: Optional[pd.DataFrame],
-                         c_code: str, c_desc: str) -> FlatScheme:
-        # TODO: test this method.
-        if code_selection is None:
-            code_selection = supported_space[c_code].drop_duplicates().astype(str).tolist()
-        else:
-            code_selection = code_selection[c_code].drop_duplicates().astype(str).tolist()
-
-            assert len(set(code_selection) - set(supported_space[c_code])) == 0, \
-                "Some item ids are not supported."
-        desc = supported_space.set_index(c_code)[c_desc].to_dict()
-        desc = {k: v for k, v in desc.items() if k in code_selection}
-        scheme = FlatScheme(CodingSchemeConfig(name),
-                            codes=sorted(code_selection),
-                            desc=desc)
-        FlatScheme.register_scheme(scheme)
-        return scheme
-
-    def register_target_scheme(self, target_name: Optional[str], mapping: pd.DataFrame,
-                               c_code: str, c_target_code: str, c_target_desc: str) -> FlatScheme:
-        """
-        Register a target scheme and its mapping.
-        """
-        tscheme_conf = CodingSchemeConfig(target_name)
-        tcodes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
-        tdesc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
-        tscheme = FlatScheme(tscheme_conf, codes=tcodes, desc=tdesc)
-        FlatScheme.register_scheme(tscheme)
-
-        mapping = mapping[[c_code, c_target_code]].astype(str)
-        mapping = mapping[mapping[c_code].isin(self.codes) & mapping[c_target_code].isin(tscheme.codes)]
-        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
-        CodeMap.register_map(CodeMap(CodeMapConfig(self.name, tscheme.name), mapping))
-        return tscheme
-
     def register_scheme(self, name: str,
                         engine: Engine, code_selection: Optional[pd.DataFrame]) -> FlatScheme:
-        return self._register_scheme(name=name, supported_space=self.space(engine),
-                                     code_selection=code_selection, c_code=self.config.code_alias,
-                                     c_desc=self.config.description_alias)
+        return FlatScheme.register_scheme_from_selection(name=name, supported_space=self.space(engine),
+                                                         code_selection=code_selection, c_code=self.config.code_alias,
+                                                         c_desc=self.config.description_alias)
 
 
 class TimestampedMultiColumnSQLTable(SQLTable):
@@ -579,39 +542,36 @@ class StaticSQLTable(SQLTable):
         query = self.config.race_space_query.format(**self.config.alias_dict)
         return pd.read_sql(query, engine)
 
-    def register_gender_scheme(self, name: str,
-                               engine: Engine,
-                               gender_selection: Optional[pd.DataFrame],
-                               target_name: Optional[str] = None,
-                               mapping: Optional[pd.DataFrame] = None):
-        scheme = CodedSQLTable._register_scheme(name=name,
-                                                supported_space=self.gender_space(engine),
-                                                code_selection=gender_selection,
-                                                c_code=self.config.gender_alias,
-                                                c_desc=self.config.gender_alias)
-        if target_name is not None and mapping is not None:
-            scheme.register_target_scheme(target_name, mapping,
+    def register_gender_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
+                               engine: Engine):
+
+        scheme = FlatScheme.register_scheme_from_selection(name=scheme_config.gender,
+                                                           supported_space=self.gender_space(engine),
+                                                           code_selection=scheme_config.gender_selection,
+                                                           c_code=self.config.gender_alias,
+                                                           c_desc=self.config.gender_alias)
+        if scheme_config.gender_map is not None:
+            scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.gender),
+                                          scheme_config.gender_map,
                                           c_code=self.config.gender_alias,
-                                          c_target_code=f'target_{self.config.gender_alias}',
-                                          c_target_desc=f'target_{self.config.gender_alias}')
+                                          c_target_code=scheme_config.target_column_name(self.config.gender_alias),
+                                          c_target_desc=scheme_config.target_column_name(self.config.gender_alias))
         return scheme
 
-    def register_ethnicity_scheme(self, name: str,
-                                  engine: Engine,
-                                  ethnicity_selection: Optional[pd.DataFrame],
-                                  target_name: Optional[str] = None,
-                                  mapping: Optional[pd.DataFrame] = None):
-        scheme = CodedSQLTable._register_scheme(name=name,
-                                                supported_space=self.ethnicity_space(engine),
-                                                code_selection=ethnicity_selection,
-                                                c_code=self.config.race_alias,
-                                                c_desc=self.config.race_alias)
+    def register_ethnicity_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
+                                  engine: Engine):
 
-        if target_name is not None and mapping is not None:
-            scheme.register_target_scheme(target_name, mapping,
+        scheme = FlatScheme.register_scheme_from_selection(name=scheme_config.ethnicity,
+                                                           supported_space=self.ethnicity_space(engine),
+                                                           code_selection=scheme_config.ethnicity_selection,
+                                                           c_code=self.config.race_alias,
+                                                           c_desc=self.config.race_alias)
+        if scheme_config.ethnicity_map is not None:
+            scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.ethnicity),
+                                          scheme_config.ethnicity_map,
                                           c_code=self.config.race_alias,
-                                          c_target_code=f'target_{self.config.race_alias}',
-                                          c_target_desc=f'target_{self.config.race_alias}')
+                                          c_target_code=scheme_config.target_column_name(self.config.race_alias),
+                                          c_target_desc=scheme_config.target_column_name(self.config.race_alias))
         return scheme
 
 
@@ -654,8 +614,8 @@ class MIMICIVDatasetSchemeSelectionFiles(Config):
 
 
 class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
-    name_prefix: str = ''
     name_separator: str = '.'
+    name_prefix: str = ''
     resources_dir: str = ''
     selection_subdir: str = 'selection'
     map_subdir: str = 'map'
@@ -668,7 +628,7 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     icu_inputs_aggregation_column: Optional[str] = 'aggregation'
 
     @property
-    def uom_normalization_file(self) -> pd.DataFrame:
+    def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
         return pd.read_csv(resources_dir(self.resources_dir, *self.icu_inputs_uom_normalization))
 
     def print_expected_configuration_layout_disk(self):
@@ -689,11 +649,11 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
         except FileNotFoundError:
             return None
 
-    def scheme_name(self, key: str) -> str:
+    def _scheme_name(self, key: str) -> str:
         return f'{self.name_prefix}{self.name_separator}{key}'
 
-    def target_scheme_name(self, key: str) -> str:
-        return self.scheme_name(f'target_{key}')
+    def propose_target_scheme_name(self, key: str) -> str:
+        return self._scheme_name(f'target_{key}')
 
     def target_column_name(self, key: str) -> str:
         return f'target_{key}'
@@ -777,17 +737,14 @@ class MIMICIVSQLTablesInterface(Module):
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_gender_scheme(config.scheme_name("gender"), self.create_engine(), config.gender_selection,
-                                            config.target_scheme_name("gender"), config.gender_map)
+        return table.register_gender_scheme(config, self.create_engine())
 
     def register_ethnicity_scheme(self, config: MIMICIVDatasetSchemeConfig):
         """
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_ethnicity_scheme(config.scheme_name("ethnicity"), self.create_engine(),
-                                               config.ethnicity_selection,
-                                               config.target_scheme_name("ethnicity"), config.ethnicity_map)
+        return table.register_ethnicity_scheme(config, self.create_engine())
 
     def register_obs_scheme(self, config: MIMICIVDatasetSchemeConfig):
         """
@@ -803,7 +760,9 @@ class MIMICIVSQLTablesInterface(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = ObservablesSQLTable(self.config.obs)
-        return table.register_scheme(config.scheme_name("obs"), self.create_engine(), config.obs_selection)
+        return table.register_scheme(config.obs,
+                                     self.create_engine(),
+                                     config.obs_selection)
 
     def register_icu_inputs_scheme(self, config: MIMICIVDatasetSchemeConfig):
         """
@@ -818,14 +777,14 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
-        name = config.scheme_name("icu_inputs")
+
         code_selection = config.icu_inputs_selection
         mapping = config.icu_inputs_map
         c_aggregation = config.icu_inputs_aggregation_column
-        target_name = config.target_scheme_name("icu_inputs")
+        target_name = config.propose_target_scheme_name(config.icu_inputs)
 
         table = CodedSQLTable(self.config.icu_inputs)
-        scheme = table.register_scheme(name, self.create_engine(), code_selection)
+        scheme = table.register_scheme(config.icu_inputs, self.create_engine(), code_selection)
         if mapping is not None and c_aggregation is not None:
             AggregatedICUInputsScheme.register_aggregated_scheme(
                 scheme, target_name, mapping,
@@ -850,16 +809,16 @@ class MIMICIVSQLTablesInterface(Module):
         """
 
         table = CodedSQLTable(self.config.icu_procedures)
-        scheme = table.register_scheme(config.scheme_name("icu_procedures"), self.create_engine(),
+        scheme = table.register_scheme(config.icu_procedures, self.create_engine(),
                                        config.icu_procedures_selection)
         mapping = config.icu_procedures_map
         if mapping is not None:
             c_target_code = config.target_column_name(self.config.icu_procedures.code_alias)
             c_target_desc = config.target_column_name(self.config.icu_procedures.description_alias)
-            table.register_target_scheme(config.target_scheme_name("icu_procedures"), mapping,
-                                         c_code=self.config.icu_procedures.code_alias,
-                                         c_target_code=c_target_code,
-                                         c_target_desc=c_target_desc)
+            scheme.register_target_scheme(config.propose_target_scheme_name(config.icu_procedures), mapping,
+                                          c_code=self.config.icu_procedures.code_alias,
+                                          c_target_code=c_target_code,
+                                          c_target_desc=c_target_desc)
         return scheme
 
     def register_hosp_procedures_scheme(self, config: MIMICIVDatasetSchemeConfig):
@@ -877,7 +836,7 @@ class MIMICIVSQLTablesInterface(Module):
         """
 
         table = MixedICDSQLTable(self.config.hosp_procedures)
-        return table.register_scheme(name=config.scheme_name("hosp_procedures"),
+        return table.register_scheme(name=config.hosp_procedures,
                                      engine=self.create_engine(),
                                      icd_schemes={'9': 'pr_icd9', '10': 'pr_flat_icd10'},
                                      icd_version_selection=config.hosp_procedures_selection,
@@ -897,7 +856,7 @@ class MIMICIVSQLTablesInterface(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = MixedICDSQLTable(self.config.dx_discharge)
-        return table.register_scheme(config.scheme_name("dx_discharge"), self.create_engine(),
+        return table.register_scheme(config.dx_discharge, self.create_engine(),
                                      {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
                                      config.dx_discharge_selection)
 
@@ -949,7 +908,8 @@ class MIMICIVSQLTablesInterface(Module):
         dataframe = table(engine)
         c_icd_version = self.config.dx_discharge.icd_version_alias
         c_icd_code = self.config.dx_discharge.icd_code_alias
-        return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version)
+        return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version,
+                                                          table.config.code_alias)
 
     def _extract_obs_table(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         table = ObservablesSQLTable(self.config.obs)
@@ -1016,11 +976,13 @@ class MIMICIVSQLTablesInterface(Module):
                                                                   dataset_scheme.hosp_procedures)
         else:
             hosp_procedures = None
-
+        static = self._extract_static_table(self.create_engine())
+        admissions = self._extract_admissions_table(self.create_engine())
+        dx_discharge = self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.dx_discharge)
         return DatasetTables(
-            static=self._extract_static_table(self.create_engine()),
-            admissions=self._extract_admissions_table(self.create_engine()),
-            dx_discharge=self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.dx_discharge),
+            static=static,
+            admissions=admissions,
+            dx_discharge=dx_discharge,
             obs=obs, icu_procedures=icu_procedures, icu_inputs=icu_inputs, hosp_procedures=hosp_procedures)
 
     def __call__(self):
