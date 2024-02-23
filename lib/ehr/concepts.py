@@ -64,6 +64,52 @@ class InpatientObservables(Data):
         """
         return len(self.time)
 
+    def equals(self, other: InpatientObservables) -> bool:
+        """
+        Compares two InpatientObservables objects for equality.
+
+        Args:
+            other (InpatientObservables): the other InpatientObservables object to compare.
+
+        Returns:
+            bool: whether the two InpatientObservables objects are equal.
+        """
+        return (np.array_equal(self.time, other.time, equal_nan=True) and
+                np.array_equal(self.value, other.value, equal_nan=True) and
+                np.array_equal(self.mask, other.mask, equal_nan=True) and
+                self.time.dtype == other.time.dtype and
+                self.value.dtype == other.value.dtype and
+                self.mask.dtype == other.mask.dtype)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Converts the observables to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: a pandas DataFrame containing the time and observable values.
+        """
+        time = {'time': self.time}
+        value = {f'val_{i}': self.value[:, i] for i in range(self.value.shape[1])}
+        mask = {f'mask_{i}': self.mask[:, i] for i in range(self.mask.shape[1])}
+        return pd.DataFrame({**time, **value, **mask})
+
+    @staticmethod
+    def from_dataframe(df: pd.DataFrame) -> InpatientObservables:
+        """
+        Converts a pandas DataFrame to an InpatientObservables object.
+
+        Args:
+            df (pd.DataFrame): the pandas DataFrame to convert.
+
+        Returns:
+            InpatientObservables: the resulting InpatientObservables object.
+        """
+        time = df['time'].values
+        p = (len(df) - 1) // 2
+        value = df[[f'val_{i}' for i in range(p)]].values
+        mask = df[[f'mask_{i}' for i in range(p)]].values
+        return InpatientObservables(time, value, mask)
+
     def as_dataframe(self,
                      scheme: CodingScheme,
                      filter_missing_columns: bool = False) -> pd.DataFrame:
@@ -668,18 +714,54 @@ class InpatientInput(Data):
     Represents inpatient input data.
 
     Attributes:
-        index (Array): the index array. Each index value correspond to a unique input code.
+        code_index (Array): the code index array. Each index value correspond to a unique input code.
         rate (Array): the rate array.
         starttime (Array): the start time array.
         endtime (Array): the end time array.
         size (int): the size of the input data.
     """
 
-    index: Array
+    code_index: Array
     rate: Array
     starttime: Array
     endtime: Array
-    size: int
+
+    @property
+    def size(self) -> int:
+        """
+        Returns the size of the input data.
+
+        Returns:
+            int: the size of the input data.
+        """
+        return len(self.code_index)
+
+    def to_dataframe(self):
+        """
+        Converts the input data to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: a pandas DataFrame containing the input data.
+        """
+        return pd.DataFrame({
+            'code_index': self.code_index,
+            'rate': self.rate,
+            'starttime': self.starttime,
+            'endtime': self.endtime
+        })
+
+    @staticmethod
+    def from_dataframe(df: pd.DataFrame) -> "InpatientInput":
+        """
+        Converts a pandas DataFrame to an InpatientInput object.
+
+        Args:
+            df (pd.DataFrame): the pandas DataFrame to convert.
+
+        Returns:
+            InpatientInput: the resulting InpatientInput object.
+        """
+        return InpatientInput(df['code_index'].values, df['rate'].values, df['starttime'].values, df['endtime'].values)
 
     def __call__(self, t: float) -> Array:
         """
@@ -706,7 +788,7 @@ class InpatientInput(Data):
             return adm_input
 
     @classmethod
-    def empty(cls, size: int) -> InpatientInput:
+    def empty(cls) -> InpatientInput:
         """
         Returns an empty InpatientInput object.
 
@@ -717,56 +799,68 @@ class InpatientInput(Data):
             InpatientInput: an empty InpatientInput object.
         """
         zvec = np.zeros(0, dtype=bool)
-        return cls(zvec.astype(int), zvec, zvec, zvec, size)
+        return cls(zvec.astype(int), zvec, zvec, zvec)
 
 
 class InpatientInterventions(Data):
-    """
-    Represents a class for handling inpatient interventions data.
+    # TODO: Add docstring.
+    hosp_procedures: Optional[InpatientInput]
+    icu_inputs: Optional[InpatientInput]
+    icu_procedures: Optional[InpatientInput]
 
-    Attributes:
-        proc (Optional[InpatientInput]): the procedures' representation.
-        input_ (Optional[InpatientInput]): the inputs' representation.
-        time (Array): the unique timestamps of the interventions starts and ends.
-        segmented_input (Optional[Array]): the segmented input array for the interventions.
-        segmented_proc (Optional[Array]): the segmented procedure array for the interventions.
+    def to_dataframes(self) -> Dict[str, pd.DataFrame]:
+        df1 = self.hosp_procedures.to_dataframe() if self.hosp_procedures is not None else None
+        df2 = self.icu_procedures.to_dataframe() if self.icu_procedures is not None else None
+        df3 = self.icu_inputs.to_dataframe() if self.icu_inputs is not None else None
+        return {'hosp_procedures': df1, 'icu_procedures': df2, 'icu_inputs': df3}
 
-    Methods:
-        segment_proc(self, proc_repr: Optional[AggregateRepresentation] = None): segments the procedure array and updates the segmented_proc attribute.
-        segment_input(self, input_repr: Optional[AggregateRepresentation] = None): segments the input array and updates the segmented_input attribute.
-    """
-    proc: Optional[InpatientInput]
-    input_: Optional[InpatientInput]
+    @staticmethod
+    def from_dataframes(dfs: Dict[str, pd.DataFrame]) -> "InpatientInterventions":
+        df1 = dfs.get('hosp_procedures')
+        df2 = dfs.get('icu_procedures')
+        df3 = dfs.get('icu_inputs')
+        hosp_procedures = InpatientInput.from_dataframe(df1) if df1 is not None else None
+        icu_procedures = InpatientInput.from_dataframe(df2) if df2 is not None else None
+        icu_inputs = InpatientInput.from_dataframe(df3) if df3 is not None else None
+        return InpatientInterventions(hosp_procedures, icu_procedures, icu_inputs)
 
+    @property
+    def timestamps(self) -> List[float]:
+        timestamps = []
+        for k in self.__dict__.keys():
+            ii = getattr(self, k, None)
+            if isinstance(ii, InpatientInput):
+                timestamps.extend(ii.starttime)
+                timestamps.extend(ii.endtime)
+        return timestamps
+
+
+class SegmentedInpatientInterventions(Data):
     time: Array
-    segmented_input: Optional[Array]
-    segmented_proc: Optional[Array]
+    hosp_procedures: Array
+    icu_procedures: Array
+    icu_inputs: Array
 
-    def __init__(self, proc: InpatientInput, input_: InpatientInput,
-                 adm_interval: float):
+    def __init__(self, inpatient_interventions: InpatientInterventions, terminal_time: float):
         """
         Initialize the InpatientInterventions object.
 
         Args:
-            proc (InpatientInput): the procedures' representation.
-            input_ (InpatientInput): the inputs' representation.
-            adm_interval (float): the admission interval.
+            hosp_procedures (InpatientInput): the hospital procedures' representation.
+            icu_procedures (InpatientInput): the ICU procedures' representation.
+            icu_inputs (InpatientInput): the ICU inputs' representation.
         """
         super().__init__()
-        self.proc = proc
-        self.input_ = input_
-        self.segmented_proc = None
-        self.segmented_input = None
 
-        time = [
-            np.clip(t, 0.0, adm_interval)
-            for t in (proc.starttime, proc.endtime, input_.starttime,
-                      input_.endtime)
-        ]
-        time = np.unique(
-            np.hstack(time + [0.0, adm_interval], dtype=np.float32))
+        time = [np.clip(t, 0.0, terminal_time)
+                for t in inpatient_interventions.timestamps
+                ] + [0.0, terminal_time]
+        time = np.unique(np.hstack(time, dtype=np.float32))
         time = self.pad_array(time, value=np.nan)
         self.time = time
+        self.hosp_procedures = self._segment(self.t0_padded, inpatient_interventions.hosp_procedures)
+        self.icu_procedures = self._segment(self.t0_padded, inpatient_interventions.icu_procedures)
+        self.icu_inputs = self._segment(self.t0_padded, inpatient_interventions.icu_inputs)
 
     @staticmethod
     def pad_array(array: Array,
@@ -789,22 +883,7 @@ class InpatientInterventions(Data):
         if n_pad == maximum_padding:
             return array
 
-        if isinstance(array, jax.Array):
-            _np = jnp
-        else:
-            _np = np
-
-        return _np.pad(array,
-                       pad_width=(0, n_pad),
-                       mode='constant',
-                       constant_values=value)
-
-    @property
-    def _np(self):
-        if isinstance(self.time, jax.Array):
-            return jnp
-        else:
-            return np
+        return np.pad(array, pad_width=(0, n_pad), mode='constant', constant_values=value)
 
     @property
     def t0_padded(self):
@@ -815,7 +894,7 @@ class InpatientInterventions(Data):
     def t0(self):
         """Start times for segmenting the interventions."""
         t = self.time
-        return t[~self._np.isnan(t)][:-1]
+        return t[~np.isnan(t)][:-1]
 
     @property
     def t1_padded(self):
@@ -826,97 +905,31 @@ class InpatientInterventions(Data):
     def t1(self):
         """End times for segmenting the interventions."""
         t = self.time
-        return t[~self._np.isnan(t)][1:]
+        return t[~np.isnan(t)][1:]
 
     @property
     def t_sep(self):
         """Separation times for segmenting the interventions."""
         t = self.time
-        return t[~self._np.isnan(t)][1:-1]
+        return t[~np.isnan(t)][1:-1]
 
     @property
-    def interval(self):
+    def interval(self) -> float:
         """Length of the admission interval"""
-        return jnp.nanmax(self.time) - jnp.nanmin(self.time)
+        return np.nanmax(self.time) - np.nanmin(self.time)
 
-    def _np_segment_proc(self, proc_repr: Optional[AggregateRepresentation]) -> Array:
+    @staticmethod
+    def _segment(t0_padded: Array, inpatient_input: InpatientInput) -> Array:
         """
         Generate segmented procedures and apply the specified procedure transformation.
-
-        Args:
-            proc_repr (Optional[AggregateRepresentation]): the procedure transformation to use.
-
         Returns:
             numpy.ndarray: the processed segments.
         """
-        t = self.t0_padded[~np.isnan(self.t0_padded)]
-        t_nan = self.t0_padded[np.isnan(self.t0_padded)]
-
-        if proc_repr is None:
-            out = np.vstack([self.proc(ti) for ti in t])
-        else:
-            out = np.vstack([proc_repr(self.proc(ti)) for ti in t])
+        t = t0_padded[~np.isnan(t0_padded)]
+        t_nan = t0_padded[np.isnan(t0_padded)]
+        out = np.vstack([inpatient_input(ti) for ti in t])
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
-
-    def _np_segment_input(self, input_repr: Optional[AggregateRepresentation]) -> Array:
-        """
-        Generate segmented inputs and apply the specified input transformation.
-
-        Args:
-            input_repr (Optional[AggregateRepresentation]): the input transformation to use.
-
-        Returns:
-            numpy.ndarray: the processed segments.
-        """
-        t = self.t0_padded[~np.isnan(self.t0_padded)]
-        t_nan = self.t0_padded[np.isnan(self.t0_padded)]
-
-        if input_repr is None:
-            out = np.vstack([self.input_(ti) for ti in t])
-        else:
-            out = np.vstack([input_repr(self.input_(ti)) for ti in t])
-
-        pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
-        return np.vstack([out, pad])
-
-    def segment_proc(self,
-                     proc_repr: Optional[AggregateRepresentation] = None) -> InpatientInterventions:
-        """
-        Segment the procedures and apply the specified procedure transformation.
-
-        Args:
-            proc_repr (Optional[AggregateRepresentation]): the procedure transformation to use.
-
-        Returns:
-            InpatientInterventions: the updated object.
-        """
-        proc_segments = self._np_segment_proc(proc_repr)
-        update = eqx.tree_at(lambda x: x.segmented_proc,
-                             self,
-                             proc_segments,
-                             is_leaf=lambda x: x is None)
-        update = eqx.tree_at(lambda x: x.proc, update, None)
-        return update
-
-    def segment_input(self,
-                      input_repr: Optional[AggregateRepresentation] = None) -> InpatientInterventions:
-        """
-        Segment the inputs and apply the specified input transformation.
-
-        Args:
-            input_repr (Optional[AggregateRepresentation]): the input transformation to use.
-
-        Returns:
-            InpatientInterventions: the updated object.
-        """
-        inp_segments = self._np_segment_input(input_repr)
-        update = eqx.tree_at(lambda x: x.segmented_input,
-                             self,
-                             inp_segments,
-                             is_leaf=lambda x: x is None)
-        update = eqx.tree_at(lambda x: x.input_, update, None)
-        return update
 
 
 class Admission(Data):
