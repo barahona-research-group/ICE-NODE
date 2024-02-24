@@ -58,6 +58,24 @@ class CodesVector(Data):
         """
         return cls(np.zeros_like(other.vec), other.scheme)
 
+    def to_codeset(self):
+        """
+        Converts the binary codes vector to a set of one code.
+
+        Returns:
+            set: a set containing one code.
+        """
+        return {self.scheme_object.index2code[i] for i in np.flatnonzero(self.vec)}
+
+    def __len__(self) -> int:
+        """
+        Returns the length of the vector.
+
+        Returns:
+            int: the length of the vector.
+        """
+        return len(self.vec)
+
 
 class CodingSchemeConfig(Config):
     """The identifier name of the coding scheme."""

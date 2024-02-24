@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from functools import cached_property
 from typing import (List, Tuple, Optional, Dict, Union)
 
 import equinox as eqx
@@ -841,26 +842,18 @@ class SegmentedInpatientInterventions(Data):
     icu_procedures: Array
     icu_inputs: Array
 
-    def __init__(self, inpatient_interventions: InpatientInterventions, terminal_time: float):
-        """
-        Initialize the InpatientInterventions object.
-
-        Args:
-            hosp_procedures (InpatientInput): the hospital procedures' representation.
-            icu_procedures (InpatientInput): the ICU procedures' representation.
-            icu_inputs (InpatientInput): the ICU inputs' representation.
-        """
-        super().__init__()
-
+    @classmethod
+    def from_interventions(cls, inpatient_interventions: InpatientInterventions, terminal_time: float):
         time = [np.clip(t, 0.0, terminal_time)
                 for t in inpatient_interventions.timestamps
                 ] + [0.0, terminal_time]
         time = np.unique(np.hstack(time, dtype=np.float32))
-        time = self.pad_array(time, value=np.nan)
-        self.time = time
-        self.hosp_procedures = self._segment(self.t0_padded, inpatient_interventions.hosp_procedures)
-        self.icu_procedures = self._segment(self.t0_padded, inpatient_interventions.icu_procedures)
-        self.icu_inputs = self._segment(self.t0_padded, inpatient_interventions.icu_inputs)
+        time = cls.pad_array(time, value=np.nan)
+        t0 = time[:-1]
+        hosp_procedures = cls._segment(t0, inpatient_interventions.hosp_procedures)
+        icu_procedures = cls._segment(t0, inpatient_interventions.icu_procedures)
+        icu_inputs = cls._segment(t0, inpatient_interventions.icu_inputs)
+        return cls(time, hosp_procedures, icu_procedures, icu_inputs)
 
     @staticmethod
     def pad_array(array: Array,
@@ -884,39 +877,6 @@ class SegmentedInpatientInterventions(Data):
             return array
 
         return np.pad(array, pad_width=(0, n_pad), mode='constant', constant_values=value)
-
-    @property
-    def t0_padded(self):
-        """Start times for segmenting the interventions, padded to the `maximum_padding`."""
-        return self.time[:-1]
-
-    @property
-    def t0(self):
-        """Start times for segmenting the interventions."""
-        t = self.time
-        return t[~np.isnan(t)][:-1]
-
-    @property
-    def t1_padded(self):
-        """End times for segmenting the interventions, padded to the `maximum_padding`."""
-        return self.time[1:]
-
-    @property
-    def t1(self):
-        """End times for segmenting the interventions."""
-        t = self.time
-        return t[~np.isnan(t)][1:]
-
-    @property
-    def t_sep(self):
-        """Separation times for segmenting the interventions."""
-        t = self.time
-        return t[~np.isnan(t)][1:-1]
-
-    @property
-    def interval(self) -> float:
-        """Length of the admission interval"""
-        return np.nanmax(self.time) - np.nanmin(self.time)
 
     @staticmethod
     def _segment(t0_padded: Array, inpatient_input: InpatientInput) -> Array:
@@ -950,9 +910,81 @@ class Admission(Data):
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    observables: Optional[Union[InpatientObservables, List[InpatientObservables]]]
+    observables: Optional[InpatientObservables]
     interventions: Optional[InpatientInterventions]
-    leading_observable: Optional[Union[InpatientObservables, List[InpatientObservables]]] = None
+    leading_observable: Optional[InpatientObservables] = None
+
+    def to_hdf(self, path: str, admissions_key: str) -> None:
+        """
+        Save the admission data to an HDF5 file.
+
+        Args:
+            path (str): the path to the HDF5 file.
+            admissions_key (str): the key to use for the admission data.
+        """
+        key = f'{admissions_key}/{self.admission_id}'
+        adm_dates = pd.DataFrame({'start': self.admission_dates[0],
+                                  'end': self.admission_dates[1],
+                                  'dx_codes_scheme': self.dx_codes.scheme,
+                                  'dx_codes_history_scheme': self.dx_codes_history.scheme,
+                                  'outcome_scheme': self.outcome.scheme}, index=[0])
+
+        adm_dates.to_hdf(path, key=f'{key}/admission_meta', format='table')
+        pd.DataFrame(self.dx_codes.vec).to_hdf(path, key=f'{key}/dx_codes', format='table')
+        pd.DataFrame(self.dx_codes_history.vec).to_hdf(path, key=f'{key}/dx_codes_history', format='table')
+        pd.DataFrame(self.outcome.vec).to_hdf(path, key=f'{key}/outcome', format='table')
+        if self.observables is not None:
+            self.observables.to_dataframe().to_hdf(path, key=f'{key}/observables', format='table')
+        if self.leading_observable is not None:
+            self.leading_observable.to_dataframe().to_hdf(path, key=f'{key}/leading_observable', format='table')
+        if self.interventions is not None:
+            for k, v in self.interventions.to_dataframes().items():
+                v.to_hdf(path, key=f'{key}/interventions/{k}', format='table')
+
+    @staticmethod
+    def from_hdf_store(hdf_store: pd.HDFStore, admissions_key: str, admission_id: str) -> 'Admission':
+        """
+        Load the admission data from an HDF5 file.
+
+        Args:
+            hdf_store (pd.HDFStore): the HDF5 store.
+            admissions_key (str): the key to use for the admission data.
+            admission_id (str): the admission ID.
+
+        Returns:
+            Admission: the admission data.
+        """
+        key = f'{admissions_key}/{admission_id}'
+        adm_meta = hdf_store[f'{key}/admission_meta']
+        adm_dates = (adm_meta['start'].iloc[0], adm_meta['end'].iloc[0])
+        dx_codes_scheme = adm_meta['dx_codes_scheme'].iloc[0]
+        dx_codes_history_scheme = adm_meta['dx_codes_history_scheme'].iloc[0]
+        outcome_scheme = adm_meta['outcome_scheme'].iloc[0]
+        dx_codes = CodesVector(hdf_store[f'{key}/dx_codes'], dx_codes_scheme)
+        dx_codes_history = CodesVector(hdf_store[f'{key}/dx_codes_history'], dx_codes_history_scheme)
+        outcome = CodesVector(hdf_store[f'{key}/outcome'], outcome_scheme)
+
+        observables = None
+        leading_observables = None
+        interventions = None
+
+        if f'{key}/observables' in hdf_store:
+            observables = InpatientObservables.from_dataframe(hdf_store[f'{key}/observables'])
+        if f'{key}/leading_observable' in hdf_store:
+            leading_observable = InpatientObservables.from_dataframe(hdf_store[f'{key}/leading_observable'])
+        if f'{key}/interventions' in hdf_store:
+            interventions = InpatientInterventions.from_dataframes({
+                k: hdf_store[f'{key}/interventions/{k}'] for k in hdf_store[f'{key}/interventions'].keys()
+            })
+
+        return Admission(admission_id=admission_id,
+                         admission_dates=adm_dates,
+                         dx_codes=dx_codes,
+                         dx_codes_history=dx_codes_history,
+                         outcome=outcome,
+                         observables=observables,
+                         leading_observable=leading_observable,
+                         interventions=interventions)
 
     @property
     def interval_hours(self) -> float:
@@ -1033,9 +1065,62 @@ class StaticInfo(Data):
     gender: Optional[CodesVector] = None
     ethnicity: Optional[CodesVector] = None
     date_of_birth: Optional[date] = None
-    constant_vec: Optional[Array] = eqx.static_field(init=False)
 
-    def __post_init__(self):
+    @classmethod
+    @property
+    def separator(cls) -> str:
+        return f':{cls.__name__}:'
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Converts the static information to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: a pandas DataFrame containing the static information.
+        """
+        df = pd.DataFrame()
+        if self.gender is not None:
+            df.loc[0, 'gender'] = self.separator.join(self.gender.to_codeset())
+            df.loc[0, 'gender_scheme'] = self.gender.scheme
+        if self.ethnicity is not None:
+            df.loc[0, 'ethnicity'] = self.separator.join(self.ethnicity.to_codeset())
+            df.loc[0, 'ethnicity_scheme'] = self.ethnicity.scheme
+        if self.date_of_birth is not None:
+            df.loc[0, 'date_of_birth'] = self.date_of_birth
+        return df
+
+    @classmethod
+    def _from_dataframe_data(cls, df: pd.DataFrame):
+        """
+        Extracts the static information from a pandas DataFrame.
+
+        Args:
+            df (pd.DataFrame): the pandas DataFrame containing the static information.
+        """
+        data = {}
+        if 'gender_scheme' in df.columns:
+            scheme = CodingScheme.from_name(df.loc[0, 'gender_scheme'])
+            codes = df.loc[0, 'gender'].split(cls.separator)
+            data['gender'] = scheme.codeset2vec(codes)
+        if 'ethnicity_scheme' in df.columns:
+            scheme = CodingScheme.from_name(df.loc[0, 'ethnicity_scheme'])
+            codes = df.loc[0, 'ethnicity'].split(cls.separator)
+            data['ethnicity'] = scheme.codeset2vec(codes)
+        if 'date_of_birth' in df.columns:
+            data['date_of_birth'] = df.loc[0, 'date_of_birth']
+        return data
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame, demographic_vector_config: DemographicVectorConfig) -> 'StaticInfo':
+        """
+        Converts a pandas DataFrame to a StaticInfo object.
+        """
+
+        return cls(demographic_vector_config=demographic_vector_config,
+                   **cls._from_dataframe_data(df))
+
+    @property
+    def constant_attrs_list(self) -> List[Array]:
         attrs_vec = []
         if self.demographic_vector_config.gender:
             assert self.gender is not None and len(
@@ -1045,11 +1130,20 @@ class StaticInfo(Data):
             assert self.ethnicity is not None, \
                 "Ethnicity is not extracted from the dataset"
             attrs_vec.append(self.ethnicity.vec)
+        return attrs_vec
+
+    @cached_property
+    def constant_vec(self):
+        attrs_vec = self.constant_attrs_list
+        if any(isinstance(a, jax.Array) for a in attrs_vec):
+            _np = jnp
+        else:
+            _np = np
 
         if len(attrs_vec) == 0:
-            self.constant_vec = np.array([], dtype=jnp.float16)
+            return _np.array([], dtype=jnp.float16)
         else:
-            self.constant_vec = np.hstack(attrs_vec)
+            return _np.hstack(attrs_vec)
 
     def age(self, current_date: date) -> float:
         """
@@ -1101,27 +1195,25 @@ class CPRDStaticInfo(StaticInfo):
     """
 
     imd: Optional[CodesVector] = None
+    demographic_vector_config: CPRDDemographicVectorConfig
 
-    def __post_init__(self):
-        attrs_vec = []
-        if self.demographic_vector_config.gender:
-            assert self.gender is not None and len(
-                self.gender) > 0, "Gender is not extracted from the dataset"
-            attrs_vec.append(self.gender.vec)
-        if self.demographic_vector_config.ethnicity:
-            assert self.ethnicity is not None, \
-                "Ethnicity is not extracted from the dataset"
-            attrs_vec.append(self.ethnicity.vec)
-
+    @property
+    def constant_attrs_list(self) -> List[Array]:
+        attrs_vec = super().constant_attrs_list
         if self.demographic_vector_config.imd:
             assert self.imd is not None, \
                 "IMD is not extracted from the dataset"
             attrs_vec.append(self.imd.vec)
+        return attrs_vec
 
-        if len(attrs_vec) == 0:
-            self.constant_vec = np.array([], dtype=jnp.float16)
-        else:
-            self.constant_vec = np.hstack(attrs_vec)
+    @classmethod
+    def _from_dataframe_data(cls, df: pd.DataFrame):
+        data = super()._from_dataframe_data(df)
+        if 'imd_scheme' in df.columns:
+            scheme = CodingScheme.from_name(df.loc[0, 'imd_scheme'])
+            codes = df.loc[0, 'imd'].split(cls.separator)
+            data['imd'] = scheme.codeset2vec(codes)
+        return data
 
 
 class Patient(Data):
