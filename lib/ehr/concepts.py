@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from functools import cached_property
-from typing import (List, Tuple, Optional, Dict, Union)
+from typing import (List, Tuple, Optional, Dict, Union, Callable)
 
 import equinox as eqx
 import jax
@@ -106,7 +106,7 @@ class InpatientObservables(Data):
             InpatientObservables: the resulting InpatientObservables object.
         """
         time = df['time'].values
-        p = (len(df) - 1) // 2
+        p = (len(df.columns) - 1) // 2
         value = df[[f'val_{i}' for i in range(p)]].values
         mask = df[[f'mask_{i}' for i in range(p)]].values
         return InpatientObservables(time, value, mask)
@@ -266,7 +266,7 @@ class LeadingObservableExtractorConfig(Config):
     Config for LeadingObservableExtractor.
 
     Attributes:
-        index (int): index of the observable in the observable scheme.
+        code_index (int): index of the observable in the observable scheme.
         leading_hours (List[float]): list of leading hours to extract. Must be sorted.
         recovery_window (float): time window in hours to mask out between a nonzero value and zero.
         entry_neglect_window (float): hours to mask out in the beginning.
@@ -274,34 +274,21 @@ class LeadingObservableExtractorConfig(Config):
         scheme (str): name of the observation coding scheme to use.
     """
 
-    index: int
-    leading_hours: List[float]
-    recovery_window: float
-    entry_neglect_window: float
-    minimum_acquisitions: int  # minimum number of acquisitions to consider
+    code_index: int
     scheme: str
 
-    def __init__(
-            self,
-            index: int,
-            leading_hours: List[float],
-            recovery_window: float,
-            entry_neglect_window: float,
-            minimum_acquisitions: int,
-            scheme: str,
-    ):
-        super().__init__()
-        self.index = index
-        self.leading_hours = list(leading_hours)
-        self.recovery_window = recovery_window
-        self.entry_neglect_window = entry_neglect_window
-        self.minimum_acquisitions = minimum_acquisitions
-        self.scheme = scheme
+    leading_hours: List[float]
+    entry_neglect_window: float
+    minimum_acquisitions: int  # minimum number of acquisitions to consider
+    recovery_window: float = 0.0
+    aggregation: str = 'any'
 
+    def __post_init__(self):
         # `leading_hours` must be sorted.
         assert all(
             x <= y for x, y in zip(self.leading_hours[:-1], self.leading_hours[1:])
         ), f"leading_hours must be sorted"
+        self.leading_hours = list(self.leading_hours)
 
 
 class LeadingObservableExtractor(Module):
@@ -310,29 +297,11 @@ class LeadingObservableExtractor(Module):
 
     Attributes:
         config (LeadingObservableExtractorConfig): the configuration for the extractor.
-        _scheme (AbstractScheme): the scheme used for indexing.
-        _index2code (Dict[int, str]): a dictionary mapping index to code.
-        _code2index (Dict[str, int]): a dictionary mapping code to index.
+        scheme (AbstractScheme): the scheme used for indexing.
+        index2code (Dict[int, str]): a dictionary mapping index to code.
+        code2index (Dict[str, int]): a dictionary mapping code to index.
     """
     config: LeadingObservableExtractorConfig
-    _scheme: CodingScheme
-    _index2code: Dict[int, str]
-    _code2index: Dict[str, int]
-
-    def __init__(self, config: LeadingObservableExtractorConfig):
-        """
-        Initializes the LeadingObservableExtractor.
-
-        Args:
-            config (LeadingObservableExtractorConfig): the configuration for the extractor.
-        """
-        super().__init__(config=config)
-        self._scheme = CodingScheme.from_name(config.scheme)
-        desc = self._scheme.index2desc[config.index]
-        self._index2code = dict(
-            zip(range(len(config.leading_hours)),
-                [f'{desc}_next_{h}hrs' for h in config.leading_hours]))
-        self._code2index = {v: k for k, v in self._index2code.items()}
 
     def __len__(self):
         """
@@ -343,7 +312,7 @@ class LeadingObservableExtractor(Module):
         """
         return len(self.config.leading_hours)
 
-    @property
+    @cached_property
     def index2code(self):
         """
         Returns the mapping of index to code.
@@ -351,9 +320,13 @@ class LeadingObservableExtractor(Module):
         Returns:
             Dict[int, str]: the mapping of index to code.
         """
-        return self._index2code
+        scheme = CodingScheme.from_name(self.config.scheme)
+        desc = scheme.index2desc[self.config.index]
+        return dict(
+            zip(range(len(self.config.leading_hours)),
+                [f'{desc}_next_{h}hrs' for h in self.config.leading_hours]))
 
-    @property
+    @cached_property
     def index2desc(self):
         """
         Returns the mapping of index to description.
@@ -363,7 +336,7 @@ class LeadingObservableExtractor(Module):
         """
         return self.index2code
 
-    @property
+    @cached_property
     def code2index(self):
         """
         Returns the mapping of code to index.
@@ -371,7 +344,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Dict[str, int]: the mapping of code to index.
         """
-        return self._code2index
+        return {v: k for k, v in self.index2code.items()}
 
     def empty(self):
         """
@@ -402,6 +375,59 @@ class LeadingObservableExtractor(Module):
         return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
 
     @staticmethod
+    def neutralize_first_acquisitions(x: Array, n: int) -> Array:
+        """
+        Neutralizes the first acquisitions in the input array.
+
+        Args:
+            x (Array): the input array.
+            n (int): number of acquisitions to neutralize.
+
+
+        Returns:
+            Array: the neutralized input array.
+        """
+        return np.where(np.arange(len(x)) < n, np.nan, x)
+
+    @staticmethod
+    def neutralize_entry_neglect_window(t: Array, x: Array, neglect_window: float) -> Array:
+        """
+        Neutralizes the observations in the beginning of the input array.
+
+        Args:
+            t (Array): the time array.
+            x (Array): the input array.
+            neglect_window (float): number of hours to neglect in the beginning.
+
+        Returns:
+            Array: the neutralized input array.
+        """
+        return np.where(t < neglect_window, np.nan, x)
+
+    @staticmethod
+    def neutralize_recovery_window(t: Array, x: Array, recovery_window: float) -> Array:
+        """
+        Neutralizes the observations within the recovery window.
+
+        Args:
+            t (Array): the time array.
+            x (Array): the input array.
+            recovery_window (float): number of hours to neglect in the beginning.
+
+        Returns:
+            Array: the neutralized input array.
+        """
+        if len(t) == 0 or len(t) == 1:
+            return x
+        x0 = x[0: -1]
+        x1 = x[1:]
+        next_recovery = (x0 != 0) & (~np.isnan(x0)) & (x1 == 0)
+
+        for i in np.flatnonzero(next_recovery):
+            x[i + 1:] = np.where(t[i + 1:] - t[i] < recovery_window, np.nan, x[i + 1:])
+        return x
+
+    @staticmethod
     def _nan_agg_nonzero(x, axis):
         """
         Aggregates the values in a given array along the specified axis, treating NaN values as zero.
@@ -417,29 +443,57 @@ class LeadingObservableExtractor(Module):
         replaced_nan = np.where(np.isnan(x), 0, x)
         return np.where(all_nan, np.nan, np.any(replaced_nan, axis=axis) * 1.0)
 
-    def __call__(self, observables: InpatientObservables):
+    @staticmethod
+    def _nan_agg_max(x, axis):
         """
-        Makes a leading observable from the current timestamp.
+        Aggregates the values in a given array along the specified axis, treating NaN values as zero.
 
         Args:
-            observables (InpatientObservables): The input observables.
+            x (Array): The input array.
+            axis: The axis along which to aggregate.
 
         Returns:
-            InpatientObservables: The resulting leading observables.
+            Array: The aggregated array.
         """
-        if len(observables) == 0:
-            return self.empty()
+        return np.nanmax(x, axis=axis)
 
-        mask = observables.mask[:, self.config.index]
-        value = np.where(mask, observables.value[:, self.config.index], np.nan)
-        time = observables.time
+    @classmethod
+    def aggregation(cls, aggregation: str) -> Callable:
+        """
+        Returns the aggregation function based on the aggregation scheme.
+
+        Returns:
+            Callable: the aggregation function.
+        """
+        if aggregation == 'max':
+            return cls._nan_agg_max
+        elif aggregation == 'any':
+            return cls._nan_agg_nonzero
+        else:
+            raise ValueError(f"Aggregation {aggregation} not supported")
+
+    @classmethod
+    def clean_values(cls, t: Array, x: Array, entry_neglect_window: float, recovery_window: float,
+                     minimum_acquisitions: int) -> Array:
+        # neutralize the first acquisitions
+        x = cls.neutralize_first_acquisitions(x, minimum_acquisitions)
+        # neutralize the observations in the beginning within the entry neglect window.
+        x = cls.neutralize_entry_neglect_window(t, x, entry_neglect_window)
+        # neutralize the observations within the recovery window.
+        x = cls.neutralize_recovery_window(t, x, recovery_window)
+        return x
+
+    @classmethod
+    def extract_leading_window(cls, t: Array, x: Array, leading_hours: List[float],
+                               aggregation: str) -> Array:
+        aggregation = cls.aggregation(aggregation)
         # a time-window starting from timestamp_i for each row_i
         # if time = [t0, t1, t2, t3]
         # then t_leads = [[t0, t1, t2, t3],
         #                 [t1, t2, t3, nan],
         #                 [t2, t3, nan, nan],
         #                 [t3, nan, nan, nan]]
-        t_leads = self._nan_concat_leading_windows(time)
+        t_leads = cls._nan_concat_leading_windows(t)
 
         # if time = [t0, t1, t2, t3]
         # then delta_leads = [[0, t1-t0, t2-t0, t3-t0],
@@ -454,12 +508,12 @@ class LeadingObservableExtractor(Module):
         #                 [v1, v2, v3, nan],
         #                 [v2, v3, nan, nan],
         #                 [v3, nan, nan, nan]]
-        v_leads = self._nan_concat_leading_windows(value)
+        v_leads = cls._nan_concat_leading_windows(x)
 
         values = []
         masks = []
 
-        for t in self.config.leading_hours:
+        for t in leading_hours:
             # select the rows where the time-window is less than t
             # if time = [t0, t1, t2, t3]
             # then mask = [[0 < t, t1 - t0 < t, t2 - t0 < t, t3 - t0 < t],
@@ -468,13 +522,34 @@ class LeadingObservableExtractor(Module):
             #              [0 < t, nan < t, nan < t, nan < t]]
             mask = delta_leads < t
             v_lead = np.where(mask, v_leads, np.nan)
-            values.append(self._nan_agg_nonzero(v_lead, axis=1).flatten())
+            values.append(aggregation(v_lead, axis=1).flatten())
 
             masks.append(np.where(np.isnan(values[-1]), False, True))
 
         values = np.stack(values, axis=1)
         masks = np.stack(masks, axis=1)
-        return InpatientObservables(time=time, value=values, mask=masks)
+        return InpatientObservables(time=t, value=values, mask=masks)
+
+    def __call__(self, observables: InpatientObservables):
+        """
+        Makes a leading observable from the current timestamp.
+
+        Args:
+            observables (InpatientObservables): The input observables.
+
+        Returns:
+            InpatientObservables: The resulting leading observables.
+        """
+        if len(observables) == 0:
+            return self.empty()
+
+        time = observables.time
+        mask = observables.mask[:, self.config.code_index]
+        value = np.where(mask, observables.value[:, self.config.code_index], np.nan)
+        value = self.clean_values(time, value, entry_neglect_window=self.config.entry_neglect_window,
+                                  recovery_window=self.config.recovery_window,
+                                  minimum_acquisitions=self.config.minimum_acquisitions)
+        return self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
 
 
 class MaskedAggregator(eqx.Module):
@@ -716,26 +791,19 @@ class InpatientInput(Data):
 
     Attributes:
         code_index (Array): the code index array. Each index value correspond to a unique input code.
-        rate (Array): the rate array.
         starttime (Array): the start time array.
         endtime (Array): the end time array.
-        size (int): the size of the input data.
+        rate (Optional[Array]): the rate array, if available. If not provided, it is assumed to be a vector of ones.
     """
 
     code_index: Array
-    rate: Array
     starttime: Array
     endtime: Array
+    rate: Optional[Array] = None
 
-    @property
-    def size(self) -> int:
-        """
-        Returns the size of the input data.
-
-        Returns:
-            int: the size of the input data.
-        """
-        return len(self.code_index)
+    def __post_init__(self):
+        if self.rate is None:
+            self.rate = np.ones(len(self.code_index), dtype=bool)
 
     def to_dataframe(self):
         """
@@ -776,17 +844,11 @@ class InpatientInput(Data):
         """
 
         mask = (self.starttime <= t) & (t < self.endtime)
-        if isinstance(self.index, jax.Array):
-            index = jnp.where(mask, self.index, 0)
-            rate = jnp.where(mask, self.rate, 0.0)
-            adm_input = jnp.zeros(self.size, dtype=rate.dtype)
-            return adm_input.at[index].add(rate)
-        else:
-            index = self.index[mask]
-            rate = self.rate[mask]
-            adm_input = np.zeros(self.size, dtype=rate.dtype)
-            adm_input[index] += rate
-            return adm_input
+        index = self.code_index[mask]
+        rate = self.rate[mask]
+        adm_input = np.zeros(len(self.code_index), dtype=rate.dtype)
+        adm_input[index] += rate
+        return adm_input
 
     @classmethod
     def empty(cls) -> InpatientInput:
@@ -1259,3 +1321,39 @@ class Patient(Data):
             The total count of outcome code occurrence over all admissions.
         """
         return sum(a.outcome.vec for a in self.admissions)
+
+    def to_hdf(self, path: str, patients_key: str) -> None:
+        """
+        Save the patient data to an HDF5 file.
+
+        Args:
+            path (str): the path to the HDF5 file.
+            patients_key (str): the key to use for the patient data.
+        """
+        key = f'{patients_key}/{self.subject_id}'
+        self.static_info.to_dataframe().to_hdf(path, key=f'{key}/static_info', format='table')
+        for i, adm in enumerate(self.admissions):
+            adm.to_hdf(path, f'{key}/admissions')
+
+        admission_ids = [adm.admission_id for adm in self.admissions]
+        pd.DataFrame(admission_ids).to_hdf(path, key=f'{key}/admission_ids', format='table')
+
+    @staticmethod
+    def from_hdf_store(hdf_store: pd.HDFStore, patients_key: str, subject_id: int,
+                       demographic_vector_config: DemographicVectorConfig) -> 'Patient':
+        """
+        Load the patient data from an HDF5 file.
+
+        Args:
+            hdf_store (pd.HDFStore): the HDF5 store.
+            patients_key (str): the key to use for the patient data.
+            subject_id (int): the subject ID.
+
+        Returns:
+            Patient: the patient data.
+        """
+        key = f'{patients_key}/{subject_id}'
+        static_info = StaticInfo.from_dataframe(hdf_store[f'{key}/static_info'], demographic_vector_config)
+        admission_ids = hdf_store[f'{key}/admission_ids']
+        admissions = [Admission.from_hdf_store(hdf_store, f'{key}/admissions', aid) for aid in admission_ids]
+        return Patient(subject_id=subject_id, static_info=static_info, admissions=admissions)

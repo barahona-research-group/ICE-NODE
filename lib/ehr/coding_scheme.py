@@ -1327,7 +1327,7 @@ class CodeMap(Module):
 
             if key[0] == key[1]:
                 m = IdentityCodeMap(source_scheme)
-                cls.register_map(source_scheme, target_scheme, m)
+                cls.register_map(m)
                 return m
 
             if key in cls._load_maps:

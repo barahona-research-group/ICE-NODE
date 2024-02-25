@@ -10,8 +10,7 @@ from lib.ehr import CodingScheme, DatasetConfig
 from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
 from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
     Dataset, AbstractDatasetPipeline
-from lib.ehr.pipeline import SetIndex
-from test.ehr.dataset.conftest import NaiveDataset, Pipeline, IndexedDataset
+from test.ehr.conftest import NaiveDataset
 
 
 @pytest.fixture(params=[('x_id_alias', 'y_id_alias'), tuple()])
@@ -150,9 +149,7 @@ def dataset_scheme_targets(dataset_scheme_config, request) -> Dict[str, Tuple[st
             CodingScheme.register_scheme(FlatScheme(config=CodingSchemeConfig(name=target_name),
                                                     codes=target_codes,
                                                     desc=target_desc))
-            CodeMap.register_map(source_scheme.name,
-                                 target_name,
-                                 CodeMap(map_config, map_data))
+            CodeMap.register_map(CodeMap(map_config, map_data))
             target_schemes.append(target_name)
         targets[space] = tuple(target_schemes)
     return targets
@@ -255,9 +252,9 @@ class TestDataset:
             assert dataset3.equals(dataset2)
             mocker.assert_called_once_with("Pipeline has already been executed. Doing nothing.")
 
-    def test_subject_ids(self, dataset_config: DatasetConfig, dataset_tables: DatasetTables):
-        naive_dataset = NaiveDataset(config=dataset_config, tables=dataset_tables)
-        indexed_dataset = IndexedDataset(config=dataset_config, tables=dataset_tables)
+    def test_subject_ids(self, dataset: NaiveDataset, indexed_dataset: NaiveDataset):
+        naive_dataset = dataset
+        indexed_dataset = indexed_dataset
 
         with pytest.raises(AssertionError):
             naive_dataset.subject_ids
@@ -294,7 +291,7 @@ class TestDataset:
 
     @pytest.mark.parametrize('splits', [[0.1], [0.4, 0.8, 0.9], [0.3, 0.5, 0.7, 0.9], [0.5, 0.2]])
     @pytest.mark.parametrize('balance', ['subjects', 'admissions', 'admissions_intervals', 'unsupported'])
-    def test_random_split(self, indexed_dataset: IndexedDataset, splits: List[float], balance: str):
+    def test_random_split(self, indexed_dataset: NaiveDataset, splits: List[float], balance: str):
         dataset = indexed_dataset.execute_pipeline()
         subjects = dataset.subject_ids
         skip = False

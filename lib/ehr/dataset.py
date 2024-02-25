@@ -292,20 +292,51 @@ class DatasetScheme(Module):
         supported_target_scheme_options(self): returns the supported target scheme options for each coding scheme.
     """
     config: DatasetSchemeConfig
-    ethnicity: CodingScheme
-    gender: CodingScheme
-    dx_discharge: Optional[CodingScheme] = None
-    obs: Optional[CodingScheme] = None
-    icu_procedures: Optional[CodingScheme] = None
-    hosp_procedures: Optional[CodingScheme] = None
-    icu_inputs: Optional[CodingScheme] = None
-    outcome: Optional[OutcomeExtractor] = None
+
+    @staticmethod
+    def _scheme(name: str) -> CodingScheme:
+        try:
+            return CodingScheme.from_name(name)
+        except KeyError as e:
+            return None
+
+    @cached_property
+    def ethnicity(self) -> CodingScheme:
+        return self._scheme(self.config.ethnicity)
+
+    @cached_property
+    def gender(self) -> CodingScheme:
+        return self._scheme(self.config.gender)
+
+    @cached_property
+    def dx_discharge(self) -> CodingScheme:
+        return self._scheme(self.config.dx_discharge)
+
+    @cached_property
+    def obs(self) -> Optional[CodingScheme]:
+        return self._scheme(self.config.obs)
+
+    @cached_property
+    def icu_procedures(self) -> Optional[CodingScheme]:
+        return self._scheme(self.config.icu_procedures)
+
+    @cached_property
+    def hosp_procedures(self) -> Optional[CodingScheme]:
+        return self._scheme(self.config.hosp_procedures)
+
+    @cached_property
+    def icu_inputs(self) -> Optional[CodingScheme]:
+        return self._scheme(self.config.icu_inputs)
+
+    @cached_property
+    def outcome(self) -> Optional[OutcomeExtractor]:
+        return OutcomeExtractor.from_name(self.config.outcome) if self.config.outcome else None
 
     @property
     def scheme_dict(self):
         return {
-            k: v
-            for k, v in self.__dict__.items() if isinstance(v, CodingScheme)
+            k: self._scheme(v)
+            for k, v in self.config.as_dict().items() if isinstance(self._scheme(v), CodingScheme)
         }
 
     @classmethod
@@ -543,7 +574,8 @@ class Dataset(Module):
         path = Path(path)
         tables = DatasetTables.load(path.with_suffix('.tables.h5'))
         config = DatasetConfig.from_dict(load_config(str(path.with_suffix('.config.json'))))
-        dataset = cls(config=config, tables=tables)
+        dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
+                              is_leaf=lambda x: x is None)
         with pd.HDFStore(path.with_suffix('.pipeline.h5')) as store:
             report = store['report'] if 'report' in store else pd.DataFrame()
             return eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)

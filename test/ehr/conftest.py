@@ -11,7 +11,7 @@ from lib.ehr import CodingScheme, FlatScheme, \
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
-    AbstractDatasetPipelineConfig
+    AbstractDatasetPipelineConfig, DatasetScheme
 from lib.ehr.pipeline import SetIndex
 
 DATASET_SCOPE = "function"
@@ -508,22 +508,28 @@ class Pipeline(AbstractDatasetPipeline):
         return dataset, {'report': pd.DataFrame({'action': ['*']})}
 
 
-class NaiveDataset(Dataset):
-
-    @classmethod
-    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return Pipeline(config=config.pipeline, transformations=[])
-
-
 @pytest.fixture
 def dataset_config(dataset_scheme_config, dataset_tables_config):
     return DatasetConfig(scheme=dataset_scheme_config, tables=dataset_tables_config,
                          pipeline=AbstractDatasetPipelineConfig())
 
 
+class NaiveDataset(Dataset):
+
+    @classmethod
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return Pipeline(config=config.pipeline, transformations=[])
+
+    @classmethod
+    def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
+        return None
+
+
 @pytest.fixture
 def dataset(dataset_config, dataset_tables):
-    return NaiveDataset(config=dataset_config, tables=dataset_tables)
+    ds = NaiveDataset(config=dataset_config)
+    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                       is_leaf=lambda x: x is None)
 
 
 @pytest.fixture

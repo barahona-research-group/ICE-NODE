@@ -7,9 +7,6 @@ import pytest
 
 from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
 
-# from unittest import TestCase, main as main_test
-# from unittest.mock import patch
-# from parameterized import parameterized
 
 _DIR = os.path.dirname(__file__)
 
