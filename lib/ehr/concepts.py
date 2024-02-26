@@ -392,7 +392,8 @@ class LeadingObservableExtractor(Module):
     @staticmethod
     def neutralize_entry_neglect_window(t: Array, x: Array, neglect_window: float) -> Array:
         """
-        Neutralizes the observations in the beginning of the input array.
+        Neutralizes the observations in the beginning of the admission within `neglect_window`.
+        Neutralization is inclusive of the timestamps equal to `neglect_window`.
 
         Args:
             t (Array): the time array.
@@ -402,7 +403,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Array: the neutralized input array.
         """
-        return np.where(t < neglect_window, np.nan, x)
+        return np.where(t <= neglect_window, np.nan, x)
 
     @staticmethod
     def neutralize_recovery_window(t: Array, x: Array, recovery_window: float) -> Array:
@@ -417,6 +418,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Array: the neutralized input array.
         """
+        x = x.copy()
         if len(t) == 0 or len(t) == 1:
             return x
         x0 = x[0: -1]
@@ -424,7 +426,7 @@ class LeadingObservableExtractor(Module):
         next_recovery = (x0 != 0) & (~np.isnan(x0)) & (x1 == 0)
 
         for i in np.flatnonzero(next_recovery):
-            x[i + 1:] = np.where(t[i + 1:] - t[i] < recovery_window, np.nan, x[i + 1:])
+            x[i + 1:] = np.where(t[i + 1:] - t[i] <= recovery_window, np.nan, x[i + 1:])
         return x
 
     @staticmethod
