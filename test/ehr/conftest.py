@@ -394,27 +394,27 @@ def gender_scheme(request):
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[('dx1', ['Dx1', 'Dx2', 'Dx3'])])
-def dx_scheme(request):
+def dx_scheme(request) -> str:
     return scheme(*request.param)
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[('hosp_proc1', ['P1', 'P2', 'P3'])])
-def hosp_proc_scheme(request):
+def hosp_proc_scheme(request) -> str:
     return scheme(*request.param)
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[('icu_proc1', ['P1', 'P2', 'P3'])])
-def icu_proc_scheme(request):
+def icu_proc_scheme(request) -> str:
     return scheme(*request.param)
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[('icu_inputs1', ['I1', 'I2', 'I3'])])
-def icu_inputs_scheme(request):
+def icu_inputs_scheme(request) -> str:
     return scheme(*request.param)
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[('observation1', ['O1', 'O2', 'O3'])])
-def observation_scheme(request):
+def observation_scheme(request) -> str:
     return scheme(*request.param)
 
 

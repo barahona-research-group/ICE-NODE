@@ -63,7 +63,7 @@ class InpatientObservables(Data):
         """
         Returns the length of the 'time' attribute.
         """
-        return len(self.time)
+        return self.time.shape[0]
 
     def equals(self, other: InpatientObservables) -> bool:
         """
@@ -375,9 +375,9 @@ class LeadingObservableExtractor(Module):
         return strided(x_ext, shape=(nrows, n), strides=(s, s))[::-1, ::-1]
 
     @staticmethod
-    def neutralize_first_acquisitions(x: Array, n: int) -> Array:
+    def filter_first_acquisitions(m: int, n: int) -> Array:
         """
-        Neutralizes the first acquisitions in the input array.
+        Generates a mask ignoring the first acquisitions in the input array.
 
         Args:
             x (Array): the input array.
@@ -385,30 +385,29 @@ class LeadingObservableExtractor(Module):
 
 
         Returns:
-            Array: the neutralized input array.
+            Array: the mask ignoring the first acquisitions in the input array.
         """
-        return np.where(np.arange(len(x)) < n, np.nan, x)
+        return np.where(np.arange(m) < n, False, True).astype(bool)
 
     @staticmethod
-    def neutralize_entry_neglect_window(t: Array, x: Array, neglect_window: float) -> Array:
+    def filter_entry_neglect_window(t: Array, neglect_window: float) -> Array:
         """
-        Neutralizes the observations in the beginning of the admission within `neglect_window`.
-        Neutralization is inclusive of the timestamps equal to `neglect_window`.
+        Generates a mask that ignores the observations in the beginning of the admission within `neglect_window`.
+        The mask suppression is inclusive of the timestamps equal to `neglect_window`.
 
         Args:
             t (Array): the time array.
-            x (Array): the input array.
             neglect_window (float): number of hours to neglect in the beginning.
 
         Returns:
             Array: the neutralized input array.
         """
-        return np.where(t <= neglect_window, np.nan, x)
+        return np.where(t <= neglect_window, False, True).astype(bool)
 
     @staticmethod
-    def neutralize_recovery_window(t: Array, x: Array, recovery_window: float) -> Array:
+    def filter_recovery_window(t: Array, x: Array, recovery_window: float) -> Array:
         """
-        Neutralizes the observations within the recovery window.
+        Generates a mask the ignores the observations within the recovery window.
 
         Args:
             t (Array): the time array.
@@ -418,16 +417,16 @@ class LeadingObservableExtractor(Module):
         Returns:
             Array: the neutralized input array.
         """
-        x = x.copy()
+        mask = np.ones_like(x).astype(bool)
         if len(t) == 0 or len(t) == 1:
-            return x
+            return mask
         x0 = x[0: -1]
         x1 = x[1:]
         next_recovery = (x0 != 0) & (~np.isnan(x0)) & (x1 == 0)
 
         for i in np.flatnonzero(next_recovery):
-            x[i + 1:] = np.where(t[i + 1:] - t[i] <= recovery_window, np.nan, x[i + 1:])
-        return x
+            mask[i + 1:] = np.where(t[i + 1:] - t[i] <= recovery_window, 0, 1)
+        return mask
 
     @staticmethod
     def _nan_agg_nonzero(x, axis):
@@ -475,15 +474,15 @@ class LeadingObservableExtractor(Module):
             raise ValueError(f"Aggregation {aggregation} not supported")
 
     @classmethod
-    def clean_values(cls, t: Array, x: Array, entry_neglect_window: float, recovery_window: float,
-                     minimum_acquisitions: int) -> Array:
+    def mask_noisy_observations(cls, t: Array, x: Array, entry_neglect_window: float, recovery_window: float,
+                                minimum_acquisitions: int) -> Array:
         # neutralize the first acquisitions
-        x = cls.neutralize_first_acquisitions(x, minimum_acquisitions)
+        m = cls.filter_first_acquisitions(len(t), minimum_acquisitions)
         # neutralize the observations in the beginning within the entry neglect window.
-        x = cls.neutralize_entry_neglect_window(t, x, entry_neglect_window)
+        m &= cls.filter_entry_neglect_window(t, entry_neglect_window)
         # neutralize the observations within the recovery window.
-        x = cls.neutralize_recovery_window(t, x, recovery_window)
-        return x
+        m &= cls.filter_recovery_window(t, x, recovery_window)
+        return m
 
     @classmethod
     def extract_leading_window(cls, t: Array, x: Array, leading_hours: List[float],
@@ -513,24 +512,18 @@ class LeadingObservableExtractor(Module):
         v_leads = cls._nan_concat_leading_windows(x)
 
         values = []
-        masks = []
-
-        for t in leading_hours:
+        for w in leading_hours:
             # select the rows where the time-window is less than t
             # if time = [t0, t1, t2, t3]
             # then mask = [[0 < t, t1 - t0 < t, t2 - t0 < t, t3 - t0 < t],
             #              [0 < t, t2 - t1 < t, t3 - t1 < t, nan < t],
             #              [0 < t, t3 - t2 < t, nan < t, nan < t]],
             #              [0 < t, nan < t, nan < t, nan < t]]
-            mask = delta_leads < t
+            mask = delta_leads < w
             v_lead = np.where(mask, v_leads, np.nan)
             values.append(aggregation(v_lead, axis=1).flatten())
 
-            masks.append(np.where(np.isnan(values[-1]), False, True))
-
-        values = np.stack(values, axis=1)
-        masks = np.stack(masks, axis=1)
-        return InpatientObservables(time=t, value=values, mask=masks)
+        return np.stack(values, axis=1)
 
     def __call__(self, observables: InpatientObservables):
         """
@@ -546,12 +539,15 @@ class LeadingObservableExtractor(Module):
             return self.empty()
 
         time = observables.time
+        value = observables.value[:, self.config.code_index]
         mask = observables.mask[:, self.config.code_index]
-        value = np.where(mask, observables.value[:, self.config.code_index], np.nan)
-        value = self.clean_values(time, value, entry_neglect_window=self.config.entry_neglect_window,
-                                  recovery_window=self.config.recovery_window,
-                                  minimum_acquisitions=self.config.minimum_acquisitions)
-        return self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
+        mask &= self.mask_noisy_observations(time, value,
+                                             entry_neglect_window=self.config.entry_neglect_window,
+                                             recovery_window=self.config.recovery_window,
+                                             minimum_acquisitions=self.config.minimum_acquisitions)
+        value = np.where(mask, value, np.nan)
+        value = self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
+        return InpatientObservables(time, value, mask=~np.isnan(value) * 1.0)
 
 
 class MaskedAggregator(eqx.Module):
@@ -832,7 +828,26 @@ class InpatientInput(Data):
         Returns:
             InpatientInput: the resulting InpatientInput object.
         """
-        return InpatientInput(df['code_index'].values, df['rate'].values, df['starttime'].values, df['endtime'].values)
+        return InpatientInput(df['code_index'].values, df['starttime'].values, df['endtime'].values, df['rate'].values)
+
+    def equals(self, other: "InpatientInput") -> bool:
+        """
+        Compares two InpatientInput objects for equality.
+
+        Args:
+            other (InpatientInput): the other InpatientInput object to compare.
+
+        Returns:
+            bool: whether the two InpatientInput objects are equal.
+        """
+        return (np.array_equal(self.code_index, other.code_index) and
+                np.array_equal(self.starttime, other.starttime) and
+                np.array_equal(self.endtime, other.endtime) and
+                np.array_equal(self.rate, other.rate) and
+                self.code_index.dtype == other.code_index.dtype and
+                self.starttime.dtype == other.starttime.dtype and
+                self.endtime.dtype == other.endtime.dtype and
+                self.rate.dtype == other.rate.dtype)
 
     def __call__(self, t: float) -> Array:
         """
@@ -870,8 +885,8 @@ class InpatientInput(Data):
 class InpatientInterventions(Data):
     # TODO: Add docstring.
     hosp_procedures: Optional[InpatientInput]
-    icu_inputs: Optional[InpatientInput]
     icu_procedures: Optional[InpatientInput]
+    icu_inputs: Optional[InpatientInput]
 
     def to_dataframes(self) -> Dict[str, pd.DataFrame]:
         df1 = self.hosp_procedures.to_dataframe() if self.hosp_procedures is not None else None
@@ -898,6 +913,18 @@ class InpatientInterventions(Data):
                 timestamps.extend(ii.starttime)
                 timestamps.extend(ii.endtime)
         return timestamps
+
+    def equals(self, other: "InpatientInterventions") -> bool:
+        cond1 = (self.hosp_procedures is None and other.hosp_procedures is None) or (
+            self.hosp_procedures.equals(other.hosp_procedures)
+        )
+        cond2 = (self.icu_procedures is None and other.icu_procedures is None) or (
+            self.icu_procedures.equals(other.icu_procedures)
+        )
+        cond3 = (self.icu_inputs is None and other.icu_inputs is None) or (
+            self.icu_inputs.equals(other.icu_inputs)
+        )
+        return cond1 and cond2 and cond3
 
 
 class SegmentedInpatientInterventions(Data):

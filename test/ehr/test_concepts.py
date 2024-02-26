@@ -1,5 +1,6 @@
 from copy import deepcopy
 from typing import List
+from unittest import mock
 
 import equinox as eqx
 import numpy as np
@@ -8,12 +9,27 @@ import pytest
 
 from lib.ehr import CodingScheme
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
-                              InpatientInput)
+                              InpatientInput, InpatientInterventions)
 
 
 @pytest.fixture
 def obs_scheme(observation_scheme: str) -> CodingScheme:
     return CodingScheme.from_name(observation_scheme)
+
+
+@pytest.fixture
+def icu_inputs_scheme_(icu_inputs_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(icu_inputs_scheme)
+
+
+@pytest.fixture
+def icu_proc_scheme_(icu_proc_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(icu_proc_scheme)
+
+
+@pytest.fixture
+def hosp_proc_scheme_(hosp_proc_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(hosp_proc_scheme)
 
 
 FIXTURE_OBS_MAX_TIME = 10.0
@@ -46,6 +62,29 @@ def inpatient_rated_input(n: int, p: int):
     bin_input = inpatient_binary_input(n, p)
     return eqx.tree_at(lambda x: x.rate, bin_input,
                        nrand.uniform(0, 1, size=(n,)))
+
+
+@pytest.fixture(params=[0, 1, 501])
+def icu_inputs(icu_inputs_scheme_: CodingScheme, request):
+    return inpatient_binary_input(request.param, len(icu_inputs_scheme_))
+
+
+@pytest.fixture(params=[0, 1, 501])
+def icu_proc(icu_proc_scheme_: CodingScheme, request):
+    return inpatient_binary_input(request.param, len(icu_proc_scheme_))
+
+
+@pytest.fixture(params=[0, 1, 501])
+def hosp_proc(hosp_proc_scheme_: CodingScheme, request):
+    return inpatient_binary_input(request.param, len(hosp_proc_scheme_))
+
+
+@pytest.fixture(params=[0, 1, 2, -1])
+def inpatient_interventions(hosp_proc, icu_proc, icu_inputs, request):
+    whoisnull = request.param
+    return InpatientInterventions(None if whoisnull == 0 else hosp_proc,
+                                  None if whoisnull == 1 else icu_proc,
+                                  None if whoisnull == 2 else icu_inputs)
 
 
 def leading_observables_extractor(observation_scheme: str, leading_hours: List[float] = (1.0,),
@@ -126,11 +165,6 @@ class TestInpatientObservables:
         pass
 
 
-# @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
-# @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
-# @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
-# @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
-# @pytest.mark.parametrize("aggregation", ["any", "max"])
 class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
@@ -181,28 +215,46 @@ class TestLeadingObservableExtractor:
         assert empty.value.size == 0
         assert empty.mask.size == 0
 
-    def test_nan_concat_leading_windows(self):
-        pass
+    @pytest.mark.parametrize("x, y", [(np.array([1., 2., 3.]),
+                                       np.array([[1., 2., 3.],
+                                                 [2., 3., np.nan],
+                                                 [3., np.nan, np.nan]]))])
+    def test_nan_concat_leading_windows(self, x, y):
+        assert np.array_equal(LeadingObservableExtractor._nan_concat_leading_windows(x), y,
+                              equal_nan=True)
 
-    def test_nan_agg_nonzero(self):
-        pass
+    @pytest.mark.parametrize("x, y", [(np.array([[1., 2., 3.],
+                                                 [2., 3., np.nan],
+                                                 [3., np.nan, np.nan]]), np.array([1., 1., 1.])),
+                                      (np.array([[1., 2., -3.],
+                                                 [0., 0., np.nan],
+                                                 [np.nan, np.nan, np.nan]]), np.array([1., 0., np.nan]))
+                                      ])
+    def test_nan_agg_nonzero(self, x, y):
+        assert np.array_equal(LeadingObservableExtractor._nan_agg_nonzero(x, axis=1), y,
+                              equal_nan=True)
 
-    def test_nan_agg_max(self):
-        pass
+    @pytest.mark.parametrize("x, y", [(np.array([[1., 2., 3.],
+                                                 [2., 3., np.nan],
+                                                 [3., np.nan, np.nan]]), np.array([3., 3., 3.])),
+                                      (np.array([[1., 2., -3.],
+                                                 [0., 0., np.nan],
+                                                 [np.nan, np.nan, np.nan]]), np.array([2., 0., np.nan]))
+                                      ])
+    def test_nan_agg_max(self, x, y):
+        assert np.array_equal(LeadingObservableExtractor._nan_agg_max(x, axis=1), y,
+                              equal_nan=True)
 
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
-    def test_neutralize_first_acquisitions(self, inpatient_observables: InpatientObservables,
-                                           observation_scheme: str,
-                                           minimum_acquisitions: int):
+    def test_filter_first_acquisitions(self, inpatient_observables: InpatientObservables,
+                                       observation_scheme: str,
+                                       minimum_acquisitions: int):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
                                                        minimum_acquisitions=minimum_acquisitions)
-        x = inpatient_observables.value[:, lead_extractor.config.code_index]
-
-        assert np.isnan(x).sum() == 0
-        y = lead_extractor.neutralize_first_acquisitions(x, minimum_acquisitions)
+        m = lead_extractor.filter_first_acquisitions(len(inpatient_observables), minimum_acquisitions)
         n_affected = min(minimum_acquisitions, len(inpatient_observables))
-        assert np.isnan(y).sum() == n_affected
-        assert np.all(y[n_affected:] == x[n_affected:])
+        assert (~m).sum() == n_affected
+        assert (~m)[n_affected:].sum() == 0
 
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     def test_neutralize_entry_neglect_window(self, inpatient_observables: InpatientObservables,
@@ -210,14 +262,11 @@ class TestLeadingObservableExtractor:
                                              entry_neglect_window: int):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
                                                        entry_neglect_window=entry_neglect_window)
-        x = inpatient_observables.value[:, lead_extractor.config.code_index]
         t = inpatient_observables.time
-        y = lead_extractor.neutralize_entry_neglect_window(t, x, entry_neglect_window)
+        m = lead_extractor.filter_entry_neglect_window(t, entry_neglect_window)
         n_affected = np.sum(t <= entry_neglect_window)
-
-        assert np.isnan(x).sum() == 0
-        assert np.isnan(y).sum() == n_affected
-        assert np.all(y[n_affected:] == x[n_affected:])
+        assert (~m).sum() == n_affected
+        assert (~m)[n_affected:].sum() == 0
 
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     def test_neutralize_recovery_window(self, inpatient_observables: InpatientObservables,
@@ -230,7 +279,7 @@ class TestLeadingObservableExtractor:
                                                        entry_neglect_window=recovery_window)
         x = inpatient_observables.value[:, lead_extractor.config.code_index]
         t = inpatient_observables.time
-        y = lead_extractor.neutralize_recovery_window(t, x, recovery_window)
+        m = lead_extractor.filter_recovery_window(t, x, recovery_window)
 
         arg_x_recovery = np.flatnonzero((x[:-1] != 0) & (x[1:] == 0))
         assert np.isnan(x).sum() == 0
@@ -240,19 +289,59 @@ class TestLeadingObservableExtractor:
                 last = arg_x_recovery[i + 1]
 
             ti = t[arg + 1:last] - t[arg]
-            xi = x[arg + 1:last]
-            yi = y[arg + 1:last]
+            mi = m[arg + 1:last]
             n_affected = np.sum(ti <= recovery_window)
 
-            assert np.isnan(yi).sum() == n_affected
+            assert (~mi).sum() == n_affected
 
-            assert np.all(yi[n_affected:] == xi[n_affected:])
+            assert (~mi)[n_affected:].sum() == 0
 
-    def test_clean_values(self):
-        pass
+    @pytest.mark.parametrize("minimum_acquisitions", [0, 100])
+    @pytest.mark.parametrize("entry_neglect_window", [0.0, 1000.0])
+    @pytest.mark.parametrize("recovery_window", [0.0, 10000.0])
+    def test_mask_noisy_observations(self, inpatient_observables: InpatientObservables,
+                                     observation_scheme: str,
+                                     minimum_acquisitions: int,
+                                     entry_neglect_window: int,
+                                     recovery_window: float):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       minimum_acquisitions=minimum_acquisitions,
+                                                       entry_neglect_window=entry_neglect_window,
+                                                       recovery_window=recovery_window)
+        x = inpatient_observables.value[:, lead_extractor.config.code_index]
+        t = inpatient_observables.time
+        qual = f'{lead_extractor.__module__}.{type(lead_extractor).__qualname__}'
+        with mock.patch(f'{qual}.filter_first_acquisitions') as mocker1:
+            with mock.patch(f'{qual}.filter_entry_neglect_window') as mocker2:
+                with mock.patch(f'{qual}.filter_recovery_window') as mocker3:
+                    lead_extractor.mask_noisy_observations(t, x, minimum_acquisitions=minimum_acquisitions,
+                                                           entry_neglect_window=entry_neglect_window,
+                                                           recovery_window=recovery_window)
+                    mocker1.assert_called_once_with(len(t), minimum_acquisitions)
+                    mocker2.assert_called_once_with(t, entry_neglect_window)
+                    mocker3.assert_called_once_with(t, x, recovery_window)
 
-    def test_extract_leading_window(self):
-        pass
+    def test_extract_leading_window(self, inpatient_observables: InpatientObservables,
+                                    observation_scheme: str):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme)
+        x = inpatient_observables.value[:, lead_extractor.config.code_index]
+        m = inpatient_observables.mask[:, lead_extractor.config.code_index]
+        t = inpatient_observables.time
+        lead = lead_extractor(inpatient_observables)
+
+        assert len(lead) == len(inpatient_observables)
+        assert lead.value.shape[1] == len(lead_extractor)
+
+        for iw, w in enumerate(lead_extractor.config.leading_hours):
+            for i in range(len(t)):
+                delta_t = t[i:] - t[i]
+                xi = np.where((delta_t <= w) & (m[i:]), x[i:], np.nan)
+                yi = lead.value[i, iw]
+                # if all are nan, then the lead is nan.
+                if np.isnan(xi).all():
+                    assert np.isnan(yi)
+                else:
+                    assert yi == xi[~np.isnan(xi)].any()
 
     def test_apply(self):
         pass
@@ -293,8 +382,13 @@ class TestInpatientInput:
     def test_apply(self):
         pass
 
-    def test_dataframe_serialization(self):
-        pass
+    @pytest.mark.parametrize("n", [0, 1, 100, 501])
+    @pytest.mark.parametrize("p", [1, 100, 501])
+    def test_dataframe_serialization(self, n: int, p: int):
+        input = inpatient_binary_input(n, p)
+        df = input.to_dataframe()
+        assert len(df) == n
+        assert input.equals(InpatientInput.from_dataframe(df))
 
     def test_empty(self):
         pass
@@ -302,8 +396,9 @@ class TestInpatientInput:
 
 class TestInpatientInterventions:
 
-    def test_dataframe_serialization(self):
-        pass
+    def test_dataframe_serialization(self, inpatient_interventions: InpatientInterventions):
+        dfs = inpatient_interventions.to_dataframes()
+        assert inpatient_interventions.equals(InpatientInterventions.from_dataframes(dfs))
 
     def test_timestamps(self):
         pass
