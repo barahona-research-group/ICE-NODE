@@ -438,10 +438,6 @@ class TestSegmentedInpatientInterventions:
             else:
                 assert getattr(seg, k) is None
 
-        # assert sum(len(s) for s in seg) == len(inpatient_interventions)
-        # assert sum(s.starttime.size + s.endtime.size for s in seg) == (inpatient_interventions.timestamps.size * 2)
-        # assert inpatient_interventions.equals(InpatientInterventions.concat(seg))
-
     @pytest.mark.parametrize("array", [np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])])
     @pytest.mark.parametrize("value", [0.0, np.nan])
     @pytest.mark.parametrize("maximum_padding", [1, 2, 3, 5, 10, 100])
