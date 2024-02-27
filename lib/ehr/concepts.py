@@ -849,12 +849,13 @@ class InpatientInput(Data):
                 self.endtime.dtype == other.endtime.dtype and
                 self.rate.dtype == other.rate.dtype)
 
-    def __call__(self, t: float) -> Array:
+    def __call__(self, t: float, input_size: int) -> Array:
         """
         Returns the vectorized input at time t.
 
         Args:
             t (float): the time at which to return the input.
+            input_size (int): the size of the input vector.
 
         Returns:
             Array: the input at time t.
@@ -863,9 +864,9 @@ class InpatientInput(Data):
         mask = (self.starttime <= t) & (t < self.endtime)
         index = self.code_index[mask]
         rate = self.rate[mask]
-        adm_input = np.zeros(len(self.code_index), dtype=rate.dtype)
-        adm_input[index] += rate
-        return adm_input
+        vec_input = np.zeros(input_size, dtype=rate.dtype)
+        vec_input[index] += rate
+        return vec_input
 
     @classmethod
     def empty(cls) -> InpatientInput:
@@ -912,7 +913,7 @@ class InpatientInterventions(Data):
             if isinstance(ii, InpatientInput):
                 timestamps.extend(ii.starttime)
                 timestamps.extend(ii.endtime)
-        return timestamps
+        return list(sorted(set(timestamps)))
 
     def equals(self, other: "InpatientInterventions") -> bool:
         cond1 = (self.hosp_procedures is None and other.hosp_procedures is None) or (
@@ -929,21 +930,37 @@ class InpatientInterventions(Data):
 
 class SegmentedInpatientInterventions(Data):
     time: Array
-    hosp_procedures: Array
-    icu_procedures: Array
-    icu_inputs: Array
+    hosp_procedures: Optional[Array]
+    icu_procedures: Optional[Array]
+    icu_inputs: Optional[Array]
 
     @classmethod
-    def from_interventions(cls, inpatient_interventions: InpatientInterventions, terminal_time: float):
-        time = [np.clip(t, 0.0, terminal_time)
-                for t in inpatient_interventions.timestamps
-                ] + [0.0, terminal_time]
-        time = np.unique(np.hstack(time, dtype=np.float32))
-        time = cls.pad_array(time, value=np.nan)
+    def from_interventions(cls, inpatient_interventions: InpatientInterventions, terminal_time: float,
+                           hosp_procedures_size: Optional[int] = None,
+                           icu_procedures_size: Optional[int] = None,
+                           icu_inputs_size: Optional[int] = None,
+                           maximum_padding: int = 1) -> "SegmentedInpatientInterventions":
+
+        timestamps = inpatient_interventions.timestamps
+        assert terminal_time >= max(timestamps, default=0.0), (
+            f"Terminal time {terminal_time} should be greater than the maximum timestamp {max(timestamps, default=0.0)}"
+        )
+        assert min(timestamps, default=0.0) >= 0.0, (
+            f"Minimum timestamp {min(timestamps, default=0.0)} should be greater than or equal to 0.0"
+        )
+
+        time = np.unique(np.hstack(timestamps + [0.0, terminal_time], dtype=np.float32))
+        time = cls.pad_array(time, value=np.nan, maximum_padding=maximum_padding)
         t0 = time[:-1]
-        hosp_procedures = cls._segment(t0, inpatient_interventions.hosp_procedures)
-        icu_procedures = cls._segment(t0, inpatient_interventions.icu_procedures)
-        icu_inputs = cls._segment(t0, inpatient_interventions.icu_inputs)
+        hosp_procedures = None
+        icu_procedures = None
+        icu_inputs = None
+        if inpatient_interventions.hosp_procedures is not None and hosp_procedures_size is not None:
+            hosp_procedures = cls._segment(t0, inpatient_interventions.hosp_procedures, hosp_procedures_size)
+        if inpatient_interventions.icu_procedures is not None and icu_procedures_size is not None:
+            icu_procedures = cls._segment(t0, inpatient_interventions.icu_procedures, icu_procedures_size)
+        if inpatient_interventions.icu_inputs is not None and icu_inputs_size is not None:
+            icu_inputs = cls._segment(t0, inpatient_interventions.icu_inputs, icu_procedures_size)
         return cls(time, hosp_procedures, icu_procedures, icu_inputs)
 
     @staticmethod
@@ -951,8 +968,9 @@ class SegmentedInpatientInterventions(Data):
                   maximum_padding: int = 100,
                   value: float = 0.0) -> Array:
         """
-        Pad array to be a multiple of maximum_padding. This is efficient to 
-        avoid jit-compiling a different function for each array shape.
+        Pad array to be a multiple of maximum_padding. This is to
+        minimize the number of jit-compiling that is made for the same functions
+        when the input shape changes.
         
         Args:
             array (Array): the array to be padded.
@@ -970,7 +988,7 @@ class SegmentedInpatientInterventions(Data):
         return np.pad(array, pad_width=(0, n_pad), mode='constant', constant_values=value)
 
     @staticmethod
-    def _segment(t0_padded: Array, inpatient_input: InpatientInput) -> Array:
+    def _segment(t0_padded: Array, inpatient_input: InpatientInput, input_size: int) -> Array:
         """
         Generate segmented procedures and apply the specified procedure transformation.
         Returns:
@@ -978,9 +996,39 @@ class SegmentedInpatientInterventions(Data):
         """
         t = t0_padded[~np.isnan(t0_padded)]
         t_nan = t0_padded[np.isnan(t0_padded)]
-        out = np.vstack([inpatient_input(ti) for ti in t])
+        out = np.stack([inpatient_input(ti, input_size) for ti in t], axis=0)
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
+
+    def to_dataframes(self) -> Dict[str, pd.DataFrame]:
+        df1 = pd.DataFrame(self.hosp_procedures) if self.hosp_procedures is not None else None
+        df2 = pd.DataFrame(self.icu_procedures) if self.icu_procedures is not None else None
+        df3 = pd.DataFrame(self.icu_inputs) if self.icu_inputs is not None else None
+        return {'hosp_procedures': df1, 'icu_procedures': df2, 'icu_inputs': df3,
+                'time': pd.DataFrame(self.time)}
+
+    def equals(self, other: "SegmentedInpatientInterventions") -> bool:
+        cond1 = (self.hosp_procedures is None and other.hosp_procedures is None) or (
+            np.array_equal(self.hosp_procedures, other.hosp_procedures)
+        )
+        cond2 = (self.icu_procedures is None and other.icu_procedures is None) or (
+            np.array_equal(self.icu_procedures, other.icu_procedures)
+        )
+        cond3 = (self.icu_inputs is None and other.icu_inputs is None) or (
+            np.array_equal(self.icu_inputs, other.icu_inputs)
+        )
+        return cond1 and cond2 and cond3 and np.array_equal(self.time, other.time)
+
+    @staticmethod
+    def from_dataframes(dataframes: Dict[str, pd.DataFrame]) -> "SegmentedInpatientInterventions":
+        df1 = dataframes.get('hosp_procedures')
+        df2 = dataframes.get('icu_procedures')
+        df3 = dataframes.get('icu_inputs')
+        time = dataframes['time']
+        hosp_procedures = df1.values if df1 is not None else None
+        icu_procedures = df2.values if df2 is not None else None
+        icu_inputs = df3.values if df3 is not None else None
+        return SegmentedInpatientInterventions(time.values.flatten(), hosp_procedures, icu_procedures, icu_inputs)
 
 
 class Admission(Data):

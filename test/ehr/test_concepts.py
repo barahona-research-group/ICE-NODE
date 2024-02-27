@@ -9,7 +9,7 @@ import pytest
 
 from lib.ehr import CodingScheme
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
-                              InpatientInput, InpatientInterventions)
+                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions)
 
 
 @pytest.fixture
@@ -400,20 +400,89 @@ class TestInpatientInterventions:
         dfs = inpatient_interventions.to_dataframes()
         assert inpatient_interventions.equals(InpatientInterventions.from_dataframes(dfs))
 
-    def test_timestamps(self):
-        pass
+    def test_timestamps(self, inpatient_interventions: InpatientInterventions):
+        timestamps = inpatient_interventions.timestamps
+        assert len(timestamps) == len(set(timestamps))
+        assert all(isinstance(t, float) for t in timestamps)
+        assert list(sorted(timestamps)) == timestamps
+        ts = set()
+        if inpatient_interventions.hosp_procedures is not None:
+            ts.update(inpatient_interventions.hosp_procedures.starttime.tolist())
+            ts.update(inpatient_interventions.hosp_procedures.endtime.tolist())
+        if inpatient_interventions.icu_procedures is not None:
+            ts.update(inpatient_interventions.icu_procedures.starttime.tolist())
+            ts.update(inpatient_interventions.icu_procedures.endtime.tolist())
+        if inpatient_interventions.icu_inputs is not None:
+            ts.update(inpatient_interventions.icu_inputs.starttime.tolist())
+            ts.update(inpatient_interventions.icu_inputs.endtime.tolist())
+        assert ts == set(timestamps)
 
 
 class TestSegmentedInpatientInterventions:
 
-    def test_from_inpatient_interventions(self):
-        pass
+    def test_from_inpatient_interventions(self, inpatient_interventions, hosp_proc_scheme_, icu_proc_scheme_,
+                                          icu_inputs_scheme_):
+        schemes = {"hosp_procedures": hosp_proc_scheme_,
+                   "icu_procedures": icu_proc_scheme_,
+                   "icu_inputs": icu_inputs_scheme_}
+        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, FIXTURE_OBS_MAX_TIME,
+                                                                 hosp_procedures_size=len(hosp_proc_scheme_),
+                                                                 icu_procedures_size=len(icu_proc_scheme_),
+                                                                 icu_inputs_size=len(icu_inputs_scheme_))
+        assert abs(len(seg.time) - len(inpatient_interventions.timestamps)) <= 2
+        for k in ("hosp_procedures", "icu_procedures", "icu_inputs"):
+            if getattr(inpatient_interventions, k) is not None:
+                seg_intervention = getattr(seg, k)
+                assert seg_intervention.shape == (len(seg.time) - 1, len(schemes[k]))
 
-    def test_pad_array(self):
-        pass
+            else:
+                assert getattr(seg, k) is None
 
-    def test_segmentation(self):
-        pass
+        # assert sum(len(s) for s in seg) == len(inpatient_interventions)
+        # assert sum(s.starttime.size + s.endtime.size for s in seg) == (inpatient_interventions.timestamps.size * 2)
+        # assert inpatient_interventions.equals(InpatientInterventions.concat(seg))
+
+    @pytest.mark.parametrize("array", [np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])])
+    @pytest.mark.parametrize("value", [0.0, np.nan])
+    @pytest.mark.parametrize("maximum_padding", [1, 2, 3, 5, 10, 100])
+    def test_pad_array(self, array, value, maximum_padding):
+        y = SegmentedInpatientInterventions.pad_array(array, value=value, maximum_padding=maximum_padding)
+        assert len(y) >= len(array)
+        assert len(y) <= len(array) + maximum_padding
+        assert np.all(y[:len(array)] == array)
+        if np.isnan(value):
+            assert np.isnan(y[len(array):]).all()
+        else:
+            assert np.all(y[len(array):] == value)
+
+        if len(array) == maximum_padding or maximum_padding == 1:
+            assert len(y) == len(array)
+
+    @pytest.mark.parametrize("test_target", ["hosp_procedures", "icu_procedures", "icu_inputs"])
+    def test_segmentation(self, inpatient_interventions: InpatientInterventions, test_target: str,
+                          hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_):
+        inpatient_intervention = getattr(inpatient_interventions, test_target)
+        if inpatient_intervention is None or inpatient_intervention.starttime.size == 0:
+            pytest.skip("No interventions to test")
+
+        scheme = {"hosp_procedures": hosp_proc_scheme_,
+                  "icu_procedures": icu_proc_scheme_,
+                  "icu_inputs": icu_inputs_scheme_}[test_target]
+        seg = SegmentedInpatientInterventions._segment(inpatient_intervention.starttime,
+                                                       inpatient_intervention,
+                                                       len(scheme))
+        for i, t in enumerate(inpatient_intervention.starttime):
+            assert np.array_equal(inpatient_intervention(t, len(scheme)), seg[i])
+
+    def test_dataframe_serialization(self, inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
+                                     icu_proc_scheme_,
+                                     icu_inputs_scheme_):
+        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, FIXTURE_OBS_MAX_TIME,
+                                                                 hosp_procedures_size=len(hosp_proc_scheme_),
+                                                                 icu_procedures_size=len(icu_proc_scheme_),
+                                                                 icu_inputs_size=len(icu_inputs_scheme_))
+        dfs = seg.to_dataframes()
+        assert seg.equals(SegmentedInpatientInterventions.from_dataframes(dfs))
 
 
 class TestAdmission:
