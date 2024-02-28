@@ -6,10 +6,11 @@ from __future__ import annotations
 import logging
 import os
 import re
-from abc import abstractmethod
+from abc import abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
+from functools import cached_property
 from threading import Lock
-from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple
+from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple, Any
 
 import numpy as np
 import numpy.typing as npt
@@ -75,6 +76,18 @@ class CodesVector(Data):
             int: the length of the vector.
         """
         return len(self.vec)
+
+    def equals(self, other: CodesVector) -> bool:
+        """
+        Checks if the current CodesVector is equal to another CodesVector.
+
+        Args:
+            other (CodesVector): the other CodesVector to compare with.
+
+        Returns:
+            bool: True if the two CodesVectors are equal, False otherwise.
+        """
+        return (self.scheme == other.scheme) and np.array_equal(self.vec, other.vec)
 
 
 class CodingSchemeConfig(Config):
@@ -1710,69 +1723,18 @@ def register_gender_scheme():
 
 class OutcomeExtractorConfig(CodingSchemeConfig):
     name: str
-    spec_file: str
 
 
-class OutcomeExtractor(FlatScheme):
-    """
-    Extracts outcomes from a coding scheme based on a given configuration/specs file.
-
-    Args:
-        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
-
-    Attributes:
-        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
-        _base_scheme (CodingScheme): the base coding scheme used for outcome extraction.
-        _spec_files (Dict[str, str]): a class-attribute dictionary of supported spec files.
-    """
-
+class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
     config: OutcomeExtractorConfig
-    _base_scheme: CodingScheme
-
-    _spec_files: ClassVar[Dict[str, str]] = {}
     # Possible Schemes, Lazy-loaded schemes.
     _load_schemes: ClassVar[Dict[str, Callable]] = {}
     _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
 
-    def __init__(self, config: OutcomeExtractorConfig):
-        """
-        Initializes an instance of the OutcomeExtractor class.
-
-        Args:
-            config (OutcomeExtractorConfig): The configuration for the outcome extractor.
-
-        """
-
-        specs = self.spec_from_json(config.spec_file)
-
-        self._base_scheme = CodingScheme.from_name(specs['code_scheme'])
-        codes = [
-            c for c in sorted(self.base_scheme.index)
-            if c not in specs['exclude_codes']
-        ]
-
-        desc = {c: self.base_scheme.desc[c] for c in codes}
-        super().__init__(config=config,
-                         codes=codes,
-                         desc=desc)
-
-    @classmethod
-    def register_outcome_extractor_loader(cls, name: str, spec_file: str):
-        """
-        Registers an outcome extractor lazy loading routine.
-
-        Args:
-            name (str): the name of the outcome extractor.
-            spec_file (str): the spec file for the outcome extractor.
-
-        """
-
-        def load():
-            config = OutcomeExtractorConfig(name=name, spec_file=spec_file)
-            cls.register_scheme(OutcomeExtractor(config))
-
-        cls._spec_files[name] = spec_file
-        cls.register_scheme_loader(name, load)
+    @property
+    @abstractmethod
+    def base_scheme(self) -> CodingScheme:
+        pass
 
     @classmethod
     def from_name(cls, name):
@@ -1795,18 +1757,6 @@ class OutcomeExtractor(FlatScheme):
         return outcome_extractor
 
     @property
-    def base_scheme(self):
-        """
-        Gets the base coding scheme used for outcome extraction.
-
-        Returns:
-            CodingScheme: the base coding scheme.
-
-        """
-
-        return self._base_scheme
-
-    @property
     def outcome_dim(self):
         """
         Gets the dimension of the outcome.
@@ -1818,7 +1768,7 @@ class OutcomeExtractor(FlatScheme):
 
         return len(self.index)
 
-    def _map_codeset(self, codeset: Set[str], base_scheme: str):
+    def _map_codeset(self, codeset: Set[str], base_scheme: str) -> Set[str]:
         """
         Maps a codeset to the base coding scheme.
 
@@ -1831,7 +1781,7 @@ class OutcomeExtractor(FlatScheme):
 
         """
 
-        m = CodeMap.get_mapper(base_scheme, self._base_scheme.name)
+        m = CodeMap.get_mapper(base_scheme, self.base_scheme.name)
         codeset = m.map_codeset(codeset)
 
         if m.config.mapped_to_dag_space:
@@ -1840,7 +1790,7 @@ class OutcomeExtractor(FlatScheme):
 
         return codeset & set(self.codes)
 
-    def mapcodevector(self, codes: CodesVector):
+    def mapcodevector(self, codes: CodesVector) -> CodesVector:
         """
         Extract outcomes from a codes vector into a new codes vector.
 
@@ -1856,6 +1806,102 @@ class OutcomeExtractor(FlatScheme):
         for c in self._map_codeset(codes.to_codeset(), codes.scheme):
             vec[self.index[c]] = True
         return CodesVector(np.array(vec), self.name)
+
+
+class ExcludingOutcomeExtractorConfig(OutcomeExtractorConfig):
+    base_scheme: str
+    exclude_codes: List[str]
+
+
+class ExcludingOutcomeExtractor(OutcomeExtractor):
+    config: ExcludingOutcomeExtractorConfig
+
+    def __init__(self, config: ExcludingOutcomeExtractorConfig):
+        base_scheme = CodingScheme.from_name(config.base_scheme)
+        codes = [c for c in sorted(base_scheme.index) if c not in config.exclude_codes]
+        desc = {c: base_scheme.desc[c] for c in codes}
+        super().__init__(config=config,
+                         codes=codes,
+                         desc=desc)
+
+    @property
+    def base_scheme(self) -> CodingScheme:
+        return CodingScheme.from_name(self.config.base_scheme)
+
+
+class FileBasedOutcomeExtractorConfig(CodingSchemeConfig):
+    spec_file: str
+
+
+class FileBasedOutcomeExtractor(OutcomeExtractor):
+    """
+    Extracts outcomes from a coding scheme based on a given configuration/specs file.
+
+    Args:
+        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
+
+    Attributes:
+        config (OutcomeExtractorConfig): the configuration for the outcome extractor.
+        _base_scheme (CodingScheme): the base coding scheme used for outcome extraction.
+        _spec_files (Dict[str, str]): a class-attribute dictionary of supported spec files.
+    """
+
+    config: FileBasedOutcomeExtractorConfig
+
+    _spec_files: ClassVar[Dict[str, str]] = {}
+
+    def __init__(self, config: FileBasedOutcomeExtractorConfig):
+        """
+        Initializes an instance of the OutcomeExtractor class.
+
+        Args:
+            config (FileBasedOutcomeExtractorConfig): The configuration for the outcome extractor.
+
+        """
+        self.config = config
+
+        codes = [
+            c for c in sorted(self.base_scheme.index)
+            if c not in self.specs['exclude_codes']
+        ]
+
+        desc = {c: self.base_scheme.desc[c] for c in codes}
+        super().__init__(config=config,
+                         codes=codes,
+                         desc=desc)
+
+    @cached_property
+    def specs(self) -> Dict[str, Any]:
+        return self.spec_from_json(self.config.spec_file)
+
+    @cached_property
+    def base_scheme(self) -> CodingScheme:
+        """
+        Gets the base coding scheme used for outcome extraction.
+
+        Returns:
+            CodingScheme: the base coding scheme.
+
+        """
+        return CodingScheme.from_name(self.specs['code_scheme'])
+
+    @classmethod
+    def register_outcome_extractor_loader(cls, name: str, spec_file: str):
+        """
+        Registers an outcome extractor lazy loading routine.
+
+        Args:
+            name (str): the name of the outcome extractor.
+            spec_file (str): the spec file for the outcome extractor.
+
+        """
+
+        def load():
+            config = FileBasedOutcomeExtractorConfig(name=name, spec_file=spec_file)
+            cls.register_scheme(FileBasedOutcomeExtractor(config))
+
+        cls._spec_files[name] = spec_file
+        cls.register_scheme_loader(name, load)
 
     @classmethod
     def supported_outcomes(cls, base_scheme: str):

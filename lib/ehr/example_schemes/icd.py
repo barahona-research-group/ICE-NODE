@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import gzip
 import logging
-import os
 import xml.etree.ElementTree as ET
 from abc import abstractmethod
 from collections import defaultdict
@@ -11,7 +10,7 @@ from typing import Set, Dict, List, Union, Any
 import pandas as pd
 
 from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
-                                   CodeMapConfig, CodeMap, OutcomeExtractor, resources_dir)
+                                   CodeMapConfig, CodeMap, resources_dir, FileBasedOutcomeExtractor)
 
 
 class ICD:
@@ -740,11 +739,11 @@ def setup_scheme_loaders():
     CodingScheme.register_scheme_loader('dx_flatccs', DxFlatCCS.create_scheme)
     CodingScheme.register_scheme_loader('pr_flatccs', PrFlatCCS.create_scheme)
 
-    OutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_mlhc_groups', 'dx_flatccs_mlhc_groups.json')
-    OutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_filter_v1', 'dx_flatccs_v1.json')
-    OutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v1', 'dx_icd9_v1.json')
-    OutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v2_groups', 'dx_icd9_v2_groups.json')
-    OutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v3_groups', 'dx_icd9_v3_groups.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_mlhc_groups', 'dx_flatccs_mlhc_groups.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_flatccs_filter_v1', 'dx_flatccs_v1.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v1', 'dx_icd9_v1.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v2_groups', 'dx_icd9_v2_groups.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_icd9_filter_v3_groups', 'dx_icd9_v3_groups.json')
 
 
 def setup_maps_loaders():

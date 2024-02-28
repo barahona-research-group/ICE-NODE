@@ -7,7 +7,7 @@ import pandas as pd
 
 from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
                                    CodeMap, CodeMapConfig, resources_dir,
-                                   SchemeWithMissing, Ethnicity, OutcomeExtractor)
+                                   SchemeWithMissing, Ethnicity, OutcomeExtractor, FileBasedOutcomeExtractor)
 
 _CPRD_LTC_FILE = resources_dir('CPRD_212_LTC_ALL.csv.gz')
 ETH16_CODE_CNAME = 'eth16'
@@ -215,8 +215,8 @@ def setup_scheme_loaders():
     register_cprd_ethnicity_scheme_loaders()
     CodingScheme.register_scheme_loader('cprd_gender', register_cprd_gender)
     CodingScheme.register_scheme_loader('cprd_imd_cat', register_cprd_imd)
-    OutcomeExtractor.register_outcome_extractor_loader('dx_cprd_ltc212', 'dx_cprd_ltc212_v1.json')
-    OutcomeExtractor.register_outcome_extractor_loader('dx_cprd_ltc9809', 'dx_cprd_ltc9809_v1.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_cprd_ltc212', 'dx_cprd_ltc212_v1.json')
+    FileBasedOutcomeExtractor.register_outcome_extractor_loader('dx_cprd_ltc9809', 'dx_cprd_ltc9809_v1.json')
 
 
 def setup_maps_loaders():

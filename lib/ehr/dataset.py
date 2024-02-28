@@ -235,7 +235,7 @@ class DatasetTables(Data):
     def load(path: Union[str, Path]) -> DatasetTables:
         with pd.HDFStore(path, mode='r') as store:
 
-            tables = {k.split('/')[1]: store[k] for k in store.keys() if not k.endswith('_dtypes')}
+            tables = {k.split('/')[1]: store[k] for k in store.keys()}
             for k in tables:
 
                 if len(tables[k]) == 4 and all(tables[k].loc[3] == 'DUMMY_ROW'):

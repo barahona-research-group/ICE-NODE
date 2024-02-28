@@ -7,7 +7,8 @@ import pandas as pd
 import pytest
 
 from lib.ehr import CodingScheme, FlatScheme, \
-    CodingSchemeConfig
+    CodingSchemeConfig, OutcomeExtractor
+from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutcomeExtractor
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
@@ -393,7 +394,7 @@ def gender_scheme(request):
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('dx1', ['Dx1', 'Dx2', 'Dx3'])])
+@pytest.fixture(scope=DATASET_SCOPE, params=[('dx1', ['Dx1', 'Dx2', 'Dx3', 'Dx4', 'Dx5'])])
 def dx_scheme(request) -> str:
     return scheme(*request.param)
 
@@ -535,3 +536,18 @@ def dataset(dataset_config, dataset_tables):
 @pytest.fixture
 def indexed_dataset(dataset):
     return eqx.tree_at(lambda x: x.core_pipeline.transformations, dataset, [SetIndex()])
+
+
+@pytest.fixture(scope=DATASET_SCOPE)
+def outcome_extractor(dx_scheme: str) -> str:
+    name = f'{dx_scheme}_outcome'
+    base_scheme = CodingScheme.from_name(dx_scheme)
+    k = max(3, len(base_scheme.codes) - 1)
+    random.seed(0)
+    excluded = random.sample(base_scheme.codes, k=k)
+    config = ExcludingOutcomeExtractorConfig(name=name,
+                                             base_scheme=base_scheme.name,
+                                             exclude_codes=excluded)
+    outcome_extractor_scheme = ExcludingOutcomeExtractor(config)
+    OutcomeExtractor.register_scheme(outcome_extractor_scheme)
+    return name

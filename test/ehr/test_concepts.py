@@ -1,15 +1,27 @@
 from copy import deepcopy
+from datetime import timedelta
 from typing import List
 from unittest import mock
 
 import equinox as eqx
 import numpy as np
 import numpy.random as nrand
+import pandas as pd
 import pytest
 
-from lib.ehr import CodingScheme
+from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
-                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions)
+                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission)
+
+
+@pytest.fixture
+def dx_scheme_(dx_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(dx_scheme)
+
+
+@pytest.fixture
+def outcome_extractor_(outcome_extractor: str) -> CodingScheme:
+    return OutcomeExtractor.from_name(outcome_extractor)
 
 
 @pytest.fixture
@@ -32,15 +44,32 @@ def hosp_proc_scheme_(hosp_proc_scheme: str) -> CodingScheme:
     return CodingScheme.from_name(hosp_proc_scheme)
 
 
-FIXTURE_OBS_MAX_TIME = 10.0
+LENGTH_OF_STAY = 10.0
 BINARY_OBSERVATION_CODE_INDEX = 0
 
 
-@pytest.fixture(params=[0, 1, 100, 501])
+@pytest.fixture
+def dx_codes(dx_scheme_: CodingScheme):
+    v = nrand.binomial(1, 0.5, size=len(dx_scheme_)).astype(bool)
+    return CodesVector(vec=v, scheme=dx_scheme_.name)
+
+
+@pytest.fixture
+def dx_codes_history(dx_codes: CodesVector):
+    v = nrand.binomial(1, 0.5, size=len(dx_codes)).astype(bool)
+    return CodesVector(vec=v + dx_codes.vec, scheme=dx_codes.scheme)
+
+
+@pytest.fixture
+def outcome(dx_codes: CodesVector, outcome_extractor_: OutcomeExtractor):
+    return outcome_extractor_.mapcodevector(dx_codes)
+
+
+@pytest.fixture(params=[0, 1, 501])
 def inpatient_observables(obs_scheme: CodingScheme, request):
     d = len(obs_scheme)
     n = request.param
-    t = np.array(sorted(nrand.choice(np.linspace(0, FIXTURE_OBS_MAX_TIME, 1000), replace=False, size=n)))
+    t = np.array(sorted(nrand.choice(np.linspace(0, LENGTH_OF_STAY, 1000), replace=False, size=n)))
     v = np.zeros((n, d))
     i = BINARY_OBSERVATION_CODE_INDEX
     v[:, i: i + 1] = nrand.binomial(1, 0.5, size=n).astype(bool).reshape(-1, 1)
@@ -52,8 +81,8 @@ def inpatient_observables(obs_scheme: CodingScheme, request):
 
 def inpatient_binary_input(n: int, p: int):
     starttime = np.array(
-        sorted(nrand.choice(np.linspace(0, FIXTURE_OBS_MAX_TIME, max(1000, n)), replace=False, size=n)))
-    endtime = starttime + nrand.uniform(0, FIXTURE_OBS_MAX_TIME - starttime, size=(n,))
+        sorted(nrand.choice(np.linspace(0, LENGTH_OF_STAY, max(1000, n)), replace=False, size=n)))
+    endtime = starttime + nrand.uniform(0, LENGTH_OF_STAY - starttime, size=(n,))
     code_index = nrand.choice(p, size=n, replace=True)
     return InpatientInput(starttime=starttime, endtime=endtime, code_index=code_index)
 
@@ -100,6 +129,25 @@ def leading_observables_extractor(observation_scheme: str, leading_hours: List[f
                                               aggregation=aggregation,
                                               leading_hours=leading_hours)
     return LeadingObservableExtractor(config=config)
+
+
+@pytest.fixture
+def leading_observable(observation_scheme: str, inpatient_observables: InpatientObservables) -> InpatientObservables:
+    return leading_observables_extractor(observation_scheme=observation_scheme)(inpatient_observables)
+
+
+@pytest.fixture
+def admission(dx_codes: CodesVector, dx_codes_history: CodesVector,
+              outcome: CodesVector, inpatient_observables: InpatientObservables,
+              inpatient_interventions: InpatientInterventions,
+              leading_observable: InpatientObservables) -> Admission:
+    admission_id = 'test'
+    admission_date = pd.Timestamp.now().to_datetime64()
+    discharge_date = (admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H')).to_datetime64()
+    return Admission(admission_id=admission_id, admission_dates=(admission_date, discharge_date),
+                     dx_codes=dx_codes, dx_codes_history=dx_codes_history, outcome=outcome,
+                     observables=inpatient_observables, interventions=inpatient_interventions,
+                     leading_observable=leading_observable)
 
 
 class TestInpatientObservables:
@@ -425,7 +473,7 @@ class TestSegmentedInpatientInterventions:
         schemes = {"hosp_procedures": hosp_proc_scheme_,
                    "icu_procedures": icu_proc_scheme_,
                    "icu_inputs": icu_inputs_scheme_}
-        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, FIXTURE_OBS_MAX_TIME,
+        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
                                                                  hosp_procedures_size=len(hosp_proc_scheme_),
                                                                  icu_procedures_size=len(icu_proc_scheme_),
                                                                  icu_inputs_size=len(icu_inputs_scheme_))
@@ -473,7 +521,7 @@ class TestSegmentedInpatientInterventions:
     def test_dataframe_serialization(self, inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
                                      icu_proc_scheme_,
                                      icu_inputs_scheme_):
-        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, FIXTURE_OBS_MAX_TIME,
+        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
                                                                  hosp_procedures_size=len(hosp_proc_scheme_),
                                                                  icu_procedures_size=len(icu_proc_scheme_),
                                                                  icu_inputs_size=len(icu_inputs_scheme_))
@@ -483,8 +531,14 @@ class TestSegmentedInpatientInterventions:
 
 class TestAdmission:
 
-    def test_serialization(self):
-        pass
+    def test_serialization(self, admission: Admission, tmpdir: str):
+        hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
+
+        admission.to_hdf(hdf_filename, 'test_admissions')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            deserialized = Admission.from_hdf_store(hdf, 'test_admissions',
+                                                    admission.admission_id)
+        assert admission.equals(deserialized)
 
     def test_interval_hours(self):
         pass

@@ -44,7 +44,10 @@ class InpatientObservables(Data):
     mask: Array  # (time, size)
 
     @staticmethod
-    def empty(size: int):
+    def empty(size: int,
+              time_dtype=np.float32,
+              value_dtype=np.float16,
+              mask_dtype=bool) -> InpatientObservables:
         """
         Create an empty InpatientObservables object.
 
@@ -54,10 +57,10 @@ class InpatientObservables(Data):
         Returns:
         - InpatientObservables: an empty InpatientObservables object with zero time, value, and mask arrays.
         """
-        return InpatientObservables(time=np.zeros(shape=0, dtype=np.float32),
+        return InpatientObservables(time=np.zeros(shape=0, dtype=time_dtype),
                                     value=np.zeros(shape=(0, size),
-                                                   dtype=np.float16),
-                                    mask=np.zeros(shape=(0, size), dtype=bool))
+                                                   dtype=value_dtype),
+                                    mask=np.zeros(shape=(0, size), dtype=mask_dtype))
 
     def __len__(self):
         """
@@ -93,6 +96,25 @@ class InpatientObservables(Data):
         value = {f'val_{i}': self.value[:, i] for i in range(self.value.shape[1])}
         mask = {f'mask_{i}': self.mask[:, i] for i in range(self.mask.shape[1])}
         return pd.DataFrame({**time, **value, **mask})
+
+    def to_hdf(self, path: str, key: str, meta_prefix: str = '') -> Dict[str, str]:
+        df = self.to_dataframe()
+        if len(df) == 0:
+            return {f'{meta_prefix}_time_dtype': str(self.time.dtype),
+                    f'{meta_prefix}_value_dtype': str(self.value.dtype),
+                    f'{meta_prefix}_mask_dtype': str(self.mask.dtype),
+                    f'{meta_prefix}_dim': self.value.shape[1]}
+        df.to_hdf(path, key=key, format='table')
+        return {}
+
+    @staticmethod
+    def empty_from_meta(meta: Dict[str, str], meta_prefix: str = '') -> Optional[InpatientObservables]:
+        if not any(k.startswith(meta_prefix) for k in meta.keys()):
+            return None
+        return InpatientObservables.empty(size=int(meta[f'{meta_prefix}_dim']),
+                                          time_dtype=np.dtype(meta[f'{meta_prefix}_time_dtype']),
+                                          value_dtype=np.dtype(meta[f'{meta_prefix}_value_dtype']),
+                                          mask_dtype=np.dtype(meta[f'{meta_prefix}_mask_dtype']))
 
     @staticmethod
     def from_dataframe(df: pd.DataFrame) -> InpatientObservables:
@@ -869,7 +891,11 @@ class InpatientInput(Data):
         return vec_input
 
     @classmethod
-    def empty(cls) -> InpatientInput:
+    def empty(cls,
+              code_index_dtype=int,
+              starttime_dtype=float,
+              endtime_dtype=float,
+              rate_dtype=float) -> InpatientInput:
         """
         Returns an empty InpatientInput object.
 
@@ -880,7 +906,27 @@ class InpatientInput(Data):
             InpatientInput: an empty InpatientInput object.
         """
         zvec = np.zeros(0, dtype=bool)
-        return cls(zvec.astype(int), zvec, zvec, zvec)
+        return cls(zvec.astype(code_index_dtype), zvec.astype(starttime_dtype), zvec.astype(endtime_dtype),
+                   zvec.astype(rate_dtype))
+
+    def to_hdf(self, path: str, key: str, meta_prefix: str = '') -> Dict[str, str]:
+        df = self.to_dataframe()
+        if len(df) == 0:
+            return {f'{meta_prefix}_code_index_dtype': str(self.code_index.dtype),
+                    f'{meta_prefix}_rate_dtype': str(self.rate.dtype),
+                    f'{meta_prefix}_starttime_dtype': str(self.starttime.dtype),
+                    f'{meta_prefix}_endtime_dtype': str(self.endtime.dtype)}
+        df.to_hdf(path, key=key, format='table')
+        return {}
+
+    @staticmethod
+    def empty_from_meta(meta: Dict[str, str], meta_prefix: str = '') -> Optional[InpatientInput]:
+        if not any(k.startswith(meta_prefix) for k in meta.keys()):
+            return None
+        return InpatientInput.empty(code_index_dtype=np.dtype(meta[f'{meta_prefix}_code_index_dtype']),
+                                    starttime_dtype=np.dtype(meta[f'{meta_prefix}_starttime_dtype']),
+                                    endtime_dtype=np.dtype(meta[f'{meta_prefix}_endtime_dtype']),
+                                    rate_dtype=np.dtype(meta[f'{meta_prefix}_rate_dtype']))
 
 
 class InpatientInterventions(Data):
@@ -890,10 +936,17 @@ class InpatientInterventions(Data):
     icu_inputs: Optional[InpatientInput]
 
     def to_dataframes(self) -> Dict[str, pd.DataFrame]:
-        df1 = self.hosp_procedures.to_dataframe() if self.hosp_procedures is not None else None
-        df2 = self.icu_procedures.to_dataframe() if self.icu_procedures is not None else None
-        df3 = self.icu_inputs.to_dataframe() if self.icu_inputs is not None else None
-        return {'hosp_procedures': df1, 'icu_procedures': df2, 'icu_inputs': df3}
+        return {k: getattr(self, k).to_dataframe() for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs') if
+                getattr(self, k) is not None}
+
+    def to_hdf(self, path: str, key: str, meta_prefix: str = '') -> Optional[Dict[str, str]]:
+        meta = {}
+        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
+            ii = getattr(self, k)
+            if ii is None:
+                continue
+            meta.update(ii.to_hdf(path, f'{key}/{k}', meta_prefix=f'{meta_prefix}_{k}'))
+        return meta
 
     @staticmethod
     def from_dataframes(dfs: Dict[str, pd.DataFrame]) -> "InpatientInterventions":
@@ -1050,7 +1103,7 @@ class Admission(Data):
     dx_codes_history: CodesVector
     outcome: CodesVector
     observables: Optional[InpatientObservables]
-    interventions: Optional[InpatientInterventions]
+    interventions: Optional[InpatientInterventions] = None
     leading_observable: Optional[InpatientObservables] = None
 
     def to_hdf(self, path: str, admissions_key: str) -> None:
@@ -1062,23 +1115,25 @@ class Admission(Data):
             admissions_key (str): the key to use for the admission data.
         """
         key = f'{admissions_key}/{self.admission_id}'
-        adm_dates = pd.DataFrame({'start': self.admission_dates[0],
-                                  'end': self.admission_dates[1],
-                                  'dx_codes_scheme': self.dx_codes.scheme,
-                                  'dx_codes_history_scheme': self.dx_codes_history.scheme,
-                                  'outcome_scheme': self.outcome.scheme}, index=[0])
-
-        adm_dates.to_hdf(path, key=f'{key}/admission_meta', format='table')
+        meta = {'start': self.admission_dates[0],
+                'end': self.admission_dates[1],
+                'dx_codes_scheme': self.dx_codes.scheme,
+                'dx_codes_history_scheme': self.dx_codes_history.scheme,
+                'outcome_scheme': self.outcome.scheme}
         pd.DataFrame(self.dx_codes.vec).to_hdf(path, key=f'{key}/dx_codes', format='table')
         pd.DataFrame(self.dx_codes_history.vec).to_hdf(path, key=f'{key}/dx_codes_history', format='table')
         pd.DataFrame(self.outcome.vec).to_hdf(path, key=f'{key}/outcome', format='table')
         if self.observables is not None:
-            self.observables.to_dataframe().to_hdf(path, key=f'{key}/observables', format='table')
+            meta.update(self.observables.to_hdf(path, key=f'{key}/observables', meta_prefix='obs'))
+
         if self.leading_observable is not None:
-            self.leading_observable.to_dataframe().to_hdf(path, key=f'{key}/leading_observable', format='table')
+            meta.update(self.leading_observable.to_hdf(path, key=f'{key}/leading_observable', meta_prefix='lead_obs'))
+
         if self.interventions is not None:
             for k, v in self.interventions.to_dataframes().items():
                 v.to_hdf(path, key=f'{key}/interventions/{k}', format='table')
+
+        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/admission_meta', format='table')
 
     @staticmethod
     def from_hdf_store(hdf_store: pd.HDFStore, admissions_key: str, admission_id: str) -> 'Admission':
@@ -1094,26 +1149,32 @@ class Admission(Data):
             Admission: the admission data.
         """
         key = f'{admissions_key}/{admission_id}'
-        adm_meta = hdf_store[f'{key}/admission_meta']
-        adm_dates = (adm_meta['start'].iloc[0], adm_meta['end'].iloc[0])
-        dx_codes_scheme = adm_meta['dx_codes_scheme'].iloc[0]
-        dx_codes_history_scheme = adm_meta['dx_codes_history_scheme'].iloc[0]
-        outcome_scheme = adm_meta['outcome_scheme'].iloc[0]
-        dx_codes = CodesVector(hdf_store[f'{key}/dx_codes'], dx_codes_scheme)
-        dx_codes_history = CodesVector(hdf_store[f'{key}/dx_codes_history'], dx_codes_history_scheme)
-        outcome = CodesVector(hdf_store[f'{key}/outcome'], outcome_scheme)
+        meta = hdf_store[f'{key}/admission_meta'].iloc[0].to_dict()
+        adm_dates = (meta['start'], meta['end'])
+        dx_codes_scheme = meta['dx_codes_scheme']
+        dx_codes_history_scheme = meta['dx_codes_history_scheme']
+        outcome_scheme = meta['outcome_scheme']
+        dx_codes = CodesVector(hdf_store[f'{key}/dx_codes'][0].values, dx_codes_scheme)
+        dx_codes_history = CodesVector(hdf_store[f'{key}/dx_codes_history'][0].values, dx_codes_history_scheme)
+        outcome = CodesVector(hdf_store[f'{key}/outcome'][0].values, outcome_scheme)
 
-        observables = None
-        leading_observables = None
+        leading_observable = None
         interventions = None
 
         if f'{key}/observables' in hdf_store:
             observables = InpatientObservables.from_dataframe(hdf_store[f'{key}/observables'])
+        else:
+            observables = InpatientObservables.empty_from_meta(meta=meta, meta_prefix='obs')
+
         if f'{key}/leading_observable' in hdf_store:
             leading_observable = InpatientObservables.from_dataframe(hdf_store[f'{key}/leading_observable'])
+        else:
+            leading_observable = InpatientObservables.empty_from_meta(meta=meta, meta_prefix='lead_obs')
+
         if f'{key}/interventions' in hdf_store:
             interventions = InpatientInterventions.from_dataframes({
-                k: hdf_store[f'{key}/interventions/{k}'] for k in hdf_store[f'{key}/interventions'].keys()
+                k: hdf_store[f'{key}/interventions/{k}'] for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs')
+                if f'{key}/interventions/{k}' in hdf_store.keys()
             })
 
         return Admission(admission_id=admission_id,
@@ -1158,6 +1219,41 @@ class Admission(Data):
         d1 = (self.admission_dates[0] - date).total_seconds() / 3600 / 24
         d2 = (self.admission_dates[1] - date).total_seconds() / 3600 / 24
         return d1, d2
+
+    def equals(self, other: 'Admission') -> bool:
+        """
+        Compares two Admission objects for equality.
+
+        Args:
+            other (Admission): the other Admission object to compare.
+
+        Returns:
+            bool: whether the two Admission objects are equal.
+        """
+        for k in ('dx_codes', 'dx_codes_history', 'outcome', 'observables', 'interventions', 'leading_observable'):
+            attr = getattr(self, k)
+            other_attr = getattr(other, k)
+            if attr is None and other_attr is None:
+                continue
+            elif attr is None or other_attr is None:
+                return False
+            elif not attr.equals(other_attr):
+                return False
+        return (self.admission_id == other.admission_id and
+                self.admission_dates == other.admission_dates)
+
+
+class SegmentedAdmission(Admission):
+    observables: Optional[List[InpatientObservables]]
+    interventions: Optional[SegmentedInpatientInterventions] = None
+    leading_observable: Optional[List[InpatientObservables]] = None
+
+    def to_hdf(self, path: str, admissions_key: str) -> None:
+        raise NotImplementedError
+
+    @staticmethod
+    def from_hdf_store(hdf_store: pd.HDFStore, admissions_key: str, admission_id: str) -> 'SegmentedAdmission':
+        raise NotImplementedError
 
 
 class DemographicVectorConfig(Config):
