@@ -116,7 +116,6 @@ class TestDatasetTables:
     def test_save_load(self, dataset_tables: DatasetTables, tmpdir: str):
         dataset_tables.save(f'{tmpdir}/test.h5', overwrite=False)
         loaded = DatasetTables.load(f'{tmpdir}/test.h5')
-
         assert loaded.equals(dataset_tables)
 
     @pytest.mark.expensive_test

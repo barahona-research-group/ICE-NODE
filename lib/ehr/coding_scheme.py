@@ -1842,12 +1842,10 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
 
     Attributes:
         config (OutcomeExtractorConfig): the configuration for the outcome extractor.
-        _base_scheme (CodingScheme): the base coding scheme used for outcome extraction.
         _spec_files (Dict[str, str]): a class-attribute dictionary of supported spec files.
     """
 
     config: FileBasedOutcomeExtractorConfig
-
     _spec_files: ClassVar[Dict[str, str]] = {}
 
     def __init__(self, config: FileBasedOutcomeExtractorConfig):
@@ -1903,25 +1901,6 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         cls._spec_files[name] = spec_file
         cls.register_scheme_loader(name, load)
 
-    @classmethod
-    def supported_outcomes(cls, base_scheme: str):
-        """
-        Gets the supported outcomes for a given base coding scheme.
-
-        Args:
-            base_scheme (str): the base coding scheme.
-
-        Returns:
-            Tuple[str]: the supported outcomes.
-        """
-
-        outcome_base = {
-            k: load_config(v, relative_to=resources_dir('outcome_filters'))['code_scheme']
-            for k, v in cls._spec_files.items()
-        }
-        return tuple(k for k, v in outcome_base.items()
-                     if v == base_scheme or v in CodingScheme.from_name(base_scheme).supported_targets)
-
     @staticmethod
     def spec_from_json(json_file: str):
         """
@@ -1951,3 +1930,22 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
             return conf
         elif 'exclude_codes' in conf:
             return conf
+
+    @staticmethod
+    def supported_outcomes(base_scheme: str):
+        """
+        Gets the supported outcomes for a given base coding scheme.
+
+        Args:
+            base_scheme (str): the base coding scheme.
+
+        Returns:
+            Tuple[str]: the supported outcomes.
+        """
+
+        outcome_base = {
+            k: load_config(v, relative_to=resources_dir('outcome_filters'))['code_scheme']
+            for k, v in FileBasedOutcomeExtractor._spec_files.items()
+        }
+        return tuple(k for k, v in outcome_base.items()
+                     if v == base_scheme or v in CodingScheme.from_name(base_scheme).supported_targets)

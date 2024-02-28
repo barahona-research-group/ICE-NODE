@@ -13,7 +13,7 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from .coding_scheme import (CodingScheme, OutcomeExtractor)
+from .coding_scheme import (CodingScheme, OutcomeExtractor, FileBasedOutcomeExtractor)
 from .concepts import (DemographicVectorConfig)
 from ..base import Config, Module, Data
 from ..utils import write_config, load_config
@@ -208,6 +208,38 @@ class DatasetTables(Data):
             if isinstance(v, pd.DataFrame)
         }
 
+    @staticmethod
+    def table_meta(df: pd.DataFrame) -> pd.DataFrame:
+        meta = {
+            f'index_dtype': str(df.index.dtype),
+            f'index_name': str(df.index.name)}
+        meta.update({
+            f'column_{i}': col for i, col in enumerate(df.columns)})
+        meta.update({
+            f'column_dtype_{df.columns[i]}': str(dtype) for i, dtype in enumerate(df.dtypes)})
+        return pd.DataFrame(meta, index=[0])
+
+    @staticmethod
+    def empty_table(meta: pd.DataFrame) -> pd.DataFrame:
+        meta = meta.iloc[0].to_dict()
+        index_dtype = meta.pop('index_dtype')
+        index_name = meta.pop('index_name')
+        cols = []
+        column_types = {}
+        while len(meta) > 0:
+            k, v = meta.popitem()
+            if k.startswith('column_dtype_'):
+                column_types[k.split('column_dtype_')[1]] = v
+            elif k.startswith('column_'):
+                order = int(k.split('column_')[1])
+                cols.append((order, v))
+        cols = [col for _, col in sorted(cols, key=lambda x: x[0])]
+        df = pd.DataFrame(columns=cols).astype(column_types)
+        df.index = pd.Index([], dtype=index_dtype)
+        if index_name != 'None':
+            df.index.name = index_name
+        return df
+
     def save(self, path: Union[str, Path], overwrite: bool):
         if Path(path).exists():
             if overwrite:
@@ -220,34 +252,20 @@ class DatasetTables(Data):
 
             # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
             # https://github.com/PyTables/PyTables/issues/592
-            # So we add a dummy row to the empty dataframes before saving.
+            # So we keep the column names, dtypes, index name, index dtype, in a metadata object.
             if df.empty:
-                df = df.copy()
-                df.loc[0] = df.dtypes
-                df.loc[1] = df.index.dtype
-                df.loc[2] = df.index.name
-                df.loc[3] = 'DUMMY_ROW'
-                df = df.astype(str)
-
-            df.to_hdf(filepath, key=name, format='table')
+                self.table_meta(df).to_hdf(filepath, key=f'{name}_meta', format='table')
+            else:
+                df.to_hdf(filepath, key=name, format='table')
 
     @staticmethod
     def load(path: Union[str, Path]) -> DatasetTables:
         with pd.HDFStore(path, mode='r') as store:
-
-            tables = {k.split('/')[1]: store[k] for k in store.keys()}
-            for k in tables:
-
-                if len(tables[k]) == 4 and all(tables[k].loc[3] == 'DUMMY_ROW'):
-                    # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
-                    # https://github.com/PyTables/PyTables/issues/592
-                    # So we add a dummy row to the empty dataframes before saving.
-                    dt = tables[k].iloc[0].to_dict()
-                    idx_dt = tables[k].iloc[1, 0]
-                    idx_name = tables[k].iloc[2, 0]
-                    tables[k] = tables[k].drop(index=[0, 1, 2, 3]).astype(dt)
-                    tables[k].index = tables[k].index.astype(idx_dt)
-                    tables[k].index.name = idx_name
+            tables = {k.split('/')[1]: store[k] for k in store.keys() if not k.endswith('_meta')}
+            meta = {k.split('/')[1].split('_meta')[0]: store[k] for k in store.keys() if k.endswith('_meta')}
+            for table_name, meta_df in meta.items():
+                assert table_name not in tables, f'Table {table_name} is both in the tables and meta dict.'
+                tables[table_name] = DatasetTables.empty_table(meta_df)
 
             return DatasetTables(**tables)
 
@@ -294,7 +312,7 @@ class DatasetScheme(Module):
     config: DatasetSchemeConfig
 
     @staticmethod
-    def _scheme(name: str) -> CodingScheme:
+    def _scheme(name: str) -> Optional[CodingScheme]:
         try:
             return CodingScheme.from_name(name)
         except KeyError as e:
@@ -383,11 +401,10 @@ class DatasetScheme(Module):
     @property
     def supported_target_scheme_options(self):
         supported_attr_targets = {
-            k: (getattr(self, k).name,) +
-               getattr(self, k).supported_targets
-            for k in self.scheme_dict if k != 'outcome'
+            k: (v.name,) + v.supported_targets
+            for k, v in self.scheme_dict.items() if not isinstance(v, OutcomeExtractor)
         }
-        supported_outcomes = OutcomeExtractor.supported_outcomes(self.dx_discharge.name)
+        supported_outcomes = FileBasedOutcomeExtractor.supported_outcomes(self.dx_discharge.name)
         supported_attr_targets['outcome'] = supported_outcomes
         return supported_attr_targets
 

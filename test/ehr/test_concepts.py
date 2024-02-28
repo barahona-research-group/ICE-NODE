@@ -1,5 +1,4 @@
 from copy import deepcopy
-from datetime import timedelta
 from typing import List
 from unittest import mock
 
@@ -11,7 +10,8 @@ import pytest
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
-                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission)
+                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
+                              SegmentedAdmission)
 
 
 @pytest.fixture
@@ -89,13 +89,13 @@ def inpatient_binary_input(n: int, p: int):
 
 def inpatient_rated_input(n: int, p: int):
     bin_input = inpatient_binary_input(n, p)
-    return eqx.tree_at(lambda x: x.rate, bin_input,
-                       nrand.uniform(0, 1, size=(n,)))
+    return InpatientInput(starttime=bin_input.starttime, endtime=bin_input.endtime, code_index=bin_input.code_index,
+                          rate=nrand.uniform(0, 1, size=(n,)))
 
 
 @pytest.fixture(params=[0, 1, 501])
 def icu_inputs(icu_inputs_scheme_: CodingScheme, request):
-    return inpatient_binary_input(request.param, len(icu_inputs_scheme_))
+    return inpatient_rated_input(request.param, len(icu_inputs_scheme_))
 
 
 @pytest.fixture(params=[0, 1, 501])
@@ -114,6 +114,16 @@ def inpatient_interventions(hosp_proc, icu_proc, icu_inputs, request):
     return InpatientInterventions(None if whoisnull == 0 else hosp_proc,
                                   None if whoisnull == 1 else icu_proc,
                                   None if whoisnull == 2 else icu_inputs)
+
+
+@pytest.fixture
+def segmented_inpatient_interventions(inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
+                                      icu_proc_scheme_,
+                                      icu_inputs_scheme_) -> SegmentedInpatientInterventions:
+    return SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
+                                                              hosp_procedures_size=len(hosp_proc_scheme_),
+                                                              icu_procedures_size=len(icu_proc_scheme_),
+                                                              icu_inputs_size=len(icu_inputs_scheme_))
 
 
 def leading_observables_extractor(observation_scheme: str, leading_hours: List[float] = (1.0,),
@@ -142,12 +152,23 @@ def admission(dx_codes: CodesVector, dx_codes_history: CodesVector,
               inpatient_interventions: InpatientInterventions,
               leading_observable: InpatientObservables) -> Admission:
     admission_id = 'test'
-    admission_date = pd.Timestamp.now().to_datetime64()
-    discharge_date = (admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H')).to_datetime64()
+    admission_date = pd.to_datetime('now')
+    discharge_date = pd.to_datetime(admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H'))
     return Admission(admission_id=admission_id, admission_dates=(admission_date, discharge_date),
                      dx_codes=dx_codes, dx_codes_history=dx_codes_history, outcome=outcome,
                      observables=inpatient_observables, interventions=inpatient_interventions,
                      leading_observable=leading_observable)
+
+
+@pytest.fixture(params=[1, 50])
+def segmented_admission(admission: Admission, hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_,
+                        request) -> SegmentedAdmission:
+    maximum_padding = request.param
+    return SegmentedAdmission.from_admission(admission,
+                                             hosp_procedures_size=len(hosp_proc_scheme_),
+                                             icu_procedures_size=len(icu_proc_scheme_),
+                                             icu_inputs_size=len(icu_inputs_scheme_),
+                                             maximum_padding=maximum_padding)
 
 
 class TestInpatientObservables:
@@ -428,6 +449,7 @@ class TestInpatientInput:
         pass
 
     def test_apply(self):
+        # TODO: priority.
         pass
 
     @pytest.mark.parametrize("n", [0, 1, 100, 501])
@@ -444,9 +466,12 @@ class TestInpatientInput:
 
 class TestInpatientInterventions:
 
-    def test_dataframe_serialization(self, inpatient_interventions: InpatientInterventions):
-        dfs = inpatient_interventions.to_dataframes()
-        assert inpatient_interventions.equals(InpatientInterventions.from_dataframes(dfs))
+    def test_hdf_serialization(self, inpatient_interventions: InpatientInterventions, tmpdir):
+        hdf_filename = f'{tmpdir}/test_inpatient_interventions_serialization.h5'
+        inpatient_interventions.to_hdf(hdf_filename, key='test_inpatient_interventions')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            assert inpatient_interventions.equals(
+                InpatientInterventions.from_hdf(hdf, key='test_inpatient_interventions'))
 
     def test_timestamps(self, inpatient_interventions: InpatientInterventions):
         timestamps = inpatient_interventions.timestamps
@@ -518,15 +543,16 @@ class TestSegmentedInpatientInterventions:
         for i, t in enumerate(inpatient_intervention.starttime):
             assert np.array_equal(inpatient_intervention(t, len(scheme)), seg[i])
 
-    def test_dataframe_serialization(self, inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
-                                     icu_proc_scheme_,
-                                     icu_inputs_scheme_):
-        seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
-                                                                 hosp_procedures_size=len(hosp_proc_scheme_),
-                                                                 icu_procedures_size=len(icu_proc_scheme_),
-                                                                 icu_inputs_size=len(icu_inputs_scheme_))
-        dfs = seg.to_dataframes()
-        assert seg.equals(SegmentedInpatientInterventions.from_dataframes(dfs))
+    def test_dataframe_serialization(self, segmented_inpatient_interventions: SegmentedInpatientInterventions):
+        dfs = segmented_inpatient_interventions.to_dataframes()
+        assert segmented_inpatient_interventions.equals(SegmentedInpatientInterventions.from_dataframes(dfs))
+
+    def test_hdf_serialization(self, segmented_inpatient_interventions, tmpdir):
+        hdf_filename = f'{tmpdir}/test_segmented_inpatient_interventions_serialization.h5'
+        segmented_inpatient_interventions.to_hdf(hdf_filename, key='test_segmented_inpatient_interventions')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            assert segmented_inpatient_interventions.equals(
+                SegmentedInpatientInterventions.from_hdf(hdf, key='test_segmented_inpatient_interventions'))
 
 
 class TestAdmission:
@@ -548,6 +574,62 @@ class TestAdmission:
 
     def test_days_since(self):
         pass
+
+
+class TestSegmentedAdmission:
+
+    def test_from_admission(self, admission: Admission, segmented_admission: SegmentedAdmission):
+        assert segmented_admission.admission_id == admission.admission_id
+        assert segmented_admission.admission_dates == admission.admission_dates
+        assert segmented_admission.dx_codes == admission.dx_codes
+        assert segmented_admission.dx_codes_history == admission.dx_codes_history
+        assert segmented_admission.outcome == admission.outcome
+        if admission.observables is not None:
+            assert InpatientObservables.concat(segmented_admission.observables).equals(admission.observables)
+        if admission.leading_observable is not None:
+            assert InpatientObservables.concat(segmented_admission.leading_observable).equals(
+                admission.leading_observable)
+        if admission.interventions is None:
+            return
+        interventions = admission.interventions
+        seg_interventions = segmented_admission.interventions
+        timestamps = admission.interventions.timestamps
+        time = sorted(set([0.0] + timestamps + [LENGTH_OF_STAY]))
+        for i, (start, end) in enumerate(zip(time[:-1], time[1:])):
+            if interventions.hosp_procedures is not None:
+                p = seg_interventions.hosp_procedures.shape[1]
+                hosp_procedure = interventions.hosp_procedures(start, p)
+                seg_hosp_procedure = seg_interventions.hosp_procedures[i]
+                assert np.array_equal(seg_hosp_procedure, hosp_procedure)
+            if interventions.icu_procedures is not None:
+                p = seg_interventions.icu_procedures.shape[1]
+                icu_procedure = interventions.icu_procedures(start, p)
+                seg_icu_procedure = seg_interventions.icu_procedures[i]
+                assert np.array_equal(seg_icu_procedure, icu_procedure)
+            if interventions.icu_inputs is not None:
+                p = seg_interventions.icu_inputs.shape[1]
+                icu_input = interventions.icu_inputs(start, p)
+                seg_icu_input = seg_interventions.icu_inputs[i]
+                assert np.array_equal(seg_icu_input, icu_input)
+
+            if admission.observables is not None:
+                assert np.all(start <= segmented_admission.observables[i].time <= end)
+                time_mask = (admission.observables.time >= start) & (admission.observables.time <= end)
+                segment_val = segmented_admission.observables[i].value
+                segment_mask = segmented_admission.observables[i].mask
+                val = admission.observables.value[time_mask]
+                mask = admission.observables.mask[time_mask]
+                assert np.array_equal(segment_val, val)
+                assert np.array_equal(segment_mask, mask)
+
+    def test_serialization(self, admission: Admission, tmpdir: str):
+        hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
+
+        admission.to_hdf(hdf_filename, 'test_admissions')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            deserialized = Admission.from_hdf_store(hdf, 'test_admissions',
+                                                    admission.admission_id)
+        assert admission.equals(deserialized)
 
 
 class TestStaticInfo:
