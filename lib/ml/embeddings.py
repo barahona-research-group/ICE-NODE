@@ -5,11 +5,233 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import equinox as eqx
+import numpy as np
 
 from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
-                   AggregateRepresentation, InpatientInput,
-                   InpatientInterventions, DemographicVectorConfig)
+                   InpatientInput, InpatientInterventions, DemographicVectorConfig, CodingScheme)
 from ..base import Config, Data
+
+
+class MaskedAggregator(eqx.Module):
+    """
+    A class representing a masked aggregator.
+
+    Attributes:
+        mask (jnp.array): The mask used for aggregation.
+    """
+
+    mask: jnp.array = eqx.static_field()
+
+    def __init__(self,
+                 subsets: jax.Array | List[int],
+                 input_size: int):
+        super().__init__()
+        mask = np.zeros((len(subsets), input_size), dtype=bool)
+        for i, s in enumerate(subsets):
+            mask[i, s] = True
+        self.mask = jnp.array(mask)
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        raise NotImplementedError
+
+
+class MaskedPerceptron(MaskedAggregator):
+    """
+    A masked perceptron model for classification tasks.
+
+    Parameters:
+    - subsets: an array of subsets used for masking.
+    - input_size: the size of the input features.
+    - key: a PRNGKey for random initialization.
+    - backend: the backend framework to use (default: 'jax').
+
+    Attributes:
+    - linear: a linear layer for the perceptron.
+
+    Methods:
+    - __call__(self, x): performs forward pass of the perceptron.
+    """
+
+    linear: eqx.nn.Linear
+
+    def __init__(self,
+                 subsets: jax.Array,
+                 input_size: int,
+                 key: "jax.random.PRNGKey"):
+        """
+        Initialize the MaskedPerceptron class.
+
+        Args:
+            subsets (Array): the subsets of input features.
+            input_size (int): the size of the input.
+            key (jax.random.PRNGKey): the random key for initialization.
+        """
+        super().__init__(subsets, input_size)
+        self.linear = eqx.nn.Linear(input_size,
+                                    len(subsets),
+                                    use_bias=False,
+                                    key=key)
+
+    @property
+    def weight(self):
+        """
+        Returns the weight of the linear layer.
+
+        Returns:
+            Array: the weights of the linear layer.
+        """
+        return self.linear.weight
+
+    @eqx.filter_jit
+    def __call__(self, x: jax.Array) -> jax.Array:
+        """
+        Performs forward pass of the perceptron.
+
+        Args:
+            x (Array): the input features.
+
+        Returns:
+            Array: the output of the perceptron.
+        """
+        return (self.weight * self.mask) @ x
+
+
+class MaskedSum(MaskedAggregator):
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        """
+        performs a masked sum aggregation on the input array x.
+
+        Args:
+            x (Array): input array to aggregate.
+
+        Returns:
+            Array: sum of x for True mask locations.
+        """
+        return self.mask @ x
+
+
+class MaskedOr(MaskedAggregator):
+
+    def __call__(self, x):
+        """Performs a masked OR aggregation.
+
+        For each row of the input array `x`, performs a logical OR operation between
+        elements of that row and the mask. Returns a boolean array indicating if there
+        was at least one `True` value for each row.
+
+        Args:
+            x: Input array to aggregate. Can be numpy ndarray or jax ndarray.
+
+        Returns:
+            Boolean ndarray indicating if there was at least one True value in each
+            row of x after applying the mask.
+        """
+        return jnp.any(self.mask & (x != 0), axis=1)
+
+
+class AggregateRepresentation(eqx.Module):
+    """
+    AggregateRepresentation aggregates input codes into target codes.
+
+    It initializes masked aggregators based on the target scheme's
+    aggregation and aggregation groups. On call, it splits the input,
+    aggregates each split with the corresponding aggregator, and
+    concatenates the results.
+
+    Handles both jax and numpy arrays for the input.
+
+    Attributes:
+        aggregators: a list of masked aggregators.
+        splits: a tuple of integers indicating the splits of the input.
+
+    Methods:
+        __call__(self, x): performs the aggregation.
+    """
+    aggregators: List[MaskedAggregator]
+    splits: Tuple[int] = eqx.static_field()
+
+    def __init__(self,
+                 source_scheme: CodingScheme,
+                 target_scheme: CodingScheme,
+                 key: "jax.random.PRNGKey" = None):
+        """
+        Initializes an AggregateRepresentation.
+
+        Constructs the masked aggregators based on the target scheme's
+        aggregation and aggregation groups. Splits the input into sections
+        for each aggregator.
+
+        Args:
+            source_scheme: Source coding scheme to aggregate from
+            target_scheme: Target coding scheme to aggregate to
+            key: JAX PRNGKey for initializing perceptrons
+        """
+        super().__init__()
+        self.aggregators = []
+        aggs = target_scheme.aggregation
+        agg_grps = target_scheme.aggregation_groups
+        grps = target_scheme.groups
+        splits = []
+
+        def is_contagious(x):
+            return x.max() - x.min() == len(x) - 1 and len(set(x)) == len(x)
+
+        for agg in aggs:
+            selectors = []
+            agg_offset = len(source_scheme)
+            for grp in agg_grps[agg]:
+                input_codes = grps[grp]
+                input_index = sorted(source_scheme.index[c]
+                                     for c in input_codes)
+                input_index = jnp.array(input_index, dtype=int)
+                assert is_contagious(input_index), (
+                    f"Selectors must be contiguous, but {input_index} is not. Codes: {input_codes}. Group: {grp}"
+                )
+                agg_offset = min(input_index.min().item(), agg_offset)
+                selectors.append(input_index)
+            selectors = [s - agg_offset for s in selectors]
+            agg_input_size = sum(len(s) for s in selectors)
+            max_index = max(s.max().item() for s in selectors)
+            assert max_index == agg_input_size - 1, (
+                f"Selectors must be contiguous, max index is {max_index} but size is {agg_input_size}"
+            )
+            splits.append(agg_input_size)
+
+            if agg == 'w_sum':
+                self.aggregators.append(
+                    MaskedPerceptron(selectors, agg_input_size, key))
+                (key,) = jrandom.split(key, 1)
+            elif agg == 'sum':
+                self.aggregators.append(
+                    MaskedSum(selectors, agg_input_size))
+            elif agg == 'or':
+                self.aggregators.append(
+                    MaskedOr(selectors, agg_input_size))
+            else:
+                raise ValueError(f"Aggregation {agg} not supported")
+        splits = jnp.cumsum([0] + splits)[1:-1]
+        self.splits = tuple(splits.tolist())
+
+    @eqx.filter_jit
+    def __call__(self, inpatient_input: jax.Array) -> jax.Array:
+        """
+        Apply aggregators to the input data.
+
+        Args:
+            inpatient_input (Array): the input data to be processed.
+
+        Returns:
+            Array: the processed data after applying aggregators.
+        """
+        if isinstance(inpatient_input, jax.Array):
+            splitted = jnp.hsplit(inpatient_input, self.splits)
+            return jnp.hstack(
+                [agg(x) for x, agg in zip(splitted, self.aggregators)])
+
+        splitted = jnp.hsplit(inpatient_input, self.splits)
+        return jnp.hstack(
+            [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
 class EmbeddedAdmission(Data):

@@ -6,10 +6,8 @@ from datetime import date
 from functools import cached_property
 from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, Any)
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -39,15 +37,18 @@ class InpatientObservables(Data):
         time_binning(hours: float): bins the time-series into time-windows and averages the values in each window.
     """
 
-    time: jnp.narray  # (time,)
+    time: Array  # (time,)
     value: Array  # (time, size)
     mask: Array  # (time, size)
 
+    def __post_init__(self):
+        assert self.time.dtype == np.float64, f"Expected time to be of type float64, got {self.time.dtype}"
+
     @staticmethod
     def empty(size: int,
-              time_dtype: Type = np.float32,
-              value_dtype: Type = np.float16,
-              mask_dtype: Type = bool) -> InpatientObservables:
+              time_dtype: Type | str = np.float64,
+              value_dtype: Type | str = np.float16,
+              mask_dtype: Type | str = bool) -> InpatientObservables:
         """
         Create an empty InpatientObservables object.
 
@@ -570,239 +571,6 @@ class LeadingObservableExtractor(Module):
         value = np.where(mask, value, np.nan)
         value = self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
         return InpatientObservables(time, value, mask=~np.isnan(value) * 1.0)
-
-
-class MaskedAggregator(eqx.Module):
-    """
-    A class representing a masked aggregator.
-
-    Attributes:
-        mask (jnp.array): The mask used for aggregation.
-    """
-
-    mask: jnp.array = eqx.static_field()
-
-    def __init__(self,
-                 subsets: Union[Array, List[int]],
-                 input_size: int,
-                 backend: str = 'jax'):
-        super().__init__()
-        mask = np.zeros((len(subsets), input_size), dtype=bool)
-        for i, s in enumerate(subsets):
-            mask[i, s] = True
-        if backend == 'jax':
-            self.mask = jnp.array(mask)
-        else:
-            self.mask = mask
-
-    def __call__(self, x: Array) -> Array:
-        raise NotImplementedError
-
-
-class MaskedPerceptron(MaskedAggregator):
-    """
-    A masked perceptron model for classification tasks.
-
-    Parameters:
-    - subsets: an array of subsets used for masking.
-    - input_size: the size of the input features.
-    - key: a PRNGKey for random initialization.
-    - backend: the backend framework to use (default: 'jax').
-
-    Attributes:
-    - linear: a linear layer for the perceptron.
-
-    Methods:
-    - __call__(self, x): performs forward pass of the perceptron.
-    """
-
-    linear: eqx.nn.Linear
-
-    def __init__(self,
-                 subsets: Array,
-                 input_size: int,
-                 key: "jax.random.PRNGKey",
-                 backend: str = 'jax'):
-        """
-        Initialize the MaskedPerceptron class.
-
-        Args:
-            subsets (Array): the subsets of input features.
-            input_size (int): the size of the input.
-            key (jax.random.PRNGKey): the random key for initialization.
-            backend (str, optional): the backend to use. Defaults to 'jax'.
-        """
-        super().__init__(subsets, input_size, backend)
-        self.linear = eqx.nn.Linear(input_size,
-                                    len(subsets),
-                                    use_bias=False,
-                                    key=key)
-
-    @property
-    def weight(self):
-        """
-        Returns the weight of the linear layer.
-
-        Returns:
-            Array: the weights of the linear layer.
-        """
-        return self.linear.weight
-
-    @eqx.filter_jit
-    def __call__(self, x: Array) -> Array:
-        """
-        Performs forward pass of the perceptron.
-
-        Args:
-            x (Array): the input features.
-
-        Returns:
-            Array: the output of the perceptron.
-        """
-        return (self.weight * self.mask) @ x
-
-
-class MaskedSum(MaskedAggregator):
-
-    def __call__(self, x: Array) -> Array:
-        """
-        performs a masked sum aggregation on the input array x.
-
-        Args:
-            x (Array): input array to aggregate.
-
-        Returns:
-            Array: sum of x for True mask locations.  
-        """
-        return self.mask @ x
-
-
-class MaskedOr(MaskedAggregator):
-
-    def __call__(self, x):
-        """Performs a masked OR aggregation.
-
-        For each row of the input array `x`, performs a logical OR operation between 
-        elements of that row and the mask. Returns a boolean array indicating if there 
-        was at least one `True` value for each row.
-
-        Args:
-            x: Input array to aggregate. Can be numpy ndarray or jax ndarray.
-
-        Returns: 
-            Boolean ndarray indicating if there was at least one True value in each 
-            row of x after applying the mask.
-        """
-        if isinstance(x, jax.Array):
-            return jnp.any(self.mask & (x != 0), axis=1)
-        else:
-            return np.any(self.mask & (x != 0), axis=1)
-
-
-class AggregateRepresentation(eqx.Module):
-    """
-    AggregateRepresentation aggregates input codes into target codes.
-    
-    It initializes masked aggregators based on the target scheme's 
-    aggregation and aggregation groups. On call, it splits the input, 
-    aggregates each split with the corresponding aggregator, and 
-    concatenates the results.
-    
-    Handles both jax and numpy arrays for the input.
-
-    Attributes:
-        aggregators: a list of masked aggregators.
-        splits: a tuple of integers indicating the splits of the input.
-
-    Methods:
-        __call__(self, x): performs the aggregation.
-    """
-    aggregators: List[MaskedAggregator]
-    splits: Tuple[int] = eqx.static_field()
-
-    def __init__(self,
-                 source_scheme: CodingScheme,
-                 target_scheme: CodingScheme,
-                 key: "jax.random.PRNGKey" = None,
-                 backend: str = 'numpy'):
-        """
-        Initializes an AggregateRepresentation.
-    
-        Constructs the masked aggregators based on the target scheme's 
-        aggregation and aggregation groups. Splits the input into sections 
-        for each aggregator.
-        
-        Args:
-            source_scheme: Source coding scheme to aggregate from 
-            target_scheme: Target coding scheme to aggregate to
-            key: JAX PRNGKey for initializing perceptrons
-            backend: 'numpy' or 'jax' 
-        """
-        super().__init__()
-        self.aggregators = []
-        aggs = target_scheme.aggregation
-        agg_grps = target_scheme.aggregation_groups
-        grps = target_scheme.groups
-        splits = []
-
-        def is_contagious(x):
-            return x.max() - x.min() == len(x) - 1 and len(set(x)) == len(x)
-
-        for agg in aggs:
-            selectors = []
-            agg_offset = len(source_scheme)
-            for grp in agg_grps[agg]:
-                input_codes = grps[grp]
-                input_index = sorted(source_scheme.index[c]
-                                     for c in input_codes)
-                input_index = np.array(input_index, dtype=np.int32)
-                assert is_contagious(input_index), (
-                    f"Selectors must be contiguous, but {input_index} is not. Codes: {input_codes}. Group: {grp}"
-                )
-                agg_offset = min(input_index.min(), agg_offset)
-                selectors.append(input_index)
-            selectors = [s - agg_offset for s in selectors]
-            agg_input_size = sum(len(s) for s in selectors)
-            max_index = max(s.max() for s in selectors)
-            assert max_index == agg_input_size - 1, (
-                f"Selectors must be contiguous, max index is {max_index} but size is {agg_input_size}"
-            )
-            splits.append(agg_input_size)
-
-            if agg == 'w_sum':
-                self.aggregators.append(
-                    MaskedPerceptron(selectors, agg_input_size, key, backend))
-                (key,) = jrandom.split(key, 1)
-            elif agg == 'sum':
-                self.aggregators.append(
-                    MaskedSum(selectors, agg_input_size, backend))
-            elif agg == 'or':
-                self.aggregators.append(
-                    MaskedOr(selectors, agg_input_size, backend))
-            else:
-                raise ValueError(f"Aggregation {agg} not supported")
-        splits = np.cumsum([0] + splits)[1:-1]
-        self.splits = tuple(splits.tolist())
-
-    @eqx.filter_jit
-    def __call__(self, inpatient_input: Array) -> Array:
-        """
-        Apply aggregators to the input data.
-
-        Args:
-            inpatient_input (Array): the input data to be processed.
-
-        Returns:
-            Array: the processed data after applying aggregators.
-        """
-        if isinstance(inpatient_input, jax.Array):
-            splitted = jnp.hsplit(inpatient_input, self.splits)
-            return jnp.hstack(
-                [agg(x) for x, agg in zip(splitted, self.aggregators)])
-
-        splitted = np.hsplit(inpatient_input, self.splits)
-        return np.hstack(
-            [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
 class InpatientInput(Data):
@@ -1372,59 +1140,6 @@ class StaticInfo(Data):
     ethnicity: Optional[CodesVector] = None
     date_of_birth: Optional[date] = None
 
-    @classmethod
-    @property
-    def separator(cls) -> str:
-        return f':{cls.__name__}:'
-
-    def to_dataframe(self) -> pd.DataFrame:
-        """
-        Converts the static information to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the static information.
-        """
-        df = pd.DataFrame()
-        if self.gender is not None:
-            df.loc[0, 'gender'] = self.separator.join(self.gender.to_codeset())
-            df.loc[0, 'gender_scheme'] = self.gender.scheme
-        if self.ethnicity is not None:
-            df.loc[0, 'ethnicity'] = self.separator.join(self.ethnicity.to_codeset())
-            df.loc[0, 'ethnicity_scheme'] = self.ethnicity.scheme
-        if self.date_of_birth is not None:
-            df.loc[0, 'date_of_birth'] = self.date_of_birth
-        return df
-
-    @classmethod
-    def _from_dataframe_data(cls, df: pd.DataFrame):
-        """
-        Extracts the static information from a pandas DataFrame.
-
-        Args:
-            df (pd.DataFrame): the pandas DataFrame containing the static information.
-        """
-        data = {}
-        if 'gender_scheme' in df.columns:
-            scheme = CodingScheme.from_name(df.loc[0, 'gender_scheme'])
-            codes = df.loc[0, 'gender'].split(cls.separator)
-            data['gender'] = scheme.codeset2vec(codes)
-        if 'ethnicity_scheme' in df.columns:
-            scheme = CodingScheme.from_name(df.loc[0, 'ethnicity_scheme'])
-            codes = df.loc[0, 'ethnicity'].split(cls.separator)
-            data['ethnicity'] = scheme.codeset2vec(codes)
-        if 'date_of_birth' in df.columns:
-            data['date_of_birth'] = df.loc[0, 'date_of_birth']
-        return data
-
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, demographic_vector_config: DemographicVectorConfig) -> 'StaticInfo':
-        """
-        Converts a pandas DataFrame to a StaticInfo object.
-        """
-
-        return cls(demographic_vector_config=demographic_vector_config,
-                   **cls._from_dataframe_data(df))
-
     @property
     def constant_attrs_list(self) -> List[Array]:
         attrs_vec = []
@@ -1491,6 +1206,78 @@ class StaticInfo(Data):
         """
         return jnp.hstack((age, vec), dtype=jnp.float16)
 
+    def to_dataframes(self) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
+        """
+        Converts the static information to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: a pandas DataFrame containing the static information.
+        """
+        df = {}
+        meta = {}
+        if self.gender is not None:
+            df['gender'] = pd.DataFrame(self.gender.vec)
+            meta.update({'gender_scheme': self.gender.scheme})
+
+        if self.ethnicity is not None:
+            df['ethnicity'] = pd.DataFrame(self.ethnicity.vec)
+            meta.update({'ethnicity_scheme': self.ethnicity.scheme})
+        if self.date_of_birth is not None:
+            df['date_of_birth'] = pd.DataFrame(self.date_of_birth)
+        return df, meta
+
+    def to_hdf(self, path: str, key: str) -> None:
+        """
+        Save the static information to an HDF5 file.
+
+        Args:
+            path (str): the path to the HDF5 file.
+            key (str): the key to use for the static information.
+        """
+        df, meta = self.to_dataframes()
+        for k, v in df.items():
+            v.to_hdf(path, key=f'{key}/{k}', format='table')
+        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/meta', format='table')
+
+    @staticmethod
+    def _data_from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> Dict[str, Any]:
+        data = {}
+        if 'gender' in dataframes:
+            scheme = CodingScheme.from_name(meta['gender_scheme'])
+            data['gender'] = scheme.vector_cls(vec=dataframes['gender'].loc[0].values,
+                                               scheme=scheme.name)
+        if 'ethnicity' in dataframes:
+            scheme = CodingScheme.from_name(meta['ethnicity_scheme'])
+            data['ethnicity'] = scheme.vector_cls(vec=dataframes['ethnicity'].loc[0].values,
+                                                  scheme=scheme.name)
+        if 'date_of_birth' in dataframes:
+            data['date_of_birth'] = dataframes['date_of_birth'].loc[0].values
+        return data
+
+    @staticmethod
+    def from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> 'StaticInfo':
+        """
+        Converts a pandas DataFrame to a StaticInfo object.
+        """
+        return StaticInfo(**StaticInfo._data_from_dataframes(dataframes, meta))
+
+    @staticmethod
+    def from_hdf(path: str, key: str) -> 'StaticInfo':
+        """
+        Load the static information from an HDF5 file.
+
+        Args:
+            path (str): the path to the HDF5 file.
+            key (str): the key to use for the static information.
+
+        Returns:
+            StaticInfo: the static information.
+        """
+        with pd.HDFStore(path, mode='r') as store:
+            dataframes = {k: store[f'{key}/{k}'] for k in store.keys() if k.startswith(f'{key}/')}
+            meta = store[f'{key}/meta'].iloc[0].to_dict()
+            return StaticInfo.from_dataframes(dataframes, meta)
+
 
 class CPRDStaticInfo(StaticInfo):
     """
@@ -1512,13 +1299,26 @@ class CPRDStaticInfo(StaticInfo):
             attrs_vec.append(self.imd.vec)
         return attrs_vec
 
-    @classmethod
-    def _from_dataframe_data(cls, df: pd.DataFrame):
-        data = super()._from_dataframe_data(df)
-        if 'imd_scheme' in df.columns:
-            scheme = CodingScheme.from_name(df.loc[0, 'imd_scheme'])
-            codes = df.loc[0, 'imd'].split(cls.separator)
-            data['imd'] = scheme.codeset2vec(codes)
+    def to_dataframes(self) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
+        """
+        Converts the static information to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: a pandas DataFrame containing the static information.
+        """
+        df, meta = super().to_dataframes()
+        if self.imd is not None:
+            df['imd'] = pd.DataFrame(self.imd.vec)
+            meta.update({'imd': self.imd.scheme})
+        return df, meta
+
+    @staticmethod
+    def _data_from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> Dict[str, Any]:
+        data = super()._data_from_dataframes(dataframes, meta)
+        if 'imd' in dataframes:
+            scheme = CodingScheme.from_name(meta['imd_scheme'])
+            data['imd'] = scheme.vector_cls(vec=dataframes['imd'].loc[0].values,
+                                            scheme=scheme.name)
         return data
 
 

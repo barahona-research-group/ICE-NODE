@@ -1,7 +1,7 @@
 from .coding_scheme import (CodingScheme, OutcomeExtractor, CodingSchemeConfig, FlatScheme, HierarchicalScheme,
                             OutcomeExtractorConfig, resources_dir)
 from .concepts import (Admission, Patient, InpatientObservables,
-                       InpatientInterventions, AggregateRepresentation,
+                       InpatientInterventions,
                        StaticInfo, InpatientInput, CodesVector,
                        DemographicVectorConfig, LeadingObservableExtractorConfig,
                        LeadingObservableExtractor,

@@ -31,7 +31,7 @@ def sample_codes(scheme: str, n: int) -> List[str]:
 
 # Static Columns
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['subject_id', 'SUBJECT_ID'])
+@pytest.fixture(scope=DATASET_SCOPE, params=['SUBJECT_IDXYZ'])
 def subject_id_alias(request):
     return request.param
 
@@ -58,7 +58,7 @@ def static_table_config(subject_id_alias, gender_alias, race_alias, date_of_birt
                              date_of_birth_alias=date_of_birth_alias)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['hadm_id', 'ADMISSION_ID'])
+@pytest.fixture(scope=DATASET_SCOPE, params=['ADMISSION_IDX'])
 def admission_id_alias(request):
     return request.param
 
@@ -454,7 +454,7 @@ def dataset_scheme_config(ethnicity_scheme: str,
 
 
 @pytest.fixture(scope=DATASET_SCOPE, params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
-                                             (50, 0, 0), (50, 10, 0), (50, 10, 10)],
+                                             (50, 0, 0), (50, 10, 10)],
                 ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,

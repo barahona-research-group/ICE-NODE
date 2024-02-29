@@ -69,7 +69,8 @@ def outcome(dx_codes: CodesVector, outcome_extractor_: OutcomeExtractor):
 def inpatient_observables(obs_scheme: CodingScheme, request):
     d = len(obs_scheme)
     n = request.param
-    t = np.array(sorted(nrand.choice(np.linspace(0, LENGTH_OF_STAY, 1000), replace=False, size=n)))
+    timestamps_grid = np.linspace(0, LENGTH_OF_STAY, 1000, dtype=np.float64)
+    t = np.array(sorted(nrand.choice(timestamps_grid, replace=False, size=n)))
     v = np.zeros((n, d))
     i = BINARY_OBSERVATION_CODE_INDEX
     v[:, i: i + 1] = nrand.binomial(1, 0.5, size=n).astype(bool).reshape(-1, 1)
@@ -416,33 +417,6 @@ class TestLeadingObservableExtractor:
         pass
 
 
-class TestMaskedPerceptron:
-
-    def test_apply(self):
-        pass
-
-
-class TestMaskedSum:
-
-    def test_apply(self):
-        pass
-
-
-class TestMaskedOr:
-
-    def test_apply(self):
-        pass
-
-
-class TestAggregateRepresentation:
-
-    def test_init(self):
-        pass
-
-    def test_apply(self):
-        pass
-
-
 class TestInpatientInput:
 
     def test_init(self):
@@ -594,6 +568,7 @@ class TestSegmentedAdmission:
         interventions = admission.interventions
         seg_interventions = segmented_admission.interventions
         timestamps = admission.interventions.timestamps
+
         time = sorted(set([0.0] + timestamps + [LENGTH_OF_STAY]))
         for i, (start, end) in enumerate(zip(time[:-1], time[1:])):
             if interventions.hosp_procedures is not None:
@@ -613,8 +588,13 @@ class TestSegmentedAdmission:
                 assert np.array_equal(seg_icu_input, icu_input)
 
             if admission.observables is not None:
-                assert np.all(start <= segmented_admission.observables[i].time <= end)
-                time_mask = (admission.observables.time >= start) & (admission.observables.time <= end)
+                obs_time = admission.observables.time
+                segment_time = segmented_admission.observables[i].time
+                assert np.all((start <= segment_time) & (segment_time <= end))
+                if i == len(time) - 2:
+                    time_mask = (obs_time >= start) & (obs_time <= end)
+                else:
+                    time_mask = (obs_time >= start) & (obs_time < end)
                 segment_val = segmented_admission.observables[i].value
                 segment_mask = segmented_admission.observables[i].mask
                 val = admission.observables.value[time_mask]
