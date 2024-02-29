@@ -311,6 +311,19 @@ class CodingScheme(Module):
         """
         return CodeMap.get_mapper(self.name, target_scheme)
 
+    def wrap_vector(self, vec: np.ndarray) -> "CodingScheme.vector_cls":
+        """
+        Wrap a numpy array as a vector representation of the current scheme.
+        Args:
+            vec (np.ndarray): the numpy array to wrap.
+        Returns:
+            CodingScheme.vector_cls: a vector representation of the current scheme.
+        """
+        assert len(vec) == len(self), f"Vector length should be {len(self)}."
+        assert vec.ndim == 1, f"Vector should be 1-dimensional."
+
+        return CodingScheme.vector_cls(vec, self.name)
+
     def codeset2vec(self, codeset: Set[str]) -> "CodingScheme.vector_cls":
         """
         Convert a codeset to a vector representation.

@@ -1,3 +1,4 @@
+import random
 from copy import deepcopy
 from typing import List
 from unittest import mock
@@ -11,7 +12,50 @@ import pytest
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                               InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
-                              SegmentedAdmission)
+                              SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
+
+
+@pytest.fixture
+def gender_scheme_(gender_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(gender_scheme)
+
+
+def _singular_codevec(scheme: CodingScheme) -> CodesVector:
+    return scheme.codeset2vec({random.choice(scheme.codes)})
+
+
+@pytest.fixture
+def gender(gender_scheme_: CodingScheme) -> CodesVector:
+    return _singular_codevec(gender_scheme_)
+
+
+@pytest.fixture
+def ethnicity_scheme_(ethnicity_scheme: str) -> CodingScheme:
+    return CodingScheme.from_name(ethnicity_scheme)
+
+
+@pytest.fixture
+def ethnicity(ethnicity_scheme_: CodingScheme) -> CodesVector:
+    return _singular_codevec(ethnicity_scheme_)
+
+
+def date_of_birth() -> pd.Timestamp:
+    return pd.to_datetime(pd.Timestamp('now') - pd.to_timedelta(nrand.randint(0, 100 * 365), unit='D'))
+
+
+def demographic_vector_config() -> DemographicVectorConfig:
+    flags = random.choices([True, False], k=3)
+    return DemographicVectorConfig(*flags)
+
+
+def _static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
+    return StaticInfo(demographic_vector_config=demographic_vector_config, ethnicity=ethnicity, gender=gender,
+                      date_of_birth=date_of_birth())
+
+
+@pytest.fixture
+def static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
+    return _static_info(ethnicity, gender)
 
 
 @pytest.fixture
@@ -48,36 +92,48 @@ LENGTH_OF_STAY = 10.0
 BINARY_OBSERVATION_CODE_INDEX = 0
 
 
+def _dx_codes(dx_scheme: CodingScheme):
+    v = nrand.binomial(1, 0.5, size=len(dx_scheme)).astype(bool)
+    return CodesVector(vec=v, scheme=dx_scheme.name)
+
+
 @pytest.fixture
 def dx_codes(dx_scheme_: CodingScheme):
-    v = nrand.binomial(1, 0.5, size=len(dx_scheme_)).astype(bool)
-    return CodesVector(vec=v, scheme=dx_scheme_.name)
+    return _dx_codes(dx_scheme_)
 
 
-@pytest.fixture
-def dx_codes_history(dx_codes: CodesVector):
+def _dx_codes_history(dx_codes: CodesVector):
     v = nrand.binomial(1, 0.5, size=len(dx_codes)).astype(bool)
     return CodesVector(vec=v + dx_codes.vec, scheme=dx_codes.scheme)
 
 
 @pytest.fixture
-def outcome(dx_codes: CodesVector, outcome_extractor_: OutcomeExtractor):
+def dx_codes_history(dx_codes: CodesVector):
+    return _dx_codes_history(dx_codes)
+
+
+def _outcome(outcome_extractor_: OutcomeExtractor, dx_codes: CodesVector):
     return outcome_extractor_.mapcodevector(dx_codes)
+
+
+@pytest.fixture
+def outcome(dx_codes: CodesVector, outcome_extractor_: OutcomeExtractor):
+    return _outcome(outcome_extractor_, dx_codes)
+
+
+def _inpatient_observables(obs_scheme: CodingScheme, n_timestamps: int):
+    d = len(obs_scheme)
+    timestamps_grid = np.linspace(0, LENGTH_OF_STAY, 1000, dtype=np.float64)
+    t = np.array(sorted(nrand.choice(timestamps_grid, replace=False, size=n_timestamps)))
+    v = nrand.randn(n_timestamps, d)
+    mask = nrand.binomial(1, 0.5, size=(n_timestamps, d)).astype(bool)
+    return InpatientObservables(t, v, mask)
 
 
 @pytest.fixture(params=[0, 1, 501])
 def inpatient_observables(obs_scheme: CodingScheme, request):
-    d = len(obs_scheme)
-    n = request.param
-    timestamps_grid = np.linspace(0, LENGTH_OF_STAY, 1000, dtype=np.float64)
-    t = np.array(sorted(nrand.choice(timestamps_grid, replace=False, size=n)))
-    v = np.zeros((n, d))
-    i = BINARY_OBSERVATION_CODE_INDEX
-    v[:, i: i + 1] = nrand.binomial(1, 0.5, size=n).astype(bool).reshape(-1, 1)
-    v[:, i + 1:] = nrand.randn(n, d - 1)
-
-    mask = nrand.binomial(1, 0.5, size=(n, d)).astype(bool)
-    return InpatientObservables(t, v, mask)
+    n_timestamps = request.param
+    return _inpatient_observables(obs_scheme, n_timestamps)
 
 
 def inpatient_binary_input(n: int, p: int):
@@ -94,37 +150,62 @@ def inpatient_rated_input(n: int, p: int):
                           rate=nrand.uniform(0, 1, size=(n,)))
 
 
+def _icu_inputs(icu_inputs_scheme_: CodingScheme, n_timestamps: int):
+    return inpatient_rated_input(n_timestamps, len(icu_inputs_scheme_))
+
+
 @pytest.fixture(params=[0, 1, 501])
 def icu_inputs(icu_inputs_scheme_: CodingScheme, request):
-    return inpatient_rated_input(request.param, len(icu_inputs_scheme_))
+    return _icu_inputs(icu_inputs_scheme_, request.param)
+
+
+def _proc(scheme: CodingScheme, n_timestamps: int):
+    return inpatient_binary_input(n_timestamps, len(scheme))
 
 
 @pytest.fixture(params=[0, 1, 501])
 def icu_proc(icu_proc_scheme_: CodingScheme, request):
-    return inpatient_binary_input(request.param, len(icu_proc_scheme_))
+    return _proc(icu_proc_scheme_, request.param)
 
 
 @pytest.fixture(params=[0, 1, 501])
 def hosp_proc(hosp_proc_scheme_: CodingScheme, request):
-    return inpatient_binary_input(request.param, len(hosp_proc_scheme_))
+    return _proc(hosp_proc_scheme_, n_timestamps=request.param)
+
+
+def _inpatient_interventions(hosp_proc, icu_proc, icu_inputs):
+    return InpatientInterventions(hosp_proc, icu_proc, icu_inputs)
 
 
 @pytest.fixture(params=[0, 1, 2, -1])
 def inpatient_interventions(hosp_proc, icu_proc, icu_inputs, request):
     whoisnull = request.param
-    return InpatientInterventions(None if whoisnull == 0 else hosp_proc,
-                                  None if whoisnull == 1 else icu_proc,
-                                  None if whoisnull == 2 else icu_inputs)
+    return _inpatient_interventions(None if whoisnull == 0 else hosp_proc,
+                                    None if whoisnull == 1 else icu_proc,
+                                    None if whoisnull == 2 else icu_inputs)
+
+
+def _segmented_inpatient_interventions(inpatient_interventions: InpatientInterventions, hosp_proc_scheme,
+                                       icu_proc_scheme,
+                                       icu_inputs_scheme,
+                                       maximum_padding: int = 1) -> SegmentedInpatientInterventions:
+    assert all(isinstance(scheme, CodingScheme) for scheme in [hosp_proc_scheme, icu_proc_scheme, icu_inputs_scheme])
+    return SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
+                                                              hosp_procedures_size=len(hosp_proc_scheme),
+                                                              icu_procedures_size=len(icu_proc_scheme),
+                                                              icu_inputs_size=len(icu_inputs_scheme),
+                                                              maximum_padding=maximum_padding)
 
 
 @pytest.fixture
 def segmented_inpatient_interventions(inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
                                       icu_proc_scheme_,
                                       icu_inputs_scheme_) -> SegmentedInpatientInterventions:
-    return SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
-                                                              hosp_procedures_size=len(hosp_proc_scheme_),
-                                                              icu_procedures_size=len(icu_proc_scheme_),
-                                                              icu_inputs_size=len(icu_inputs_scheme_))
+    return _segmented_inpatient_interventions(inpatient_interventions,
+                                              hosp_proc_scheme=hosp_proc_scheme_,
+                                              icu_proc_scheme=icu_proc_scheme_,
+                                              icu_inputs_scheme=icu_inputs_scheme_,
+                                              maximum_padding=1)
 
 
 def leading_observables_extractor(observation_scheme: str, leading_hours: List[float] = (1.0,),
@@ -147,29 +228,74 @@ def leading_observable(observation_scheme: str, inpatient_observables: Inpatient
     return leading_observables_extractor(observation_scheme=observation_scheme)(inpatient_observables)
 
 
+def _admission(admission_id: str, admission_date: pd.Timestamp,
+               dx_codes: CodesVector,
+               dx_codes_history: CodesVector, outcome: CodesVector, observables: InpatientObservables,
+               interventions: InpatientInterventions, leading_observable: InpatientObservables):
+    discharge_date = pd.to_datetime(admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H'))
+
+    return Admission(admission_id=admission_id, admission_dates=(admission_date, discharge_date),
+                     dx_codes=dx_codes,
+                     dx_codes_history=dx_codes_history, outcome=outcome, observables=observables,
+                     interventions=interventions, leading_observable=leading_observable)
+
+
 @pytest.fixture
 def admission(dx_codes: CodesVector, dx_codes_history: CodesVector,
               outcome: CodesVector, inpatient_observables: InpatientObservables,
               inpatient_interventions: InpatientInterventions,
               leading_observable: InpatientObservables) -> Admission:
     admission_id = 'test'
-    admission_date = pd.to_datetime('now')
-    discharge_date = pd.to_datetime(admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H'))
-    return Admission(admission_id=admission_id, admission_dates=(admission_date, discharge_date),
-                     dx_codes=dx_codes, dx_codes_history=dx_codes_history, outcome=outcome,
-                     observables=inpatient_observables, interventions=inpatient_interventions,
-                     leading_observable=leading_observable)
+    return _admission(admission_id=admission_id, admission_date=pd.to_datetime('now'),
+                      dx_codes=dx_codes, dx_codes_history=dx_codes_history, outcome=outcome,
+                      observables=inpatient_observables, interventions=inpatient_interventions,
+                      leading_observable=leading_observable)
 
 
-@pytest.fixture(params=[1, 50])
-def segmented_admission(admission: Admission, hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_,
-                        request) -> SegmentedAdmission:
-    maximum_padding = request.param
-    return SegmentedAdmission.from_admission(admission,
-                                             hosp_procedures_size=len(hosp_proc_scheme_),
-                                             icu_procedures_size=len(icu_proc_scheme_),
+@pytest.fixture
+def segmented_admission(admission: Admission, icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
+                        hosp_proc_scheme_: CodingScheme) -> SegmentedAdmission:
+    return SegmentedAdmission.from_admission(admission=admission, maximum_padding=1,
                                              icu_inputs_size=len(icu_inputs_scheme_),
-                                             maximum_padding=maximum_padding)
+                                             icu_procedures_size=len(icu_proc_scheme_),
+                                             hosp_procedures_size=len(hosp_proc_scheme_))
+
+
+def _admissions(n_admissions, dx_scheme_: CodingScheme,
+                outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
+                icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
+                hosp_proc_scheme_: CodingScheme) -> List[Admission]:
+    admissions = []
+    for i in range(n_admissions):
+        dx_codes = _dx_codes(dx_scheme_)
+        obs = _inpatient_observables(obs_scheme, n_timestamps=nrand.randint(0, 100))
+        lead = leading_observables_extractor(observation_scheme=obs_scheme.name)(obs)
+        icu_proc = _proc(icu_proc_scheme_, n_timestamps=nrand.randint(0, 50))
+        hosp_proc = _proc(hosp_proc_scheme_, n_timestamps=nrand.randint(0, 50))
+        icu_inputs = _icu_inputs(icu_inputs_scheme_, n_timestamps=nrand.randint(0, 50))
+
+        admissions.append(_admission(admission_id=f'test_{i}', admission_date=pd.to_datetime('now'),
+                                     dx_codes=dx_codes,
+                                     dx_codes_history=_dx_codes_history(dx_codes),
+                                     outcome=_outcome(outcome_extractor_, dx_codes),
+                                     observables=obs,
+                                     interventions=_inpatient_interventions(hosp_proc=hosp_proc, icu_proc=icu_proc,
+                                                                            icu_inputs=icu_inputs),
+                                     leading_observable=lead))
+    return admissions
+
+
+@pytest.fixture
+def patient(n_admissions, static_info: StaticInfo,
+            dx_scheme_: CodingScheme,
+            outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
+            icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
+            hosp_proc_scheme_: CodingScheme) -> List[Patient]:
+    admissions = _admissions(n_admissions=n_admissions, dx_scheme_=dx_scheme_,
+                             outcome_extractor_=outcome_extractor_, obs_scheme=obs_scheme,
+                             icu_inputs_scheme_=icu_inputs_scheme_, icu_proc_scheme_=icu_proc_scheme_,
+                             hosp_proc_scheme_=hosp_proc_scheme_)
+    return Patient(subject_id='test', admissions=admissions, static_info=static_info)
 
 
 class TestInpatientObservables:
@@ -469,13 +595,16 @@ class TestSegmentedInpatientInterventions:
 
     def test_from_inpatient_interventions(self, inpatient_interventions, hosp_proc_scheme_, icu_proc_scheme_,
                                           icu_inputs_scheme_):
+        assert all(
+            isinstance(scheme, CodingScheme) for scheme in (hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_))
         schemes = {"hosp_procedures": hosp_proc_scheme_,
                    "icu_procedures": icu_proc_scheme_,
                    "icu_inputs": icu_inputs_scheme_}
         seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
                                                                  hosp_procedures_size=len(hosp_proc_scheme_),
                                                                  icu_procedures_size=len(icu_proc_scheme_),
-                                                                 icu_inputs_size=len(icu_inputs_scheme_))
+                                                                 icu_inputs_size=len(icu_inputs_scheme_),
+                                                                 maximum_padding=1)
         assert abs(len(seg.time) - len(inpatient_interventions.timestamps)) <= 2
         for k in ("hosp_procedures", "icu_procedures", "icu_inputs"):
             if getattr(inpatient_interventions, k) is not None:
@@ -534,10 +663,9 @@ class TestAdmission:
     def test_serialization(self, admission: Admission, tmpdir: str):
         hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
 
-        admission.to_hdf(hdf_filename, 'test_admissions')
+        admission.to_hdf(hdf_filename, 'test_admission')
         with pd.HDFStore(hdf_filename, 'r') as hdf:
-            deserialized = Admission.from_hdf_store(hdf, 'test_admissions',
-                                                    admission.admission_id)
+            deserialized = Admission.from_hdf_store(hdf, 'test_admission')
         assert admission.equals(deserialized)
 
     def test_interval_hours(self):
@@ -605,22 +733,35 @@ class TestSegmentedAdmission:
     def test_serialization(self, admission: Admission, tmpdir: str):
         hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
 
-        admission.to_hdf(hdf_filename, 'test_admissions')
+        admission.to_hdf(hdf_filename, 'test_admission')
         with pd.HDFStore(hdf_filename, 'r') as hdf:
-            deserialized = Admission.from_hdf_store(hdf, 'test_admissions',
-                                                    admission.admission_id)
+            deserialized = SegmentedAdmission.from_hdf_store(hdf, 'test_admission')
         assert admission.equals(deserialized)
 
 
 class TestStaticInfo:
 
-    def test_dataframe_serialization(self):
-        pass
+    def test_dataframe_serialization(self, static_info: StaticInfo):
+        dfs, meta = static_info.to_dataframes()
+        static_info_deserialized = StaticInfo.from_dataframes(dfs, meta,
+                                                              demographic_vector_config=static_info.demographic_vector_config)
+        assert static_info.equals(static_info_deserialized)
+
+    def test_hdf_serialization(self, static_info: StaticInfo, tmpdir):
+        hdf_filename = f'{tmpdir}/test_static_info_serialization.h5'
+        static_info.to_hdf(hdf_filename, 'test_static_info')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            deserialized = StaticInfo.from_hdf(hdf, 'test_static_info',
+                                               demographic_vector_config=static_info.demographic_vector_config)
+        assert static_info.equals(deserialized)
 
     def test_constant_attributes(self):
         pass
 
     def test_constant_vec(self):
+        pass
+
+    def test_dynamic_attributes(self):
         pass
 
 
@@ -632,5 +773,11 @@ class TestPatient:
     def test_outcome_frequency(self):
         pass
 
-    def test_serialization(self):
-        pass
+    @pytest.mark.parametrize("n_admissions", [0, 1, 50])
+    def test_serialization(self, patient: Patient, tmpdir):
+        hdf_filename = f'{tmpdir}/test_patient_serialization.h5'
+        patient.to_hdf(hdf_filename, 'test_patient')
+        with pd.HDFStore(hdf_filename, 'r') as hdf:
+            demo_config = patient.static_info.demographic_vector_config
+            deserialized = Patient.from_hdf_store(hdf, 'test_patient', demographic_vector_config=demo_config)
+        assert patient.equals(deserialized)
