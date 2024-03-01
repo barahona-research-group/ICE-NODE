@@ -2,3 +2,4 @@ select icu.hadm_id {admission_id_alias}, {attributes}, v.charttime {time_alias}
 from mimiciv_derived.vitalsign as v
 inner join mimiciv_icu.icustays as icu
  on icu.stay_id = v.stay_id
+where icu.hadm_id is not null

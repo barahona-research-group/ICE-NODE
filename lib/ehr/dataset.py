@@ -7,7 +7,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, Any
+from typing import Dict, Optional, Union, Tuple, List, Any, Literal
 
 import equinox as eqx
 import numpy as np
@@ -54,7 +54,17 @@ class TimestampedTableConfig(TableConfig):
 
 
 class TimestampedMultiColumnTableConfig(TimestampedTableConfig):
-    attributes: Tuple[str] = field(kw_only=True)
+    attributes: Tuple[str, ...] = field(kw_only=True)
+    type_hint: Tuple[Literal['N', 'C', 'B', 'O'], ...] = field(kw_only=True, default=None)
+    default_type_hint: Literal['N', 'C', 'B', 'O'] = 'N'
+
+    def __post_init__(self):
+        if self.type_hint is None:
+            self.type_hint = (self.default_type_hint,) * len(self.attributes)
+        assert len(self.attributes) == len(self.type_hint), \
+            f"Length of attributes and type_hint must be the same. Got {len(self.attributes)} and {len(self.type_hint)}."
+        assert all(t in ('N', 'C', 'B', 'O') for t in self.type_hint), \
+            f"Type hint must be one of 'N', 'C', 'B', 'O'. Got {self.type_hint}."
 
 
 class CodedTableConfig(TableConfig):

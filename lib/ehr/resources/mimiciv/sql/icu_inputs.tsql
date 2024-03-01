@@ -13,3 +13,4 @@ inner join mimiciv_icu.inputevents inp
     on i.stay_id = inp.stay_id
 inner join mimiciv_icu.d_items di
     on inp.itemid = di.itemid
+where a.hadm_id is not null

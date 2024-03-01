@@ -6,7 +6,7 @@ import warnings
 from collections import defaultdict
 from dataclasses import field
 from functools import cached_property
-from typing import Dict, List, Optional, Iterable, Tuple
+from typing import Dict, List, Optional, Iterable, Tuple, Literal
 
 import pandas as pd
 import sqlalchemy
@@ -22,6 +22,7 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              DatasetTables, DatasetConfig, DatasetSchemeConfig, Dataset, AbstractDatasetPipelineConfig)
 from lib.ehr.example_schemes.icd import ICDScheme
 from lib.ehr.pipeline import SECONDS_TO_HOURS_SCALER
+from lib.utils import tqdm_constructor
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -119,7 +120,15 @@ class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
 
 class ObservableMIMICScheme(FlatScheme):
     # TODO: Document this class.
-    type_hint: Dict[str, str] = field(kw_only=True)
+    type_hint: Dict[str, Literal['B', 'N', 'O', 'C']] = field(kw_only=True)
+
+    def __init__(self, type_hint: Dict[str, Literal['B', 'N', 'O', 'C']], *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.type_hint = type_hint
+        assert set(self.codes) == set(self.type_hint.keys()), \
+            f"The set of codes ({self.codes}) does not match the set of type hints ({self.type_hint.keys()})."
+        assert set(self.type_hint.values()) <= {'B', 'N', 'O', 'C'}, \
+            f"The set of type hints ({self.type_hint.values()}) contains invalid values."
 
     @classmethod
     def from_selection(cls, name: str, obs_variables: pd.DataFrame):
@@ -421,39 +430,37 @@ class ObservablesSQLTable(SQLTable):
             dfs.append(self.melted_table(engine, table_name, attr2code))
         return pd.concat(dfs, ignore_index=True)
 
-    def _time_stat(self, code_table: pd.DataFrame) -> Optional[pd.Series]:
+    def _time_stat(self, code_table: pd.DataFrame) -> pd.Series:
         c_admission_id = self.config.admission_id_alias
         c_time = self.config.time_alias
-
-        time_deltas: List[pd.Series] = []
-        for _, group in code_table.groupby(c_admission_id):
-            timestamps = group[c_time].sort_values()
-            if len(timestamps) > 1:
-                time_deltas.append(timestamps.diff()[1:].dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
-        if len(time_deltas) == 0:
-            return None
-        time_deltas_series: pd.Series = pd.concat(time_deltas)
-        time_deltas_stats: pd.Series = time_deltas_series.describe()
+        timestamps = code_table[[c_admission_id, c_time]].sort_values([c_admission_id, c_time])
+        time_deltas = (timestamps[c_time].diff().dt.total_seconds() * SECONDS_TO_HOURS_SCALER).iloc[1:]
+        in_admission = pd.Series(timestamps[c_admission_id] == timestamps[c_admission_id].shift()).iloc[1:]
+        time_deltas_stats = time_deltas[in_admission].describe()
         return time_deltas_stats.rename(index={k: f'time_delta_{k}' for k in time_deltas_stats.index})
+
+    def _stats(self, code: str, code_table: pd.DataFrame) -> pd.DataFrame:
+        values = code_table[self.config.value_alias]
+        stats = values.describe()
+        stats['nunique'] = values.nunique()
+        time_stats = self._time_stat(code_table)
+        stats = pd.concat([stats, time_stats])
+        stats = stats.to_frame().T
+        stats[self.config.code_alias] = code
+
+        return stats.set_index(self.config.code_alias)
+
+    def gen_melted_tables(self, engine: Engine, obs_scheme: ObservableMIMICScheme):
+        for table_name, attrs_df in tqdm_constructor(obs_scheme.as_dataframe().groupby('table_name'), leave=False):
+            attr2code = attrs_df.set_index('attribute')['code'].to_dict()
+            yield self.melted_table(engine, table_name, attr2code)
 
     def stats(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         dfs = []
-        for table_name, attrs_df in obs_scheme.as_dataframe().groupby('table_name'):
-            attr2code = attrs_df.set_index('attribute')['code'].to_dict()
-            table = self.melted_table(engine, table_name, attr2code)
+        for table in self.gen_melted_tables(engine, obs_scheme):
             for code, code_table in table.groupby(self.config.code_alias):
-                stats = code_table[self.config.value_alias].describe()
-                stats = stats.rename({k: f'{code}_{k}' for k in stats.index})
-                stats[f'{code}_nunique'] = code_table[self.config.value_alias].nunique()
-
-                stats = stats.to_frame().T
-                stats[self.config.code_alias] = code
-                stats = stats.set_index(self.config.code_alias)
-                time_stats = self._time_stat(code_table)
-                if time_stats is not None:
-                    stats = pd.concat([stats, time_stats], axis=1)
-                dfs.append(stats)
-        return pd.concat(dfs)
+                dfs.append(self._stats(code, code_table))
+        return pd.concat(dfs, axis=0)
 
     def space(self, engine: Engine) -> pd.DataFrame:
         df_list = [self.table_interface(c.name).space(engine) for c in self.config.components]
@@ -564,14 +571,25 @@ class TimestampedMultiColumnSQLTable(SQLTable):
 
     config: AdmissionTimestampedMultiColumnSQLTableConfig
 
+    def _coerce_value_to_real(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Some of the values in the `value_alias` column are stored as strings.
+        """
+        types = {k: float for k in self.config.attributes if k in df.columns
+                          and not pd.api.types.is_float_dtype(df.dtypes[k])}
+        return df.astype(types)
+
+    def process_table_types(self, table):
+        return self._coerce_value_to_real(self._coerce_code_to_str(self._coerce_id_to_str(table)))
+
     def __call__(self, engine: Engine, attributes: List[str]) -> pd.DataFrame:
         assert len(set(attributes)) == len(attributes), f"Duplicate attributes {attributes}"
         assert all(a in self.config.attributes for a in attributes), \
             f"Some attributes {attributes} not in {self.config.attributes}"
         query = self.config.query.format(attributes=','.join(attributes),
                                          **self.config.alias_dict)
-        return self._coerce_id_to_str(pd.read_sql(query, engine,
-                                                  coerce_float=False))
+        return self.process_table_types(pd.read_sql(query, engine,
+                                                    coerce_float=False))
 
     def space(self, engine: Engine):
         space = pd.DataFrame([(self.config.name, a) for a in self.config.attributes],
@@ -947,6 +965,10 @@ class MIMICIVSQLTablesInterface(Module):
         table = StaticSQLTable(self.config.static)
         return table.ethnicity_space(self.create_engine())
 
+    def obs_stats(self, scheme: ObservableMIMICScheme) -> pd.DataFrame:
+        table = ObservablesSQLTable(self.config.obs)
+        return table.stats(self.create_engine(), scheme)
+
     @cached_property
     def supported_obs_variables(self) -> pd.DataFrame:
         table = ObservablesSQLTable(self.config.obs)
@@ -1113,7 +1135,6 @@ ADMISSIONS_CONF = AdmissionSQLTableConfig(query_template="mimiciv/sql/admissions
 STATIC_CONF = StaticSQLTableConfig(query_template="mimiciv/sql/static.tsql",
                                    gender_space_query_template="mimiciv/sql/static_gender_space.tsql",
                                    race_space_query_template="mimiciv/sql/static_race_space.tsql")
-
 DX_DISCHARGE_CONF = AdmissionMixedICDSQLTableConfig(query_template="mimiciv/sql/dx_discharge.tsql",
                                                     space_query_template="mimiciv/sql/dx_discharge_space.tsql")
 

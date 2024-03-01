@@ -10,3 +10,4 @@ INNER JOIN mimiciv_hosp.d_icd_procedures di
   AND pi.icd_code = di.icd_code
 INNER JOIN mimiciv_hosp.admissions a
   ON pi.hadm_id = a.hadm_id
+WHERE a.hadm_id IS NOT NULL

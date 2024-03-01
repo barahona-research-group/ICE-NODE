@@ -10,3 +10,4 @@ inner join mimiciv_icu.procedureevents pe
     on i.stay_id = pe.stay_id
 inner join mimiciv_icu.d_items di
     on pe.itemid = di.itemid
+where a.hadm_id is not null
