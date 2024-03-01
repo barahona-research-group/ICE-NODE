@@ -245,14 +245,17 @@ class InpatientObservables(Data):
 
         return InpatientObservables(time, value, mask)
 
-    def time_binning(self, hours: float) -> InpatientObservables:
+    def time_binning(self, hours: float,
+                     binary_indices: Optional[List[int]]=None) -> InpatientObservables:
         """
         Bin the time-series into time-windows of length `hours`.
-        The values are averaged in each window and assigned to the
-        end of the window.
+        The values are aggregated in each window and assigned to the
+        end of the window. Aggregation by default is `mean`, except for observables at binary_indices,
+        where the aggregation is `any`.
 
         Args:
             hours (float): length of the time-windows in hours.
+            binary_indices (Optional[List[int]]): list of indices of binary variables.
 
         Returns:
             InpatientObservables: A new instance of InpatientObservables

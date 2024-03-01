@@ -21,6 +21,7 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
                              DatasetTables, DatasetConfig, DatasetSchemeConfig, Dataset, AbstractDatasetPipelineConfig)
 from lib.ehr.example_schemes.icd import ICDScheme
+from lib.ehr.pipeline import SECONDS_TO_HOURS_SCALER
 
 warnings.filterwarnings('error',
                         category=RuntimeWarning,
@@ -118,6 +119,7 @@ class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
 
 class ObservableMIMICScheme(FlatScheme):
     # TODO: Document this class.
+    type_hint: Dict[str, str] = field(kw_only=True)
 
     @classmethod
     def from_selection(cls, name: str, obs_variables: pd.DataFrame):
@@ -131,6 +133,8 @@ class ObservableMIMICScheme(FlatScheme):
                 The DataFrame should have the following columns:
                     - table_name (index): The name of the table containing the variable.
                     - attribute: The name of the variable.
+                    - type_hint: The type of the variable. 'B' for boolean, 'N' for numeric, 'O' for ordinal,
+                        'C' for categorical.
 
         Returns:
             (CodingScheme.FlatScheme) A new scheme containing the variables in obs_variables.
@@ -138,14 +142,15 @@ class ObservableMIMICScheme(FlatScheme):
         # format codes to be of the form 'table_name.attribute'
         codes = (obs_variables.index + '.' + obs_variables['attribute']).tolist()
         desc = dict(zip(codes, codes))
-
-        return cls(CodingSchemeConfig(name),
+        type_hint = dict(zip(codes, obs_variables['type_hint'].tolist()))
+        return cls(config=CodingSchemeConfig(name),
                    codes=codes,
-                   desc=desc)
+                   desc=desc,
+                   type_hint=type_hint)
 
     def as_dataframe(self):
-        columns = ['code', 'desc', 'code_index', 'table_name', 'attribute']
-        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split('.')) for c in self.codes],
+        columns = ['code', 'desc', 'type_hint', 'code_index', 'table_name', 'attribute']
+        return pd.DataFrame([(c, self.desc[c], self.type_hint[c], self.index[c], *c.split('.')) for c in self.codes],
                             columns=columns)
 
 
@@ -392,29 +397,63 @@ class ObservablesSQLTable(SQLTable):
 
     config: AdmissionTimestampedCodedValueSQLTableConfig
 
+    def melted_table(self, engine: Engine, table_name: str, attribute2code: Dict[str, str]) -> pd.DataFrame:
+        c_code = self.config.code_alias
+        c_value = self.config.value_alias
+        attributes = list(attribute2code.keys())
+        # download the table.
+        table = self.table_interface(str(table_name))
+        obs_df = table(engine, attributes)
+        # melt the table. (admission_id, time, attribute, value)
+        melted_obs_df = obs_df.melt(id_vars=[table.config.admission_id_alias, table.config.time_alias],
+                                    var_name='attribute', value_name=c_value, value_vars=attributes)
+        # add the code. (admission_id, time, attribute, value, code)
+        melted_obs_df[c_code] = melted_obs_df['attribute'].map(attribute2code)
+        melted_obs_df = melted_obs_df[melted_obs_df.value.notnull()]
+        # drop the attribute. (admission_id, time, value, code)
+        return melted_obs_df.drop('attribute', axis=1)
+
     def __call__(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
         # TODO: test this method with a mock engine.
         dfs = []
-        c_code = self.config.code_alias
-        c_value = self.config.value_alias
-
         for table_name, attrs_df in obs_scheme.as_dataframe().groupby('table_name'):
-            attributes = attrs_df['attribute'].tolist()
             attr2code = attrs_df.set_index('attribute')['code'].to_dict()
-            # download the table.
-            table = self.table_interface(str(table_name))
-            obs_df = table(engine, attributes)
-            # melt the table. (admission_id, time, attribute, value)
-            melted_obs_df = obs_df.melt(id_vars=[table.config.admission_id_alias, table.config.time_alias],
-                                        var_name='attribute', value_name=c_value, value_vars=attributes)
-            # add the code. (admission_id, time, attribute, value, code)
-            melted_obs_df[c_code] = melted_obs_df['attribute'].map(attr2code)
-            melted_obs_df = melted_obs_df[melted_obs_df.value.notnull()]
-            # drop the attribute. (admission_id, time, value, code)
-            melted_obs_df = melted_obs_df.drop('attribute', axis=1)
-            dfs.append(melted_obs_df)
-
+            dfs.append(self.melted_table(engine, table_name, attr2code))
         return pd.concat(dfs, ignore_index=True)
+
+    def _time_stat(self, code_table: pd.DataFrame) -> Optional[pd.Series]:
+        c_admission_id = self.config.admission_id_alias
+        c_time = self.config.time_alias
+
+        time_deltas: List[pd.Series] = []
+        for _, group in code_table.groupby(c_admission_id):
+            timestamps = group[c_time].sort_values()
+            if len(timestamps) > 1:
+                time_deltas.append(timestamps.diff()[1:].dt.total_seconds() * SECONDS_TO_HOURS_SCALER)
+        if len(time_deltas) == 0:
+            return None
+        time_deltas_series: pd.Series = pd.concat(time_deltas)
+        time_deltas_stats: pd.Series = time_deltas_series.describe()
+        return time_deltas_stats.rename(index={k: f'time_delta_{k}' for k in time_deltas_stats.index})
+
+    def stats(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
+        dfs = []
+        for table_name, attrs_df in obs_scheme.as_dataframe().groupby('table_name'):
+            attr2code = attrs_df.set_index('attribute')['code'].to_dict()
+            table = self.melted_table(engine, table_name, attr2code)
+            for code, code_table in table.groupby(self.config.code_alias):
+                stats = code_table[self.config.value_alias].describe()
+                stats = stats.rename({k: f'{code}_{k}' for k in stats.index})
+                stats[f'{code}_nunique'] = code_table[self.config.value_alias].nunique()
+
+                stats = stats.to_frame().T
+                stats[self.config.code_alias] = code
+                stats = stats.set_index(self.config.code_alias)
+                time_stats = self._time_stat(code_table)
+                if time_stats is not None:
+                    stats = pd.concat([stats, time_stats], axis=1)
+                dfs.append(stats)
+        return pd.concat(dfs)
 
     def space(self, engine: Engine) -> pd.DataFrame:
         df_list = [self.table_interface(c.name).space(engine) for c in self.config.components]
@@ -1013,7 +1052,6 @@ class MIMICIVSQLTablesInterface(Module):
         else:
             obs = None
 
-
         static = self._extract_static_table(self.create_engine())
         admissions = self._extract_admissions_table(self.create_engine())
         dx_discharge = self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.dx_discharge)
@@ -1094,19 +1132,19 @@ RENAL_AKI_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
 SOFA_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="sofa",
                                                           attributes=["sofa_24hours"],
                                                           query_template="mimiciv/sql/sofa.tsql")
-
+BLOOD_GAS_ATTRIBUTES = ['so2', 'po2', 'pco2', 'fio2',
+                        'fio2_chartevents',
+                        'aado2', 'aado2_calc',
+                        'pao2fio2ratio', 'ph',
+                        'baseexcess', 'bicarbonate', 'totalco2',
+                        'hematocrit',
+                        'hemoglobin',
+                        'carboxyhemoglobin', 'methemoglobin',
+                        'chloride', 'calcium', 'temperature',
+                        'potassium',
+                        'sodium', 'lactate', 'glucose']
 BLOOD_GAS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_gas",
-                                                               attributes=['so2', 'po2', 'pco2', 'fio2',
-                                                                           'fio2_chartevents',
-                                                                           'aado2', 'aado2_calc',
-                                                                           'pao2fio2ratio', 'ph',
-                                                                           'baseexcess', 'bicarbonate', 'totalco2',
-                                                                           'hematocrit',
-                                                                           'hemoglobin',
-                                                                           'carboxyhemoglobin', 'methemoglobin',
-                                                                           'chloride', 'calcium', 'temperature',
-                                                                           'potassium',
-                                                                           'sodium', 'lactate', 'glucose'],
+                                                               attributes=BLOOD_GAS_ATTRIBUTES,
                                                                query_template="mimiciv/sql/blood_gas.tsql")
 
 BLOOD_CHEMISTRY_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_chemistry",
@@ -1163,28 +1201,29 @@ COAGULATION_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="coagulati
                                                                              'fibrinogen', 'thrombin'],
                                                                  query_template="mimiciv/sql/coagulation.tsql")
 # Blood differential
+BLOOD_DIFF_ATTRIBUTES = ['neutrophils', 'lymphocytes',
+                         'monocytes',
+                         'eosinophils', 'basophils',
+                         'atypical_lymphocytes',
+                         'bands', 'immature_granulocytes',
+                         'metamyelocytes',
+                         'nrbc',
+                         'basophils_abs', 'eosinophils_abs',
+                         'lymphocytes_abs',
+                         'monocytes_abs', 'neutrophils_abs']
 BLOOD_DIFF_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="blood_diff",
-                                                                attributes=['neutrophils', 'lymphocytes',
-                                                                            'monocytes',
-                                                                            'eosinophils', 'basophils',
-                                                                            'atypical_lymphocytes',
-                                                                            'bands', 'immature_granulocytes',
-                                                                            'metamyelocytes',
-                                                                            'nrbc',
-                                                                            'basophils_abs', 'eosinophils_abs',
-                                                                            'lymphocytes_abs',
-                                                                            'monocytes_abs', 'neutrophils_abs'],
+                                                                attributes=BLOOD_DIFF_ATTRIBUTES,
                                                                 query_template="mimiciv/sql/blood_diff.tsql")
-
+ENZYMES_ATTRIBUTES = ['ast', 'alt', 'alp', 'ld_ldh', 'ck_cpk',
+                      'ck_mb',
+                      'amylase', 'ggt', 'bilirubin_direct',
+                      'bilirubin_total', 'bilirubin_indirect']
 # Enzymes
 ENZYMES_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="enzymes",
-                                                             attributes=['ast', 'alt', 'alp', 'ld_ldh', 'ck_cpk',
-                                                                         'ck_mb',
-                                                                         'amylase', 'ggt', 'bilirubin_direct',
-                                                                         'bilirubin_total', 'bilirubin_indirect'],
+                                                             attributes=ENZYMES_ATTRIBUTES,
                                                              query_template="mimiciv/sql/enzymes.tsql")
 
-OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
+OBS_COMPONENTS = [
     RENAL_OUT_CONF,
     RENAL_CREAT_CONF,
     RENAL_AKI_CONF,
@@ -1201,7 +1240,8 @@ OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=[
     COAGULATION_CONF,
     BLOOD_DIFF_CONF,
     ENZYMES_CONF
-])
+]
+OBS_TABLE_CONFIG = AdmissionTimestampedCodedValueSQLTableConfig(components=OBS_COMPONENTS)
 
 ICU_INPUTS_CONF = RatedInputSQLTableConfig(query_template="mimiciv/sql/icu_inputs.tsql",
                                            space_query_template="mimiciv/sql/icu_inputs_space.tsql")

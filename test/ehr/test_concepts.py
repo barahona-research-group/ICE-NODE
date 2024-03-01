@@ -357,7 +357,9 @@ class TestInpatientObservables:
         assert all(seg[i].time.max() <= sep[i] for i in range(len(sep)) if len(seg[i]) > 0)
         assert all(seg[i + 1].time.min() >= sep[i] for i in range(len(sep)) if len(seg[i + 1]) > 0)
 
-    def test_time_binning(self):
+
+    @pytest.mark.parametrize("hours", [1.0, 2.0, 3.0])
+    def test_time_binning(self, hours: float):
         pass
 
 
