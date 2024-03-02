@@ -475,6 +475,14 @@ class ObservablesSQLTable(SQLTable):
         supported_space = self.space(engine)
         if attributes_selection is None:
             attributes_selection = supported_space
+        else:
+            if attributes_selection.index.name != 'table_name':
+                attributes_selection = attributes_selection.set_index('table_name', drop=True)
+            if 'type' not in attributes_selection.columns:
+                attributes_selection = pd.merge(attributes_selection, supported_space,
+                                                left_on=['table_name', 'attribute'],
+                                                right_on=['table_name', 'attribute'],
+                                                how='inner')
 
         scheme = ObservableMIMICScheme.from_selection(name, attributes_selection)
         FlatScheme.register_scheme(scheme)
@@ -576,7 +584,7 @@ class TimestampedMultiColumnSQLTable(SQLTable):
         Some of the values in the `value_alias` column are stored as strings.
         """
         types = {k: float for k in self.config.attributes if k in df.columns
-                          and not pd.api.types.is_float_dtype(df.dtypes[k])}
+                 and not pd.api.types.is_float_dtype(df.dtypes[k])}
         return df.astype(types)
 
     def process_table_types(self, table):
@@ -592,8 +600,9 @@ class TimestampedMultiColumnSQLTable(SQLTable):
                                                     coerce_float=False))
 
     def space(self, engine: Engine):
-        space = pd.DataFrame([(self.config.name, a) for a in self.config.attributes],
-                             columns=['table_name', 'attribute'])
+        space = pd.DataFrame(
+            [(self.config.name, a, self.config.type_hint[i]) for i, a in enumerate(self.config.attributes)],
+            columns=['table_name', 'attribute', 'type_hint'])
         return space.set_index('table_name', drop=True).sort_values('attribute').sort_index()
 
 
@@ -1148,11 +1157,13 @@ RENAL_CREAT_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_cre
 
 RENAL_AKI_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="renal_aki",
                                                                attributes=['aki_stage_smoothed', 'aki_binary'],
-                                                               query_template="mimiciv/sql/renal_aki.tsql")
+                                                               query_template="mimiciv/sql/renal_aki.tsql",
+                                                               type_hint=('O', 'B'))  # Ordinal, Binary.
 
 SOFA_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="sofa",
                                                           attributes=["sofa_24hours"],
-                                                          query_template="mimiciv/sql/sofa.tsql")
+                                                          query_template="mimiciv/sql/sofa.tsql",
+                                                          default_type_hint='O')  # Ordinal.
 BLOOD_GAS_ATTRIBUTES = ['so2', 'po2', 'pco2', 'fio2',
                         'fio2_chartevents',
                         'aado2', 'aado2_calc',
@@ -1204,7 +1215,8 @@ VITAL_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="vital",
 GCS_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="gcs",
                                                          attributes=['gcs', 'gcs_motor', 'gcs_verbal', 'gcs_eyes',
                                                                      'gcs_unable'],
-                                                         query_template="mimiciv/sql/gcs.tsql")
+                                                         query_template="mimiciv/sql/gcs.tsql",
+                                                         default_type_hint='O')  # Ordinal.
 
 # Intracranial pressure
 ICP_CONF = AdmissionTimestampedMultiColumnSQLTableConfig(name="icp",
