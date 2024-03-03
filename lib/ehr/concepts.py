@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from datetime import date
 from functools import cached_property
 from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, Any, ClassVar)
@@ -12,7 +13,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor)
+from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor, NumericalTypeHint)
 from ..base import Config, Data, Module
 
 Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
@@ -245,8 +246,42 @@ class InpatientObservables(Data):
 
         return InpatientObservables(time, value, mask)
 
-    def time_binning(self, hours: float,
-                     binary_indices: Optional[List[int]]=None) -> InpatientObservables:
+    @cached_property
+    def type_hint_aggregator(self) -> Dict[NumericalTypeHint, Callable]:
+        """
+        Returns the type hint aggregator based on the type hints of the observables.
+
+        Returns:
+            Dict[NumericalTypeHint, Callable]: the type hint aggregator.
+        """
+        return {
+            'B': lambda x: np.any(x) * 1.0,
+            'O': lambda x: np.quantile(a=x, q=0.5, interpolation='higher'),
+            # Most frequent value (mode) for categorical.
+            'C': statistics.mode,
+            'N': np.mean
+        }
+
+    def _time_binning_aggregate(self, x: Array, mask: npt.NDArray[bool],
+                                type_hint: npt.NDArray[NumericalTypeHint]) -> Array:
+        """
+        Aggregates the values in a given array based on the type hint.
+
+        Args:
+            x (Array): The input array.
+            type_hint (npt.NDArray[NumericalTypeHint]): The type hint.
+
+        Returns:
+            Array: The aggregated array.
+        """
+        assert x.ndim == 2 and mask.ndim == 2, f"Expected x, mask to be 2D, got ({x.ndim}, {mask.ndim})"
+        assert x.shape == mask.shape, f"Expected x.shape to be {mask.shape}, got {x.shape}"
+        assert x.shape[1] == len(type_hint), f"Expected x.shape[1] to be {len(type_hint)}, got {x.shape[1]}"
+        type_hint_aggregator = self.type_hint_aggregator
+        return np.array([type_hint_aggregator[ti](xi[mi]) if mi.sum() > 0 else np.nan
+                         for xi, mi, ti in zip(x.T, mask.T, type_hint)])
+
+    def time_binning(self, hours: float, type_hint: npt.NDArray[NumericalTypeHint]) -> InpatientObservables:
         """
         Bin the time-series into time-windows of length `hours`.
         The values are aggregated in each window and assigned to the
@@ -255,8 +290,8 @@ class InpatientObservables(Data):
 
         Args:
             hours (float): length of the time-windows in hours.
-            binary_indices (Optional[List[int]]): list of indices of binary variables.
-
+            type_hint (npt.NDArray[NumericalTypeHint]): type hints for the observables vector as
+                (B) binary, (O) ordinal, (C) categorical, or (N) numerical.
         Returns:
             InpatientObservables: A new instance of InpatientObservables
                 with the time-series binned according to the specified
@@ -266,15 +301,13 @@ class InpatientObservables(Data):
         if len(self) == 0:
             return self
 
-        obs_value = np.where(self.mask, self.value, np.nan)
         last_ts = (int(self.time[-1] / hours) + 1) * hours
         new_time = np.arange(0, last_ts + hours, hours) * 1.0
         values = []
         masks = []
         for ti, tf in zip(new_time[:-1], new_time[1:]):
-            mask = (ti <= self.time) & (self.time < tf)
-            value = obs_value[mask]
-            value = np.nanmean(value, axis=0)
+            time_mask = (ti <= self.time) & (self.time < tf)
+            value = self._time_binning_aggregate(self.value[time_mask], self.mask[time_mask], type_hint)
             mask = np.where(np.isnan(value), False, True)
             values.append(value)
             masks.append(mask)
@@ -315,6 +348,7 @@ class LeadingObservableExtractorConfig(Config):
             x <= y for x, y in zip(self.leading_hours[:-1], self.leading_hours[1:])
         ), f"leading_hours must be sorted"
         self.leading_hours = list(self.leading_hours)
+
 
 
 class LeadingObservableExtractor(Module):

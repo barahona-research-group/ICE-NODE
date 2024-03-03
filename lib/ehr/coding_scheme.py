@@ -10,7 +10,7 @@ from abc import abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from functools import cached_property
 from threading import Lock
-from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple, Any
+from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple, Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -18,6 +18,8 @@ import pandas as pd
 
 from ..base import Config, Module, Data
 from ..utils import load_config
+
+NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, Categorical
 
 
 def resources_dir(*subdir) -> str:
@@ -478,6 +480,38 @@ class FlatScheme(CodingScheme):
     @property
     def index2desc(self):
         return self._index2desc
+
+
+class NumericScheme(FlatScheme):
+    """
+    NumericScheme is a subclass of FlatScheme that represents a numerical coding scheme.
+    Additional to `FlatScheme` attributes, it contains the following attributes to represent the coding scheme:
+    - type_hint: Dict mapping codes to their type hint (B: binary, N: numerical, O: ordinal, C: categorical)
+    """
+
+    type_hint: Dict[str, NumericalTypeHint]
+    default_type_hint: Literal['N', 'C', 'B', 'O'] = 'N'
+
+    def __init__(self, type_hint: Optional[Dict[str, NumericalTypeHint]],
+                 default_type_hint: NumericalTypeHint = 'N',
+                 *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if type_hint is None:
+            type_hint = {code: default_type_hint for code in self.codes}
+        self.type_hint = type_hint
+        assert set(self.codes) == set(self.type_hint.keys()), \
+            f"The set of codes ({self.codes}) does not match the set of type hints ({self.type_hint.keys()})."
+        assert set(self.type_hint.values()) <= {'B', 'N', 'O', 'C'}, \
+            f"The set of type hints ({self.type_hint.values()}) contains invalid values."
+
+    @cached_property
+    def type_array(self) -> npt.NDArray[NumericalTypeHint]:
+        """
+        Returns the type hint of the codes in the scheme as a numpy array.
+        """
+        assert set(self.index[c] for c in self.codes) == set(range(len(self))), \
+            f"The order of codes ({self.codes}) does not match the order of type hints ({self.type_hint.keys()})."
+        return np.array([self.type_hint[code] for code in self.codes])
 
 
 class BinaryCodesVector(CodesVector):

@@ -7,13 +7,13 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, Any, Literal
+from typing import Dict, Optional, Union, Tuple, List, Any
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from .coding_scheme import (CodingScheme, OutcomeExtractor, FileBasedOutcomeExtractor)
+from .coding_scheme import (CodingScheme, OutcomeExtractor, FileBasedOutcomeExtractor, NumericalTypeHint)
 from .concepts import (DemographicVectorConfig)
 from ..base import Config, Module, Data
 from ..utils import write_config, load_config
@@ -55,8 +55,8 @@ class TimestampedTableConfig(TableConfig):
 
 class TimestampedMultiColumnTableConfig(TimestampedTableConfig):
     attributes: Tuple[str, ...] = field(kw_only=True)
-    type_hint: Tuple[Literal['N', 'C', 'B', 'O'], ...] = field(kw_only=True, default=None)
-    default_type_hint: Literal['N', 'C', 'B', 'O'] = 'N'
+    type_hint: Tuple[NumericalTypeHint, ...] = field(kw_only=True, default=None)
+    default_type_hint: NumericalTypeHint = 'N'
 
     def __post_init__(self):
         if self.type_hint is None:

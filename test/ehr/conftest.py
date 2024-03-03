@@ -8,7 +8,7 @@ import pytest
 
 from lib.ehr import CodingScheme, FlatScheme, \
     CodingSchemeConfig, OutcomeExtractor
-from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutcomeExtractor
+from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutcomeExtractor, NumericScheme
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
@@ -414,9 +414,16 @@ def icu_inputs_scheme(request) -> str:
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('observation1', ['O1', 'O2', 'O3'])])
+@pytest.fixture(scope=DATASET_SCOPE, params=[('observation1',
+                                              ('O1', 'O2', 'O3', 'O4', 'O5'),
+                                              ('B', 'C', 'O', 'N', 'N'))])
 def observation_scheme(request) -> str:
-    return scheme(*request.param)
+    name, codes, types = request.param
+    CodingScheme.register_scheme(NumericScheme(config=CodingSchemeConfig(name),
+                                               codes=codes,
+                                               desc=dict(zip(codes, codes)),
+                                               type_hint=dict(zip(codes, types))))
+    return name
 
 
 @pytest.fixture(scope=DATASET_SCOPE)

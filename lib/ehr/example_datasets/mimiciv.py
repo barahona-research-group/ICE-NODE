@@ -13,7 +13,8 @@ import sqlalchemy
 from sqlalchemy import Engine
 
 from lib.base import Module, Config
-from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodeMapConfig)
+from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodeMapConfig,
+                                   NumericScheme)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
@@ -118,18 +119,7 @@ class RatedInputSQLTableConfig(CodedSQLTableConfig, RatedInputTableConfig):
     derived_normalized_amount_per_hour: str = 'derived_normalized_amount_per_hour'
 
 
-class ObservableMIMICScheme(FlatScheme):
-    # TODO: Document this class.
-    type_hint: Dict[str, Literal['B', 'N', 'O', 'C']] = field(kw_only=True)
-
-    def __init__(self, type_hint: Dict[str, Literal['B', 'N', 'O', 'C']], *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.type_hint = type_hint
-        assert set(self.codes) == set(self.type_hint.keys()), \
-            f"The set of codes ({self.codes}) does not match the set of type hints ({self.type_hint.keys()})."
-        assert set(self.type_hint.values()) <= {'B', 'N', 'O', 'C'}, \
-            f"The set of type hints ({self.type_hint.values()}) contains invalid values."
-
+class ObservableMIMICScheme(NumericScheme):
     @classmethod
     def from_selection(cls, name: str, obs_variables: pd.DataFrame):
         # TODO: test this method.
