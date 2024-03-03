@@ -76,33 +76,33 @@ jobs:
       - name: "Combine"
         run: |
           python -m tox -e coverage
-          export TOTAL=$(python -c "import json;print(json.load(open('coverage.json'))['totals']['percent_covered_display'])")
-          echo "total=$TOTAL" >> $GITHUB_ENV
+          export TOTAL=$(python -c "import json;print(json.load(open('ehr_coverage.json'))['totals']['percent_covered_display'])")
+          echo "ehr_total=$TOTAL" >> $GITHUB_ENV
           echo "### Total coverage: ${TOTAL}%" >> $GITHUB_STEP_SUMMARY
 
-      - name: "Make badge: main"
+      - name: "Make badge: main - lib.ehr"
         uses: schneegans/dynamic-badges-action@v1.4.0
         if: github.ref == 'refs/heads/main'
         with:
           # GIST_TOKEN is a GitHub personal access token with scope "gist".
           auth: ${{ secrets.GIST_TOKEN }}
           gistID: 7c4939ecfd6b99a7b77dd1c4f789fd1b   # replace with your real Gist id.
-          filename: covbadge_main.json
+          filename: covbadge_main_ehr.json
           label: "cov:lib.ehr"
-          message: ${{ env.total }}%
+          message: ${{ env.ehr_total }}%
           minColorRange: 50
           maxColorRange: 90
           valColorRange: ${{ env.total }}
-      - name: "Make badge: dev"
+      - name: "Make badge: dev - lib.ehr"
         uses: schneegans/dynamic-badges-action@v1.4.0
         if: github.ref == 'refs/heads/dev'
         with:
           # GIST_TOKEN is a GitHub personal access token with scope "gist".
           auth: ${{ secrets.GIST_TOKEN }}
           gistID: f15bea7fb1837fba360e742b10244429   # replace with your real Gist id.
-          filename: covbadge_dev.json
+          filename: covbadge_dev_ehr.json
           label: "cov:lib.ehr"
-          message: ${{ env.total }}%
+          message: ${{ env.ehr_total }}%
           minColorRange: 50
           maxColorRange: 90
           valColorRange: ${{ env.total }}

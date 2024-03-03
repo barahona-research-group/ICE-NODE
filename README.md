@@ -2,10 +2,10 @@
 
 ##### Coverage
 
-| Branch | Coverage                                                                                                                                           |
-|--------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| main   | ![main_cov](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/A-Alaa/7c4939ecfd6b99a7b77dd1c4f789fd1b/raw/covbadge_main.json) |
-| dev    | ![dev_cov](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/A-Alaa/f15bea7fb1837fba360e742b10244429/raw/covbadge_dev.json)   |
+| Branch | Coverage                                                                                                                                                   |
+|--------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| main   | ![main_cov_ehr](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/A-Alaa/7c4939ecfd6b99a7b77dd1c4f789fd1b/raw/covbadge_main_ehr.json) |
+| dev    | ![dev_cov_ehr](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/A-Alaa/f15bea7fb1837fba360e742b10244429/raw/covbadge_dev_ehr.json)   |
 
 
 ## Citation
