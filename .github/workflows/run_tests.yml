@@ -50,9 +50,10 @@ jobs:
           name: covdata
           path: .coverage.*
 
-  coverage:
-    name: Coverage
+  coverage_main:
+    name: Coverage on main/dev
     needs: tests
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - name: "Check out the repo"
@@ -79,14 +80,28 @@ jobs:
           echo "total=$TOTAL" >> $GITHUB_ENV
           echo "### Total coverage: ${TOTAL}%" >> $GITHUB_STEP_SUMMARY
 
-      - name: "Make badge"
+      - name: "Make badge: main"
         uses: schneegans/dynamic-badges-action@v1.4.0
+        if: github.ref == 'refs/heads/main'
         with:
           # GIST_TOKEN is a GitHub personal access token with scope "gist".
           auth: ${{ secrets.GIST_TOKEN }}
           gistID: 7c4939ecfd6b99a7b77dd1c4f789fd1b   # replace with your real Gist id.
-          filename: covbadge.json
-          label: Coverage
+          filename: covbadge_main.json
+          label: "cov:lib.ehr"
+          message: ${{ env.total }}%
+          minColorRange: 50
+          maxColorRange: 90
+          valColorRange: ${{ env.total }}
+      - name: "Make badge: dev"
+        uses: schneegans/dynamic-badges-action@v1.4.0
+        if: github.ref == 'refs/heads/dev'
+        with:
+          # GIST_TOKEN is a GitHub personal access token with scope "gist".
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: f15bea7fb1837fba360e742b10244429   # replace with your real Gist id.
+          filename: covbadge_dev.json
+          label: "cov:lib.ehr"
           message: ${{ env.total }}%
           minColorRange: 50
           maxColorRange: 90
