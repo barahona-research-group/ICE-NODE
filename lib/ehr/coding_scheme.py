@@ -1774,9 +1774,6 @@ class OutcomeExtractorConfig(CodingSchemeConfig):
 
 class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
     config: OutcomeExtractorConfig
-    # Possible Schemes, Lazy-loaded schemes.
-    _load_schemes: ClassVar[Dict[str, Callable]] = {}
-    _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
 
     @property
     @abstractmethod
@@ -1930,8 +1927,8 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         """
         return CodingScheme.from_name(self.specs['code_scheme'])
 
-    @classmethod
-    def register_outcome_extractor_loader(cls, name: str, spec_file: str):
+    @staticmethod
+    def register_outcome_extractor_loader(name: str, spec_file: str):
         """
         Registers an outcome extractor lazy loading routine.
 
@@ -1943,10 +1940,9 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
 
         def load():
             config = FileBasedOutcomeExtractorConfig(name=name, spec_file=spec_file)
-            cls.register_scheme(FileBasedOutcomeExtractor(config))
-
-        cls._spec_files[name] = spec_file
-        cls.register_scheme_loader(name, load)
+            CodingScheme.register_scheme(FileBasedOutcomeExtractor(config))
+        CodingScheme.register_scheme_loader(name, load)
+        FileBasedOutcomeExtractor._spec_files[name] = spec_file
 
     @staticmethod
     def spec_from_json(json_file: str):

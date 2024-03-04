@@ -340,7 +340,6 @@ class LeadingObservableExtractorConfig(Config):
     entry_neglect_window: float
     minimum_acquisitions: int  # minimum number of acquisitions to consider
     recovery_window: float = 0.0
-    aggregation: str = 'any'
 
     def __post_init__(self):
         # `leading_hours` must be sorted.
@@ -349,14 +348,51 @@ class LeadingObservableExtractorConfig(Config):
         ), f"leading_hours must be sorted"
         self.leading_hours = list(self.leading_hours)
 
-        scheme: NumericScheme = CodingScheme.from_name(self.scheme)
-        assert scheme.type_hint[scheme.codes[self.code_index]] in ('B', 'O'), (
+        assert self.type_hint in ('B', 'O'), (
             f"LeadingObservableExtractor only supports binary and ordinal observables, "
-            f"got {scheme.type_hint[scheme.codes[self.code_index]]}. Categorical and Numeric types "
+            f"got {self.type_hint}. Categorical and Numeric types "
             "would require custom aggregation function specific to the observation of interest,"
             "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
             "relevant to use max/min aggregation over numeric observables. Create a feature request "
             "if you need this feature.")
+
+    @cached_property
+    def scheme_object(self) -> NumericScheme:
+        """
+        Returns the scheme object based on the scheme name.
+
+        Returns:
+            NumericScheme: the scheme object.
+        """
+        scheme = CodingScheme.from_name(self.scheme)
+        assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
+        return scheme
+
+    @cached_property
+    def type_hint(self) -> NumericalTypeHint:
+        """
+        Returns the type hint for the observable.
+
+        Returns:
+            NumericalTypeHint: the type hint for the observable.
+        """
+        scheme = self.scheme_object
+        return scheme.type_hint[scheme.codes[self.code_index]]
+
+    @cached_property
+    def aggregation(self) -> str:
+        """
+        Returns the aggregation function based on the aggregation scheme.
+
+        Returns:
+            Callable: the aggregation function.
+        """
+        if self.type_hint == 'B':
+            return 'any'
+        elif self.type_hint == 'O':
+            return 'max'
+        else:
+            assert False, f"unsupported type hint {self.type_hint}"
 
 
 class LeadingObservableExtractor(Module):
