@@ -13,7 +13,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor, NumericalTypeHint)
+from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor, NumericalTypeHint, NumericScheme)
 from ..base import Config, Data, Module
 
 Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
@@ -349,6 +349,14 @@ class LeadingObservableExtractorConfig(Config):
         ), f"leading_hours must be sorted"
         self.leading_hours = list(self.leading_hours)
 
+        scheme: NumericScheme = CodingScheme.from_name(self.scheme)
+        assert scheme.type_hint[scheme.codes[self.code_index]] in ('B', 'O'), (
+            f"LeadingObservableExtractor only supports binary and ordinal observables, "
+            f"got {scheme.type_hint[scheme.codes[self.code_index]]}. Categorical and Numeric types "
+            "would require custom aggregation function specific to the observation of interest,"
+            "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
+            "relevant to use max/min aggregation over numeric observables. Create a feature request "
+            "if you need this feature.")
 
 
 class LeadingObservableExtractor(Module):

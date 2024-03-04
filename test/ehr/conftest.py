@@ -414,6 +414,12 @@ def icu_inputs_scheme(request) -> str:
     return scheme(*request.param)
 
 
+BINARY_OBSERVATION_CODE_INDEX = 0
+CATEGORICAL_OBSERVATION_CODE_INDEX = 1
+ORDINAL_OBSERVATION_CODE_INDEX = 2
+NUMERIC_OBSERVATION_CODE_INDEX = 3
+
+
 @pytest.fixture(scope=DATASET_SCOPE, params=[('observation1',
                                               ('O1', 'O2', 'O3', 'O4', 'O5'),
                                               ('B', 'C', 'O', 'N', 'N'))])

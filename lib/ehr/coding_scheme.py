@@ -117,67 +117,67 @@ class CodingScheme(Module):
     config: CodingSchemeConfig
     # Possible Schemes, Lazy-loaded schemes.
     _load_schemes: ClassVar[Dict[str, Callable]] = {}
-    _schemes: ClassVar[Dict[str, "CodingScheme"]] = {}
+    _schemes: ClassVar[Dict[str, Union["CodingScheme", Any]]] = {}
 
     # vector representation class
     vector_cls: ClassVar[Type[CodesVector]] = CodesVector
 
-    @classmethod
-    def from_name(cls, name: str) -> "CodingScheme":
-        if name in cls._schemes:
-            return cls._schemes[name]
+    @staticmethod
+    def from_name(name: str) -> CodingScheme:
+        if name in CodingScheme._schemes:
+            return CodingScheme._schemes[name]
 
-        if name in cls._load_schemes:
-            cls._load_schemes[name]()
+        if name in CodingScheme._load_schemes:
+            CodingScheme._load_schemes[name]()
 
-        return cls._schemes[name]
+        return CodingScheme._schemes[name]
 
-    @classmethod
-    def register_scheme(cls, scheme: CodingScheme) -> None:
+    @staticmethod
+    def register_scheme(scheme: CodingScheme) -> None:
         """
         Register a scheme in order to be retrieved by its name in `scheme.config.name` using the function `from_name`.
         """
-        assert scheme.name not in cls._schemes or scheme == cls._schemes[scheme.name], \
+        assert scheme.name not in CodingScheme._schemes or scheme == CodingScheme._schemes[scheme.name], \
             f"Scheme {scheme.name} already registered with mismatched content. Make sure to unregister schemes before" \
             "loading new ones with the same name."
 
-        if scheme.name in cls._schemes:
+        if scheme.name in CodingScheme._schemes:
             logging.warning(f"Scheme {scheme.name} already registered and matching content. Overwriting.")
 
-        cls._schemes[scheme.name] = scheme
+        CodingScheme._schemes[scheme.name] = scheme
 
-    @classmethod
-    def register_scheme_loader(cls, name: str, loader: Callable) -> None:
+    @staticmethod
+    def register_scheme_loader(name: str, loader: Callable) -> None:
         """
         Register a scheme loader for easy-loading of schemes in order to be retrieved by its name in `name`.
         """
 
-        if name in cls._load_schemes:
+        if name in CodingScheme._load_schemes:
             logging.warning(f"Scheme {name} already registered. Overwriting.")
 
-        cls._load_schemes[name] = loader
+        CodingScheme._load_schemes[name] = loader
 
-    @classmethod
-    def unregister_schemes(cls):
+    @staticmethod
+    def unregister_schemes():
         """
         Unregister all schemes.
         """
-        cls._schemes = {}
+        CodingScheme._schemes = {}
 
-    @classmethod
-    def unregister_scheme_loaders(cls):
+    @staticmethod
+    def unregister_scheme_loaders():
         """
         Unregister all scheme loaders.
         """
-        cls._load_schemes = {}
+        CodingScheme._load_schemes = {}
 
-    @classmethod
-    def deregister_scheme(cls, name: str):
+    @staticmethod
+    def deregister_scheme(name: str):
         """
         Deregister a scheme by its name.
         """
-        if name in cls._schemes:
-            del cls._schemes[name]
+        if name in CodingScheme._schemes:
+            del CodingScheme._schemes[name]
 
     def register_target_scheme(self,
                                target_name: Optional[str], map_table: pd.DataFrame,
@@ -221,12 +221,12 @@ class CodingScheme(Module):
         FlatScheme.register_scheme(scheme)
         return scheme
 
-    @classmethod
-    def available_schemes(cls) -> Set[str]:
+    @staticmethod
+    def available_schemes() -> Set[str]:
         """
         Get a list of all registered schemes.
         """
-        return set(cls._schemes.keys()) | set(cls._load_schemes.keys())
+        return set(CodingScheme._schemes.keys()) | set(CodingScheme._load_schemes.keys())
 
     @property
     @abstractmethod
@@ -1783,8 +1783,8 @@ class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
     def base_scheme(self) -> CodingScheme:
         pass
 
-    @classmethod
-    def from_name(cls, name):
+    @staticmethod
+    def from_name(name):
         """
         Creates an instance of the OutcomeExtractor class based on a given supported name.
 

@@ -13,6 +13,8 @@ from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                               InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                               SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
+from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
+    NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 
 
 @pytest.fixture
@@ -89,7 +91,6 @@ def hosp_proc_scheme_(hosp_proc_scheme: str) -> CodingScheme:
 
 
 LENGTH_OF_STAY = 10.0
-BINARY_OBSERVATION_CODE_INDEX = 0
 
 
 def _dx_codes(dx_scheme: CodingScheme):
@@ -212,8 +213,9 @@ def leading_observables_extractor(observation_scheme: str, leading_hours: List[f
                                   entry_neglect_window: float = 0.0,
                                   recovery_window: float = 0.0,
                                   minimum_acquisitions: int = 0,
+                                  code_index: int = BINARY_OBSERVATION_CODE_INDEX,
                                   aggregation: str = "any") -> LeadingObservableExtractor:
-    config = LeadingObservableExtractorConfig(code_index=BINARY_OBSERVATION_CODE_INDEX,
+    config = LeadingObservableExtractorConfig(code_index=code_index,
                                               scheme=observation_scheme,
                                               entry_neglect_window=entry_neglect_window,
                                               recovery_window=recovery_window,
@@ -357,7 +359,6 @@ class TestInpatientObservables:
         assert all(seg[i].time.max() <= sep[i] for i in range(len(sep)) if len(seg[i]) > 0)
         assert all(seg[i + 1].time.min() >= sep[i] for i in range(len(sep)) if len(seg[i + 1]) > 0)
 
-
     @pytest.mark.parametrize("hours", [1.0, 2.0, 3.0])
     def test_time_binning(self, hours: float):
         pass
@@ -383,11 +384,33 @@ class TestLeadingObservableExtractor:
             pytest.skip("Not enough leading hours to test")
 
         with pytest.raises(AssertionError):
+            # leading hours must be sorted
             leading_observables_extractor(observation_scheme=observation_scheme,
                                           leading_hours=list(reversed(leading_hours)),
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
                                           minimum_acquisitions=minimum_acquisitions,
+                                          code_index=BINARY_OBSERVATION_CODE_INDEX,
+                                          aggregation=aggregation)
+
+        with pytest.raises(AssertionError):
+            # categorical and numerical codes are not supported, yet.
+            leading_observables_extractor(observation_scheme=observation_scheme,
+                                          leading_hours=leading_hours,
+                                          entry_neglect_window=entry_neglect_window,
+                                          recovery_window=recovery_window,
+                                          minimum_acquisitions=minimum_acquisitions,
+                                          code_index=CATEGORICAL_OBSERVATION_CODE_INDEX,
+                                          aggregation=aggregation)
+
+        with pytest.raises(AssertionError):
+            # categorical and numerical codes are not supported, yet.
+            leading_observables_extractor(observation_scheme=observation_scheme,
+                                          leading_hours=leading_hours,
+                                          entry_neglect_window=entry_neglect_window,
+                                          recovery_window=recovery_window,
+                                          minimum_acquisitions=minimum_acquisitions,
+                                          code_index=NUMERIC_OBSERVATION_CODE_INDEX,
                                           aggregation=aggregation)
 
     def test_index2code(self):
@@ -400,9 +423,11 @@ class TestLeadingObservableExtractor:
         pass
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
-    def test_empty(self, observation_scheme: str, leading_hours: List[float]):
+    @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
+    def test_empty(self, observation_scheme: str, leading_hours: List[float], code_index: int):
         extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                  leading_hours=leading_hours)
+                                                  leading_hours=leading_hours,
+                                                  code_index=code_index)
         empty = extractor.empty()
         assert len(extractor) == len(leading_hours)
         assert empty.value.shape[1] == len(extractor)
@@ -519,9 +544,11 @@ class TestLeadingObservableExtractor:
                     mocker2.assert_called_once_with(t, entry_neglect_window)
                     mocker3.assert_called_once_with(t, x, recovery_window)
 
+    @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
     def test_extract_leading_window(self, inpatient_observables: InpatientObservables,
-                                    observation_scheme: str):
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme)
+                                    observation_scheme: str, code_index: int):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       code_index=code_index)
         x = inpatient_observables.value[:, lead_extractor.config.code_index]
         m = inpatient_observables.mask[:, lead_extractor.config.code_index]
         t = inpatient_observables.time
@@ -538,8 +565,12 @@ class TestLeadingObservableExtractor:
                 # if all are nan, then the lead is nan.
                 if np.isnan(xi).all():
                     assert np.isnan(yi)
-                else:
+                elif code_index == BINARY_OBSERVATION_CODE_INDEX:
                     assert yi == xi[~np.isnan(xi)].any()
+                elif code_index == ORDINAL_OBSERVATION_CODE_INDEX:
+                    assert yi == xi[~np.isnan(xi)].max()
+                else:
+                    assert False
 
     def test_apply(self):
         pass
