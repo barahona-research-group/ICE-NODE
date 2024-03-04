@@ -1,5 +1,5 @@
 {
-  "code_scheme": "DxFlatCCS",
+  "code_scheme": "dx_flatccs",
   "exclude_codes": [
     "2611",
     "662",
@@ -87,6 +87,5 @@
     "650": "Adjustment disorders",
     "662": "Suicide and intentional self-inflicted in",
     "663": "Screening and history of mental health an"
-  },
-  "outcome_scheme": "DxFlatCCS"
+  }
 }

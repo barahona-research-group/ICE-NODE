@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import statistics
 from datetime import date
 from functools import cached_property
@@ -246,8 +247,9 @@ class InpatientObservables(Data):
 
         return InpatientObservables(time, value, mask)
 
-    @cached_property
-    def type_hint_aggregator(self) -> Dict[NumericalTypeHint, Callable]:
+    @staticmethod
+    @functools.cache
+    def type_hint_aggregator() -> Dict[NumericalTypeHint, Callable]:
         """
         Returns the type hint aggregator based on the type hints of the observables.
 
@@ -262,7 +264,8 @@ class InpatientObservables(Data):
             'N': np.mean
         }
 
-    def _time_binning_aggregate(self, x: Array, mask: npt.NDArray[bool],
+    @staticmethod
+    def _time_binning_aggregate(x: Array, mask: npt.NDArray[bool],
                                 type_hint: npt.NDArray[NumericalTypeHint]) -> Array:
         """
         Aggregates the values in a given array based on the type hint.
@@ -274,10 +277,10 @@ class InpatientObservables(Data):
         Returns:
             Array: The aggregated array.
         """
+        type_hint_aggregator = InpatientObservables.type_hint_aggregator()
         assert x.ndim == 2 and mask.ndim == 2, f"Expected x, mask to be 2D, got ({x.ndim}, {mask.ndim})"
         assert x.shape == mask.shape, f"Expected x.shape to be {mask.shape}, got {x.shape}"
         assert x.shape[1] == len(type_hint), f"Expected x.shape[1] to be {len(type_hint)}, got {x.shape[1]}"
-        type_hint_aggregator = self.type_hint_aggregator
         return np.array([type_hint_aggregator[ti](xi[mi]) if mi.sum() > 0 else np.nan
                          for xi, mi, ti in zip(x.T, mask.T, type_hint)])
 
@@ -356,7 +359,6 @@ class LeadingObservableExtractorConfig(Config):
             "relevant to use max/min aggregation over numeric observables. Create a feature request "
             "if you need this feature.")
 
-    @cached_property
     def scheme_object(self) -> NumericScheme:
         """
         Returns the scheme object based on the scheme name.
@@ -368,7 +370,7 @@ class LeadingObservableExtractorConfig(Config):
         assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
         return scheme
 
-    @cached_property
+    @property
     def type_hint(self) -> NumericalTypeHint:
         """
         Returns the type hint for the observable.
@@ -376,7 +378,7 @@ class LeadingObservableExtractorConfig(Config):
         Returns:
             NumericalTypeHint: the type hint for the observable.
         """
-        scheme = self.scheme_object
+        scheme = self.scheme_object()
         return scheme.type_hint[scheme.codes[self.code_index]]
 
     @cached_property

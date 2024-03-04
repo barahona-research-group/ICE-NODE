@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
+from lib.ehr.coding_scheme import NumericalTypeHint
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                               InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                               SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
@@ -213,14 +214,12 @@ def leading_observables_extractor(observation_scheme: str, leading_hours: List[f
                                   entry_neglect_window: float = 0.0,
                                   recovery_window: float = 0.0,
                                   minimum_acquisitions: int = 0,
-                                  code_index: int = BINARY_OBSERVATION_CODE_INDEX,
-                                  aggregation: str = "any") -> LeadingObservableExtractor:
+                                  code_index: int = BINARY_OBSERVATION_CODE_INDEX) -> LeadingObservableExtractor:
     config = LeadingObservableExtractorConfig(code_index=code_index,
                                               scheme=observation_scheme,
                                               entry_neglect_window=entry_neglect_window,
                                               recovery_window=recovery_window,
                                               minimum_acquisitions=minimum_acquisitions,
-                                              aggregation=aggregation,
                                               leading_hours=leading_hours)
     return LeadingObservableExtractor(config=config)
 
@@ -359,6 +358,15 @@ class TestInpatientObservables:
         assert all(seg[i].time.max() <= sep[i] for i in range(len(sep)) if len(seg[i]) > 0)
         assert all(seg[i + 1].time.min() >= sep[i] for i in range(len(sep)) if len(seg[i + 1]) > 0)
 
+    @pytest.mark.parametrize("ntype", ['N', 'B', 'C', 'O'])
+    def test_type_aggregator(self, ntype: NumericalTypeHint):
+        pass
+
+    def test_time_binning_aggregate(self):
+        pass
+
+
+
     @pytest.mark.parametrize("hours", [1.0, 2.0, 3.0])
     def test_time_binning(self, hours: float):
         pass
@@ -376,10 +384,9 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
-    @pytest.mark.parametrize("aggregation", ["any", "max"])
     def test_init(self, observation_scheme: str, leading_hours: List[float],
                   entry_neglect_window: float, recovery_window: float,
-                  minimum_acquisitions: int, aggregation: str):
+                  minimum_acquisitions: int):
         if len(leading_hours) < 2:
             pytest.skip("Not enough leading hours to test")
 
@@ -390,8 +397,7 @@ class TestLeadingObservableExtractor:
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
                                           minimum_acquisitions=minimum_acquisitions,
-                                          code_index=BINARY_OBSERVATION_CODE_INDEX,
-                                          aggregation=aggregation)
+                                          code_index=BINARY_OBSERVATION_CODE_INDEX)
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
@@ -400,8 +406,7 @@ class TestLeadingObservableExtractor:
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
                                           minimum_acquisitions=minimum_acquisitions,
-                                          code_index=CATEGORICAL_OBSERVATION_CODE_INDEX,
-                                          aggregation=aggregation)
+                                          code_index=CATEGORICAL_OBSERVATION_CODE_INDEX)
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
@@ -410,8 +415,7 @@ class TestLeadingObservableExtractor:
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
                                           minimum_acquisitions=minimum_acquisitions,
-                                          code_index=NUMERIC_OBSERVATION_CODE_INDEX,
-                                          aggregation=aggregation)
+                                          code_index=NUMERIC_OBSERVATION_CODE_INDEX)
 
     def test_index2code(self):
         pass
