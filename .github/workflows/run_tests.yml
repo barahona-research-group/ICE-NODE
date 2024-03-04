@@ -88,7 +88,7 @@ jobs:
           auth: ${{ secrets.GIST_TOKEN }}
           gistID: 7c4939ecfd6b99a7b77dd1c4f789fd1b   # replace with your real Gist id.
           filename: covbadge_main_ehr.json
-          label: "cov:lib.ehr"
+          label: "Coverage.ehr"
           message: ${{ env.ehr_total }}%
           minColorRange: 50
           maxColorRange: 90
@@ -101,7 +101,7 @@ jobs:
           auth: ${{ secrets.GIST_TOKEN }}
           gistID: f15bea7fb1837fba360e742b10244429   # replace with your real Gist id.
           filename: covbadge_dev_ehr.json
-          label: "cov:lib.ehr"
+          label: "Coverage.ehr"
           message: ${{ env.ehr_total }}%
           minColorRange: 50
           maxColorRange: 90
