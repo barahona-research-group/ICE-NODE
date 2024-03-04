@@ -1798,7 +1798,7 @@ class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
             AssertionError: if the created instance is not an OutcomeExtractor.
         """
 
-        outcome_extractor = super().from_name(name)
+        outcome_extractor = CodingScheme.from_name(name)
         assert isinstance(outcome_extractor,
                           OutcomeExtractor), f'OutcomeExtractor expected, got {type(outcome_extractor)}'
         return outcome_extractor
