@@ -380,7 +380,15 @@ def sample_obs_dataframe(admissions_df: pd.DataFrame,
     df['los'] = (df[c_dischtime] - df[c_admittime]).dt.total_seconds() / 3600
     relative_time = np.random.uniform(0, df['los'].values, size=n)
     df[c_time] = df[c_admittime] + pd.to_timedelta(relative_time, unit='H')
-    df[c_value] = np.random.uniform(low=0, high=1000, size=n)
+
+    scheme_object = CodingScheme.from_name(obs_scheme)
+    assert isinstance(scheme_object, NumericScheme), 'Only numeric schemes are supported'
+    df['obs_type'] = df[c_obs].map(scheme_object.type_hint)
+    df.loc[df.obs_type == 'N', c_value] = np.random.uniform(low=0, high=1000, size=(df.obs_type == 'N').sum())
+    df.loc[df.obs_type.isin(('C', 'O')), c_value] = random.choices([0, 1, 2],
+                                                                   k=df.obs_type.isin(('C', 'O')).sum())
+    df.loc[df.obs_type == 'B', c_value] = random.choices([0, 1], k=(df.obs_type == 'B').sum())
+
     return df[[c_admission, c_obs, c_time, c_value]]
 
 

@@ -6,7 +6,7 @@ import equinox as eqx
 import pandas as pd
 import pytest
 
-from lib.ehr import CodingScheme, DatasetConfig
+from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
 from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
     Dataset, AbstractDatasetPipeline
@@ -227,9 +227,6 @@ class TestDatasetScheme:
         pass
         # scheme = DatasetScheme(config=dataset_scheme_config)
         # assert scheme.demographic_size == 3
-
-
-
 
 
 class TestDataset:
