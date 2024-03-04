@@ -45,6 +45,13 @@ class InpatientObservables(Data):
 
     def __post_init__(self):
         assert self.time.dtype == np.float64, f"Expected time to be of type float64, got {self.time.dtype}"
+        assert self.mask.dtype == bool, f"Expected mask to be of type bool, got {self.mask.dtype}"
+
+        assert self.value.ndim == 2, f"Expected value to be 2D, got {self.value.ndim}"
+        assert self.mask.ndim == 2, f"Expected mask to be 2D, got {self.mask.ndim}"
+        assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, "\
+                                                    f"got {self.value.shape}"
+        assert self.time.ndim == 1, f"Expected time to be 1D, got {self.time.ndim}"
 
     @staticmethod
     def empty(size: int,
@@ -653,7 +660,7 @@ class LeadingObservableExtractor(Module):
                                              minimum_acquisitions=self.config.minimum_acquisitions)
         value = np.where(mask, value, np.nan)
         value = self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
-        return InpatientObservables(time, value, mask=~np.isnan(value) * 1.0)
+        return InpatientObservables(time, value, mask=~np.isnan(value))
 
 
 class InpatientInput(Data):

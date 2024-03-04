@@ -1,6 +1,6 @@
 import random
 from copy import deepcopy
-from typing import List
+from typing import List, Callable
 from unittest import mock
 
 import equinox as eqx
@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
-from lib.ehr.coding_scheme import NumericalTypeHint
+from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
 from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                               InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                               SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
@@ -308,6 +308,44 @@ class TestInpatientObservables:
         assert len(obs.mask) == 0
         assert all(a.shape == (0, len(obs_scheme)) for a in [obs.value, obs.mask])
 
+    @pytest.mark.parametrize('time_valid_dtype', [np.float64])
+    @pytest.mark.parametrize('mask_valid_dtype', [bool])
+    @pytest.mark.parametrize('time_invalid_dtype', [np.int32, np.int64, np.float32, bool, str, object])
+    @pytest.mark.parametrize('mask_invalid_dtype', [np.int32, np.int64, np.float32, str, object])
+    def test_invalid_init(self, time_invalid_dtype, mask_invalid_dtype, time_valid_dtype, mask_valid_dtype):
+        obs = InpatientObservables(time=np.array([1.0, 2.0], dtype=time_valid_dtype),
+                                   value=np.array([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]]),
+                                   mask=np.array([[True, False, True], [False, True, False]],
+                                                 dtype=mask_valid_dtype))
+
+        # Invalid value shape
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=obs.time[:1], value=obs.value[:1].squeeze(), mask=obs.mask[:1])
+
+        # Invalid mask shape
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=obs.time[:1], value=obs.value[:1], mask=obs.mask[:1].squeeze())
+
+        # inconsistent time and value shape
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=obs.time, value=obs.value[:-1], mask=obs.mask)
+
+        # inconsistent time and mask shape
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=obs.time, value=obs.value, mask=obs.mask[:-1])
+
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=np.array([1.0, 2.0], dtype=time_invalid_dtype),
+                                 value=np.array([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]]),
+                                 mask=np.array([[True, False, True], [False, True, False]],
+                                               dtype=mask_valid_dtype))
+
+        with pytest.raises(AssertionError):
+            InpatientObservables(time=np.array([1.0, 2.0], dtype=time_valid_dtype),
+                                 value=np.array([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]]),
+                                 mask=np.array([[True, False, True], [False, True, False]],
+                                               dtype=mask_invalid_dtype))
+
     def test_fixture_sorted(self, inpatient_observables: InpatientObservables):
         assert np.all(np.diff(inpatient_observables.time) >= 0)
 
@@ -360,16 +398,59 @@ class TestInpatientObservables:
 
     @pytest.mark.parametrize("ntype", ['N', 'B', 'C', 'O'])
     def test_type_aggregator(self, ntype: NumericalTypeHint):
-        pass
+        aggregator = InpatientObservables.type_hint_aggregator()
+        assert isinstance(aggregator, dict)
+        assert isinstance(aggregator[ntype], Callable)
+        assert np.isscalar(aggregator[ntype](np.array([1, 2, 3])))
 
-    def test_time_binning_aggregate(self):
-        pass
+    @pytest.mark.parametrize("mask", [np.array([1, 0, 1], dtype=bool)])
+    @pytest.mark.parametrize("x,ntype,out", [(np.array([1.0, 2.0, 3.0]), 'N', 2.0),
+                                             (np.array([1, 0, 1]), 'B', 1.0),
+                                             (np.array([0, 1, 0]), 'B', 0.0),
+                                             (np.array([0, 1, 0]), 'C', 0),
+                                             (np.array([1, 0, 1]), 'C', 1),
+                                             (np.array([0, 1, 0]), 'O', 0),
+                                             (np.array([1, 0, 1]), 'O', 1),
+                                             (np.array([1, 0, 0]), 'O', 1)])
+    def test_time_binning_aggregate(self, x, mask, ntype, out):
+        x = x.reshape(-1, 1)
+        mask = mask.reshape(-1, 1)
+        ntype = np.array([ntype])
+        out = np.array([out])
 
+        assert np.array_equal(InpatientObservables._time_binning_aggregate(x, mask, ntype), out)
+        # if mask is all zeros, then the result is nan.
+        assert np.isnan(InpatientObservables._time_binning_aggregate(x, np.zeros_like(mask, dtype=bool), ntype)).all()
 
+        with pytest.raises(AssertionError):
+            InpatientObservables._time_binning_aggregate(x, mask.squeeze(), ntype)
+
+        with pytest.raises(AssertionError):
+            InpatientObservables._time_binning_aggregate(x.squeeze(), mask, ntype)
 
     @pytest.mark.parametrize("hours", [1.0, 2.0, 3.0])
-    def test_time_binning(self, hours: float):
-        pass
+    def test_time_binning(self, hours: float, inpatient_observables: InpatientObservables,
+                          obs_scheme: NumericScheme):
+        if len(inpatient_observables) == 0:
+            pytest.skip("No observations to test")
+
+        binned = inpatient_observables.time_binning(hours, obs_scheme.type_array)
+        assert np.all(binned.time % hours == 0.0)
+        assert sorted(binned.time) == binned.time.tolist()
+
+        # test causality. inject np.inf to the time array and ensure that
+        # values in future time bins do not leak into the past ones.
+        for i, ti in enumerate(inpatient_observables.time):
+            val = inpatient_observables.value.copy()
+            # NUMERIC_OBSERVATION_CODE_INDEX is aggregated with mean.
+            val[i:, NUMERIC_OBSERVATION_CODE_INDEX] = np.inf
+            obs = eqx.tree_at(lambda x: x.value, inpatient_observables, val)
+            binned = obs.time_binning(hours, obs_scheme.type_array)
+            assert np.all(binned.value[binned.time < ti] < np.inf)
+
+            mask = inpatient_observables.mask.copy()
+            if mask[i:, NUMERIC_OBSERVATION_CODE_INDEX].sum() > 0:
+                assert np.any(np.isinf(binned.value[binned.time >= ti]))
 
 
 class TestLeadingObservableExtractor:
