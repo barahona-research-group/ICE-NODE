@@ -215,7 +215,7 @@ class CodingScheme(Module):
         # drop=False in case c_target_code == c_target_desc.
         desc = supported_space.set_index(c_code, drop=False)[c_desc].to_dict()
         desc = {k: v for k, v in desc.items() if k in code_selection}
-        scheme = FlatScheme(CodingSchemeConfig(name),
+        scheme = FlatScheme(config=CodingSchemeConfig(name),
                             codes=sorted(code_selection),
                             desc=desc)
         FlatScheme.register_scheme(scheme)
@@ -735,7 +735,7 @@ class HierarchicalScheme(FlatScheme):
         self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
         self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
 
-        super().__init__(config, codes, desc)
+        super().__init__(config=config, codes=codes, desc=desc)
 
     def equals(self, other: "HierarchicalScheme") -> bool:
         return (super().equals(other) and (self._dag_codes == other._dag_codes) and (

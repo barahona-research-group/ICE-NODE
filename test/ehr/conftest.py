@@ -105,6 +105,7 @@ def obs_value_alias(request):
 
 @pytest.fixture(scope=DATASET_SCOPE)
 def obs_table_config(admission_table_config, obs_time_alias, obs_code_alias,
+                     obs_code_desc_alias,
                      obs_value_alias) -> AdmissionTimestampedCodedValueTableConfig:
     return AdmissionTimestampedCodedValueTableConfig(admission_id_alias=admission_table_config.admission_id_alias,
                                                      time_alias=obs_time_alias,

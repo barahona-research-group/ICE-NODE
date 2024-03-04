@@ -1,15 +1,39 @@
 import json
 from abc import ABCMeta
-from collections.abc import Iterable
-from copy import deepcopy
-from typing import Dict, Any, ClassVar, Union
+from typing import Dict, Any, ClassVar, Union, Type, Callable
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
-from .utils import load_config
+
+class NumpyEncoder(json.JSONEncoder):
+    """ Custom encoder for numpy data types """
+
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+
+            return int(obj)
+
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+
+        elif isinstance(obj, (np.complex_, np.complex64, np.complex128)):
+            return {'real': obj.real, 'imag': obj.imag}
+
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+
+        elif isinstance(obj, (np.void)):
+            return None
+
+        return json.JSONEncoder.default(self, obj)
 
 
 class Config(eqx.Module):
@@ -43,76 +67,75 @@ class Config(eqx.Module):
 
         get() - Get a config value by path, with default.
     """
-    _class_registry: ClassVar[Dict[str, "Config"]] = {}
+    _class_registry: ClassVar[Dict[str, Type["Config"]]] = {}
 
     @staticmethod
-    def _is_config(x):
-        return issubclass(x.__class__, Config)
+    def _map_hierarchical_config(unit_config_map: Callable[["Config"], Dict[str, Any]], x: Any) -> Any:
+        if isinstance(x, Config):
+            x = unit_config_map(x)
+        if isinstance(x, dict):
+            return {k: Config._map_hierarchical_config(unit_config_map, v) for k, v in x.items()}
+        elif isinstance(x, list):
+            return [Config._map_hierarchical_config(unit_config_map, v) for v in x]
+        elif isinstance(x, tuple):
+            return tuple(Config._map_hierarchical_config(unit_config_map, v) for v in x)
+        else:
+            return x
+
+    def equals(self, other: 'Config') -> bool:
+        return other.as_dict() == self.as_dict()
 
     @staticmethod
-    def _is_config_dict(x):
+    def as_normal_dict(x: 'Config') -> Dict[str, Any]:
+        return {k: v for k, v in x.__dict__.items() if not k.startswith("_")}
+
+    @staticmethod
+    def as_typed_dict(x: 'Config') -> Dict[str, Any]:
+        return Config.as_normal_dict(x) | {"_type": x.__class__.__name__}
+
+    @staticmethod
+    def _is_typed_dict(x) -> bool:
         return isinstance(x, dict) and "_type" in x
 
     @staticmethod
-    def _addiction(x):
-        if issubclass(x.__class__, Config):
-            return {k: v for k, v in x.__dict__.items() if not k.startswith("_")}
-        else:
-            return x
-
-    @staticmethod
-    def _typed_addiction(x):
-        if issubclass(x.__class__, Config):
-            return {k: v for k, v in x.__dict__.items() if not k.startswith("_")} | {
-                "_type": x.__class__.__name__
-            }
-        else:
-            return x
+    def map_config_to_dict(unit_map: Callable[[Union['Config', Any]], Dict[str, Any]], x) -> Dict[str, Any]:
+        return json.loads(json.dumps(Config._map_hierarchical_config(unit_map, x), cls=NumpyEncoder))
 
     def as_dict(self) -> Dict[str, Any]:
-        def _as_dict(x):
-            dicted = self._addiction(x)
-            if isinstance(dicted, Iterable) and not isinstance(dicted, str):
-                return jtu.tree_map(_as_dict, dicted, is_leaf=self._is_config)
-            else:
-                return dicted
+        return self.map_config_to_dict(Config.as_normal_dict, self)
 
-        return json.loads(json.dumps(_as_dict(self), default=vars))
+    def to_dict(self) -> Dict[str, Any]:
+        return self.map_config_to_dict(Config.as_typed_dict, self)
 
-    def to_dict(self):
-        def _to_dict(x):
-            dicted = self._typed_addiction(x)
-            if isinstance(dicted, Iterable) and not isinstance(dicted, str):
-                return jtu.tree_map(_to_dict, dicted, is_leaf=self._is_config)
-            else:
-                return dicted
+    def update(self, other: Union['Config', Dict[str, Any]]) -> 'Config':
+        if isinstance(other, Config):
+            other = other.as_dict()
+        return Config.from_dict(self.to_dict() | other)
 
-        return json.loads(json.dumps(_to_dict(self), default=vars))
-
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.as_dict())
 
     @classmethod
-    def from_dict(cls, config: Dict[str, Any], config_class=None, **kwargs) -> "Config":
-        def _concretise(x):
-            if cls._is_config_dict(x):
-                return cls.from_dict(x, **kwargs)
-            elif isinstance(x, Iterable) and not isinstance(x, str):
-                return jtu.tree_map(_concretise, x, is_leaf=cls._is_config_dict)
+    def from_dict(cls, config: Dict[str, Any]) -> "Config":
+        def _map_dict_to_config(x):
+            if cls._is_typed_dict(x):
+                config_class = cls._class_registry[x.pop("_type")]
+                config_kwargs = {k: _map_dict_to_config(v) for k, v in x.items()}
+                return config_class(**config_kwargs)
+            elif isinstance(x, dict):
+                return {k: _map_dict_to_config(v) for k, v in x.items()}
+            elif isinstance(x, list):
+                return [_map_dict_to_config(v) for v in x]
+            elif isinstance(x, tuple):
+                return tuple(_map_dict_to_config(v) for v in x)
             else:
                 return x
 
-        config_class = cls._class_registry.get(config.pop("_type"), config_class)
-        assert config_class is not None, f"No config class registered for {config['_type']}"
-        kwargs = {k: kwargs[k] for k in set(kwargs) & set(config)}
-        return config_class(**({k: _concretise(v) for k, v in config.items()} | kwargs))
+        return _map_dict_to_config(config)
 
     @classmethod
     def register(cls):
         cls._class_registry[cls.__name__] = cls
-
-    def copy(self) -> "Config":
-        return deepcopy(self)
 
     def path_update(self, path, value):
         nesting = path.split(".")
@@ -125,26 +148,6 @@ class Config(eqx.Module):
         _type = type(_get(self))
 
         return eqx.tree_at(_get, self, _type(value))
-
-    def update(self, other=None, **kwargs):
-        if other is not None:
-            updated = self
-            common_attrs = set(self.as_dict().keys()) & set(other.as_dict().keys())
-            for attr in common_attrs:
-                updated = eqx.tree_at(
-                    lambda x: getattr(x, attr), updated, getattr(other, attr)
-                )
-            return updated
-
-        updated = self.to_dict()
-        updated.update({k: kwargs[k] for k in set(kwargs) & set(updated)})
-        return Config.from_dict(updated, config_class=self.__class__)
-
-    def get(self, path, default=None):
-        x = self
-        for n in path.split("."):
-            x = getattr(x, n, default)
-        return x
 
 
 class Module(eqx.Module, metaclass=ABCMeta):
@@ -173,23 +176,7 @@ class Module(eqx.Module, metaclass=ABCMeta):
         get() - Get a config value by path, with default.
     """
     config: Config
-    _class_registry: ClassVar[Dict[str, 'Module']] = {}
-
-    def __init__(self,
-                 config: Config = None,
-                 config_path: str = None,
-                 **kwargs):
-        super().__init__()
-        if config_path is not None:
-            config = Config.from_dict(load_config(config_path))
-        conf_kwargs = kwargs.copy()
-        conf_kwargs = {
-            k: conf_kwargs.pop(k)
-            for k in set(config.as_dict()) & set(kwargs)
-        }
-        self.config = config.update(**conf_kwargs)
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+    _class_registry: ClassVar[Dict[str, Type['Module']]] = {}
 
     @classmethod
     def register(cls):
@@ -206,23 +193,21 @@ class Module(eqx.Module, metaclass=ABCMeta):
     def import_module(cls,
                       config: Union[Dict[str, Any], Config],
                       classname=None,
-                      **kwargs):
+                      **external_kwargs):
         if issubclass(type(config), Config):
-            config = config.copy()
             module_class = cls._class_registry[classname or cls.__name__]
-            return module_class(config=config, **kwargs)
-        config = deepcopy(config)
+            return module_class(config=config, **external_kwargs)
 
-        external_kwargs = {
-            k: kwargs.pop(k)
-            for k in set(config.get('external_argnames', []))
-                     & set(kwargs.keys())
-        }
+        if len(external_kwargs) > 0:
+            assert set(config['external_argnames']) == set(external_kwargs.keys()), \
+                "External kwargs do not match external argnames."
+
         module_class = cls._class_registry[config.get('classname', classname)]
         if isinstance(config['config'], dict):
-            config = Config.from_dict(config['config']).update(**kwargs)
+            config = Config.from_dict(config['config'])
         else:
-            config = config['config'].update(**kwargs)
+            config = config['config']
+
         return module_class(config=config, **external_kwargs)
 
     def export_module(self):

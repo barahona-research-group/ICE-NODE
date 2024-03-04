@@ -1,19 +1,21 @@
 import random
 import string
 from collections import defaultdict
-from typing import List, Tuple, Set, Dict, Type
+from typing import List, Tuple, Set, Dict, Type, Any
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 import pytest
 
-from lib.ehr import Dataset
+from lib import Config
+from lib.ehr import Dataset, DatasetConfig
+from lib.ehr.dataset import DatasetScheme, DatasetTables
 from lib.ehr.pipeline import DatasetTransformation, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
     ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths, CodedValueScaler, ObsAdaptiveScaler, \
-    InputScaler, TrainableTransformation, DatasetPipeline
+    InputScaler, TrainableTransformation, DatasetPipeline, ReportAttributes
 
 
 @pytest.mark.parametrize('cls, params', [
@@ -26,7 +28,6 @@ from lib.ehr.pipeline import DatasetTransformation, SampleSubjects, CastTimestam
     (ProcessOverlappingAdmissions, {'merge': False}),
     (FilterClampTimestampsToAdmissionInterval, {}),
     (FilterInvalidInputRatesSubjects, {}),
-    (ICUInputRateUnitConversion, {'conversion_table': pd.DataFrame()}),
     (RandomSplits, {'splits': [0.5], 'splits_key': 'splits', 'seed': 0, 'balance': 'subjects',
                     'discount_first_admission': False}),
     (ObsIQROutlierRemover, {'fit_only': False,
@@ -68,9 +69,14 @@ def test_synchronize_index_admissions(indexed_dataset: Dataset):
     admissions = admissions.drop(index=sample_admission_id)
     indexed_dataset = eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
 
-    synced_indexed_dataset, _ = DatasetTransformation.synchronize_index(indexed_dataset, 'admissions', c_admission_id,
-                                                                        aux={},
-                                                                        report=lambda *args, **kwargs: None)
+    synced_indexed_dataset, aux = DatasetTransformation.synchronize_index(
+        indexed_dataset, 'admissions', c_admission_id,
+        aux={}, report=DatasetTransformation.static_reporter())
+
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     for table_name, table in indexed_dataset.tables.tables_dict.items():
         if table is not None and c_admission_id in table.columns and len(table) > 0:
             assert sample_admission_id in table[c_admission_id].values
@@ -90,8 +96,12 @@ def test_filter_no_admissions_subjects(indexed_dataset: Dataset):
     admissions = indexed_dataset.tables.admissions
     admissions = admissions[admissions[c_subject_id] != sample_subject_id]
     indexed_dataset = eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
-    filtered_dataset, _ = DatasetTransformation.filter_no_admission_subjects(indexed_dataset, {},
-                                                                             report=lambda *args, **kwargs: None)
+    filtered_dataset, aux = DatasetTransformation.filter_no_admission_subjects(
+        indexed_dataset, {}, report=DatasetTransformation.static_reporter())
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     assert sample_subject_id not in filtered_dataset.tables.static
 
 
@@ -108,7 +118,11 @@ def test_sample_subjects(indexed_dataset: Dataset, seed: int):
     n_sample = int(n_subjects / 5)
 
     for offset in range(n_subjects - n_sample):
-        sampled_dataset, _ = SampleSubjects(n_subjects=n_sample, seed=seed, offset=offset)(indexed_dataset, {})
+        sampled_dataset, aux = SampleSubjects(n_subjects=n_sample, seed=seed, offset=offset)(indexed_dataset, {})
+        # assert serialization/deserialization of aux reports
+        assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+        assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
         sampled_subjects = sampled_dataset.subject_ids
         assert len(sampled_subjects) == n_sample
         assert len(set(sampled_subjects)) == n_sample
@@ -317,9 +331,13 @@ def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str
 
     # Assert no data loss from records.
     # Assert children admissions are mapped in records and removed from admissions.
-    dataset, _ = ProcessOverlappingAdmissions._merge_overlapping_admissions(indexed_dataset, {},
-                                                                            admission_ids_map,
-                                                                            lambda *args, **kwargs: None)
+    dataset, aux = ProcessOverlappingAdmissions._merge_overlapping_admissions(indexed_dataset, {},
+                                                                              admission_ids_map,
+                                                                              DatasetTransformation.static_reporter())
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     admissions0 = indexed_dataset.tables.admissions
     admissions1 = dataset.tables.admissions
 
@@ -354,8 +372,13 @@ def test_merge_overlapping_admissions(indexed_dataset: Dataset):
     if len(sub2sup) == 0:
         pytest.skip("No overlapping admissions in dataset.")
 
-    merged_dataset, _ = ProcessOverlappingAdmissions(merge=True)(indexed_dataset, {})
-    filtered_dataset, _ = ProcessOverlappingAdmissions(merge=False)(indexed_dataset, {})
+    merged_dataset, aux1 = ProcessOverlappingAdmissions(merge=True)(indexed_dataset, {})
+    filtered_dataset, aux2 = ProcessOverlappingAdmissions(merge=False)(indexed_dataset, {})
+    for aux in [aux1, aux2]:
+        # assert serialization/deserialization of aux reports
+        assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+        assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     admissions0 = indexed_dataset.tables.admissions
     admissions_m = merged_dataset.tables.admissions
     admissions_f = filtered_dataset.tables.admissions
@@ -433,7 +456,11 @@ def shifted_timestamps_dataset(indexed_dataset: Dataset):
 
 
 def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Dataset):
-    fixed_dataset, _ = FilterClampTimestampsToAdmissionInterval()(shifted_timestamps_dataset, {})
+    fixed_dataset, aux = FilterClampTimestampsToAdmissionInterval()(shifted_timestamps_dataset, {})
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     admissions = shifted_timestamps_dataset.tables.admissions
 
     c_admission_id = shifted_timestamps_dataset.config.tables.admissions.admission_id_alias
@@ -504,7 +531,11 @@ def unit_converter_table(dataset_config, dataset_tables):
 def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter_table: pd.DataFrame):
     indexed_dataset = indexed_dataset.execute_pipeline()
 
-    fixed_dataset, _ = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
+    fixed_dataset, aux = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     icu_inputs0 = indexed_dataset.tables.icu_inputs
     icu_inputs1 = fixed_dataset.tables.icu_inputs
     c_code = indexed_dataset.config.tables.icu_inputs.code_alias
@@ -554,7 +585,11 @@ def nan_inputs_dataset(preprocessed_dataset: Dataset):
 
 
 def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
-    fixed_dataset, _ = FilterInvalidInputRatesSubjects()(nan_inputs_dataset, {})
+    fixed_dataset, aux = FilterInvalidInputRatesSubjects()(nan_inputs_dataset, {})
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+
     icu_inputs0 = nan_inputs_dataset.tables.icu_inputs
     admissions0 = nan_inputs_dataset.tables.admissions
     static0 = nan_inputs_dataset.tables.static
@@ -590,6 +625,10 @@ def test_random_splits(indexed_dataset: Dataset, splits: List[float]):
                                discount_first_admission=False)(indexed_dataset, {})
     _, aux_los = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='admissions_intervals',
                               discount_first_admission=False)(indexed_dataset, {})
+
+    # assert serialization/deserialization of aux reports
+    assert all(isinstance(v.as_dict(), dict) for aux in (aux_subjs, aux_adms, aux_los) for v in aux['report'])
+    assert all([Config.from_dict(v.to_dict()).equals(v) for aux in (aux_subjs, aux_adms, aux_los) for v in aux['report']])
 
     for aux in (aux_subjs, aux_adms, aux_los):
         assert len(aux['splits']) == len(splits) + 1
@@ -736,4 +775,44 @@ def test_trainable_transformer(preprocessed_dataset: Dataset, use_float16: bool,
      InputScaler(splits_key=''))])
 def test_pipeline_transformers_sequence(illegal_transformation_sequence: List[DatasetTransformation]):
     with pytest.raises(AssertionError):
-        DatasetPipeline(transformations=illegal_transformation_sequence)
+        DatasetPipeline(transformations=illegal_transformation_sequence,
+                        config=Config())
+
+
+class IndexedDataset(Dataset):
+
+    @classmethod
+    def _setup_core_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
+        return DatasetPipeline(transformations=[SetIndex()], config=config.pipeline)
+
+    @classmethod
+    def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
+        return None
+
+
+@pytest.fixture
+def indexed_dataset(dataset_config, dataset_tables):
+    ds = IndexedDataset(config=dataset_config)
+    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                       is_leaf=lambda x: x is None)
+
+
+@pytest.mark.parametrize('invalid_attrs', [
+    {'before': int, 'after': 0},
+    {'column': float, 'before': 2},
+    {'before': np.dtype('bool')}
+])
+def test_report_attributes_coercion(invalid_attrs: Dict[str, Any]):
+    report_attr = ReportAttributes(**invalid_attrs)
+    as_dict = report_attr.as_dict()
+    for k, v in invalid_attrs.items():
+        if isinstance(v, (np.dtype, type)):
+            assert isinstance(as_dict[k], str)
+            assert as_dict[k] == v.name if isinstance(v, np.dtype) else v.__name__
+
+
+def test_pipeline_execution_report(indexed_dataset: Dataset):
+    assert len(indexed_dataset.core_pipeline_report) == 0
+    indexed_dataset = indexed_dataset.execute_pipeline()
+    assert isinstance(indexed_dataset.core_pipeline_report, pd.DataFrame)
+    assert len(indexed_dataset.core_pipeline_report) > 0

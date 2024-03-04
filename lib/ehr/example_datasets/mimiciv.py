@@ -6,7 +6,7 @@ import warnings
 from collections import defaultdict
 from dataclasses import field
 from functools import cached_property
-from typing import Dict, List, Optional, Iterable, Tuple, Literal
+from typing import Dict, List, Optional, Iterable, Tuple
 
 import pandas as pd
 import sqlalchemy
@@ -1108,15 +1108,15 @@ class MIMICIVDataset(Dataset):
 
         columns = [c_code, c_unit, c_normalization]
         assert all(c in df.columns for c in columns), \
-            f"Columns {columns} not found in icu_inputs.csv"
+            f"Columns {columns} not found in the normalization table."
 
         if c_universal_uom not in df.columns:
             df[c_universal_uom] = ''
-            for (code, uom), uom_df in df.groupby([c_code, c_unit]):
+            for code, code_df in df.groupby(c_code):
                 # Select the first unit associated with 1.0 as a normalization factor.
-                index = uom_df[uom_df[c_normalization] == 1.0].first_valid_index()
-                assert index is not None, f"No unit associated with 1.0 normalization factor for code {code} and unit {uom}"
-                df.loc[uom_df.index, c_universal_uom] = uom_df.loc[index, c_unit]
+                index = code_df[code_df[c_normalization] == 1.0].first_valid_index()
+                if index is not None:
+                    df.loc[code_df.index, c_universal_uom] = code_df.loc[index, c_unit]
         return df
 
     @classmethod

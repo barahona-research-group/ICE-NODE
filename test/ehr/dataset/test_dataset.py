@@ -212,7 +212,7 @@ class TestDatasetScheme:
                                 dataset_scheme_targets: Dict[str, str]):
         for target_config in traverse_all_targets(dataset_scheme_targets):
             scheme = DatasetScheme(config=dataset_scheme_config)
-            target_scheme = scheme.make_target_scheme(**target_config)
+            target_scheme = scheme.make_target_scheme(scheme.config.update(target_config))
             assert isinstance(target_scheme, DatasetScheme)
             for space, target_name in target_config.items():
                 assert isinstance(getattr(target_scheme, space), CodingScheme)

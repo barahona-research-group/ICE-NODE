@@ -381,12 +381,7 @@ class DatasetScheme(Module):
                 att_t_scheme.name
             ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
 
-    def make_target_scheme_config(self, **kwargs):
-        return self.config.update(**kwargs)
-
-    def make_target_scheme(self, config=None, **kwargs):
-        if config is None:
-            config = self.make_target_scheme_config(**kwargs)
+    def make_target_scheme(self, config: DatasetSchemeConfig):
         t_scheme = type(self)(config)
         self._assert_valid_maps(self, t_scheme)
         return t_scheme

@@ -1,4 +1,4 @@
-,code,description,label,amountuom,derived_unit_normalization_factor,dose_impact
+,code,description,label,amount_unit,derived_unit_normalization_factor,dose_impact
 0,227529,ACD-A Citrate (1000ml),ACD-A Citrate (1000ml),ml,1,Y
 1,227528,ACD-A Citrate (500ml),ACD-A Citrate (500ml),ml,1,Y
 2,221261,Abciximab (Reopro),Abciximab (Reopro),mg,1,N
