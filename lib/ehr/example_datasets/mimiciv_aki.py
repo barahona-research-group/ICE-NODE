@@ -37,4 +37,4 @@ class AKIMIMICIVDataset(MIMICIVDataset):
             SetCodeIntegerIndices(),
             SetAdmissionRelativeTimes()
         ]
-        return DatasetPipeline(transformations=pipeline)
+        return DatasetPipeline(config=pconfig, transformations=pipeline)

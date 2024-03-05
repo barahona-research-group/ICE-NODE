@@ -170,9 +170,9 @@ class MixedICDScheme(FlatScheme):
                  icd_schemes: Dict[str, ICDScheme]) -> pd.DataFrame:
         df = df.copy()
         for version, icd_df in df.groupby(c_icd_version):
-            scheme = icd_schemes[version]
+            scheme = icd_schemes[str(version)]
             df.loc[icd_df.index, c_icd_code] = \
-                icd_df[c_icd_code].str.replace(' ', '').str.replace('.', '').map(scheme.add_dots)
+                icd_df[c_icd_code].str.replace(' ', '').str.replace('.', '').map(scheme.ops.add_dots)
         return df
 
     @classmethod
@@ -472,6 +472,7 @@ class ObservablesSQLTable(SQLTable):
                 attributes_selection = pd.merge(attributes_selection, supported_space,
                                                 left_on=['table_name', 'attribute'],
                                                 right_on=['table_name', 'attribute'],
+                                                suffixes=(None, '_y'),
                                                 how='inner')
 
         scheme = ObservableMIMICScheme.from_selection(name, attributes_selection)
@@ -719,7 +720,7 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
 
     @property
     def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
-        return pd.read_csv(resources_dir(self.resources_dir, *self.icu_inputs_uom_normalization))
+        return pd.read_csv(resources_dir(self.resources_dir, *self.icu_inputs_uom_normalization)).astype(str)
 
     def print_expected_configuration_layout_disk(self):
         raise NotImplementedError()

@@ -6,8 +6,8 @@ from .model import (InpatientModel, ModelConfig)
 from .trainer import (TrainerConfig, ReportingConfig,
                       TrainerReporting)
 from ..base import Config, Module
-from ..ehr import (Patients, load_dataset, DatasetConfig,
-                   InterfaceConfig)
+from ..ehr import (TVxEHR, load_dataset, DatasetConfig,
+                   TVxEHRConfig)
 
 
 class SplitConfig(Config):
@@ -19,7 +19,7 @@ class SplitConfig(Config):
 
 class ExperimentConfig(Config):
     dataset: DatasetConfig
-    interface: InterfaceConfig
+    interface: TVxEHRConfig
     split: SplitConfig
     trainer: TrainerConfig
     trainer_classname: str
@@ -65,10 +65,10 @@ class Experiment(Module):
         return load_dataset(config=dataset_config)
 
     def load_interface(self):
-        return Patients.try_load_cached(self.config.interface,
-                                        dataset_config=self.config.dataset,
-                                        dataset_generator=self.load_dataset,
-                                        num_workers=self.num_workers)
+        return TVxEHR.try_load_cached(self.config.interface,
+                                      dataset_config=self.config.dataset,
+                                      dataset_generator=self.load_dataset,
+                                      num_workers=self.num_workers)
 
     def load_model(self, interface):
         key = jrandom.PRNGKey(self.prng_seed)

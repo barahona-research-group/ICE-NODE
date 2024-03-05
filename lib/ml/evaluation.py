@@ -19,7 +19,7 @@ from ..db.models import (Experiment as ExperimentModel, EvaluationRun as
 EvaluationRunModel, EvaluationStatus as
                          EvaluationStatusModel, Results as ResultsModel, Metric
                          as MetricModel, get_or_create, create_tables)
-from ..metric import (MetricsCollection)
+from ..metric.stat import (MetricsCollection)
 from ..utils import (load_config, zip_members)
 
 

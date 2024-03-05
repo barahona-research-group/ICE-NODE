@@ -428,7 +428,7 @@ class PrHierarchicalICD10(ICDHierarchicalScheme):
         CodingScheme.register_scheme(scheme)
 
 
-class PrFlatICD10(FlatScheme):
+class PrFlatICD10(ICDFlatScheme):
     ops: ClassVar[Type[PrICD10Ops]] = PrICD10Ops
 
     @classmethod
@@ -437,7 +437,7 @@ class PrFlatICD10(FlatScheme):
                                                  **cls.ops.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', False)))
 
 
-class DxHierarchicalICD9(HierarchicalScheme):
+class DxHierarchicalICD9(ICDHierarchicalScheme):
     ops: ClassVar[Type[DxICD9Ops]] = DxICD9Ops
 
     @classmethod
@@ -457,7 +457,7 @@ class DxHierarchicalICD9(HierarchicalScheme):
                                                         **cls.ops.generate_dictionaries(df), pt2ch=pt2ch))
 
 
-class PrHierarchicalICD9(HierarchicalScheme):
+class PrHierarchicalICD9(ICDHierarchicalScheme):
     ops: ClassVar[Type[PrICD9Ops]] = PrICD9Ops
 
     @classmethod
@@ -594,17 +594,18 @@ class PrCCSMapOps(CCSMapOps):
 
 class CCSHierarchicalScheme(HierarchicalScheme):
     ops: ClassVar[Type[CCSMapOps]] = CCSMapOps
-    icd9_scheme_name: str = None
+    ICD9_SCHEME_NAME: str = None
+    SCHEME_NAME: str = None
 
     @classmethod
     def create_scheme(cls):
-        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.icd9_scheme_name)
+        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.ICD9_SCHEME_NAME)
         cols, _ = cls.ops.ccs_columns(icd9_scheme)
         df = pd.DataFrame(cols)
         pt2ch = cls.ops.parent_child_mappings(df)
         desc = cls.ops.desc_mappings(df)
         codes = sorted(desc.keys())
-        CodingScheme.register_scheme(cls(CodingSchemeConfig(name='dx_ccs'),
+        CodingScheme.register_scheme(cls(CodingSchemeConfig(name=cls.SCHEME_NAME),
                                          pt2ch=pt2ch,
                                          codes=codes,
                                          desc=desc))
@@ -612,12 +613,14 @@ class CCSHierarchicalScheme(HierarchicalScheme):
 
 class DxCCS(CCSHierarchicalScheme):
     ops: ClassVar[Type[DxCCSMapOps]] = DxCCSMapOps
-    icd9_scheme_name: str = 'dx_icd9'
+    ICD9_SCHEME_NAME: str = 'dx_icd9'
+    SCHEME_NAME: str = 'dx_ccs'
 
 
 class PrCCS(CCSHierarchicalScheme):
     ops: ClassVar[Type[PrCCSMapOps]] = PrCCSMapOps
-    icd9_scheme_name: str = 'pr_icd9'
+    ICD9_SCHEME_NAME: str = 'pr_icd9'
+    SCHEME_NAME: str = 'pr_ccs'
 
 
 class FlatCCSMapOps:
@@ -676,27 +679,28 @@ class PrFlatCCSMapOps(FlatCCSMapOps):
 
 class FlatCCSScheme(FlatScheme):
     ops: ClassVar[Type[FlatCCSMapOps]] = FlatCCSMapOps
-    icd9_scheme_name: str = None
+    ICD9_SCHEME_NAME: str = None
+    SCHEME_NAME: str = None
 
     @classmethod
     def create_scheme(cls):
-        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.icd9_scheme_name)
+        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.ICD9_SCHEME_NAME)
         cols, _ = cls.ops.flatccs_columns(icd9_scheme)
         codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(cls(config=CodingSchemeConfig('dx_flatccs'),
+        CodingScheme.register_scheme(cls(config=CodingSchemeConfig(cls.SCHEME_NAME),
                                          codes=codes,
                                          desc=dict(zip(cols['code'], cols['desc']))))
 
 
 class DxFlatCCS(FlatCCSScheme):
     ops: ClassVar[Type[DxFlatCCSMapOps]] = DxFlatCCSMapOps
-    icd9_scheme_name: str = 'dx_icd9'
-
+    ICD9_SCHEME_NAME: str = 'dx_icd9'
+    SCHEME_NAME: str = 'dx_flatccs'
 
 class PrFlatCCS(FlatCCSScheme):
     ops: ClassVar[Type[PrFlatCCSMapOps]] = PrFlatCCSMapOps
-    icd9_scheme_name: str = 'pr_icd9'
-
+    ICD9_SCHEME_NAME: str = 'pr_icd9'
+    SCHEME_NAME: str = 'pr_flatccs'
 
 def setup_scheme_loaders():
     CodingScheme.register_scheme_loader('dx_icd10', DxHierarchicalICD10.create_scheme)

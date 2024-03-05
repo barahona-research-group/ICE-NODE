@@ -7,16 +7,16 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, Any
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
 from .coding_scheme import (CodingScheme, OutcomeExtractor, FileBasedOutcomeExtractor, NumericalTypeHint)
-from .concepts import (DemographicVectorConfig)
+from .tvx_concepts import (DemographicVectorConfig)
 from ..base import Config, Module, Data
-from ..utils import write_config, load_config
+from ..utils import write_config, load_config, tqdm_constructor
 
 
 class TableConfig(Config):
@@ -200,6 +200,12 @@ class DatasetTablesConfig(Config):
     def code_column(self) -> Dict[str, str]:
         return {k: v.code_alias for k, v in self.__dict__.items() if isinstance(v, CodedTableConfig)}
 
+    def temporal_admission_linked_table(self, table_name: str) -> bool:
+        conf = getattr(self, table_name)
+        temporal = isinstance(conf, TimestampedTableConfig) or isinstance(conf, IntervalBasedTableConfig)
+        admission_linked = isinstance(conf, AdmissionLinkedTableConfig)
+        return temporal and admission_linked
+
 
 class DatasetTables(Data):
     static: pd.DataFrame
@@ -266,13 +272,13 @@ class DatasetTables(Data):
             if df.empty:
                 self.table_meta(df).to_hdf(filepath, key=f'{name}_meta', format='table')
             else:
-                df.to_hdf(filepath, key=name, format='table')
+                df.to_hdf(filepath, key=f'table_{name}', format='table')
 
     @staticmethod
     def load(path: Union[str, Path]) -> DatasetTables:
         with pd.HDFStore(path, mode='r') as store:
-            tables = {k.split('/')[1]: store[k] for k in store.keys() if not k.endswith('_meta')}
-            meta = {k.split('/')[1].split('_meta')[0]: store[k] for k in store.keys() if k.endswith('_meta')}
+            tables = {k.split('/')[-1].replace('table_', ''): store[k] for k in store.keys() if 'table_' in k}
+            meta = {k.split('/')[1].split('_meta')[0]: store[k] for k in store.keys() if '_meta' in k}
             for table_name, meta_df in meta.items():
                 assert table_name not in tables, f'Table {table_name} is both in the tables and meta dict.'
                 tables[table_name] = DatasetTables.empty_table(meta_df)
@@ -414,24 +420,78 @@ class DatasetScheme(Module):
         return supported_attr_targets
 
 
+class ReportAttributes(Config):
+    transformation: str = None
+    operation: str = None
+    table: str = None
+    column: str = None
+    value_type: str = None
+    before: Optional[str | int | float | bool] = None
+    after: Optional[str | int | float | bool] = None
+    additional_parameters: Optional[str] = None
+
+    def __post_init__(self):
+
+        for k, v in self.__dict__.items():
+            if not k.startswith('_') and v is not None:
+                if isinstance(v, type):
+                    setattr(self, k, v.__name__)
+                elif isinstance(v, np.dtype):
+                    setattr(self, k, v.name)
+
+
 class AbstractDatasetTransformation(eqx.Module):
     name: str = None
+    dependencies: ClassVar[Tuple[Type[AbstractDatasetTransformation], ...]] = tuple()
+    blockers: ClassVar[Tuple[Type[AbstractDatasetTransformation], ...]] = tuple()
+
+    # TODO: Add a global dag instead of dependencies and blockers.
 
     @abstractmethod
-    def __call__(self, dataset: Dataset, aux: Dict[str, Any]) -> Tuple[Dataset, Dict[str, Any]]:
+    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
+        Dataset, Tuple[ReportAttributes, ...]]:
         pass
 
 
 class AbstractDatasetPipelineConfig(Config):
-    pass
+    validate_transformations: bool = True
 
 
 class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
+    config: AbstractDatasetPipelineConfig
     transformations: List[AbstractDatasetTransformation]
 
-    @abstractmethod
-    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
-        pass
+    @staticmethod
+    def compile_report(report: Tuple[ReportAttributes, ...], current_report: pd.DataFrame) -> pd.DataFrame:
+        new_report = pd.DataFrame([x.as_dict() for x in report]).astype(str)
+        return pd.concat([current_report, new_report], ignore_index=True, axis=0)
+
+    def __post_init__(self):
+        if self.config.validate_transformations:
+            self._validate_transformation_sequence()
+
+    def _validate_transformation_sequence(self):
+        applied_set = set()
+
+        for t in self.transformations:
+            assert type(t) not in applied_set, f"Transformation {type(t).__name__} applied more than once."
+            applied_set.add(type(t))
+            assert len(set(t.dependencies) - applied_set) == 0, \
+                f"Transformation {type(t)} depends on {set(t.dependencies) - applied_set} which " \
+                "was not applied before."
+            assert len(set(t.blockers) & applied_set) == 0, \
+                f"Transformation {type(t)} is blocked by {set(t.blockers) & applied_set} which was applied before."
+
+    def __call__(self, dataset: Dataset) -> Tuple[Dataset, pd.DataFrame]:
+        report = tuple()
+
+        with tqdm_constructor(desc='Transforming Dataset', unit='transformations',
+                              total=len(self.transformations)) as pbar:
+            for t in self.transformations:
+                pbar.set_description(f"Transforming Dataset: {t.name or type(t).__name__}")
+                dataset, report = t(dataset, report)
+                pbar.update(1)
+        return dataset, self.compile_report(report, dataset.core_pipeline_report)
 
 
 class DatasetConfig(Config):
@@ -460,16 +520,20 @@ class Dataset(Module):
     """
     config: DatasetConfig
     tables: DatasetTables
-    scheme: DatasetScheme
-    core_pipeline: AbstractDatasetPipeline
     core_pipeline_report: pd.DataFrame
 
     def __init__(self, config: DatasetConfig):
         super().__init__(config=config)
-        self.scheme = self.load_dataset_scheme(config)
         self.tables = self.load_tables(config, self.scheme)
-        self.core_pipeline = self._setup_core_pipeline(config)
         self.core_pipeline_report = pd.DataFrame()
+
+    @cached_property
+    def core_pipeline(self) -> AbstractDatasetPipeline:
+        return self._setup_core_pipeline(self.config)
+
+    @cached_property
+    def scheme(self) -> DatasetScheme:
+        return self.load_dataset_scheme(self.config)
 
     @classmethod
     def load_dataset_scheme(cls, config: DatasetConfig) -> DatasetScheme:
@@ -485,14 +549,20 @@ class Dataset(Module):
     def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
         pass
 
-    def execute_pipeline(self) -> Dataset:
+    def execute_core_pipeline(self) -> Dataset:
         if len(self.core_pipeline_report) > 0:
             logging.warning("Pipeline has already been executed. Doing nothing.")
             return self
-        dataset, aux = self.core_pipeline(self)
-
+        dataset, report = self.core_pipeline(self)
         dataset = eqx.tree_at(lambda x: x.config.pipeline_executed, dataset, True)
-        dataset = eqx.tree_at(lambda x: x.core_pipeline_report, dataset, aux['report'])
+        dataset = eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
+        return dataset
+
+    def execute_external_transformations(self, transformations: List[AbstractDatasetTransformation]) -> Dataset:
+        dataset = self
+        report = tuple()
+        for t in transformations:
+            dataset, report = t(dataset, report)
         return dataset
 
     @cached_property
@@ -501,7 +571,6 @@ class Dataset(Module):
 
     @cached_property
     def subject_ids(self):
-        assert self.config.pipeline_executed, "Pipeline must be executed first."
         assert self.tables.static.index.name == self.config.tables.static.subject_id_alias, \
             f"Index name of static table must be {self.config.tables.static.subject_id_alias}."
         return self.tables.static.index.unique()
@@ -578,27 +647,30 @@ class Dataset(Module):
     def save(self, path: Union[str, Path], overwrite: bool = False):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.tables.save(path.with_suffix('.tables.h5'), overwrite)
-        self.core_pipeline_report.to_hdf(path.with_suffix('.pipeline.h5'),
+        h5_path = str(path.with_suffix('.h5'))  # tables and pipeline report goes here.
+        json_path = path.with_suffix('.json')  # config goes here.
+        if json_path.exists():
+            if overwrite:
+                json_path.unlink()
+            else:
+                raise RuntimeError(f'File {json_path} already exists.')
+        write_config(self.config.to_dict(), str(json_path))
+
+        self.tables.save(h5_path, overwrite)
+        self.core_pipeline_report.to_hdf(h5_path,
                                          key='report',
                                          format='table')
 
-        config_path = path.with_suffix('.config.json')
-        if config_path.exists():
-            if overwrite:
-                config_path.unlink()
-            else:
-                raise RuntimeError(f'File {config_path} already exists.')
-        write_config(self.config.to_dict(), str(config_path))
-
     @classmethod
     def load(cls, path: Union[str, Path]):
-        path = Path(path)
-        tables = DatasetTables.load(path.with_suffix('.tables.h5'))
-        config = DatasetConfig.from_dict(load_config(str(path.with_suffix('.config.json'))))
+        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
+        json_path = str(Path(path).with_suffix('.json'))  # config goes here.
+
+        tables = DatasetTables.load(h5_path)
+        config = DatasetConfig.from_dict(load_config(json_path))
         dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
                               is_leaf=lambda x: x is None)
-        with pd.HDFStore(path.with_suffix('.pipeline.h5')) as store:
+        with pd.HDFStore(h5_path) as store:
             report = store['report'] if 'report' in store else pd.DataFrame()
             return eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
 

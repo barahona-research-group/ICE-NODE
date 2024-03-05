@@ -16,10 +16,8 @@ from .embeddings import (InpatientEmbedding, EmbeddedInAdmission, InpatientLiteE
                          DeepMindEmbeddedAdmission)
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
                     Precomputes)
-from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   DatasetScheme, DemographicVectorConfig, CodesVector, LeadingObservableExtractorConfig,
-                   PatientTrajectory,
-                   TrajectoryConfig)
+from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector, LeadingObservableExtractorConfig)
+from .artefacts import AdmissionPrediction, TrajectoryConfig
 from ..utils import model_params_scaler
 
 
@@ -245,15 +243,15 @@ class InICENODE(InpatientModel):
             trajectory.append(state)
         return trajectory
 
-    def decode_obs_trajectory(
-            self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        obs = eqx.filter_vmap(self._f_obs_dec)(trajectory.value)
-        return PatientTrajectory(time=trajectory.time, value=obs)
-
-    def decode_lead_trajectory(
-            self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        lead = eqx.filter_vmap(self._f_lead_dec)(trajectory.value)
-        return PatientTrajectory(time=trajectory.time, value=lead)
+    # def decode_obs_trajectory(
+    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
+    #     obs = eqx.filter_vmap(self._f_obs_dec)(trajectory.value)
+    #     return PatientTrajectory(time=trajectory.time, value=obs)
+    #
+    # def decode_lead_trajectory(
+    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
+    #     lead = eqx.filter_vmap(self._f_lead_dec)(trajectory.value)
+    #     return PatientTrajectory(time=trajectory.time, value=lead)
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
@@ -326,17 +324,17 @@ class InICENODE(InpatientModel):
 
         pred_dx = CodesVector(self._f_dx_dec(state), admission.outcome.scheme)
 
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=pred_dx,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory)
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=pred_dx,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory)
 
     @property
     def dyn_params_list(self):
@@ -424,17 +422,17 @@ class InICENODELite(InICENODE):
             pred_lead_l.append(pred_lead)
             trajectory.extend(traj)
 
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory)
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=None,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory)
 
 
 class InGRUConfig(InICENODELiteConfig):
@@ -925,17 +923,17 @@ class InSKELKoopman(InICENODELite):
             pred_lead_l.append(pred_lead)
             trajectory.extend(traj)
 
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory,
-                                   auxiliary_loss={'L_rec': rec_loss})
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=None,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory,
+        #                            auxiliary_loss={'L_rec': rec_loss})
 
     @eqx.filter_jit
     def pathwise_params_stats(self):

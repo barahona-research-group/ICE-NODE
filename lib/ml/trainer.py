@@ -19,8 +19,10 @@ import equinox as eqx
 from blinker import signal
 import optuna
 
-from ..ehr import Predictions, Patients
-from ..metric import (MetricsCollection, Metric, binary_loss, numeric_loss)
+from ..ehr import TVxEHR
+from .artefacts import Predictions
+from ..metric.stat import (MetricsCollection, Metric)
+from ..metric.loss import binary_loss, numeric_loss
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 from ..base import Config, Module
@@ -44,7 +46,7 @@ class StudyHalted(Exception):
 
 class TrainingHistory:
 
-    def __init__(self, metrics: MetricsCollection):
+    def __init__(self, metrics: Callable[[int, Predictions], pd.DataFrame]):
         self.metrics = metrics
         self._train_df = None
         self._val_df = None
@@ -76,7 +78,7 @@ class TrainingHistory:
 
     def append_train_preds(self, step: int, res: Predictions,
                            elapsed_time: float, eval_time: float):
-        row_df = self.metrics.to_df(step, res)
+        row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -84,7 +86,7 @@ class TrainingHistory:
 
     def append_val_preds(self, step: int, res: Predictions,
                          elapsed_time: float, eval_time: float):
-        row_df = self.metrics.to_df(step, res)
+        row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -92,7 +94,7 @@ class TrainingHistory:
 
     def append_test_preds(self, step: int, res: Predictions,
                           elapsed_time: float, eval_time: float):
-        row_df = self.metrics.to_df(step, res)
+        row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -695,7 +697,7 @@ class Trainer(Module):
     def external_argnames(cls):
         return ['reg_hyperparams']
 
-    def batch_predict(self, model: AbstractModel, patients: Patients):
+    def batch_predict(self, model: AbstractModel, patients: TVxEHR):
         return model.batch_predict(patients,
                                    leave_pbar=False,
                                    regularisation=self.reg_hyperparams)
@@ -716,7 +718,7 @@ class Trainer(Module):
     def prediction_auxiliary_loss(self, predictions: Predictions):
         return predictions.associative_regularisation(self.reg_hyperparams)
 
-    def loss(self, model: AbstractModel, patients: Patients):
+    def loss(self, model: AbstractModel, patients: TVxEHR):
         preds = self.batch_predict(model, patients)
         return self.loss_term(model, preds)
 
@@ -724,7 +726,7 @@ class Trainer(Module):
         return model
 
     def step_optimizer(self, step: int, optimizer: Optimizer,
-                       model: AbstractModel, patients: Patients):
+                       model: AbstractModel, patients: TVxEHR):
         grad_f = eqx.filter_value_and_grad(self.loss)
         value, grads = grad_f(model, patients)
         optimizer = optimizer.step(step, grads)
@@ -734,7 +736,7 @@ class Trainer(Module):
 
     def __call__(self,
                  model: AbstractModel,
-                 patients: Patients,
+                 patients: TVxEHR,
                  splits: Tuple[List[int], ...],
                  model_snapshot_frequency: int = 0,
                  n_evals=100,
@@ -785,7 +787,7 @@ class Trainer(Module):
                 signals=signals,
                 exported_config=exported_config)
 
-    def _warmup(self, model: AbstractModel, patients: Patients,
+    def _warmup(self, model: AbstractModel, patients: TVxEHR,
                 splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
                 history: TrainingHistory, signals: TrainerSignals,
                 warmup_config: WarmupConfig):
@@ -805,7 +807,7 @@ class Trainer(Module):
 
     def _train(self,
                model: AbstractModel,
-               patients: Patients,
+               patients: TVxEHR,
                splits: Tuple[List[int], ...],
                model_snapshot_frequency: int,
                n_evals: int,

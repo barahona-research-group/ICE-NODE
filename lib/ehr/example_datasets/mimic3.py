@@ -8,7 +8,7 @@ from typing import Dict, List, ClassVar
 import dask.dataframe as dd
 import pandas as pd
 
-from lib.ehr.concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
+from lib.ehr.tvx_concepts import (Patient, Admission, DemographicVectorConfig, StaticInfo)
 from lib.ehr.dataset import Dataset, DatasetScheme
 
 

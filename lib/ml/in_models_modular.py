@@ -16,10 +16,9 @@ from .embeddings import (EmbeddedInAdmission, InpatientLiteEmbedding,
                          DeepMindEmbeddedAdmission)
 from .in_models import (InICENODE, InICENODERegularisation)
 from .model import (InpatientModel, ModelConfig, Precomputes)
-from ..ehr import (Admission, InpatientObservables, AdmissionPrediction,
-                   DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableExtractorConfig, PatientTrajectory,
-                   TrajectoryConfig)
+from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
+                   LeadingObservableExtractorConfig)
+from .artefacts import AdmissionPrediction, TrajectoryConfig
 from ..utils import model_params_scaler
 
 
@@ -141,18 +140,18 @@ class InModularICENODE(InICENODE):
     @eqx.filter_jit
     def split_state(self, state: jnp.ndarray):
         return jnp.hsplit(state, self.config.state_splitter)
-
-    def decode_obs_trajectory(
-            self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        state_components = eqx.filter_vmap(self.split_state, trajectory.value)
-        obs = eqx.filter_vmap(self._f_obs_dec, state_components[1])
-        return PatientTrajectory(time=trajectory.time, value=obs)
-
-    def decode_lead_trajectory(
-            self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        state_components = eqx.filter_vmap(self.split_state, trajectory.value)
-        lead = eqx.filter_vmap(self._f_lead_dec, state_components[2])
-        return PatientTrajectory(time=trajectory.time, value=lead)
+    #
+    # def decode_obs_trajectory(
+    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
+    #     state_components = eqx.filter_vmap(self.split_state, trajectory.value)
+    #     obs = eqx.filter_vmap(self._f_obs_dec, state_components[1])
+    #     return PatientTrajectory(time=trajectory.time, value=obs)
+    #
+    # def decode_lead_trajectory(
+    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
+    #     state_components = eqx.filter_vmap(self.split_state, trajectory.value)
+    #     lead = eqx.filter_vmap(self._f_lead_dec, state_components[2])
+    #     return PatientTrajectory(time=trajectory.time, value=lead)
 
     def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
                      obs: InpatientObservables, lead: InpatientObservables,
@@ -223,20 +222,20 @@ class InModularICENODE(InICENODE):
             pred_lead_l.append(pred_lead)
             trajectory.extend(traj)
 
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-
-        pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
-                              admission.outcome.scheme)
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=pred_dx,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory)
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        #
+        # pred_dx = CodesVector(self._f_dx_dec(self.split_state(state)[3]),
+        #                       admission.outcome.scheme)
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=pred_dx,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory)
 
 
 class InModularICENODELiteConfig(InModularICENODEConfig):
@@ -334,18 +333,18 @@ class InModularICENODELite(InModularICENODE):
             pred_obs_l.append(pred_obs)
             pred_lead_l.append(pred_lead)
             trajectory.extend(traj)
-
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory)
+        #
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=None,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory)
 
 
 class InModularSKELKoopmanConfig(InModularICENODELiteConfig):
@@ -438,25 +437,25 @@ class InModularSKELKoopman(InModularICENODELite):
             pred_lead_l.append(pred_lead)
             trajectory.extend(traj)
 
-        if len(trajectory) > 0:
-            trajectory = PatientTrajectory(time=sampling_time,
-                                           value=jnp.vstack(trajectory))
-        else:
-            trajectory = None
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=trajectory,
-                                   auxiliary_loss={'L_rec': rec_loss})
-
-        return AdmissionPrediction(admission=admission,
-                                   outcome=None,
-                                   observables=pred_obs_l,
-                                   leading_observable=pred_lead_l,
-                                   trajectory=None,
-                                   auxiliary_loss={'L_rec': rec_loss})
+        # if len(trajectory) > 0:
+        #     trajectory = PatientTrajectory(time=sampling_time,
+        #                                    value=jnp.vstack(trajectory))
+        # else:
+        #     trajectory = None
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=None,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=trajectory,
+        #                            auxiliary_loss={'L_rec': rec_loss})
+        #
+        # return AdmissionPrediction(admission=admission,
+        #                            outcome=None,
+        #                            observables=pred_obs_l,
+        #                            leading_observable=pred_lead_l,
+        #                            trajectory=None,
+        #                            auxiliary_loss={'L_rec': rec_loss})
 
 
 class InModularVanillaKoopmanConfig(InModularICENODELiteConfig):

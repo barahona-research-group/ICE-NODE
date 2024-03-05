@@ -334,7 +334,9 @@ def _sample_proc_dataframe(admissions_df: pd.DataFrame,
         c_admission: random.choices(admissions_df[c_admission], k=n),
         c_code: codes
     })
-    df = pd.merge(df, admissions_df[[c_admission, c_admittime, c_dischtime]], on=c_admission)
+    df = pd.merge(df, admissions_df[[c_admission, c_admittime, c_dischtime]],
+                  on=c_admission,
+                  suffixes=(None, '_admission'))
     df['los'] = (df[c_dischtime] - df[c_admittime]).dt.total_seconds() / 3600
 
     relative_start = np.random.uniform(0, df['los'].values, size=n)
@@ -377,7 +379,8 @@ def sample_obs_dataframe(admissions_df: pd.DataFrame,
         c_admission: random.choices(admissions_df[c_admission], k=n),
         c_obs: codes
     })
-    df = pd.merge(df, admissions_df[[c_admission, c_admittime, c_dischtime]], on=c_admission)
+    df = pd.merge(df, admissions_df[[c_admission, c_admittime, c_dischtime]], on=c_admission,
+                  suffixes=(None, '_y'))
     df['los'] = (df[c_dischtime] - df[c_admittime]).dt.total_seconds() / 3600
     relative_time = np.random.uniform(0, df['los'].values, size=n)
     df[c_time] = df[c_admittime] + pd.to_timedelta(relative_time, unit='H')
@@ -557,7 +560,7 @@ def dataset(dataset_config, dataset_tables):
 
 @pytest.fixture
 def indexed_dataset(dataset):
-    return eqx.tree_at(lambda x: x.core_pipeline.transformations, dataset, [SetIndex()])
+    return dataset.execute_external_transformations([SetIndex()])
 
 
 @pytest.fixture(scope=DATASET_SCOPE)

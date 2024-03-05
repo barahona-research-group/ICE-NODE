@@ -10,8 +10,9 @@ import jax.random as jrandom
 import equinox as eqx
 
 from ..utils import model_params_scaler
-from ..ehr import (Patient, AdmissionPrediction, DemographicVectorConfig,
-                   DatasetScheme, CodesVector, PatientTrajectory, Predictions)
+from ..ehr import (Patient, DemographicVectorConfig,
+                   DatasetScheme, CodesVector)
+from .artefacts import AdmissionPrediction, Predictions
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
@@ -161,19 +162,19 @@ class ICENODE(OutpatientModel):
             dx_e = embedded_admissions[i].dx
             mem = self._update(mem, dx_e_hat, dx_e)
             state = self.join_state_emb(mem, dx_e)
-
-            if store_embeddings:
-                trajectory = PatientTrajectory(time=t1, state=state)
-                preds.append(
-                    AdmissionPrediction(admission=adm,
-                                        outcome=dx_hat,
-                                        trajectory=trajectory,
-                                        associative_regularisation=reg))
-            else:
-                preds.append(
-                    AdmissionPrediction(admission=adm,
-                                        outcome=dx_hat,
-                                        associative_regularisation=reg))
+            #
+            # if store_embeddings:
+            #     trajectory = PatientTrajectory(time=t1, state=state)
+            #     preds.append(
+            #         AdmissionPrediction(admission=adm,
+            #                             outcome=dx_hat,
+            #                             trajectory=trajectory,
+            #                             associative_regularisation=reg))
+            # else:
+            #     preds.append(
+            #         AdmissionPrediction(admission=adm,
+            #                             outcome=dx_hat,
+            #                             associative_regularisation=reg))
         return preds
 
 
@@ -251,19 +252,19 @@ class GRU(OutpatientModel):
             state = self._update(state, dx_e_prev, demo)
             # Predict
             dx_hat = CodesVector(self._decode(state), adm.outcome.scheme)
-
-            if store_embeddings:
-                tdisch = adm.days_since(adms[0].admission_dates[0])[1]
-                trajectory = PatientTrajectory(time=tdisch, state=state)
-                preds.append(
-                    AdmissionPrediction(admission=adm,
-                                        outcome=dx_hat,
-                                        trajectory=trajectory))
-            else:
-                preds.append(AdmissionPrediction(admission=adm,
-                                                 outcome=dx_hat))
-
-            preds.append(AdmissionPrediction(admission=adm, outcome=dx_hat))
+            #
+            # if store_embeddings:
+            #     tdisch = adm.days_since(adms[0].admission_dates[0])[1]
+            #     trajectory = PatientTrajectory(time=tdisch, state=state)
+            #     preds.append(
+            #         AdmissionPrediction(admission=adm,
+            #                             outcome=dx_hat,
+            #                             trajectory=trajectory))
+            # else:
+            #     preds.append(AdmissionPrediction(admission=adm,
+            #                                      outcome=dx_hat))
+            #
+            # preds.append(AdmissionPrediction(admission=adm, outcome=dx_hat))
         return preds
 
 
@@ -402,15 +403,15 @@ class RETAIN(OutpatientModel):
             logits = CodesVector(self._dx_dec(c_context),
                                  adms[i].outcome.scheme)
 
-            if store_embeddings:
-                tdisch = adms[i].days_since(adms[0].admission_dates[0])[1]
-                trajectory = PatientTrajectory(time=tdisch, state=c_context)
-                preds.append(
-                    AdmissionPrediction(admission=adms[i],
-                                        outcome=logits,
-                                        trajectory=trajectory))
-            else:
-                preds.append(
-                    AdmissionPrediction(admission=adms[i], outcome=logits))
+            # if store_embeddings:
+            #     tdisch = adms[i].days_since(adms[0].admission_dates[0])[1]
+            #     trajectory = PatientTrajectory(time=tdisch, state=c_context)
+            #     preds.append(
+            #         AdmissionPrediction(admission=adms[i],
+            #                             outcome=logits,
+            #                             trajectory=trajectory))
+            # else:
+            #     preds.append(
+            #         AdmissionPrediction(admission=adms[i], outcome=logits))
 
         return preds

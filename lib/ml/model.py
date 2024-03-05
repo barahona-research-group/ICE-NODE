@@ -10,9 +10,10 @@ import jax.tree_util as jtu
 import equinox as eqx
 
 from ..utils import tqdm_constructor, translate_path
-from ..ehr import (Patients, Patient, DemographicVectorConfig, DatasetScheme,
-                   Predictions, Admission, TrajectoryConfig, PatientTrajectory,
-                   InpatientInput, InpatientObservables, AdmissionPrediction)
+from ..ehr import (TVxEHR, Patient, DemographicVectorConfig, DatasetScheme,
+                   Admission,
+                   InpatientInput, InpatientObservables)
+from .artefacts import AdmissionPrediction, Predictions, TrajectoryConfig
 from ..base import Config, Module, Data
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
@@ -78,7 +79,7 @@ class AbstractModel(Module):
             f"({config.emb.demo}) and input demographic vector size "\
             f"({demo_vec_dim}) must both be zero or non-zero."
 
-    def precomputes(self, inpatients: Patients):
+    def precomputes(self, inpatients: TVxEHR):
         return Precomputes()
 
     @abstractmethod
@@ -93,7 +94,7 @@ class AbstractModel(Module):
     @abstractmethod
     def batch_predict(
             self,
-            patients: Patients,
+            patients: TVxEHR,
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
@@ -212,17 +213,17 @@ class InpatientModel(AbstractModel):
             "leading_observable_config", "key"
         ]
 
-    def decode_lead_trajectory(
-            self, trajectory: PatientTrajectory) -> PatientTrajectory:
-        raise NotImplementedError
-
-    def decode_obs_trajectory(
-            self, trajectories: PatientTrajectory) -> PatientTrajectory:
-        raise NotImplementedError
+    # def decode_lead_trajectory(
+    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
+    #     raise NotImplementedError
+    #
+    # def decode_obs_trajectory(
+    #         self, trajectories: PatientTrajectory) -> PatientTrajectory:
+    #     raise NotImplementedError
 
     def batch_predict(
             self,
-            inpatients: Patients,
+            inpatients: TVxEHR,
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
@@ -274,7 +275,7 @@ class OutpatientModel(AbstractModel):
 
     def batch_predict(
             self,
-            inpatients: Patients,
+            inpatients: TVxEHR,
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
@@ -309,6 +310,6 @@ class OutpatientModel(AbstractModel):
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
 
-    def patient_embeddings(self, patients: Patients):
+    def patient_embeddings(self, patients: TVxEHR):
         pass
 

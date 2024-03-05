@@ -236,7 +236,7 @@ class TestDataset:
         assert dataset.core_pipeline_report.equals(pd.DataFrame())
         assert dataset.config.pipeline_executed is False
 
-        dataset2 = dataset.execute_pipeline()
+        dataset2 = dataset.execute_core_pipeline()
         # Because we use identity pipeline, the dataset tables should be the same
         # but the new dataset should have a different report (metadata).
         assert not dataset2.equals(dataset) and dataset2.tables.equals(dataset.tables)
@@ -244,23 +244,17 @@ class TestDataset:
         assert dataset2.config.pipeline_executed is True
 
         with mock.patch('logging.warning') as mocker:
-            dataset3 = dataset2.execute_pipeline()
+            dataset3 = dataset2.execute_core_pipeline()
             assert dataset3.equals(dataset2)
             mocker.assert_called_once_with("Pipeline has already been executed. Doing nothing.")
 
     def test_subject_ids(self, dataset: NaiveDataset, indexed_dataset: NaiveDataset):
-        naive_dataset = dataset
-        indexed_dataset = indexed_dataset
+        with pytest.raises(AssertionError):
+            dataset.subject_ids
 
+        dataset = dataset.execute_core_pipeline()
         with pytest.raises(AssertionError):
-            naive_dataset.subject_ids
-        with pytest.raises(AssertionError):
-            indexed_dataset.subject_ids
-
-        naive_dataset = naive_dataset.execute_pipeline()
-        indexed_dataset = indexed_dataset.execute_pipeline()
-        with pytest.raises(AssertionError):
-            naive_dataset.subject_ids
+            dataset.subject_ids
 
         assert set(indexed_dataset.subject_ids) == set(indexed_dataset.tables.static.index.unique())
 
@@ -270,7 +264,7 @@ class TestDataset:
     def test_save_load(self, dataset: NaiveDataset, tmpdir: str, execute_pipeline: bool, overwrite: bool):
         raw_dataset = dataset
         if execute_pipeline:
-            dataset = dataset.execute_pipeline()
+            dataset = dataset.execute_core_pipeline()
 
         dataset.save(f'{tmpdir}/test_dataset', overwrite=False)
         if overwrite:
@@ -283,12 +277,12 @@ class TestDataset:
         assert loaded.equals(dataset)
         if execute_pipeline:
             assert not loaded.equals(raw_dataset)
-            assert loaded.equals(raw_dataset.execute_pipeline())
+            assert loaded.equals(raw_dataset.execute_core_pipeline())
 
     @pytest.mark.parametrize('splits', [[0.1], [0.4, 0.8, 0.9], [0.3, 0.5, 0.7, 0.9], [0.5, 0.2]])
     @pytest.mark.parametrize('balance', ['subjects', 'admissions', 'admissions_intervals', 'unsupported'])
     def test_random_split(self, indexed_dataset: NaiveDataset, splits: List[float], balance: str):
-        dataset = indexed_dataset.execute_pipeline()
+        dataset = indexed_dataset.execute_core_pipeline()
         subjects = dataset.subject_ids
         skip = False
         if balance not in ('subjects', 'admissions', 'admissions_intervals'):

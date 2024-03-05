@@ -11,10 +11,11 @@ from bokeh.models import Span
 from bokeh.palettes import tol
 
 from .base import Data, Module
-from .ehr import (Admission, AdmissionPrediction, InpatientObservables,
+from .ehr import (Admission, InpatientObservables,
                   InpatientInterventions, DemographicVectorConfig,
-                  LeadingObservableConfig, Patients, PatientTrajectory,
-                  TrajectoryConfig, DatasetScheme, AbstractScheme, Predictions)
+                  LeadingObservableConfig, TVxEHR, PatientTrajectory,
+                  DatasetScheme, AbstractScheme)
+from .ml.artefacts import AdmissionPrediction, Predictions, TrajectoryConfig
 from .ml import InpatientModel
 
 
@@ -236,7 +237,7 @@ class ModelVisualiser(eqx.Module):
         return _aux(adm.observables, adm.leading_observable, adm.interventions,
                     obs_traj, lead_traj)
 
-    def batch_predict(self, model: InpatientModel, inpatients: Patients):
+    def batch_predict(self, model: InpatientModel, inpatients: TVxEHR):
         predictions = model.batch_predict(
             inpatients,
             leave_pbar=False,

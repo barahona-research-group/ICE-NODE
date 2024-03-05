@@ -11,9 +11,9 @@ import pytest
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
-from lib.ehr.concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
-                              InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
-                              SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
+from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
+                                  InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
+                                  SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
 from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
     NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 

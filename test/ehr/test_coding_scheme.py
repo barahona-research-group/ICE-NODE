@@ -158,10 +158,10 @@ class TestFlatScheme:
 
     @pytest.mark.expensive_test
     @pytest.mark.usefixtures('clean_schemes')
-    @pytest.mark.parametrize("scheme_setup", [setup_cprd, setup_icd])
-    def test_registered_schemes(self, scheme_setup):
+    def test_registered_schemes(self):
         assert CodingScheme.available_schemes() == set()
-        scheme_setup()
+        for scheme_setup in [setup_cprd, setup_icd]:
+            scheme_setup()
         assert len(CodingScheme.available_schemes()) > 0
 
         for scheme_name in CodingScheme.available_schemes():

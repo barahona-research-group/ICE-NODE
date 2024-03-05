@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import optuna
 
 from .glove import train_glove
-from ..ehr import Patients
+from ..ehr import TVxEHR
 
 
 def unnormalized_softmax(x, axis=-1):
@@ -287,7 +287,7 @@ class LogitsDecoder(eqx.Module):
 
 def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
                                                                       float]],
-                            subject_interface: Patients,
+                            subject_interface: TVxEHR,
                             train_ids: List[int]):
 
     classname = emb_conf['classname']
@@ -327,7 +327,7 @@ def create_embeddings_model(code_type: str, emb_conf: Dict[str, Union[str, int,
 
 
 def embeddings_from_conf(conf: Dict[str, Union[str, int, float]],
-                         subject_interface: Patients, train_ids: List[int],
+                         subject_interface: TVxEHR, train_ids: List[int],
                          decoder_input_size: int):
     models = {}
     if conf.get('dx_discharge'):

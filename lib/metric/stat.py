@@ -18,8 +18,8 @@ import jax.numpy as jnp
 from sklearn import metrics
 import warnings
 
-from ..ehr import (Patients, Predictions, AdmissionPrediction,
-                   InpatientObservables)
+from ..ehr import (TVxEHR, InpatientObservables)
+from ..ml.artefacts import AdmissionPrediction, Predictions
 from ..base import Module, Config
 from .delong import FastDeLongTest
 from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
@@ -124,7 +124,7 @@ def nan_compute_auc(v_truth, v_preds):
 
 class Metric(Module):
     config: Config = Config()
-    patients: Patients
+    patients: TVxEHR
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1277,7 +1277,7 @@ class MetricLevelsConfig(Config):
 class AdmissionAUC(Metric):
 
     def __init__(self,
-                 patients: Patients,
+                 patients: TVxEHR,
                  config: MetricLevelsConfig = None,
                  **kwargs):
         if config is None:
@@ -1445,7 +1445,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     config: CodeGroupTopAlarmAccuracyConfig
 
     def __init__(self,
-                 patients: Patients,
+                 patients: TVxEHR,
                  train_split: List[int],
                  config: MetricLevelsConfig = None,
                  **kwargs):
