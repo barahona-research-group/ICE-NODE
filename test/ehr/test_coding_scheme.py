@@ -7,7 +7,6 @@ import pytest
 
 from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
 
-
 _DIR = os.path.dirname(__file__)
 
 
@@ -46,12 +45,18 @@ def primitive_flat_scheme(primitive_flat_scheme_kwarg):
     return FlatScheme(**primitive_flat_scheme_kwarg)
 
 
-@pytest.fixture
-def clean_schemes():
+def _clean_schemes():
     CodingScheme.unregister_schemes()
     CodingScheme.unregister_scheme_loaders()
     OutcomeExtractor.unregister_schemes()
     OutcomeExtractor.unregister_scheme_loaders()
+
+
+@pytest.fixture
+def clean_schemes():
+    _clean_schemes()
+    yield
+    _clean_schemes()
 
 
 class TestFlatScheme:
@@ -153,28 +158,17 @@ class TestFlatScheme:
 
     @pytest.mark.expensive_test
     @pytest.mark.usefixtures('clean_schemes')
-    def test_registered_schemes(self):
-        """
-        Test case to verify the behavior of registered coding schemes.
-
-        This test case checks the following:
-        - The initial set of available coding schemes is empty.
-        - After each setup (setup_cprd, setup_mimic, setup_icd), the number of available coding schemes increases.
-        - Each registered coding scheme is an instance of FlatScheme object.
-        - The name of the instantiated FlatScheme object matches the registered coding scheme.
-        """
-
+    @pytest.mark.parametrize("scheme_setup", [setup_cprd, setup_icd])
+    def test_registered_schemes(self, scheme_setup):
         assert CodingScheme.available_schemes() == set()
-        count = 0
-        for setup in (setup_cprd, setup_icd):
-            setup()
-            assert len(CodingScheme.available_schemes()) > count
-            count = len(CodingScheme.available_schemes())
+        scheme_setup()
+        assert len(CodingScheme.available_schemes()) > 0
 
-        for registered_scheme in CodingScheme.available_schemes():
-            scheme = FlatScheme.from_name(registered_scheme)
+        for scheme_name in CodingScheme.available_schemes():
+            scheme = CodingScheme.from_name(scheme_name)
             assert isinstance(scheme, FlatScheme)
-            assert scheme.name == registered_scheme
+            assert scheme.name == scheme_name
+
 
     @pytest.mark.parametrize("config, codes, desc",
                              [(CodingSchemeConfig('problematic_codes'), [1], {'1': 'one'}),

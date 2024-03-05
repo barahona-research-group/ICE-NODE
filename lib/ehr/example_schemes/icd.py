@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import gzip
-import logging
 import xml.etree.ElementTree as ET
 from abc import abstractmethod
 from collections import defaultdict
-from typing import Set, Dict, List, Union, Any, ClassVar, Type
+from typing import Set, Dict, List, Union, Any, ClassVar, Type, Tuple, Final
 
 import pandas as pd
 
@@ -50,12 +49,7 @@ class ICDOps:
         pass
 
     @staticmethod
-    @classmethod
-    def create_scheme(cls):
-        pass
-
-    @staticmethod
-    def _deselect_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
+    def deselect_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
         to_del = HierarchicalScheme._bfs_traversal(pt2ch, sub_root, True)
         pt2ch = pt2ch.copy()
         to_del = set(to_del) & set(pt2ch.keys())
@@ -64,16 +58,36 @@ class ICDOps:
         return pt2ch
 
     @staticmethod
-    def _select_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
+    def select_subtree(pt2ch: Dict[str, Set[str]], sub_root: str) -> Dict[str, Set[str]]:
         to_keep = HierarchicalScheme._bfs_traversal(pt2ch, sub_root, True)
         to_keep = set(to_keep) & set(pt2ch.keys())
         return {idx: pt2ch[idx] for idx in to_keep}
 
+
+class ICDScheme(CodingScheme):
+    ops: ClassVar[Type[ICDOps]] = ICDOps
+
+    @classmethod
+    def create_scheme(cls):
+        raise NotImplementedError
+
+
+class ICDFlatScheme(ICDScheme, FlatScheme):
+    def __init__(self, *args, **kwargs):
+        FlatScheme.__init__(self, *args, **kwargs)
+
+
+class ICDHierarchicalScheme(ICDScheme, HierarchicalScheme):
+
+    def __init__(self, *args, **kwargs):
+        HierarchicalScheme.__init__(self, *args, **kwargs)
+
+
+class ICDMapOps:
     @staticmethod
-    def load_conv_table(s_scheme: CodingScheme, t_scheme: CodingScheme,
-                        s_ops: ICDOps, t_ops: ICDOps,
-                        conv_fname: str) -> Dict[str, Union[pd.DataFrame, str, Set[str]]]:
-        df = pd.read_csv(resources_dir("CCS", conv_fname),
+    def load_conversion_table(source_scheme: ICDScheme, target_scheme: ICDScheme,
+                              conversion_filename: str) -> Tuple[pd.DataFrame, Dict[str, Union[str, Set[str]]]]:
+        df = pd.read_csv(resources_dir("CCS", conversion_filename),
                          sep='\s+',
                          dtype=str,
                          names=['source', 'target', 'meta'])
@@ -82,45 +96,23 @@ class ICDOps:
         df['combination'] = df['meta'].apply(lambda s: s[2])
         df['scenario'] = df['meta'].apply(lambda s: s[3])
         df['choice_list'] = df['meta'].apply(lambda s: s[4])
-        df['source'] = df['source'].map(s_ops.add_dots)
-        df['target'] = df['target'].map(t_ops.add_dots)
+        df['source'] = df['source'].map(source_scheme.ops.add_dots)
+        df['target'] = df['target'].map(target_scheme.ops.add_dots)
 
-        valid_target = df['target'].isin(t_scheme.index)
-        unrecognised_target = set(df[~valid_target]["target"])
-        if len(unrecognised_target) > 0:
-            logging.debug(f"""
-                            {s_scheme}->{t_scheme} Unrecognised t_codes
-                            ({len(unrecognised_target)}):
-                            {sorted(unrecognised_target)[:20]}...""")
+        valid_target = df['target'].isin(target_scheme.index)
+        valid_source = df['source'].isin(source_scheme.index)
 
-        valid_source = df['source'].isin(s_scheme.index)
-        unrecognised_source = set(df[~valid_source]["source"])
-        if len(unrecognised_source) > 0:
-            logging.debug(f"""
-                            {s_scheme}->{t_scheme} Unrecognised s_codes
-                            ({len(unrecognised_source)}):
-                            {sorted(unrecognised_source)[:20]}...""")
+        conversion_table = df[valid_target & valid_source]
 
-        df = df[valid_target & valid_source]
-        # df['target'] = df['target'].map(t_scheme.code2dag)
-
-        return {
-            "df": df,
-            "conv_file": conv_fname,
-            "unrecognised_target": unrecognised_target,
-            "unrecognised_source": unrecognised_source
-        }
+        return conversion_table, {"conversion_filename": conversion_filename,
+                                  "unrecognised_target": set(df[~valid_target]["target"]),
+                                  "unrecognised_source": set(df[~valid_source]["source"])}
 
     @staticmethod
-    def analyse_conversions(s_scheme: CodingScheme, t_scheme: CodingScheme,
-                            s_ops: ICDOps, t_ops: ICDOps,
-                            conv_fname: str) -> pd.DataFrame:
-        df = ICDOps.load_conv_table(s_scheme=s_scheme, t_scheme=t_scheme,
-                                    s_ops=s_ops, t_ops=t_ops,
-                                    conv_fname=conv_fname)["df"]
-        codes = list(df['source'][df['no_map'] == '1'])
+    def analyse_conversions(conversion_table: pd.DataFrame) -> pd.DataFrame:
+        codes = list(conversion_table['source'][conversion_table['no_map'] == '1'])
         status = ['no_map' for _ in codes]
-        for code, source_df in df[df['no_map'] == '0'].groupby('source'):
+        for code, source_df in conversion_table[conversion_table['no_map'] == '0'].groupby('source'):
             codes.append(code)
             if len(source_df) == 1:
                 status.append('11_map')
@@ -131,36 +123,25 @@ class ICDOps:
             else:
                 status.append('1n_map')
 
-        status = pd.DataFrame({'code': codes, 'status': status})
-        return status
+        return pd.DataFrame({'code': codes, 'status': status})
 
     @staticmethod
-    def register_mappings(s_scheme: str, t_scheme: str,
-                          s_ops: ICDOps, t_ops: ICDOps,
-                          conv_fname: str):
-        s_scheme = CodingScheme.from_name(s_scheme)
-        t_scheme = CodingScheme.from_name(t_scheme)
-
-        res = ICDOps.load_conv_table(s_scheme=s_scheme, t_scheme=t_scheme,
-                                     s_ops=s_ops, t_ops=t_ops,
-                                     conv_fname=conv_fname)
-
-        conv_df = res["df"]
-        status_df = ICDOps.analyse_conversions(s_scheme=s_scheme, t_scheme=t_scheme,
-                                               s_ops=s_ops, t_ops=t_ops,
-                                               conv_fname=conv_fname)
-
-        map_kind = dict(zip(status_df['code'], status_df['status']))
-
-        config = CodeMapConfig(source_scheme=s_scheme.name,
-                               target_scheme=t_scheme.name,
-                               mapped_to_dag_space=False)
+    def register_mappings(source_scheme: str, target_scheme: str,
+                          conversion_filename: str):
+        source_scheme: ICDScheme = CodingScheme.from_name(source_scheme)
+        target_scheme: ICDScheme = CodingScheme.from_name(target_scheme)
+        table, _ = ICDMapOps.load_conversion_table(source_scheme=source_scheme, target_scheme=target_scheme,
+                                                   conversion_filename=conversion_filename)
+        status_df = ICDMapOps.analyse_conversions(table)
         data = dict()
-        for code, df in conv_df.groupby('source'):
-            kind = map_kind[code]
-            if kind == 'no_map':
+        mapping_status = status_df.set_index('code')['status'].to_dict()
+        for code, code_targets_table in table.groupby('source'):
+            if mapping_status[code] == 'no_map':
                 continue
-            data[code] = set(df['target'])
+            data[code] = set(code_targets_table['target'])
+        config = CodeMapConfig(source_scheme=source_scheme.name,
+                               target_scheme=target_scheme.name,
+                               mapped_to_dag_space=False)
         CodeMap.register_map(CodeMap(config=config, data=data))
 
 
@@ -314,32 +295,16 @@ class PrICD10Ops(ICDOps):
         }
 
 
-class DxICD9Ops(ICDOps):
-    _PR_ROOT_CLASS_ID = 'MM_CLASS_2'
-    _DX_ROOT_CLASS_ID = 'MM_CLASS_21'
-    _DX_DUMMY_ROOT_CLASS_ID = 'owl#Thing'
-
-    @staticmethod
-    def add_dots(code: str) -> str:
-        if '.' in code:
-            # logging.debug(f'Code {code} already is in decimal format')
-            return code
-        if code[0] == 'E':
-            if len(code) > 4:
-                return code[:4] + '.' + code[4:]
-            else:
-                return code
-        else:
-            if len(code) > 3:
-                return code[:3] + '.' + code[3:]
-            else:
-                return code
+class ICD9Ops(ICDOps):
+    ICD9CM_FILE: Final[str] = resources_dir('HOM-ICD9.csv.gz')
+    DUMMY_ROOT_CLASS_ID: Final[str] = 'owl#Thing'
+    PR_ROOT_CLASS_ID: Final[str] = 'MM_CLASS_2'
+    DX_ROOT_CLASS_ID: Final[str] = 'MM_CLASS_21'
 
     @staticmethod
     def icd9_columns() -> Dict[str, List[str]]:
         # https://bioportal.bioontology.org/ontologies/HOM-ICD9
-        ICD9CM_FILE = resources_dir('HOM-ICD9.csv.gz')
-        df = pd.read_csv(ICD9CM_FILE, dtype=str)
+        df = pd.read_csv(ICD9Ops.ICD9CM_FILE, dtype=str)
         df = df.fillna('')
 
         def retain_suffix(cell):
@@ -368,10 +333,10 @@ class DxICD9Ops(ICDOps):
     def parent_child_mappings(df: pd.DataFrame) -> Dict[str, Set[str]]:
         pt2ch = {}
         for pt, ch_df in df.groupby('PARENT_IDX'):
-            pt2ch[pt] = set(ch_df['NODE_IDX'])
+            pt2ch[str(pt)] = set(ch_df['NODE_IDX'])
 
         # Remove dummy parent of diagnoses.
-        del pt2ch[DxICD9Ops._DX_DUMMY_ROOT_CLASS_ID]
+        del pt2ch[ICD9Ops.DUMMY_ROOT_CLASS_ID]
         return pt2ch
 
     @staticmethod
@@ -400,6 +365,24 @@ class DxICD9Ops(ICDOps):
         }
 
 
+class DxICD9Ops(ICD9Ops):
+    @staticmethod
+    def add_dots(code: str) -> str:
+        if '.' in code:
+            # logging.debug(f'Code {code} already is in decimal format')
+            return code
+        if code[0] == 'E':
+            if len(code) > 4:
+                return code[:4] + '.' + code[4:]
+            else:
+                return code
+        else:
+            if len(code) > 3:
+                return code[:3] + '.' + code[3:]
+            else:
+                return code
+
+
 class PrICD9Ops(DxICD9Ops):
 
     @staticmethod
@@ -413,7 +396,7 @@ class PrICD9Ops(DxICD9Ops):
             return code
 
 
-class DxHierarchicalICD10(HierarchicalScheme):
+class DxHierarchicalICD10(ICDHierarchicalScheme):
     ops: ClassVar[Type[DxICD10Ops]] = DxICD10Ops
 
     @classmethod
@@ -421,21 +404,21 @@ class DxHierarchicalICD10(HierarchicalScheme):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
         config = CodingSchemeConfig(name='dx_icd10')
         CodingScheme.register_scheme(
-            DxHierarchicalICD10(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', True)))
+            cls(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', True)))
 
 
-class DxFlatICD10(FlatScheme):
+class DxFlatICD10(ICDFlatScheme):
     ops: ClassVar[Type[DxICD10Ops]] = DxICD10Ops
 
     @classmethod
     def create_scheme(cls):
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
         config = CodingSchemeConfig(name='dx_flat_icd10')
-        scheme = DxFlatICD10(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', False))
+        scheme = cls(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', False))
         CodingScheme.register_scheme(scheme)
 
 
-class PrHierarchicalICD10(HierarchicalScheme):
+class PrHierarchicalICD10(ICDHierarchicalScheme):
     ops: ClassVar[Type[PrICD10Ops]] = PrICD10Ops
 
     @classmethod
@@ -463,16 +446,15 @@ class DxHierarchicalICD9(HierarchicalScheme):
         pt2ch = cls.ops.parent_child_mappings(df)
 
         # Remove the procedure codes.
-        pt2ch = cls.ops._deselect_subtree(pt2ch, cls.ops._PR_ROOT_CLASS_ID)
+        pt2ch = cls.ops.deselect_subtree(pt2ch, cls.ops.PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
         nodes = set().union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
-        scheme = DxHierarchicalICD9(config=CodingSchemeConfig(name='dx_icd9'),
-                                    **cls.ops.generate_dictionaries(df), pt2ch=pt2ch)
-        CodingScheme.register_scheme(scheme)
+        CodingScheme.register_scheme(DxHierarchicalICD9(config=CodingSchemeConfig(name='dx_icd9'),
+                                                        **cls.ops.generate_dictionaries(df), pt2ch=pt2ch))
 
 
 class PrHierarchicalICD9(HierarchicalScheme):
@@ -480,97 +462,53 @@ class PrHierarchicalICD9(HierarchicalScheme):
 
     @classmethod
     def create_scheme(cls):
-        df = pd.DataFrame(DxICD9Ops.icd9_columns())
-        pt2ch = DxICD9Ops.parent_child_mappings(df)
+        df = pd.DataFrame(cls.ops.icd9_columns())
+        pt2ch = cls.ops.parent_child_mappings(df)
 
         # Remove the procedure codes.
-        pt2ch = cls.ops._select_subtree(pt2ch, cls.ops._PR_ROOT_CLASS_ID)
+        pt2ch = cls.ops.select_subtree(pt2ch, cls.ops.PR_ROOT_CLASS_ID)
 
         # Remaining node indices in one set.
         nodes = set().union(set(pt2ch), *pt2ch.values())
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
-        scheme = PrHierarchicalICD9(config=CodingSchemeConfig(name='pr_icd9'),
-                                    **cls.ops.generate_dictionaries(df), pt2ch=pt2ch)
-        CodingScheme.register_scheme(scheme)
+        CodingScheme.register_scheme(PrHierarchicalICD9(config=CodingSchemeConfig(name='pr_icd9'),
+                                                        **cls.ops.generate_dictionaries(df), pt2ch=pt2ch))
 
 
-class CCSOps:
-    _SCHEME_FILE = None
-    _N_LEVELS = None
-
-    @classmethod
-    @abstractmethod
-    def ccs_columns(cls, icd9_scheme: CodingScheme,
-                    icd9_ops: ICDOps) -> Dict[str, List[str]]:
-        pass
-
-    @staticmethod
-    @abstractmethod
-    def register_mappings(ccs_scheme: str,
-                          ccs_ops: CCSOps,
-                          icd9_scheme: str):
-        pass
+class CCSMapOps:
+    SCHEME_FILE: str = None
+    N_LEVELS: int = None
 
     @classmethod
-    @abstractmethod
-    def parent_child_mappings(cls, df: pd.DataFrame) -> Dict[str, Set[str]]:
-        pass
-
-    @classmethod
-    @abstractmethod
-    def desc_mappings(cls, df: pd.DataFrame) -> Dict[str, str]:
-        pass
-
-    @staticmethod
-    @abstractmethod
-    def _code_ancestors_dots(code: str, include_itself: bool = True) -> Set[str]:
-        pass
-
-    @classmethod
-    def code_ancestors(cls, code: str, include_itself: bool) -> Set[str]:
-        return cls._code_ancestors_dots(code, include_itself)
-
-
-class DxCCSOps(CCSOps):
-    _SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
-    _N_LEVELS = 4
-
-    @classmethod
-    def ccs_columns(cls, icd9_scheme: CodingScheme,
-                    icd9_ops: ICDOps) -> Dict[str, List[str] | str]:
-        df = pd.read_csv(resources_dir("CCS", cls._SCHEME_FILE), dtype=str)
+    def ccs_columns(cls, icd9_scheme: ICDHierarchicalScheme) -> Tuple[Dict[str, List[str]], Dict[str, Set[str] | str]]:
+        df = pd.read_csv(resources_dir("CCS", cls.SCHEME_FILE), dtype=str)
         icd_cname = '\'ICD-9-CM CODE\''
 
-        df[icd_cname] = df[icd_cname].apply(lambda l: l.strip('\'').strip())
-        df[icd_cname] = df[icd_cname].map(icd9_ops.add_dots)
+        df[icd_cname] = df[icd_cname].str.strip('\'').str.strip()
+        df[icd_cname] = df[icd_cname].map(icd9_scheme.ops.add_dots)
         valid_icd = df[icd_cname].isin(icd9_scheme.index)
-        unrecognised_icd9 = set(df[~valid_icd][icd_cname])
         df = df[valid_icd]
 
         cols = {}
-        for i in range(1, cls._N_LEVELS + 1):
-            cols[f'I{i}'] = list(
-                df[f'\'CCS LVL {i}\''].apply(lambda l: l.strip('\'').strip()))
-            cols[f'L{i}'] = list(df[f'\'CCS LVL {i} LABEL\''].apply(
-                lambda l: l.strip('\'').strip()))
-        cols['ICD'] = list(df[icd_cname])
+        for i in range(1, cls.N_LEVELS + 1):
+            cols[f'I{i}'] = df[f'\'CCS LVL {i}\''].str.strip('\'').str.strip().tolist()
+            cols[f'L{i}'] = df[f'\'CCS LVL {i} LABEL\''].str.strip('\'').str.strip().tolist()
+        cols['ICD'] = df[icd_cname].tolist()
 
-        return {
-            "cols": cols,
-            "unrecognised_icd9": unrecognised_icd9,
-            "conv_file": cls._SCHEME_FILE
+        return cols, {
+            "unrecognised_icd9": set(df[~valid_icd][icd_cname]),
+            "conversion_filename": cls.SCHEME_FILE
         }
 
-    @staticmethod
-    def register_mappings(ccs_scheme: str,
-                          ccs_ops: CCSOps,
+    @classmethod
+    def register_mappings(cls, ccs_scheme: str,
                           icd9_scheme: str):
         ccs_scheme: CodingScheme = CodingScheme.from_name(ccs_scheme)
-        icd9_scheme: CodingScheme = CodingScheme.from_name(icd9_scheme)
+        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(icd9_scheme)
 
-        res = ccs_ops.ccs_columns(icd9_scheme)
+        res = cls.ccs_columns(icd9_scheme)
 
         # TODO: Check if the mapping is correct
         icd92ccs_config = CodeMapConfig(icd9_scheme.name,
@@ -586,7 +524,7 @@ class DxCCSOps(CCSOps):
         n_rows = len(cols['ICD'])
         for i in range(n_rows):
             last_index = None
-            for j in range(1, ccs_ops._N_LEVELS + 1):
+            for j in range(1, cls.N_LEVELS + 1):
                 level = cols[f'I{j}'][i]
                 if level != '':
                     last_index = level
@@ -602,7 +540,7 @@ class DxCCSOps(CCSOps):
     def parent_child_mappings(cls, df: pd.DataFrame) -> Dict[str, Set[str]]:
         """Make dictionary for parent-child connections."""
         pt2ch = {'root': set(df['I1'])}
-        levels = list(map(lambda i: f'I{i}', range(1, cls._N_LEVELS + 1)))
+        levels = list(map(lambda i: f'I{i}', range(1, cls.N_LEVELS + 1)))
 
         for pt_col, ch_col in zip(levels[:-1], levels[1:]):
             df_ = df[(df[pt_col] != '') & (df[ch_col] != '')]
@@ -615,8 +553,8 @@ class DxCCSOps(CCSOps):
     def desc_mappings(cls, df: pd.DataFrame) -> Dict[str, str]:
         """Make a dictionary for CCS labels."""
         desc = {'root': 'root'}
-        levels = list(map(lambda i: f'I{i}', range(1, cls._N_LEVELS + 1)))
-        descs = list(map(lambda i: f'L{i}', range(1, cls._N_LEVELS + 1)))
+        levels = list(map(lambda i: f'I{i}', range(1, cls.N_LEVELS + 1)))
+        descs = list(map(lambda i: f'L{i}', range(1, cls.N_LEVELS + 1)))
         for code_col, desc_col in zip(levels, descs):
             df_ = df[df[code_col] != '']
             df_ = df_[[code_col, desc_col]].drop_duplicates()
@@ -625,7 +563,7 @@ class DxCCSOps(CCSOps):
         return desc
 
     @staticmethod
-    def _code_ancestors_dots(code: str, include_itself: bool = True) -> Set[str]:
+    def code_ancestors_dots(code: str, include_itself: bool = True) -> Set[str]:
 
         ancestors = {code} if include_itself else set()
         if code == 'root':
@@ -641,91 +579,72 @@ class DxCCSOps(CCSOps):
 
     @classmethod
     def code_ancestors(cls, code: str, include_itself: bool) -> Set[str]:
-        return cls._code_ancestors_dots(code, include_itself)
+        return cls.code_ancestors_dots(code, include_itself)
 
 
-class PrCCSOps(DxCCSOps):
-    _SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
-    _N_LEVELS = 3
+class DxCCSMapOps(CCSMapOps):
+    SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
+    N_LEVELS = 4
 
 
-class DxCCS(HierarchicalScheme):
-    ops: ClassVar[Type[CCSOps]] = CCSOps
+class PrCCSMapOps(CCSMapOps):
+    SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
+    N_LEVELS = 3
+
+
+class CCSHierarchicalScheme(HierarchicalScheme):
+    ops: ClassVar[Type[CCSMapOps]] = CCSMapOps
+    icd9_scheme_name: str = None
 
     @classmethod
     def create_scheme(cls):
-        icd9_scheme = CodingScheme.from_name('dx_icd9')
-        icd9_ops: ICDOps = icd9_scheme.ops
-
-        cols = cls.ops.ccs_columns(icd9_scheme, icd9_ops)["cols"]
+        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.icd9_scheme_name)
+        cols, _ = cls.ops.ccs_columns(icd9_scheme)
         df = pd.DataFrame(cols)
         pt2ch = cls.ops.parent_child_mappings(df)
         desc = cls.ops.desc_mappings(df)
         codes = sorted(desc.keys())
-        CodingScheme.register_scheme(DxCCS(CodingSchemeConfig(name='dx_ccs'),
-                                           pt2ch=pt2ch,
-                                           codes=codes,
-                                           desc=desc))
+        CodingScheme.register_scheme(cls(CodingSchemeConfig(name='dx_ccs'),
+                                         pt2ch=pt2ch,
+                                         codes=codes,
+                                         desc=desc))
 
 
-class PrCCS(HierarchicalScheme):
-    ops: ClassVar[Type[CCSOps]] = CCSOps
-
-    @classmethod
-    def create_scheme(cls):
-        icd9_scheme = CodingScheme.from_name('pr_icd9')
-        icd9_ops: ICDOps = icd9_scheme.ops
-
-        cols = cls.ops.ccs_columns(icd9_scheme,
-                                   icd9_ops)["cols"]
-        df = pd.DataFrame(cols)
-        pt2ch = cls.ops.parent_child_mappings(df)
-        desc = cls.ops.desc_mappings(df)
-        codes = sorted(desc.keys())
-        CodingScheme.register_scheme(PrCCS(CodingSchemeConfig(name='pr_ccs'),
-                                           pt2ch=pt2ch,
-                                           codes=codes,
-                                           desc=desc))
+class DxCCS(CCSHierarchicalScheme):
+    ops: ClassVar[Type[DxCCSMapOps]] = DxCCSMapOps
+    icd9_scheme_name: str = 'dx_icd9'
 
 
-class FlatCCSOps:
-    _SCHEME_FILE = None
+class PrCCS(CCSHierarchicalScheme):
+    ops: ClassVar[Type[PrCCSMapOps]] = PrCCSMapOps
+    icd9_scheme_name: str = 'pr_icd9'
+
+
+class FlatCCSMapOps:
+    SCHEME_FILE = None
 
     @classmethod
-    def flatccs_columns(cls, icd9_scheme: CodingScheme,
-                        icd9_ops: ICDOps) -> Dict[str, List[str]]:
-        filepath = resources_dir("CCS", cls._SCHEME_FILE)
+    def flatccs_columns(cls, icd9_scheme: ICDHierarchicalScheme) -> Tuple[pd.DataFrame, Dict[str, Set[str] | str]]:
+        filepath = resources_dir("CCS", cls.SCHEME_FILE)
         df = pd.read_csv(filepath, skiprows=[0, 2], dtype=str)
         icd9_cname = '\'ICD-9-CM CODE\''
         cat_cname = '\'CCS CATEGORY\''
         desc_cname = '\'CCS CATEGORY DESCRIPTION\''
-        df[icd9_cname] = df[icd9_cname].map(lambda c: c.strip('\'').strip())
-        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.add_dots)
-
+        for cname in (icd9_cname, cat_cname, desc_cname):
+            df[cname] = df[cname].str.strip('\'').str.strip()
+        df[icd9_cname] = df[icd9_cname].map(icd9_scheme.ops.add_dots)
+        # Filter out unrecognised ICD-9 codes.
         valid_icd9 = df[icd9_cname].isin(icd9_scheme.index)
-
-        unrecognised_icd9 = set(df[~valid_icd9][icd9_cname])
         df = df[valid_icd9]
-
-        code_col = list(df[cat_cname].map(lambda c: c.strip('\'').strip()))
-        icd9_col = list(df[icd9_cname])
-        desc_col = list(df[desc_cname].map(lambda d: d.strip('\'').strip()))
-
-        return {
-            'code': code_col,
-            'icd9': icd9_col,
-            'desc': desc_col,
-            'unrecognised_icd9': unrecognised_icd9,
-            'conv_file': cls._SCHEME_FILE
+        df = df.rename(columns={icd9_cname: 'icd9', cat_cname: 'code', desc_cname: 'desc'})
+        return df[['code', 'icd9', 'desc']], {
+            'unrecognised_icd9': set(df[~valid_icd9]['icd9']),
+            'conversion_filename': cls.SCHEME_FILE
         }
 
-    @staticmethod
-    def register_mappings(flatccs_scheme: str, icd9_scheme: str):
-        flatccs_scheme = CodingScheme.from_name(flatccs_scheme)
-        icd9_scheme = CodingScheme.from_name(icd9_scheme)
-
-        res = FlatCCSOps.flatccs_columns(icd9_scheme,
-                                         icd9_ops)
+    @classmethod
+    def register_ccs_flat_mappings(cls, flatccs_scheme: CodingScheme, icd9_scheme: ICDHierarchicalScheme):
+        columns, _ = cls.flatccs_columns(icd9_scheme)
 
         flatccs2icd9_config = CodeMapConfig(
             flatccs_scheme.name,
@@ -736,45 +655,47 @@ class FlatCCSOps:
             flatccs_scheme.name,
             t_dag_space=False)
 
-        map_n1 = dict(zip(res['icd9'], res['code']))
-        assert len(map_n1) == len(res['icd9']), "1toN mapping expected"
-
+        assert len(columns['icd9']) == columns['icd9'].nunique(), "1toN mapping expected"
         flatccs2icd9 = defaultdict(set)
         icd92flatccs = defaultdict(set)
-        for icd_code, ccode in map_n1.items():
+        for icd_code, ccode in columns.set_index('icd9')['code'].to_dict().items():
             flatccs2icd9[ccode].add(icd_code)
             icd92flatccs[icd_code].add(ccode)
-        flatccs2icd9 = dict(flatccs2icd9)
-        icd92flatccs = dict(icd92flatccs)
-        CodeMap.register_map(CodeMap(flatccs2icd9_config, flatccs2icd9))
-        CodeMap.register_map(CodeMap(icd92flatccs_config, icd92flatccs))
+
+        CodeMap.register_map(CodeMap(flatccs2icd9_config, dict(flatccs2icd9)))
+        CodeMap.register_map(CodeMap(icd92flatccs_config, dict(icd92flatccs)))
 
 
-class DxFlatCCS(FlatScheme):
-    ops: ClassVar[Type[CCSOps]] = CCSOps
-    _SCHEME_FILE = '$dxref 2015.csv.gz'
-
-    @classmethod
-    def create_scheme(cls):
-        dx_icd9 = CodingScheme.from_name('dx_icd9')
-        cols = cls.ops.flatccs_columns(dx_icd9)
-        codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(DxFlatCCS(CodingSchemeConfig('dx_flatccs'),
-                                               codes=codes,
-                                               desc=dict(zip(cols['code'], cols['desc']))))
+class DxFlatCCSMapOps(FlatCCSMapOps):
+    SCHEME_FILE = '$dxref 2015.csv.gz'
 
 
-class PrFlatCCS(FlatCCS):
-    _SCHEME_FILE = '$prref 2015.csv.gz'
+class PrFlatCCSMapOps(FlatCCSMapOps):
+    SCHEME_FILE = '$prref 2015.csv.gz'
+
+
+class FlatCCSScheme(FlatScheme):
+    ops: ClassVar[Type[FlatCCSMapOps]] = FlatCCSMapOps
+    icd9_scheme_name: str = None
 
     @classmethod
     def create_scheme(cls):
-        pr_icd9 = CodingScheme.from_name('pr_icd9')
-        cols = cls.flatccs_columns(pr_icd9)
+        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.icd9_scheme_name)
+        cols, _ = cls.ops.flatccs_columns(icd9_scheme)
         codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(PrFlatCCS(CodingSchemeConfig('pr_flatccs'),
-                                               codes=codes,
-                                               desc=dict(zip(cols['code'], cols['desc']))))
+        CodingScheme.register_scheme(cls(config=CodingSchemeConfig('dx_flatccs'),
+                                         codes=codes,
+                                         desc=dict(zip(cols['code'], cols['desc']))))
+
+
+class DxFlatCCS(FlatCCSScheme):
+    ops: ClassVar[Type[DxFlatCCSMapOps]] = DxFlatCCSMapOps
+    icd9_scheme_name: str = 'dx_icd9'
+
+
+class PrFlatCCS(FlatCCSScheme):
+    ops: ClassVar[Type[PrFlatCCSMapOps]] = PrFlatCCSMapOps
+    icd9_scheme_name: str = 'pr_icd9'
 
 
 def setup_scheme_loaders():
@@ -782,8 +703,8 @@ def setup_scheme_loaders():
     CodingScheme.register_scheme_loader('pr_icd10', PrHierarchicalICD10.create_scheme)
     CodingScheme.register_scheme_loader('dx_flat_icd10', DxFlatICD10.create_scheme)
     CodingScheme.register_scheme_loader('pr_flat_icd10', PrFlatICD10.create_scheme)
-    CodingScheme.register_scheme_loader('dx_icd9', DxICD9.create_scheme)
-    CodingScheme.register_scheme_loader('pr_icd9', PrICD9.create_scheme)
+    CodingScheme.register_scheme_loader('dx_icd9', DxHierarchicalICD9.create_scheme)
+    CodingScheme.register_scheme_loader('pr_icd9', PrHierarchicalICD9.create_scheme)
     CodingScheme.register_scheme_loader('dx_ccs', DxCCS.create_scheme)
     CodingScheme.register_scheme_loader('pr_ccs', PrCCS.create_scheme)
     CodingScheme.register_scheme_loader('dx_flatccs', DxFlatCCS.create_scheme)
@@ -796,42 +717,46 @@ def setup_scheme_loaders():
 def setup_maps_loaders():
     # ICD9 <-> ICD10s
     CodeMap.register_map_loader('dx_icd10', 'dx_icd9',
-                                lambda: ICD.register_mappings('dx_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('dx_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz'))
     CodeMap.register_map_loader('dx_icd9', 'dx_icd10',
-                                lambda: ICD.register_mappings('dx_icd9', 'dx_icd10', '2018_gem_cm_I9I10.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('dx_icd9', 'dx_icd10', '2018_gem_cm_I9I10.txt.gz'))
     CodeMap.register_map_loader('pr_icd10', 'pr_icd9',
-                                lambda: ICD.register_mappings('pr_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('pr_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
     CodeMap.register_map_loader('pr_icd9', 'pr_icd10',
-                                lambda: ICD.register_mappings('pr_icd9', 'pr_icd10', '2018_gem_pcs_I9I10.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('pr_icd9', 'pr_icd10', '2018_gem_pcs_I9I10.txt.gz'))
     CodeMap.register_map_loader('dx_flat_icd10', 'dx_icd9',
-                                lambda: ICD.register_mappings('dx_flat_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('dx_flat_icd10', 'dx_icd9',
+                                                                    '2018_gem_cm_I10I9.txt.gz'))
     CodeMap.register_map_loader('dx_icd9', 'dx_flat_icd10',
-                                lambda: ICD.register_mappings('dx_icd9', 'dx_flat_icd10', '2018_gem_cm_I9I10.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('dx_icd9', 'dx_flat_icd10',
+                                                                    '2018_gem_cm_I9I10.txt.gz'))
     CodeMap.register_map_loader('pr_flat_icd10', 'pr_icd9',
-                                lambda: ICD.register_mappings('pr_flat_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('pr_flat_icd10', 'pr_icd9',
+                                                                    '2018_gem_pcs_I10I9.txt.gz'))
     CodeMap.register_map_loader('pr_icd9', 'pr_flat_icd10',
-                                lambda: ICD.register_mappings('pr_icd9', 'pr_flat_icd10', '2018_gem_pcs_I9I10.txt.gz'))
+                                lambda: ICDMapOps.register_mappings('pr_icd9', 'pr_flat_icd10',
+                                                                    '2018_gem_pcs_I9I10.txt.gz'))
 
     # ICD9 <-> CCS
-    bimap_dx_ccs_icd9 = lambda: CCS.register_mappings('dx_ccs', 'dx_icd9')
+    bimap_dx_ccs_icd9 = lambda: DxCCSMapOps.register_mappings('dx_ccs', 'dx_icd9')
 
     CodeMap.register_map_loader('dx_icd9', 'dx_ccs',
                                 bimap_dx_ccs_icd9)
     CodeMap.register_map_loader('dx_ccs', 'dx_icd9',
                                 bimap_dx_ccs_icd9)
 
-    bimap_pr_ccs_icd9 = lambda: CCS.register_mappings('pr_ccs', 'pr_icd9')
+    bimap_pr_ccs_icd9 = lambda: PrCCSMapOps.register_mappings('pr_ccs', 'pr_icd9')
     CodeMap.register_map_loader('pr_icd9', 'pr_ccs',
                                 bimap_pr_ccs_icd9)
     CodeMap.register_map_loader('pr_ccs', 'pr_icd9',
                                 bimap_pr_ccs_icd9)
 
-    bimap_dx_flatccs_icd9 = lambda: FlatCCS.register_mappings('dx_flatccs', 'dx_icd9')
+    bimap_dx_flatccs_icd9 = lambda: DxCCSMapOps.register_mappings('dx_flatccs', 'dx_icd9')
     CodeMap.register_map_loader('dx_flatccs', 'dx_icd9',
                                 bimap_dx_flatccs_icd9)
     CodeMap.register_map_loader('dx_icd9', 'dx_flatccs',
                                 bimap_dx_flatccs_icd9)
-    bimap_pr_flatccs_icd9 = lambda: FlatCCS.register_mappings('pr_flatccs', 'pr_icd9')
+    bimap_pr_flatccs_icd9 = lambda: PrCCSMapOps.register_mappings('pr_flatccs', 'pr_icd9')
     CodeMap.register_map_loader('pr_flatccs', 'pr_icd9',
                                 bimap_pr_flatccs_icd9)
     CodeMap.register_map_loader('pr_icd9', 'pr_flatccs',
