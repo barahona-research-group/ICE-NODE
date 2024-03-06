@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Dict
+from typing import List
 
 import equinox as eqx
 import numpy as np
@@ -31,50 +31,50 @@ def sample_codes(scheme: str, n: int) -> List[str]:
 
 # Static Columns
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['SUBJECT_IDXYZ'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['SUBJECT_IDXYZ'])
 def subject_id_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['race'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['race'])
 def race_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['gender'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['gender'])
 def gender_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['dob'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['dob'])
 def date_of_birth_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def static_table_config(subject_id_alias, gender_alias, race_alias, date_of_birth_alias):
     return StaticTableConfig(subject_id_alias=subject_id_alias,
                              gender_alias=gender_alias, race_alias=race_alias,
                              date_of_birth_alias=date_of_birth_alias)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['ADMISSION_IDX'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['ADMISSION_IDX'])
 def admission_id_alias(request):
     return request.param
 
 
 # Admission Columns
-@pytest.fixture(scope=DATASET_SCOPE, params=['admission_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['admission_time'])
 def admission_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['discharge_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['discharge_time'])
 def discharge_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def admission_table_config(static_table_config, admission_id_alias, admission_time_alias, discharge_time_alias):
     return AdmissionTableConfig(subject_id_alias=static_table_config.subject_id_alias,
                                 admission_id_alias=admission_id_alias,
@@ -83,27 +83,27 @@ def admission_table_config(static_table_config, admission_id_alias, admission_ti
 
 
 # Obs Columns
-@pytest.fixture(scope=DATASET_SCOPE, params=['time_bin'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['time_bin'])
 def obs_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['measurement'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['measurement'])
 def obs_code_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['measurement description'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['measurement description'])
 def obs_code_desc_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['obs_val'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['obs_val'])
 def obs_value_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def obs_table_config(admission_table_config, obs_time_alias, obs_code_alias,
                      obs_code_desc_alias,
                      obs_value_alias) -> AdmissionTimestampedCodedValueTableConfig:
@@ -115,17 +115,17 @@ def obs_table_config(admission_table_config, obs_time_alias, obs_code_alias,
 
 
 # Dx Columns
-@pytest.fixture(scope=DATASET_SCOPE, params=['dx_code'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['dx_code'])
 def dx_code_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['dx_code_desc'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['dx_code_desc'])
 def dx_code_desc_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def dx_discharge_table_config(admission_table_config,
                               dx_code_alias, dx_code_desc_alias) -> AdmissionLinkedCodedValueTableConfig:
     return AdmissionLinkedCodedValueTableConfig(admission_id_alias=admission_table_config.admission_id_alias,
@@ -133,27 +133,27 @@ def dx_discharge_table_config(admission_table_config,
 
 
 # Hosp Proc Columns
-@pytest.fixture(scope=DATASET_SCOPE, params=['hosp_proc_code'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['hosp_proc_code'])
 def hosp_proc_code_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['hosp_proc_code_desc'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['hosp_proc_code_desc'])
 def hosp_proc_code_desc_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['hosp_proc_start_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['hosp_proc_start_time'])
 def hosp_proc_start_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['hosp_proc_end_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['hosp_proc_end_time'])
 def hosp_proc_end_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def hosp_proc_table_config(admission_table_config: AdmissionTableConfig,
                            hosp_proc_code_alias: str,
                            hosp_proc_code_desc_alias: str, hosp_proc_start_time_alias: str,
@@ -166,27 +166,27 @@ def hosp_proc_table_config(admission_table_config: AdmissionTableConfig,
 
 
 # ICU Proc Columns
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_proc_code'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_proc_code'])
 def icu_proc_code_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_proc_code_desc'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_proc_code_desc'])
 def icu_proc_code_desc_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_proc_start_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_proc_start_time'])
 def icu_proc_start_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_proc_end_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_proc_end_time'])
 def icu_proc_end_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def icu_proc_table_config(admission_table_config: AdmissionTableConfig,
                           icu_proc_code_alias: str,
                           icu_proc_code_desc_alias: str, icu_proc_start_time_alias: str,
@@ -200,57 +200,57 @@ def icu_proc_table_config(admission_table_config: AdmissionTableConfig,
 
 # ICU Input Columns
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_code'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_code'])
 def icu_input_code_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_code_desc'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_code_desc'])
 def icu_input_code_desc_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_start_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_start_time'])
 def icu_input_start_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_end_time'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_end_time'])
 def icu_input_end_time_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_amount'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_amount'])
 def icu_input_amount_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_amount_uom'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_amount_uom'])
 def icu_input_amount_unit_alias(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_normalized_amount'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_derived_normalized_amount'])
 def icu_input_derived_normalized_amount(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_normalized_amount_per_hour'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_derived_normalized_amount_per_hour'])
 def icu_input_derived_normalized_amount_per_hour(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_unit_normalization_factor'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_derived_unit_normalization_factor'])
 def icu_input_derived_unit_normalization_factor(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=['icu_input_derived_universal_unit'])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=['icu_input_derived_universal_unit'])
 def icu_input_derived_universal_unit(request):
     return request.param
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def icu_input_table_config(admission_table_config: AdmissionTableConfig,
                            icu_input_code_alias: str,
                            icu_input_code_desc_alias: str, icu_input_start_time_alias: str,
@@ -396,32 +396,32 @@ def sample_obs_dataframe(admissions_df: pd.DataFrame,
     return df[[c_admission, c_obs, c_time, c_value]]
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('ethnicity1', ['E1', 'E2', 'E3'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('ethnicity1', ['E1', 'E2', 'E3'])])
 def ethnicity_scheme(request):
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('gender1', ['M', 'F'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('gender1', ['M', 'F'])])
 def gender_scheme(request):
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('dx1', ['Dx1', 'Dx2', 'Dx3', 'Dx4', 'Dx5'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('dx1', ['Dx1', 'Dx2', 'Dx3', 'Dx4', 'Dx5'])])
 def dx_scheme(request) -> str:
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('hosp_proc1', ['P1', 'P2', 'P3'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('hosp_proc1', ['P1', 'P2', 'P3'])])
 def hosp_proc_scheme(request) -> str:
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('icu_proc1', ['P1', 'P2', 'P3'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('icu_proc1', ['P1', 'P2', 'P3'])])
 def icu_proc_scheme(request) -> str:
     return scheme(*request.param)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('icu_inputs1', ['I1', 'I2', 'I3'])])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('icu_inputs1', ['I1', 'I2', 'I3'])])
 def icu_inputs_scheme(request) -> str:
     return scheme(*request.param)
 
@@ -432,9 +432,9 @@ ORDINAL_OBSERVATION_CODE_INDEX = 2
 NUMERIC_OBSERVATION_CODE_INDEX = 3
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[('observation1',
-                                              ('O1', 'O2', 'O3', 'O4', 'O5'),
-                                              ('B', 'C', 'O', 'N', 'N'))])
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True, params=[('observation1',
+                                                            ('O1', 'O2', 'O3', 'O4', 'O5'),
+                                                            ('B', 'C', 'O', 'N', 'N'))])
 def observation_scheme(request) -> str:
     name, codes, types = request.param
     CodingScheme.register_scheme(NumericScheme(config=CodingSchemeConfig(name),
@@ -444,7 +444,7 @@ def observation_scheme(request) -> str:
     return name
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def dataset_tables_config(static_table_config: StaticTableConfig,
                           admission_table_config: AdmissionTableConfig,
                           obs_table_config: AdmissionTimestampedCodedValueTableConfig,
@@ -461,7 +461,7 @@ def dataset_tables_config(static_table_config: StaticTableConfig,
                                icu_inputs=icu_input_table_config)
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def dataset_scheme_config(ethnicity_scheme: str,
                           gender_scheme: str,
                           dx_scheme: str,
@@ -478,8 +478,9 @@ def dataset_scheme_config(ethnicity_scheme: str,
                                hosp_procedures=hosp_proc_scheme)
 
 
-@pytest.fixture(scope=DATASET_SCOPE, params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
-                                             (50, 0, 0), (50, 10, 10)],
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True,
+                params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
+                        (50, 0, 0), (50, 10, 10)],
                 ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,
@@ -526,15 +527,7 @@ def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                          icu_inputs=icu_inputs_df)
 
 
-class Pipeline(AbstractDatasetPipeline):
-
-    def __call__(self, dataset: Dataset) -> Tuple[Dataset, Dict[str, pd.DataFrame]]:
-        for transformation in self.transformations:
-            dataset, _ = transformation(dataset, {'report': []})
-        return dataset, {'report': pd.DataFrame({'action': ['*']})}
-
-
-@pytest.fixture
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def dataset_config(dataset_scheme_config, dataset_tables_config):
     return DatasetConfig(scheme=dataset_scheme_config, tables=dataset_tables_config,
                          pipeline=AbstractDatasetPipelineConfig())
@@ -544,21 +537,21 @@ class NaiveDataset(Dataset):
 
     @classmethod
     def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return Pipeline(config=config.pipeline, transformations=[])
+        return AbstractDatasetPipeline(config=config.pipeline, transformations=[])
 
     @classmethod
     def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
         return None
 
 
-@pytest.fixture
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def dataset(dataset_config, dataset_tables):
     ds = NaiveDataset(config=dataset_config)
     return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
                        is_leaf=lambda x: x is None)
 
 
-@pytest.fixture
+@pytest.fixture(scope=DATASET_SCOPE, autouse=True)
 def indexed_dataset(dataset):
     return dataset.execute_external_transformations([SetIndex()])
 

@@ -586,7 +586,6 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
 class RandomSplits(AbstractTVxTransformation):
 
     # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps)
-
     def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
         config = tv_ehr.config.splits

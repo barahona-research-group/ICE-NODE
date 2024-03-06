@@ -17,7 +17,7 @@ modules = [
     model, dx_models, in_models, in_models_modular, embeddings, trainer,
     experiment, evaluation, stat,
     # ehr
-    tvx_concepts, dataset, coding_scheme, pipeline, mimic3, cprd, mimiciv, mimiciv_aki
+    tvx_concepts, dataset, coding_scheme, transformations, mimic3, cprd, mimiciv, mimiciv_aki
 ]
 for m in modules:
     for name, _class in inspect.getmembers(m, inspect.isclass):

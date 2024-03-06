@@ -491,7 +491,7 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
     @staticmethod
     def compile_report(report: Tuple[ReportAttributes, ...], current_report: pd.DataFrame) -> pd.DataFrame:
         if len(report) == 0:
-            report = (ReportAttributes(transformation='no_transformation'),)
+            report = (ReportAttributes(transformation='identity'),)
         new_report = pd.DataFrame([x.as_dict() for x in report]).astype(str)
         return pd.concat([current_report, new_report], ignore_index=True, axis=0)
 
@@ -582,7 +582,6 @@ class Dataset(Module):
             logging.warning("Pipeline has already been executed. Doing nothing.")
             return self
         dataset, report = self.core_pipeline(self)
-        dataset = eqx.tree_at(lambda x: x.config.pipeline_executed, dataset, True)
         dataset = eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
         return dataset
 
@@ -625,6 +624,7 @@ class Dataset(Module):
                       random_seed: int = 42,
                       balance: str = 'subjects',
                       discount_first_admission: bool = False):
+        assert len(splits) > 0, "Splits must be non-empty."
         assert list(splits) == sorted(splits), "Splits must be sorted."
         assert balance in ('subjects', 'admissions',
                            'admissions_intervals'), "Balanced must be'subjects', 'admissions', or 'admissions_intervals'."

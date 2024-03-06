@@ -86,24 +86,24 @@ def test_synchronize_index_admissions(indexed_dataset: Dataset):
 
 class TestDatasetTransformation:
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def subject_id_column(self, indexed_dataset: Dataset) -> str:
         return indexed_dataset.config.tables.subject_id_alias
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def sample_subject_id(self, indexed_dataset: Dataset, subject_id_column: str) -> str:
         if len(indexed_dataset.tables.admissions) == 0:
             pytest.skip("No static table found in dataset.")
         return indexed_dataset.tables.admissions[subject_id_column].iloc[0]
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def indexed_dataset_removed_admission(self, indexed_dataset: Dataset, sample_subject_id: str,
                                           subject_id_column: str):
         admissions = indexed_dataset.tables.admissions
         admissions = admissions[admissions[subject_id_column] != sample_subject_id]
         return eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def filter_no_admission_subjects_result(self, indexed_dataset_removed_admission: Dataset):
         filtered_dataset, report = DatasetTransformation.filter_no_admission_subjects(
             indexed_dataset_removed_admission, report=tuple(), reporter=DatasetTransformation.static_reporter())
@@ -774,7 +774,7 @@ def test_trainable_transformer(preprocessed_dataset: Dataset, use_float16: bool,
     (SetIndex(), FilterInvalidInputRatesSubjects()),
     (ICUInputRateUnitConversion(conversion_table=None), FilterInvalidInputRatesSubjects()),
     # RandomSplits() needs SetIndex, CastTimestamps before.
-    (RandomSplits(splits=[0.5], splits_key=''),),
+    (RandomSplits(),),
     (SetIndex(), RandomSplits(splits=[0.5], splits_key='')),
     (CastTimestamps(), RandomSplits(splits=[0.5], splits_key='')),
     # ObsIQROutlierRemover(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices before.

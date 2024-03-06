@@ -1,5 +1,5 @@
 import itertools
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, List, Callable
 from unittest import mock
 
 import equinox as eqx
@@ -229,79 +229,146 @@ class TestDatasetScheme:
         # assert scheme.demographic_size == 3
 
 
-class TestDataset:
+TEST_DATASET_SCOPE = 'function'
 
-    def test_execute_pipeline(self, dataset: Dataset):
+
+class TestDataset:
+    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    def dataset_after_identity_pipeline(self, dataset: Dataset):
+        return dataset.execute_core_pipeline()
+
+    def test_execute_pipeline(self, dataset: Dataset, dataset_after_identity_pipeline: Dataset):
         assert isinstance(dataset.core_pipeline, AbstractDatasetPipeline)
+        assert isinstance(dataset, Dataset)
+        assert isinstance(dataset_after_identity_pipeline, Dataset)
         assert dataset.core_pipeline_report.equals(pd.DataFrame())
 
-        dataset2 = dataset.execute_core_pipeline()
         # Because we use identity pipeline, the dataset tables should be the same
         # but the new dataset should have a different report (metadata).
-        assert not dataset2.equals(dataset) and dataset2.tables.equals(dataset.tables)
-        assert len(dataset2.core_pipeline_report) == 1
-        assert dataset2.core_pipeline_report.loc[0, 'transformation'] == 'no_transformation'
+        assert not dataset_after_identity_pipeline.equals(dataset)
+        assert not dataset_after_identity_pipeline.core_pipeline_report.equals(dataset.core_pipeline_report)
+        assert dataset_after_identity_pipeline.tables.equals(dataset.tables)
+        assert len(dataset_after_identity_pipeline.core_pipeline_report) == 1
+        assert dataset_after_identity_pipeline.core_pipeline_report.loc[0, 'transformation'] == 'identity'
 
         with mock.patch('logging.warning') as mocker:
-            dataset3 = dataset2.execute_core_pipeline()
-            assert dataset3.equals(dataset2)
+            dataset3 = dataset_after_identity_pipeline.execute_core_pipeline()
+            assert dataset3.equals(dataset_after_identity_pipeline)
             mocker.assert_called_once_with("Pipeline has already been executed. Doing nothing.")
 
-    def test_subject_ids(self, dataset: NaiveDataset, indexed_dataset: NaiveDataset):
+    def test_subject_ids(self, dataset: NaiveDataset,
+                         dataset_after_identity_pipeline: NaiveDataset,
+                         indexed_dataset: NaiveDataset):
         with pytest.raises(AssertionError):
             dataset.subject_ids
 
-        dataset = dataset.execute_core_pipeline()
         with pytest.raises(AssertionError):
-            dataset.subject_ids
+            dataset_after_identity_pipeline.subject_ids
 
         assert set(indexed_dataset.subject_ids) == set(indexed_dataset.tables.static.index.unique())
 
     @pytest.mark.expensive_test
     @pytest.mark.parametrize('overwrite', [True, False])
-    @pytest.mark.parametrize('execute_pipeline', [True, False])
-    def test_save_load(self, dataset: NaiveDataset, tmpdir: str, execute_pipeline: bool, overwrite: bool):
-        raw_dataset = dataset
-        if execute_pipeline:
-            dataset = dataset.execute_core_pipeline()
-
-        dataset.save(f'{tmpdir}/test_dataset', overwrite=False)
+    def test_save_load(self, dataset: NaiveDataset,
+                       dataset_after_identity_pipeline: NaiveDataset,
+                       tmpdir: str, overwrite: bool):
+        dataset_after_identity_pipeline.save(f'{tmpdir}/test_dataset', overwrite=False)
         if overwrite:
-            dataset.save(f'{tmpdir}/test_dataset', overwrite=True)
+            dataset_after_identity_pipeline.save(f'{tmpdir}/test_dataset', overwrite=True)
 
         with pytest.raises(RuntimeError):
-            dataset.save(f'{tmpdir}/test_dataset', overwrite=False)
+            dataset_after_identity_pipeline.save(f'{tmpdir}/test_dataset', overwrite=False)
 
-        loaded = type(dataset).load(f'{tmpdir}/test_dataset')
-        assert loaded.equals(dataset)
-        if execute_pipeline:
-            assert not loaded.equals(raw_dataset)
-            assert loaded.equals(raw_dataset.execute_core_pipeline())
+        loaded = NaiveDataset.load(f'{tmpdir}/test_dataset')
+        assert loaded.equals(dataset_after_identity_pipeline)
+        assert not loaded.equals(dataset)
+        assert loaded.equals(dataset.execute_core_pipeline())
 
-    @pytest.mark.parametrize('splits', [[0.1], [0.4, 0.8, 0.9], [0.3, 0.5, 0.7, 0.9], [0.5, 0.2]])
-    @pytest.mark.parametrize('balance', ['subjects', 'admissions', 'admissions_intervals', 'unsupported'])
-    def test_random_split(self, indexed_dataset: NaiveDataset, splits: List[float], balance: str):
-        dataset = indexed_dataset.execute_core_pipeline()
-        subjects = dataset.subject_ids
-        skip = False
-        if balance not in ('subjects', 'admissions', 'admissions_intervals'):
+    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    def subject_ids(self, indexed_dataset: NaiveDataset):
+        return indexed_dataset.subject_ids
+
+    @pytest.mark.parametrize('valid_split', [[1.0]])
+    @pytest.mark.parametrize('valid_balance', ['subjects', 'admissions', 'admissions_intervals'])
+    @pytest.mark.parametrize('invalid_splits', [[], [0.3, 0.8, 0.7, 0.9], [0.5, 0.2]])  # should be sorted.
+    @pytest.mark.parametrize('invalid_balance', ['hi', 'unsupported'])
+    def test_random_split_invalid_args(self, indexed_dataset: NaiveDataset, subject_ids: List[str],
+                                       valid_split: List[float], valid_balance: str,
+                                       invalid_splits: List[float], invalid_balance: str):
+        if len(subject_ids) == 0:
             with pytest.raises(AssertionError):
-                dataset.random_splits(splits, balance=balance)
-            skip = True
-        if sorted(splits) != splits:
-            with pytest.raises(AssertionError):
-                dataset.random_splits(splits, balance=balance)
-            skip = True
-        if len(subjects) == 0:
-            with pytest.raises(AssertionError):
-                dataset.random_splits(splits, balance=balance)
-            skip = True
-        if balance in ('admissions', 'admissions_intervals') and len(dataset.tables.admissions) == 0:
-            with pytest.raises(AssertionError):
-                dataset.random_splits(splits, balance=balance)
-            skip = True
-        if skip:
+                indexed_dataset.random_splits(valid_split, balance=valid_balance)
             return
 
-        subject_splits = dataset.random_splits(splits, balance=balance)
-        assert set.union(*list(map(set, subject_splits))) == set(subjects)
+        if len(indexed_dataset.tables.admissions) == 0 and 'admissions' in valid_balance:
+            with pytest.raises(AssertionError):
+                indexed_dataset.random_splits(valid_split, balance=valid_balance)
+            return
+
+        assert set(indexed_dataset.random_splits(valid_split, balance=valid_balance)[0]) == set(subject_ids)
+
+        with pytest.raises(AssertionError):
+            indexed_dataset.random_splits(valid_split, balance=invalid_balance)
+
+        with pytest.raises(AssertionError):
+            indexed_dataset.random_splits(invalid_splits, balance=valid_balance)
+
+        with pytest.raises(AssertionError):
+            indexed_dataset.random_splits(invalid_splits, balance=invalid_balance)
+
+    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    def split_measure(self, indexed_dataset: NaiveDataset, balance: str):
+        return {
+            'subjects': lambda x: len(x),
+            'admissions': lambda x: sum(indexed_dataset.subjects_n_admissions.loc[x]),
+            'admissions_intervals': lambda x: sum(indexed_dataset.subjects_intervals_sum.loc[x])
+        }[balance]
+
+    @pytest.fixture(scope=TEST_DATASET_SCOPE, params=['subjects', 'admissions', 'admissions_intervals'])
+    def balance(self, request):
+        return request.param
+
+    @pytest.fixture(scope=TEST_DATASET_SCOPE, params=[[0.1], [0.4, 0.8, 0.9], [0.3, 0.5, 0.7, 0.9]])
+    def split_quantiles(self, request):
+        return request.param
+
+    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    def subject_splits(self, indexed_dataset: NaiveDataset, subject_ids: List[str], balance: str,
+                       split_quantiles: List[float]):
+        if len(subject_ids) == 0 or (len(indexed_dataset.tables.admissions) == 0 and 'admissions' in balance):
+            pytest.skip("No admissions in dataset or no subjects.")
+        return indexed_dataset.random_splits(split_quantiles, balance=balance)
+
+    def test_random_split(self, indexed_dataset: NaiveDataset, subject_ids: List[str],
+                          subject_splits: List[List[str]],
+                          split_quantiles: List[float]):
+        assert set.union(*list(map(set, subject_splits))) == set(subject_ids)
+        assert len(subject_splits) == len(split_quantiles) + 1
+        # No overlaps.
+        assert sum(len(v) for v in subject_splits) == len(indexed_dataset.subject_ids)
+        assert set.union(*[set(v) for v in subject_splits]) == set(indexed_dataset.subject_ids)
+
+    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    def split_proportions(self, split_quantiles: List[float]):
+        return [p1 - p0 for p0, p1 in zip([0] + split_quantiles, split_quantiles + [1])]
+
+    def test_random_split_balance(self, subject_ids: List[str],
+                                  subject_splits: List[List[str]],
+                                  split_proportions: List[float],
+                                  balance: str,
+                                  split_measure: Callable[[List[str]], float]):
+        # # test proportionality
+        # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
+        # is not appropriate.
+        p_threshold = 1 / len(subject_ids)
+        for i in range(len(split_proportions)):
+            for j in range(i + 1, len(split_proportions)):
+                if abs(split_proportions[i] - split_proportions[j]) < p_threshold:
+                    if balance == 'subjects':
+                        # Difference between subjects is at most 1 when balance is applied
+                        # on subjects count AND proportions are (almost) equal.
+                        assert abs(len(subject_splits[i]) - len(subject_splits[j])) <= 1
+                elif split_proportions[i] > split_proportions[j]:
+                    assert split_measure(subject_splits[i]) >= split_measure(subject_splits[j])
+                else:
+                    assert split_measure(subject_splits[i]) <= split_measure(subject_splits[j])
