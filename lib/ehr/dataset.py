@@ -7,7 +7,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Any
 
 import equinox as eqx
 import numpy as np
@@ -452,6 +452,33 @@ class AbstractDatasetTransformation(eqx.Module):
         Dataset, Tuple[ReportAttributes, ...]]:
         pass
 
+    @property
+    def additional_parameters(self) -> Dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items() if k != 'name' and not k.startswith('_')}
+
+    @property
+    def additional_parameters_str(self) -> str:
+        return ', '.join([f"{k}={v}" for k, v in self.additional_parameters.items()])
+
+    @property
+    def meta(self) -> Dict[str, Any]:
+        return {'transformation': self.name or type(self).__name__,
+                'additional_parameters': self.additional_parameters}
+
+    @staticmethod
+    def static_report(report: Tuple[ReportAttributes, ...], **report_attributes) -> Tuple[ReportAttributes, ...]:
+        return report + (ReportAttributes(**report_attributes),)
+
+    def report(self, report: Tuple[ReportAttributes, ...], **kwargs) -> Tuple[ReportAttributes, ...]:
+        return self.static_report(report, **self.meta, **kwargs)
+
+    @classmethod
+    def static_reporter(cls) -> Callable:
+        return cls.static_report
+
+    def reporter(self) -> Callable:
+        return self.report
+
 
 class AbstractDatasetPipelineConfig(Config):
     validate_transformations: bool = True
@@ -463,6 +490,8 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
 
     @staticmethod
     def compile_report(report: Tuple[ReportAttributes, ...], current_report: pd.DataFrame) -> pd.DataFrame:
+        if len(report) == 0:
+            report = (ReportAttributes(transformation='no_transformation'),)
         new_report = pd.DataFrame([x.as_dict() for x in report]).astype(str)
         return pd.concat([current_report, new_report], ignore_index=True, axis=0)
 
@@ -498,7 +527,6 @@ class DatasetConfig(Config):
     scheme: DatasetSchemeConfig
     tables: DatasetTablesConfig
     pipeline: AbstractDatasetPipelineConfig
-    pipeline_executed: bool = False
 
 
 class Dataset(Module):

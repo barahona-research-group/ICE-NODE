@@ -2,48 +2,24 @@ from __future__ import annotations
 
 import logging
 import random
-from abc import abstractmethod, ABCMeta
+from abc import abstractmethod
 from collections import defaultdict
 from dataclasses import field
-from typing import Dict, Optional, Tuple, List, Any, Callable, Union, ClassVar, Type
+from typing import Dict, Optional, Tuple, List, Any, Callable, ClassVar, Type
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
+from . import TVxEHR
 from .dataset import Dataset, AbstractDatasetTransformation, AbstractDatasetPipelineConfig, AbstractDatasetPipeline, \
     ReportAttributes
+from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation
 
 SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
 
 
 class DatasetTransformation(AbstractDatasetTransformation):
-    @property
-    def additional_parameters(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k != 'name' and not k.startswith('_')}
-
-    @property
-    def additional_parameters_str(self) -> str:
-        return ', '.join([f"{k}={v}" for k, v in self.additional_parameters.items()])
-
-    @property
-    def meta(self) -> Dict[str, Any]:
-        return {'transformation': self.name or type(self).__name__,
-                'additional_parameters': self.additional_parameters}
-
-    @staticmethod
-    def static_report(report: Tuple[ReportAttributes, ...], **report_attributes) -> Tuple[ReportAttributes, ...]:
-        return report + (ReportAttributes(**report_attributes),)
-
-    def report(self, report: Tuple[ReportAttributes, ...], **kwargs) -> Tuple[ReportAttributes, ...]:
-        return self.static_report(report, **self.meta, **kwargs)
-
-    @staticmethod
-    def static_reporter() -> Callable:
-        return DatasetTransformation.static_report
-
-    def reporter(self) -> Callable:
-        return self.report
 
     @staticmethod
     def synchronize_index(dataset: Dataset, indexed_table_name: str,
@@ -607,26 +583,24 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         return self.synchronize_subjects(dataset, report, self.reporter())
 
 
-class RandomSplits(DatasetTransformation):
-    splits: List[float] = field(kw_only=True)
-    splits_key: str = field(kw_only=True)
-    seed: Optional[int] = None
-    balance: str = 'subjects'
-    discount_first_admission: bool = False
+class RandomSplits(AbstractTVxTransformation):
 
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps)
+    # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps)
 
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        splits = dataset.random_splits(splits=self.splits,
-                                       random_seed=self.seed,
-                                       balance=self.balance,
-                                       discount_first_admission=self.discount_first_admission)
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+        config = tv_ehr.config.splits
+        splits = tv_ehr.dataset.random_splits(splits=config.split_quantiles,
+                                              random_seed=config.seed,
+                                              balance=config.balance,
+                                              discount_first_admission=config.discount_first_admission)
+
         report = self.report(report, table='static', column=None, value_type='splits',
-                             operation=f'aux["{self.splits_key}"]<-dataset.random_splits',
-                             before=(len(dataset.tables.static),),
+                             operation=f'TVxEHR.splits<-TVxEHR.dataset.random_splits(TVxEHR.config.splits)',
+                             before=(len(tv_ehr.dataset.tables.static),),
                              after=tuple(len(x) for x in splits))
-        return dataset, report
+        tv_ehr = eqx.tree_at(lambda x: x.splits, tv_ehr, splits)
+        return tv_ehr, report
 
 
 class CodedValueProcessor(eqx.Module):
@@ -859,115 +833,89 @@ class IQROutlierRemover(CodedValueProcessor):
                     max_val=np.maximum(q['out_q2'], stat['out_z2']))
 
 
-class TrainableTransformation(DatasetTransformation, metaclass=ABCMeta):
-    splits_key: str = field(kw_only=True)
-    training_split_index: Union[int, List[str]] = 0
-    fit_only: bool = False
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices)
-
-    def get_training_split(self, report: Tuple[ReportAttributes, ...]) -> List[str]:
-        assert self.splits_key in aux, "Training subject ids cannot be retrieved." \
-                                       "{self.splits_key} not found in aux."
-        return aux[self.splits_key][self.training_split_index]
-
-    def get_admission_ids(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> List[str]:
-        c_subject_id = dataset.config.tables.static.subject_id_alias
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
-        admissions = dataset.tables.admissions[[c_subject_id]]
-        assert c_admission_id in admissions.index.names, f"Column {c_admission_id} not found in admissions table index."
-        training_subject_ids = self.get_training_split(aux)
-        return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique()
-
-
 class ObsIQROutlierRemover(TrainableTransformation):
-    outlier_q1: float = 0.25
-    outlier_q2: float = 0.75
-    outlier_iqr_scale: float = 1.5
-    outlier_z1: float = -2.5
-    outlier_z2: float = 2.5
-    transformer_key: str = 'obs_outlier_remover'
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+        config = tv_ehr.config.numerical_processors.outlier_removers.obs
+        remover = IQROutlierRemover(table=lambda x: x.dataset.tables.obs,
+                                    code_column=lambda x: x.dataset.config.tables.obs.code_alias,
+                                    value_column=lambda x: x.dataset.config.tables.obs.value_alias,
+                                    outlier_q1=config.outlier_q1,
+                                    outlier_q2=config.outlier_q2,
+                                    outlier_iqr_scale=config.outlier_iqr_scale,
+                                    outlier_z1=config.outlier_z1,
+                                    outlier_z2=config.outlier_z2).fit(tv_ehr.dataset, self.get_admission_ids(tv_ehr))
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover)
+        report = self.report(report,
+                             table='obs', column=None, value_type='type',
+                             operation='TVxEHR.numerical_processors.outlier_removers.obs <- IQROutlierRemover',
+                             after=type(remover))
 
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        remover = IQROutlierRemover(table=lambda x: x.tables.obs,
-                                    code_column=lambda x: x.config.tables.obs.code_alias,
-                                    value_column=lambda x: x.config.tables.obs.value_alias,
-                                    outlier_q1=self.outlier_q1,
-                                    outlier_q2=self.outlier_q2,
-                                    outlier_iqr_scale=self.outlier_iqr_scale,
-                                    outlier_z1=self.outlier_z1,
-                                    outlier_z2=self.outlier_z2).fit(dataset, self.get_admission_ids(dataset, report))
-        aux[self.transformer_key] = remover
-
-        if self.fit_only:
-            return dataset, report
-
-        n1 = len(dataset.tables.obs)
+        n1 = len(tv_ehr.dataset.tables.obs)
         # TODO: report specific removals stats for each code.
-        dataset = remover(dataset)
-        n2 = len(dataset.tables.obs)
+        tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, remover(tv_ehr.dataset))
+        n2 = len(tv_ehr.dataset.tables.obs)
         report = self.report(report, table='obs', column=None, value_type='count',
                              operation='filter', before=n1, after=n2)
-        return dataset, report
+        return tv_ehr, report
 
 
 class ObsAdaptiveScaler(TrainableTransformation):
-    transformer_key = 'obs_scaler'
-    use_float16: bool = True
     dependencies = (ObsIQROutlierRemover, RandomSplits, SetIndex, SetCodeIntegerIndices)
 
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+        config = tv_ehr.config.numerical_processors.scalers.obs
+        value_column = lambda x: x.config.tables.obs.value_alias
         scaler = AdaptiveScaler(table=lambda x: x.tables.obs,
                                 code_column=lambda x: x.config.tables.obs.code_alias,
-                                value_column=lambda x: x.config.tables.obs.value_alias,
-                                use_float16=self.use_float16).fit(dataset,
-                                                                  self.get_admission_ids(
-                                                                      dataset, report))
+                                value_column=value_column,
+                                use_float16=config.use_float16).fit(tv_ehr.dataset,
+                                                                    self.get_admission_ids(tv_ehr))
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler)
+        report = self.report(report,
+                             table='obs', column=None, value_type='type',
+                             operation='TVxEHR.numerical_processors.scalers.obs <- AdaptiveScaler',
+                             after=type(scaler))
 
-        aux[self.transformer_key] = scaler
-
-        if self.fit_only:
-            return dataset, report
-
-        dtype1 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
-        dataset = scaler(dataset)
-        dtype2 = dataset.tables.obs[dataset.config.tables.obs.value_alias].dtype
-        report = self.report(report, table='obs', column=dataset.config.tables.obs.value_alias,
+        dtype1 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
+        tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
+        dtype2 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
+        report = self.report(report, table='obs', column=value_column(tv_ehr.dataset),
                              value_type='dtype',
                              operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                              before=dtype1, after=dtype2)
-        return dataset, report
+        return tv_ehr, report
 
 
 class InputScaler(TrainableTransformation):
-    transformer_key: str = 'icu_inputs_scaler'
-    use_float16: bool = True
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices,
-                                                                       ICUInputRateUnitConversion,
-                                                                       FilterInvalidInputRatesSubjects)
+    # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices,
+    #                                                                    ICUInputRateUnitConversion,
+    #                                                                    FilterInvalidInputRatesSubjects)
 
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
         code_column = lambda x: x.config.tables.icu_inputs.code_alias
         value_column = lambda x: x.config.tables.icu_inputs.derived_normalized_amount_per_hour
         scaler = MaxScaler(table=lambda x: x.tables.icu_inputs,
                            code_column=code_column,
                            value_column=value_column,
-                           use_float16=self.use_float16).fit(dataset, self.get_admission_ids(dataset, report))
-        aux[self.transformer_key] = scaler
+                           use_float16=self.use_float16).fit(tv_ehr.dataset, self.get_admission_ids(tv_ehr))
 
-        if self.fit_only:
-            return dataset, report
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.icu_inputs, tv_ehr, scaler)
+        report = self.report(report,
+                             table='icu_inputs', column=None, value_type='type',
+                             operation='TVxEHR.numerical_processors.scalers.icu_inputs <- MaxScaler',
+                             after=type(scaler))
 
-        dtype1 = dataset.tables.icu_inputs[value_column(dataset)].dtype
-        dataset = scaler(dataset)
-        dtype2 = dataset.tables.icu_inputs[value_column(dataset)].dtype
-        report = self.report(report, table='icu_inputs', column=dataset.config.tables.obs.value_alias,
+        dtype1 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
+        tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
+        dtype2 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
+        report = self.report(report, table='icu_inputs', column=value_column(tv_ehr.dataset),
                              value_type='dtype',
                              operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                              before=dtype1, after=dtype2)
-        return dataset, report
+        return tv_ehr, report
 
 #     def subject_info_extractor(self, subject_ids, target_scheme):
 #

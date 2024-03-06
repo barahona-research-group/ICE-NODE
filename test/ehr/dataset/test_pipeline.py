@@ -10,7 +10,7 @@ import pytest
 
 from lib import Config
 from lib.ehr import Dataset
-from lib.ehr.pipeline import DatasetTransformation, SampleSubjects, CastTimestamps, \
+from lib.ehr.transformations import DatasetTransformation, SampleSubjects, CastTimestamps, \
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
     ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths, CodedValueScaler, ObsAdaptiveScaler, \

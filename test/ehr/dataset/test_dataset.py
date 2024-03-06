@@ -234,14 +234,13 @@ class TestDataset:
     def test_execute_pipeline(self, dataset: Dataset):
         assert isinstance(dataset.core_pipeline, AbstractDatasetPipeline)
         assert dataset.core_pipeline_report.equals(pd.DataFrame())
-        assert dataset.config.pipeline_executed is False
 
         dataset2 = dataset.execute_core_pipeline()
         # Because we use identity pipeline, the dataset tables should be the same
         # but the new dataset should have a different report (metadata).
         assert not dataset2.equals(dataset) and dataset2.tables.equals(dataset.tables)
-        assert dataset2.core_pipeline_report.equals(pd.DataFrame({'action': ['*']}))
-        assert dataset2.config.pipeline_executed is True
+        assert len(dataset2.core_pipeline_report) == 1
+        assert dataset2.core_pipeline_report.loc[0, 'transformation'] == 'no_transformation'
 
         with mock.patch('logging.warning') as mocker:
             dataset3 = dataset2.execute_core_pipeline()

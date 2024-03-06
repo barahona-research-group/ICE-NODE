@@ -22,7 +22,7 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
                              DatasetTables, DatasetConfig, DatasetSchemeConfig, Dataset, AbstractDatasetPipelineConfig)
 from lib.ehr.example_schemes.icd import ICDScheme
-from lib.ehr.pipeline import SECONDS_TO_HOURS_SCALER
+from lib.ehr.transformations import SECONDS_TO_HOURS_SCALER
 from lib.utils import tqdm_constructor
 
 warnings.filterwarnings('error',

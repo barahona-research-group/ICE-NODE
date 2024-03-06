@@ -1,7 +1,7 @@
 import inspect
 
 from .base import Config, Module
-from .ehr import tvx_concepts, dataset, coding_scheme, pipeline
+from .ehr import tvx_concepts, dataset, coding_scheme, transformations
 from .ehr.example_datasets import mimic3, cprd, mimiciv, mimiciv_aki
 from .metric import stat
 from .ml import dx_models

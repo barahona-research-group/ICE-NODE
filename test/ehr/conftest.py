@@ -13,7 +13,7 @@ from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLi
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
     AbstractDatasetPipelineConfig, DatasetScheme
-from lib.ehr.pipeline import SetIndex
+from lib.ehr.transformations import SetIndex
 
 DATASET_SCOPE = "function"
 

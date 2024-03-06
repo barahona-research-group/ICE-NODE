@@ -5,7 +5,7 @@ import pickle
 from abc import ABCMeta, abstractmethod
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional, Dict, Union, Callable, Tuple, Any
+from typing import List, Optional, Dict, Union, Callable, Tuple
 
 import dask
 import equinox as eqx
@@ -14,7 +14,8 @@ import jax.tree_util as jtu
 import numpy as np
 import pandas as pd
 
-from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig
+from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig, ReportAttributes, \
+    AbstractDatasetTransformation, AbstractDatasetPipeline
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient)
@@ -42,6 +43,53 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
     return first_occurrence
 
 
+class TVxEHRSplitsConfig(Config):
+    split_quantiles: List[float]
+    seed: Optional[int] = None
+    balance: str = 'subjects'
+    discount_first_admission: bool = False
+
+
+class IQROutlierRemoverConfig(Config):
+    outlier_q1: float = 0.25
+    outlier_q2: float = 0.75
+    outlier_iqr_scale: float = 1.5
+    outlier_z1: float = -2.5
+    outlier_z2: float = 2.5
+
+
+class ScalerConfig(Config):
+    use_float16: bool = True
+
+
+class OutlierRemoversConfig(Config):
+    obs: Optional[IQROutlierRemoverConfig] = None
+
+
+class OutlierRemovers(eqx.Module):
+    obs: Optional[eqx.Module] = None
+
+
+class ScalersConfig(Config):
+    obs: Optional[ScalerConfig] = None
+    icu_inputs: Optional[ScalerConfig] = None
+
+
+class Scalers(eqx.Module):
+    obs: Optional[eqx.Module] = None
+    icu_inputs: Optional[eqx.Module] = None
+
+
+class DatasetNumericalProcessorsConfig(Config):
+    scalers: Optional[ScalersConfig] = ScalersConfig()
+    outlier_removers: Optional[OutlierRemoversConfig] = OutlierRemoversConfig()
+
+
+class DatasetNumericalProcessors(eqx.Module):
+    outlier_removers: OutlierRemovers = OutlierRemovers()
+    scalers: Scalers = Scalers()
+
+
 class TVxEHRConfig(Config):
     """
     Configuration class for the interface.
@@ -54,26 +102,58 @@ class TVxEHRConfig(Config):
     """
     scheme: DatasetSchemeConfig
     demographic_vector: DemographicVectorConfig
-    leading_observable: Optional[LeadingObservableExtractorConfig]
+    splits: Optional[TVxEHRSplitsConfig] = None
+    numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
     interventions: bool = False
     observables: bool = False
     interventions_segmentation: bool = False
     time_binning: Optional[float] = None
 
 
-class AbstractTVxTransformation(eqx.Module):
+class TVxReportAttributes(ReportAttributes):
+    tvx_concept: str = None
+
+
+class AbstractTVxTransformation(AbstractDatasetTransformation, metaclass=ABCMeta):
     name: str = None
 
     @abstractmethod
-    def __call__(self, ehr: TVxEHR, aux: Dict[str, Any]) -> Tuple[TVxEHR, Dict[str, Any]]:
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+        pass
+
+    @staticmethod
+    def static_report(report: Tuple[TVxReportAttributes, ...], **report_attributes) -> Tuple[TVxReportAttributes, ...]:
+        return report + (TVxReportAttributes(**report_attributes),)
+
+    def report(self, report: Tuple[TVxReportAttributes, ...], **kwargs) -> Tuple[TVxReportAttributes, ...]:
+        return self.static_report(report, **self.meta, **kwargs)
+
+
+class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
+
+    # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices)
+
+    @staticmethod
+    def get_admission_ids(tv_ehr: TVxEHR) -> List[str]:
+        c_subject_id = tv_ehr.dataset.config.tables.static.subject_id_alias
+        c_admission_id = tv_ehr.dataset.config.tables.admissions.admission_id_alias
+        admissions = tv_ehr.dataset.tables.admissions[[c_subject_id]]
+        assert c_admission_id in admissions.index.names, f"Column {c_admission_id} not found in admissions table index."
+        training_subject_ids = tv_ehr.splits[0]
+        return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique().tolist()
+
+    @abstractmethod
+    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
         pass
 
 
-class AbstractTVxPipeline(Module, metaclass=ABCMeta):
+class AbstractTVxPipeline(AbstractDatasetPipeline, metaclass=ABCMeta):
     transformations: List[AbstractTVxTransformation]
 
     @abstractmethod
-    def __call__(self, ehr: TVxEHR) -> Tuple[TVxEHR, Dict[str, pd.DataFrame]]:
+    def __call__(self, tv_ehr: TVxEHR) -> Tuple[TVxEHR, pd.DataFrame]:
         pass
 
 
@@ -115,10 +195,10 @@ class TVxEHR(Module):
     """
 
     config: TVxEHRConfig
-    dataset: Optional[Dataset] = None
+    dataset: Dataset
+    dataset_numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
     subjects: Optional[Dict[str, Patient]] = None
-    splits: Optional[List[List[str]]] = None
-    scaler: Optional[Any] = None
+    splits: Optional[Tuple[Tuple[str]]] = None
 
     @property
     def subject_ids(self):

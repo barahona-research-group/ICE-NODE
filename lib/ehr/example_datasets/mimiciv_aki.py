@@ -1,7 +1,7 @@
 from lib.ehr.dataset import AbstractDatasetPipeline
 from lib.ehr.example_datasets.mimiciv import MIMICIVDatasetSchemeConfig, \
     MIMICIVDataset, MIMICIVDatasetConfig
-from lib.ehr.pipeline import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
+from lib.ehr.transformations import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
     FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes, DatasetPipeline
