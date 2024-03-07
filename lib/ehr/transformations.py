@@ -5,7 +5,7 @@ import random
 from abc import abstractmethod
 from collections import defaultdict
 from dataclasses import field
-from typing import Dict, Optional, Tuple, List, Any, Callable, ClassVar, Type
+from typing import Dict, Optional, Tuple, List, Any, Callable, ClassVar, Type, Final, Set
 
 import equinox as eqx
 import numpy as np
@@ -13,7 +13,7 @@ import pandas as pd
 
 from . import TVxEHR
 from .dataset import Dataset, AbstractDatasetTransformation, AbstractDatasetPipelineConfig, AbstractDatasetPipeline, \
-    ReportAttributes
+    ReportAttributes, TransformationsDependency
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation
 
 SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
@@ -87,14 +87,13 @@ class DatasetPipelineConfig(AbstractDatasetPipelineConfig):
     offset: Optional[int] = 0
 
 
-class DatasetPipeline(AbstractDatasetPipeline):
+class ValidatedDatasetPipeline(AbstractDatasetPipeline):
     config: DatasetPipelineConfig
     transformations: List[DatasetTransformation]
+    validator: ClassVar[TransformationsDependency] = field(default_factory=lambda: PIPELINE_VALIDATOR)
 
 
 class SetIndex(DatasetTransformation):
-    name: str = 'SetIndex'
-
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
         tables_dict = dataset.tables.tables_dict
@@ -108,32 +107,6 @@ class SetIndex(DatasetTransformation):
                                  operation='set_index')
             dataset = eqx.tree_at(lambda x: getattr(x.tables, indexed_table_name), dataset, table)
         return dataset, report
-
-
-class SampleSubjects(DatasetTransformation):
-    n_subjects: int = field(kw_only=True)
-    seed: Optional[int] = None
-    offset: int = 0
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex,)
-
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        static = dataset.tables.static
-        # assert index name is subject_id
-        c_subject_id = dataset.config.tables.static.subject_id_alias
-        assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
-
-        rng = random.Random(self.seed)
-        subjects = static.index.unique().tolist()
-        rng.shuffle(subjects)
-        subjects = subjects[self.offset:self.offset + self.n_subjects]
-        n1 = len(static)
-        static = static.loc[subjects]
-        n2 = len(static)
-        report = self.report(report, table='static', column='index', before=n1, after=n2, value_type='count',
-                             operation='sample')
-        dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return self.synchronize_subjects(dataset, report, self.reporter())
 
 
 class CastTimestamps(DatasetTransformation):
@@ -164,8 +137,6 @@ class CastTimestamps(DatasetTransformation):
 
 
 class SetAdmissionRelativeTimes(DatasetTransformation):
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (CastTimestamps, SetIndex)
-
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
         time_cols = {k: v for k, v in dataset.config.tables.time_cols.items()
@@ -198,8 +169,6 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
 
 
 class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
-    name: str = 'FilterSubjectsNegativeAdmissionLengths'
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (CastTimestamps, SetIndex)
 
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
@@ -248,8 +217,6 @@ class SetCodeIntegerIndices(DatasetTransformation):
 
 
 class FilterUnsupportedCodes(DatasetTransformation):
-    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices,)
-
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
         tables_dict = dataset.tables.tables_dict
@@ -266,10 +233,6 @@ class FilterUnsupportedCodes(DatasetTransformation):
 
 
 class ProcessOverlappingAdmissions(DatasetTransformation):
-    merge: bool = field(
-        kw_only=True)  # if True, merge overlapping admissions. Otherwise, remove overlapping admissions.
-
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps,)
 
     @staticmethod
     def map_admission_ids(dataset: Dataset, report: Tuple[ReportAttributes, ...], sub2sup: Dict[str, Any],
@@ -394,8 +357,6 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
 
 class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps,)
-    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetAdmissionRelativeTimes,)
 
     def _filter_timestamped_tables(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
@@ -467,9 +428,6 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
 
 
 class SelectSubjectsWithObservation(DatasetTransformation):
-    code: str = field(kw_only=True)
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex,)
-    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices, SampleSubjects)
 
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
@@ -494,18 +452,6 @@ class SelectSubjectsWithObservation(DatasetTransformation):
 
 
 class ICUInputRateUnitConversion(DatasetTransformation):
-    blockers: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetCodeIntegerIndices,)
-    _conversion_table: pd.DataFrame
-
-    def __init__(self, conversion_table: pd.DataFrame, name: Optional[str] = None):
-        super().__init__(name=name)
-        self._conversion_table = conversion_table
-
-    @property
-    def conversion_table(self) -> pd.DataFrame:
-        # To avoid logging the whole table in the report, we access _conversion_table through a property.
-        # attributes with a leading underscore are not logged.
-        return self._conversion_table
 
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
@@ -546,8 +492,6 @@ class ICUInputRateUnitConversion(DatasetTransformation):
 
 
 class FilterInvalidInputRatesSubjects(DatasetTransformation):
-    dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, ICUInputRateUnitConversion)
-
     def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
         Dataset, Tuple[ReportAttributes, ...]]:
         c_rate = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
@@ -583,9 +527,30 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         return self.synchronize_subjects(dataset, report, self.reporter())
 
 
+class SampleSubjects(AbstractTVxTransformation):
+
+    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
+        Dataset, Tuple[ReportAttributes, ...]]:
+        static = dataset.tables.static
+        # assert index name is subject_id
+        c_subject_id = dataset.config.tables.static.subject_id_alias
+        assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
+
+        rng = random.Random(self.seed)
+        subjects = static.index.unique().tolist()
+        rng.shuffle(subjects)
+        subjects = subjects[self.offset:self.offset + self.n_subjects]
+        n1 = len(static)
+        static = static.loc[subjects]
+        n2 = len(static)
+        report = self.report(report, table='static', column='index', before=n1, after=n2, value_type='count',
+                             operation='sample')
+        dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
+        return self.synchronize_subjects(dataset, report, self.reporter())
+
+
 class RandomSplits(AbstractTVxTransformation):
 
-    # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (SetIndex, CastTimestamps)
     def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
         config = tv_ehr.config.splits
@@ -630,7 +595,7 @@ class CodedValueProcessor(eqx.Module):
 
 
 class CodedValueScaler(CodedValueProcessor):
-    use_float16: bool  # = field(default=True, init=False)
+    use_float16: bool
 
     @property
     @abstractmethod
@@ -860,8 +825,6 @@ class ObsIQROutlierRemover(TrainableTransformation):
 
 
 class ObsAdaptiveScaler(TrainableTransformation):
-    dependencies = (ObsIQROutlierRemover, RandomSplits, SetIndex, SetCodeIntegerIndices)
-
     def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
         config = tv_ehr.config.numerical_processors.scalers.obs
@@ -888,10 +851,6 @@ class ObsAdaptiveScaler(TrainableTransformation):
 
 
 class InputScaler(TrainableTransformation):
-    # dependencies: ClassVar[Tuple[Type[DatasetTransformation], ...]] = (RandomSplits, SetIndex, SetCodeIntegerIndices,
-    #                                                                    ICUInputRateUnitConversion,
-    #                                                                    FilterInvalidInputRatesSubjects)
-
     def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
         code_column = lambda x: x.config.tables.icu_inputs.code_alias
@@ -915,6 +874,32 @@ class InputScaler(TrainableTransformation):
                              operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                              before=dtype1, after=dtype2)
         return tv_ehr, report
+
+
+DEPENDS_RELATIONS: Final[Dict[Type[DatasetTransformation], Set[Type[DatasetTransformation]]]] = {
+    SetAdmissionRelativeTimes: {CastTimestamps, SetIndex},
+    FilterSubjectsNegativeAdmissionLengths: {CastTimestamps, SetIndex},
+    SetCodeIntegerIndices: {FilterUnsupportedCodes},
+    ProcessOverlappingAdmissions: {SetIndex, CastTimestamps},
+    FilterClampTimestampsToAdmissionInterval: {SetIndex, CastTimestamps},
+    SelectSubjectsWithObservation: {SetIndex},
+    ICUInputRateUnitConversion: {SetCodeIntegerIndices},
+    FilterInvalidInputRatesSubjects: {SetIndex, ICUInputRateUnitConversion},
+    RandomSplits: {SetIndex, CastTimestamps},
+    TrainableTransformation: {RandomSplits, SetIndex, SetCodeIntegerIndices},
+    ObsAdaptiveScaler: {ObsIQROutlierRemover}
+    # <- inherits also from TrainableTransformation (TODO: test the inheritance of dependencies).
+}
+
+BLOCKED_BY_RELATIONS: Final[Dict[Type[DatasetTransformation], Set[Type[DatasetTransformation]]]] = {
+    FilterClampTimestampsToAdmissionInterval: {SetAdmissionRelativeTimes},
+    SelectSubjectsWithObservation: {SetCodeIntegerIndices},
+    ICUInputRateUnitConversion: {SetCodeIntegerIndices},
+}
+PIPELINE_VALIDATOR = TransformationsDependency(
+    depends=DEPENDS_RELATIONS,
+    blocked_by=BLOCKED_BY_RELATIONS,
+)
 
 #     def subject_info_extractor(self, subject_ids, target_scheme):
 #
@@ -976,7 +961,7 @@ class InputScaler(TrainableTransformation):
 # class MIMIC4ICUDataset(Dataset):
 #
 #     @classmethod
-#     def _setup_core_pipeline(cls, config: DatasetConfig) -> DatasetPipeline:
+#     def _setup_core_pipeline(cls, config: DatasetConfig) -> ValidatedDatasetPipeline:
 #         raise NotImplementedError("Not implemented")
 #
 #     def to_subjects(self,

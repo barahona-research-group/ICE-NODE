@@ -4,7 +4,7 @@ from lib.ehr.example_datasets.mimiciv import MIMICIVDatasetSchemeConfig, \
 from lib.ehr.transformations import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
-    FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes, DatasetPipeline
+    FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes, ValidatedDatasetPipeline
 
 
 class AKIMIMICIVDatasetSchemeConfig(MIMICIVDatasetSchemeConfig):
@@ -37,4 +37,4 @@ class AKIMIMICIVDataset(MIMICIVDataset):
             SetCodeIntegerIndices(),
             SetAdmissionRelativeTimes()
         ]
-        return DatasetPipeline(config=pconfig, transformations=pipeline)
+        return ValidatedDatasetPipeline(config=pconfig, transformations=pipeline)

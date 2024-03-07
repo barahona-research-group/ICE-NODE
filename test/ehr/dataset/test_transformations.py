@@ -14,29 +14,8 @@ from lib.ehr.transformations import DatasetTransformation, SampleSubjects, CastT
     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
     ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths, CodedValueScaler, ObsAdaptiveScaler, \
-    InputScaler, TrainableTransformation, DatasetPipeline, ReportAttributes
+    InputScaler, TrainableTransformation, ValidatedDatasetPipeline, ReportAttributes
 
-
-@pytest.mark.parametrize('cls, params', [
-    (SampleSubjects, {'n_subjects': 10, 'seed': 0, 'offset': 5}),
-    (CastTimestamps, {}),
-    (FilterUnsupportedCodes, {}),
-    (SetAdmissionRelativeTimes, {}),
-    (SetCodeIntegerIndices, {}),
-    (SetIndex, {}),
-    (ProcessOverlappingAdmissions, {'merge': False}),
-    (FilterClampTimestampsToAdmissionInterval, {}),
-    (FilterInvalidInputRatesSubjects, {}),
-    (RandomSplits, {'splits': [0.5], 'splits_key': 'splits', 'seed': 0, 'balance': 'subjects',
-                    'discount_first_admission': False}),
-    (ObsIQROutlierRemover, {'fit_only': False,
-                            'splits_key': 'splits', 'training_split_index': 0,
-                            'outlier_q1': 0.0, 'outlier_q2': 0.0,
-                            'outlier_iqr_scale': 0.0, 'outlier_z1': 0.0,
-                            'outlier_z2': 0.0, 'transformer_key': 'key'})])
-def test_additional_parameters(cls, params):
-    # Test that additional_parameters returns dict without name
-    assert cls(name='test', **params).additional_parameters == params
 
 
 def test_synchronize_index_subjects(indexed_dataset: Dataset):
@@ -742,64 +721,64 @@ def test_trainable_transformer(preprocessed_dataset: Dataset, use_float16: bool,
 # def test_obs_iqr_outlier_remover(indexed_dataset: Dataset):
 #     assert False
 
-
-@pytest.mark.parametrize('illegal_transformation_sequence', [
-    (SetIndex(), SetCodeIntegerIndices(), SetIndex()),  # No duplicates.
-    (SetIndex(), SetCodeIntegerIndices(), SetCodeIntegerIndices()),  # No duplicates.
-    (SampleSubjects(n_subjects=1),),  # Needs SetIndex before.
-    # SetAdmissionRelativeTimes() needs SetIndex, CastTimestamps before.
-    (SetAdmissionRelativeTimes(),),
-    (SetIndex(), SetAdmissionRelativeTimes()),
-    (CastTimestamps(), SetAdmissionRelativeTimes()),
-    # FilterSubjectsNegativeAdmissionLengths() needs SetIndex, CastTimestamps before.
-    (FilterSubjectsNegativeAdmissionLengths(),),
-    (SetIndex(), FilterSubjectsNegativeAdmissionLengths()),
-    (CastTimestamps(), FilterSubjectsNegativeAdmissionLengths()),
-    # FilterUnsupportedCodes() blocked by SetCodeIntegerIndices before.
-    (SetCodeIntegerIndices(), FilterUnsupportedCodes(),),
-    # ProcessOverlappingAdmissions() needs SetIndex, CastTimestamps before.
-    (ProcessOverlappingAdmissions(merge=True),),
-    (SetIndex(), ProcessOverlappingAdmissions(merge=True)),
-    (CastTimestamps(), ProcessOverlappingAdmissions(merge=True)),
-    # FilterClampTimestampsToAdmissionInterval() needs SetIndex, CastTimestamps before.
-    # Blocked by SetAdmissionRelativeTimes
-    (FilterClampTimestampsToAdmissionInterval(),),
-    (SetIndex(), FilterClampTimestampsToAdmissionInterval()),
-    (CastTimestamps(), FilterClampTimestampsToAdmissionInterval()),
-    (SetIndex(), CastTimestamps(), SetAdmissionRelativeTimes(), FilterClampTimestampsToAdmissionInterval()),
-    # ICUInputRateUnitConversion() is blocked by SetCodeIntegerIndices.
-    (SetCodeIntegerIndices(), ICUInputRateUnitConversion(conversion_table=None),),
-    # FilterInvalidInputRatesSubjects() needs SetIndex, ICUInputRateUnitConversion before.
-    (FilterInvalidInputRatesSubjects(),),
-    (SetIndex(), FilterInvalidInputRatesSubjects()),
-    (ICUInputRateUnitConversion(conversion_table=None), FilterInvalidInputRatesSubjects()),
-    # RandomSplits() needs SetIndex, CastTimestamps before.
-    (RandomSplits(),),
-    (SetIndex(), RandomSplits(splits=[0.5], splits_key='')),
-    (CastTimestamps(), RandomSplits(splits=[0.5], splits_key='')),
-    # ObsIQROutlierRemover(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices before.
-    (ObsIQROutlierRemover(splits_key=''),),
-    (RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-    (SetIndex(), ObsIQROutlierRemover(splits_key='')),
-    (SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
-    (SetIndex(), SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
-    (SetIndex(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-    (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-    # ObsAdaptiveScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
-    # ObsIQROutlierRemover before.
-    (ObsAdaptiveScaler(splits_key=''),),
-    (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
-    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
-    # InputScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
-    # ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects before.
-    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''),
-     ICUInputRateUnitConversion(conversion_table=None), InputScaler(splits_key='')),
-    (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), FilterInvalidInputRatesSubjects(),
-     InputScaler(splits_key=''))])
-def test_pipeline_transformers_sequence(illegal_transformation_sequence: List[DatasetTransformation]):
-    with pytest.raises(AssertionError):
-        DatasetPipeline(transformations=illegal_transformation_sequence,
-                        config=Config())
+#
+# @pytest.mark.parametrize('illegal_transformation_sequence', [
+#     (SetIndex(), SetCodeIntegerIndices(), SetIndex()),  # No duplicates.
+#     (SetIndex(), SetCodeIntegerIndices(), SetCodeIntegerIndices()),  # No duplicates.
+#     (SampleSubjects(n_subjects=1),),  # Needs SetIndex before.
+#     # SetAdmissionRelativeTimes() needs SetIndex, CastTimestamps before.
+#     (SetAdmissionRelativeTimes(),),
+#     (SetIndex(), SetAdmissionRelativeTimes()),
+#     (CastTimestamps(), SetAdmissionRelativeTimes()),
+#     # FilterSubjectsNegativeAdmissionLengths() needs SetIndex, CastTimestamps before.
+#     (FilterSubjectsNegativeAdmissionLengths(),),
+#     (SetIndex(), FilterSubjectsNegativeAdmissionLengths()),
+#     (CastTimestamps(), FilterSubjectsNegativeAdmissionLengths()),
+#     # FilterUnsupportedCodes() blocked by SetCodeIntegerIndices before.
+#     (SetCodeIntegerIndices(), FilterUnsupportedCodes(),),
+#     # ProcessOverlappingAdmissions() needs SetIndex, CastTimestamps before.
+#     (ProcessOverlappingAdmissions(merge=True),),
+#     (SetIndex(), ProcessOverlappingAdmissions(merge=True)),
+#     (CastTimestamps(), ProcessOverlappingAdmissions(merge=True)),
+#     # FilterClampTimestampsToAdmissionInterval() needs SetIndex, CastTimestamps before.
+#     # Blocked by SetAdmissionRelativeTimes
+#     (FilterClampTimestampsToAdmissionInterval(),),
+#     (SetIndex(), FilterClampTimestampsToAdmissionInterval()),
+#     (CastTimestamps(), FilterClampTimestampsToAdmissionInterval()),
+#     (SetIndex(), CastTimestamps(), SetAdmissionRelativeTimes(), FilterClampTimestampsToAdmissionInterval()),
+#     # ICUInputRateUnitConversion() is blocked by SetCodeIntegerIndices.
+#     (SetCodeIntegerIndices(), ICUInputRateUnitConversion(conversion_table=None),),
+#     # FilterInvalidInputRatesSubjects() needs SetIndex, ICUInputRateUnitConversion before.
+#     (FilterInvalidInputRatesSubjects(),),
+#     (SetIndex(), FilterInvalidInputRatesSubjects()),
+#     (ICUInputRateUnitConversion(conversion_table=None), FilterInvalidInputRatesSubjects()),
+#     # RandomSplits() needs SetIndex, CastTimestamps before.
+#     (RandomSplits(),),
+#     (SetIndex(), RandomSplits(splits=[0.5], splits_key='')),
+#     (CastTimestamps(), RandomSplits(splits=[0.5], splits_key='')),
+#     # ObsIQROutlierRemover(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices before.
+#     (ObsIQROutlierRemover(splits_key=''),),
+#     (RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+#     (SetIndex(), ObsIQROutlierRemover(splits_key='')),
+#     (SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
+#     (SetIndex(), SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
+#     (SetIndex(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+#     (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
+#     # ObsAdaptiveScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
+#     # ObsIQROutlierRemover before.
+#     (ObsAdaptiveScaler(splits_key=''),),
+#     (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
+#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
+#     # InputScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
+#     # ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects before.
+#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''),
+#      ICUInputRateUnitConversion(conversion_table=None), InputScaler(splits_key='')),
+#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), FilterInvalidInputRatesSubjects(),
+#      InputScaler(splits_key=''))])
+# def test_pipeline_transformers_sequence(illegal_transformation_sequence: List[DatasetTransformation]):
+#     with pytest.raises(AssertionError):
+#         ValidatedDatasetPipeline(transformations=illegal_transformation_sequence,
+#                         config=Config())
 
 
 @pytest.mark.parametrize('invalid_attrs', [

@@ -45,9 +45,15 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
 
 class TVxEHRSplitsConfig(Config):
     split_quantiles: List[float]
-    seed: Optional[int] = None
+    seed: int = 0
     balance: str = 'subjects'
     discount_first_admission: bool = False
+
+
+class TVxEHRSampleConfig(Config):
+    n_subjects: int
+    seed: int = 0
+    offset: int = 0
 
 
 class IQROutlierRemoverConfig(Config):

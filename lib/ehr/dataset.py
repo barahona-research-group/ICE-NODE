@@ -7,7 +7,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Any
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Any, Set
 
 import equinox as eqx
 import numpy as np
@@ -480,13 +480,79 @@ class AbstractDatasetTransformation(eqx.Module):
         return self.report
 
 
+class TransformationDependencyException(TypeError):
+    pass
+
+
+class DuplicateTransformationException(TransformationDependencyException):
+    pass
+
+
+class MissingDependencyException(TransformationDependencyException):
+    pass
+
+
+class BlockedTransformationException(TransformationDependencyException):
+    pass
+
+
+class TransformationsDependency(Config):
+    depends: Dict[Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]
+    blocked_by: Dict[Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]
+
+    @staticmethod
+    def empty():
+        return TransformationsDependency(depends={}, blocks={})
+
+    @staticmethod
+    def inherit_features(transformation_type: Type[AbstractDatasetTransformation],
+                         inheritable_map: Dict[
+                             Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]) -> Set[
+        Type[AbstractDatasetTransformation]]:
+        inherited_features = inheritable_map.get(transformation_type, set())
+        for d in inheritable_map:
+            if issubclass(transformation_type, d):
+                inherited_features |= inheritable_map[d]
+        return inherited_features
+
+    def get_dependencies(self, transformation_type: Type[AbstractDatasetTransformation]) -> Set[
+        Type[AbstractDatasetTransformation]]:
+        return self.inherit_features(transformation_type, self.depends)
+
+    def get_blocked_by(self, transformation_type: Type[AbstractDatasetTransformation]) -> Set[
+        Type[AbstractDatasetTransformation]]:
+        return self.inherit_features(transformation_type, self.blocked_by)
+
+    def validate_sequence(self, transformations: List[AbstractDatasetTransformation]):
+        transformations_type = list(map(type, transformations))
+        if len(set(transformations_type)) != len(transformations_type):
+            raise DuplicateTransformationException("Transformation sequence contains duplicate transformations. "
+                                                   "Each transformation must appear only once. "
+                                                   f"Got {transformations}.")
+        applied_set: Set[Type[AbstractDatasetTransformation]] = set()
+        for t in transformations_type:
+            applied_set.add(t)
+            dependency_gap = self.get_dependencies(t) - applied_set
+            block_incidents = self.get_blocked_by(t) & applied_set
+            if len(dependency_gap) > 0:
+                raise MissingDependencyException(f"Transformation {t} depends on "
+                                                 f"{dependency_gap} which "
+                                                 "was not applied before."
+                                                 f"Got {transformations_type}.")
+            if len(block_incidents) > 0:
+                raise BlockedTransformationException(f"Transformation {t} is blocked by "
+                                                     f"{block_incidents} "
+                                                     f"which was applied before. Got {transformations_type}.")
+
+
 class AbstractDatasetPipelineConfig(Config):
-    validate_transformations: bool = True
+    pass
 
 
 class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
     config: AbstractDatasetPipelineConfig
     transformations: List[AbstractDatasetTransformation]
+    validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
 
     @staticmethod
     def compile_report(report: Tuple[ReportAttributes, ...], current_report: pd.DataFrame) -> pd.DataFrame:
@@ -496,20 +562,7 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
         return pd.concat([current_report, new_report], ignore_index=True, axis=0)
 
     def __post_init__(self):
-        if self.config.validate_transformations:
-            self._validate_transformation_sequence()
-
-    def _validate_transformation_sequence(self):
-        applied_set = set()
-
-        for t in self.transformations:
-            assert type(t) not in applied_set, f"Transformation {type(t).__name__} applied more than once."
-            applied_set.add(type(t))
-            assert len(set(t.dependencies) - applied_set) == 0, \
-                f"Transformation {type(t)} depends on {set(t.dependencies) - applied_set} which " \
-                "was not applied before."
-            assert len(set(t.blockers) & applied_set) == 0, \
-                f"Transformation {type(t)} is blocked by {set(t.blockers) & applied_set} which was applied before."
+        self.validator.validate_sequence(self.transformations)
 
     def __call__(self, dataset: Dataset) -> Tuple[Dataset, pd.DataFrame]:
         report = tuple()
