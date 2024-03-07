@@ -21,7 +21,7 @@ from lib.ehr.transformations import DatasetTransformation, SampleSubjects, CastT
 def test_synchronize_index_subjects(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     c_subject_id = indexed_dataset.config.tables.subject_id_alias
     sample_subject_id = indexed_dataset.tables.admissions[c_subject_id].iloc[0]
@@ -39,7 +39,7 @@ def test_synchronize_index_subjects(indexed_dataset: Dataset):
 def test_synchronize_index_admissions(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     c_admission_id = indexed_dataset.config.tables.admission_id_alias
     sample_admission_id = indexed_dataset.tables.admissions.index[0]
@@ -108,7 +108,7 @@ class TestDatasetTransformation:
 
 @pytest.mark.parametrize('seed', [0, 1])
 def test_sample_subjects(indexed_dataset: Dataset, seed: int):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     if len(indexed_dataset.tables.static) <= 1:
         pytest.skip("Only one subject in dataset.")
@@ -132,7 +132,7 @@ def test_sample_subjects(indexed_dataset: Dataset, seed: int):
 
 @pytest.fixture
 def indexed_dataset_str_timestamps(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     for table_name, time_cols in indexed_dataset.config.tables.time_cols.items():
         if len(time_cols) == 0:
@@ -159,7 +159,7 @@ def test_cast_timestamps(indexed_dataset_str_timestamps: Dataset):
 def indexed_dataset_unsupported_codes(indexed_dataset: Dataset):
     if all(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.code_column.keys()):
         pytest.skip("No coded tables or they are all empty.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     unsupported_codes = {}
     for table_name, code_col in indexed_dataset.config.tables.code_column.items():
@@ -182,7 +182,7 @@ def test_filter_unsupported_codes(indexed_dataset_unsupported_codes: Tuple[Datas
 def test_set_relative_times(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0 or len(indexed_dataset.tables.obs) == 0:
         pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     dataset, _ = SetAdmissionRelativeTimes()(indexed_dataset, {})
 
@@ -210,7 +210,7 @@ def test_set_relative_times(indexed_dataset: Dataset):
 def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     admissions = indexed_dataset.tables.admissions.copy()
     first_admission_i = admissions.index[0]
@@ -244,7 +244,7 @@ def test_filter_subjects_negative_admission_length(indexed_dataset_first_negativ
 
 
 def test_set_code_integer_indices(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     dataset, _ = SetCodeIntegerIndices()(indexed_dataset, {})
     for table_name, code_col in dataset.config.tables.code_column.items():
@@ -313,7 +313,7 @@ def test_overlapping_cases(admission_pattern, expected_out):
 
 @pytest.fixture
 def admission_ids_map(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     if len(indexed_dataset.tables.admissions) < 10:
         pytest.skip("Not enough admissions for the test in dataset.")
@@ -328,7 +328,7 @@ def admission_ids_map(indexed_dataset: Dataset):
 
 
 def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str, str]):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     # Assert no data loss from records.
     # Assert children admissions are mapped in records and removed from admissions.
@@ -358,7 +358,7 @@ def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str
 def test_merge_overlapping_admissions(indexed_dataset: Dataset):
     if len(indexed_dataset.tables.admissions) == 0:
         pytest.skip("No admissions in dataset.")
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     admissions = indexed_dataset.tables.admissions
     c_subject_id = indexed_dataset.config.tables.admissions.subject_id_alias
@@ -412,7 +412,7 @@ def shifted_timestamps_dataset(indexed_dataset: Dataset):
     if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):
         pytest.skip("No temporal data in dataset.")
 
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     admissions = indexed_dataset.tables.admissions
 
@@ -530,7 +530,7 @@ def unit_converter_table(dataset_config, dataset_tables):
 
 
 def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter_table: pd.DataFrame):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     fixed_dataset, aux = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
     # assert serialization/deserialization of aux reports
@@ -575,7 +575,7 @@ def nan_inputs_dataset(preprocessed_dataset: Dataset):
     if 'icu_inputs' not in preprocessed_dataset.tables.tables_dict or len(preprocessed_dataset.tables.icu_inputs) == 0:
         pytest.skip("No ICU inputs in dataset.")
 
-    preprocessed_dataset = preprocessed_dataset.execute_core_pipeline()
+    preprocessed_dataset = preprocessed_dataset.execute_pipeline()
 
     c_rate = preprocessed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
     c_admission_id = preprocessed_dataset.config.tables.icu_inputs.admission_id_alias
@@ -615,7 +615,7 @@ def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
 
 @pytest.mark.parametrize('splits', [[0.5], [0.2, 0.5, 0.7], [0.1, 0.2, 0.3, 0.4, 0.5]])
 def test_random_splits(indexed_dataset: Dataset, splits: List[float]):
-    indexed_dataset = indexed_dataset.execute_core_pipeline()
+    indexed_dataset = indexed_dataset.execute_pipeline()
 
     if len(indexed_dataset.tables.admissions) == 0 or len(splits) >= len(indexed_dataset.subject_ids):
         pytest.skip("No admissions in dataset or splits requested exceeds the number of subjects.")

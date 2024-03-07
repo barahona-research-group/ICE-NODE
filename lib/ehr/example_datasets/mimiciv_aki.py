@@ -1,7 +1,9 @@
+from typing import Literal
+
 from lib.ehr.dataset import AbstractDatasetPipeline
 from lib.ehr.example_datasets.mimiciv import MIMICIVDatasetSchemeConfig, \
     MIMICIVDataset, MIMICIVDatasetConfig
-from lib.ehr.transformations import SetIndex, CastTimestamps, SetCodeIntegerIndices, \
+from lib.ehr.transformations import SetIndex, CastTimestamps, \
     SelectSubjectsWithObservation, ProcessOverlappingAdmissions, FilterSubjectsNegativeAdmissionLengths, \
     FilterClampTimestampsToAdmissionInterval, FilterUnsupportedCodes, ICUInputRateUnitConversion, \
     FilterInvalidInputRatesSubjects, SetAdmissionRelativeTimes, ValidatedDatasetPipeline
@@ -14,27 +16,25 @@ class AKIMIMICIVDatasetSchemeConfig(MIMICIVDatasetSchemeConfig):
 
 class AKIMIMICIVDatasetConfig(MIMICIVDatasetConfig):
     scheme: AKIMIMICIVDatasetSchemeConfig = AKIMIMICIVDatasetSchemeConfig()
+    overlapping_admissions: Literal["merge", "remove"] = "merge"
+    filter_subjects_with_observation: str = 'renal_aki.aki_binary'
 
 
 class AKIMIMICIVDataset(MIMICIVDataset):
 
     @classmethod
-    def _setup_core_pipeline(cls, config: AKIMIMICIVDatasetConfig) -> AbstractDatasetPipeline:
+    def _setup_pipeline(cls, config: AKIMIMICIVDatasetConfig) -> AbstractDatasetPipeline:
         pconfig = config.pipeline
-        conversion_table = cls.icu_inputs_uom_normalization(config.tables.icu_inputs,
-                                                            config.scheme.icu_inputs_uom_normalization_table)
         pipeline = [
             SetIndex(),
-            SelectSubjectsWithObservation(name='select_with_aki_info',
-                                          code='renal_aki.aki_binary'),
+            SelectSubjectsWithObservation(),
             CastTimestamps(),
-            ProcessOverlappingAdmissions(merge=pconfig.overlap_merge),
+            ProcessOverlappingAdmissions(),
             FilterSubjectsNegativeAdmissionLengths(),
             FilterClampTimestampsToAdmissionInterval(),
             FilterUnsupportedCodes(),
-            ICUInputRateUnitConversion(conversion_table=conversion_table),
+            ICUInputRateUnitConversion(),
             FilterInvalidInputRatesSubjects(),
-            SetCodeIntegerIndices(),
             SetAdmissionRelativeTimes()
         ]
         return ValidatedDatasetPipeline(config=pconfig, transformations=pipeline)

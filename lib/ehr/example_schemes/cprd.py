@@ -175,28 +175,23 @@ def register_cprd_eth_mapping():
 
 
 def register_cprd_gender():
-    missing_code = '9'
     codes = ['0', '1', '2']
     desc = {
         '0': 'female',
         '1': 'male',
         '2': 'intermediate'
     }
-    name = 'cprd_gender'
     SchemeWithMissing.register_scheme(
-        SchemeWithMissing(CodingSchemeConfig(name),
-                          codes=codes, desc=desc, missing_code=missing_code))
+        SchemeWithMissing(CodingSchemeConfig('cprd_gender'),
+                          codes=codes, desc=desc, missing_code='9'))
 
 
 def register_cprd_imd():
-    missing_code = '99'
     codes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
     desc = dict(zip(codes, codes))
-    name = 'cprd_imd_cat'
-
-    SchemeWithMissing.register_scheme(SchemeWithMissing(CodingSchemeConfig(name),
+    SchemeWithMissing.register_scheme(SchemeWithMissing(CodingSchemeConfig('cprd_imd_cat'),
                                                         codes=codes, desc=desc,
-                                                        missing_code=missing_code))
+                                                        missing_code='99'))
 
 
 def register_medcode_mapping(medcode_scheme: str,

@@ -235,24 +235,24 @@ TEST_DATASET_SCOPE = 'function'
 class TestDataset:
     @pytest.fixture(scope=TEST_DATASET_SCOPE)
     def dataset_after_identity_pipeline(self, dataset: Dataset):
-        return dataset.execute_core_pipeline()
+        return dataset.execute_pipeline()
 
     def test_execute_pipeline(self, dataset: Dataset, dataset_after_identity_pipeline: Dataset):
-        assert isinstance(dataset.core_pipeline, AbstractDatasetPipeline)
+        assert isinstance(dataset.pipeline, AbstractDatasetPipeline)
         assert isinstance(dataset, Dataset)
         assert isinstance(dataset_after_identity_pipeline, Dataset)
-        assert dataset.core_pipeline_report.equals(pd.DataFrame())
+        assert dataset.pipeline_report.equals(pd.DataFrame())
 
         # Because we use identity pipeline, the dataset tables should be the same
         # but the new dataset should have a different report (metadata).
         assert not dataset_after_identity_pipeline.equals(dataset)
-        assert not dataset_after_identity_pipeline.core_pipeline_report.equals(dataset.core_pipeline_report)
+        assert not dataset_after_identity_pipeline.pipeline_report.equals(dataset.pipeline_report)
         assert dataset_after_identity_pipeline.tables.equals(dataset.tables)
-        assert len(dataset_after_identity_pipeline.core_pipeline_report) == 1
-        assert dataset_after_identity_pipeline.core_pipeline_report.loc[0, 'transformation'] == 'identity'
+        assert len(dataset_after_identity_pipeline.pipeline_report) == 1
+        assert dataset_after_identity_pipeline.pipeline_report.loc[0, 'transformation'] == 'identity'
 
         with mock.patch('logging.warning') as mocker:
-            dataset3 = dataset_after_identity_pipeline.execute_core_pipeline()
+            dataset3 = dataset_after_identity_pipeline.execute_pipeline()
             assert dataset3.equals(dataset_after_identity_pipeline)
             mocker.assert_called_once_with("Pipeline has already been executed. Doing nothing.")
 
@@ -282,7 +282,7 @@ class TestDataset:
         loaded = NaiveDataset.load(f'{tmpdir}/test_dataset')
         assert loaded.equals(dataset_after_identity_pipeline)
         assert not loaded.equals(dataset)
-        assert loaded.equals(dataset.execute_core_pipeline())
+        assert loaded.equals(dataset.execute_pipeline())
 
     @pytest.fixture(scope=TEST_DATASET_SCOPE)
     def subject_ids(self, indexed_dataset: NaiveDataset):

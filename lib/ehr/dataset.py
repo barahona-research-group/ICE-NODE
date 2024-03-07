@@ -7,7 +7,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Any, Set
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Set, Literal
 
 import equinox as eqx
 import numpy as np
@@ -440,96 +440,128 @@ class ReportAttributes(Config):
                     setattr(self, k, v.name)
 
 
-class AbstractDatasetTransformation(eqx.Module):
-    name: str = None
-    dependencies: ClassVar[Tuple[Type[AbstractDatasetTransformation], ...]] = tuple()
-    blockers: ClassVar[Tuple[Type[AbstractDatasetTransformation], ...]] = tuple()
+class AbstractDatasetRepresentation(Module):
+    config: Config
+    pipeline_report: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    # TODO: Add a global dag instead of dependencies and blockers.
-
-    @abstractmethod
-    def __call__(self, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        pass
-
-    @property
-    def additional_parameters(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if k != 'name' and not k.startswith('_')}
-
-    @property
-    def additional_parameters_str(self) -> str:
-        return ', '.join([f"{k}={v}" for k, v in self.additional_parameters.items()])
-
-    @property
-    def meta(self) -> Dict[str, Any]:
-        return {'transformation': self.name or type(self).__name__,
-                'additional_parameters': self.additional_parameters}
-
-    @staticmethod
-    def static_report(report: Tuple[ReportAttributes, ...], **report_attributes) -> Tuple[ReportAttributes, ...]:
-        return report + (ReportAttributes(**report_attributes),)
-
-    def report(self, report: Tuple[ReportAttributes, ...], **kwargs) -> Tuple[ReportAttributes, ...]:
-        return self.static_report(report, **self.meta, **kwargs)
+    @cached_property
+    def pipeline(self) -> AbstractDatasetPipeline:
+        return self._setup_pipeline(self.config)
 
     @classmethod
-    def static_reporter(cls) -> Callable:
-        return cls.static_report
+    @abstractmethod
+    def _setup_pipeline(cls, config: Config) -> AbstractDatasetPipeline:
+        pass
 
-    def reporter(self) -> Callable:
-        return self.report
+    def execute_pipeline(self) -> AbstractDatasetPipeline:
+        if len(self.pipeline_report) > 0:
+            logging.warning("Pipeline has already been executed. Doing nothing.")
+            return self
+        dataset, report = self.pipeline(self)
+        dataset = eqx.tree_at(lambda x: x.pipeline_report, dataset, report)
+        return dataset
+
+    def execute_external_transformations(self,
+                                         transformations: List[AbstractTransformation]) -> AbstractDatasetPipeline:
+        dataset = self
+        report = tuple()
+        for t in transformations:
+            dataset, report = t(dataset, report)
+        return dataset
+
+    @abstractmethod
+    def equals(self, other: 'AbstractDatasetPipeline'):
+        pass
+
+    @abstractmethod
+    def save(self, path: Union[str, Path], overwrite: bool = False):
+        pass
+
+    @classmethod
+    @abstractmethod
+    def load(cls, path: Union[str, Path]) -> AbstractDatasetPipeline:
+        pass
 
 
-class TransformationDependencyException(TypeError):
+class AbstractTransformation(eqx.Module):
+
+    def __call__(self, dataset: AbstractDatasetRepresentation, report: Tuple[ReportAttributes, ...]) -> Tuple[
+        AbstractDatasetRepresentation, Tuple[ReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def apply(cls, dataset: AbstractDatasetRepresentation, report: Tuple[ReportAttributes, ...]) -> Tuple[
+        AbstractDatasetRepresentation, Tuple[ReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @staticmethod
+    def report(report: Tuple[ReportAttributes, ...], **report_attributes) -> Tuple[ReportAttributes, ...]:
+        return report + (ReportAttributes(**report_attributes),)
+
+    @classmethod
+    def reporter(cls) -> Callable:
+        return cls.report
+
+
+class TransformationSequenceException(TypeError):
     pass
 
 
-class DuplicateTransformationException(TransformationDependencyException):
+class DuplicateTransformationException(TransformationSequenceException):
     pass
 
 
-class MissingDependencyException(TransformationDependencyException):
+class MissingDependencyException(TransformationSequenceException):
     pass
 
 
-class BlockedTransformationException(TransformationDependencyException):
+class BlockedTransformationException(TransformationSequenceException):
     pass
 
 
 class TransformationsDependency(Config):
-    depends: Dict[Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]
-    blocked_by: Dict[Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]
+    depends: Dict[Type[AbstractTransformation], Set[Type[AbstractTransformation]]]
+    blocked_by: Dict[Type[AbstractTransformation], Set[Type[AbstractTransformation]]]
 
     @staticmethod
     def empty():
         return TransformationsDependency(depends={}, blocks={})
 
     @staticmethod
-    def inherit_features(transformation_type: Type[AbstractDatasetTransformation],
+    def inherit_features(transformation_type: Type[AbstractTransformation],
                          inheritable_map: Dict[
-                             Type[AbstractDatasetTransformation], Set[Type[AbstractDatasetTransformation]]]) -> Set[
-        Type[AbstractDatasetTransformation]]:
+                             Type[AbstractTransformation], Set[Type[AbstractTransformation]]]) -> Set[
+        Type[AbstractTransformation]]:
         inherited_features = inheritable_map.get(transformation_type, set())
         for d in inheritable_map:
             if issubclass(transformation_type, d):
                 inherited_features |= inheritable_map[d]
         return inherited_features
 
-    def get_dependencies(self, transformation_type: Type[AbstractDatasetTransformation]) -> Set[
-        Type[AbstractDatasetTransformation]]:
+    def merge(self, other: 'TransformationsDependency') -> 'TransformationsDependency':
+        common_depend_keys = set(self.depends.keys()) & set(other.depends.keys())
+        common_blocked_keys = set(self.blocked_by.keys()) & set(other.blocked_by.keys())
+        common_depends = {k: self.depends[k] | other.depends[k] for k in common_depend_keys}
+        common_blocked = {k: self.blocked_by[k] | other.blocked_by[k] for k in common_blocked_keys}
+        return TransformationsDependency(depends={**self.depends, **other.depends, **common_depends},
+                                         blocked_by={**self.blocked_by, **other.blocked_by, **common_blocked})
+
+    def get_dependencies(self, transformation_type: Type[AbstractTransformation]) -> Set[
+        Type[AbstractTransformation]]:
         return self.inherit_features(transformation_type, self.depends)
 
-    def get_blocked_by(self, transformation_type: Type[AbstractDatasetTransformation]) -> Set[
-        Type[AbstractDatasetTransformation]]:
+    def get_blocked_by(self, transformation_type: Type[AbstractTransformation]) -> Set[
+        Type[AbstractTransformation]]:
         return self.inherit_features(transformation_type, self.blocked_by)
 
-    def validate_sequence(self, transformations: List[AbstractDatasetTransformation]):
+    def validate_sequence(self, transformations: List[AbstractTransformation]):
         transformations_type = list(map(type, transformations))
         if len(set(transformations_type)) != len(transformations_type):
             raise DuplicateTransformationException("Transformation sequence contains duplicate transformations. "
                                                    "Each transformation must appear only once. "
                                                    f"Got {transformations}.")
-        applied_set: Set[Type[AbstractDatasetTransformation]] = set()
+        applied_set: Set[Type[AbstractTransformation]] = set()
         for t in transformations_type:
             applied_set.add(t)
             dependency_gap = self.get_dependencies(t) - applied_set
@@ -550,8 +582,8 @@ class AbstractDatasetPipelineConfig(Config):
 
 
 class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
-    config: AbstractDatasetPipelineConfig
-    transformations: List[AbstractDatasetTransformation]
+    config: AbstractDatasetPipelineConfig = field(default_factory=AbstractDatasetPipelineConfig)
+    transformations: List[AbstractTransformation] = field(kw_only=True)
     validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
 
     @staticmethod
@@ -564,25 +596,25 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
     def __post_init__(self):
         self.validator.validate_sequence(self.transformations)
 
-    def __call__(self, dataset: Dataset) -> Tuple[Dataset, pd.DataFrame]:
+    def __call__(self, dataset: AbstractDatasetRepresentation) -> Tuple[AbstractDatasetRepresentation, pd.DataFrame]:
         report = tuple()
-
         with tqdm_constructor(desc='Transforming Dataset', unit='transformations',
                               total=len(self.transformations)) as pbar:
             for t in self.transformations:
-                pbar.set_description(f"Transforming Dataset: {t.name or type(t).__name__}")
-                dataset, report = t(dataset, report)
+                pbar.set_description(f"Transforming Dataset: {type(t).__name__}")
+                dataset, report = t.apply(dataset, report)
                 pbar.update(1)
-        return dataset, self.compile_report(report, dataset.core_pipeline_report)
+        return dataset, self.compile_report(report, dataset.pipeline_report)
 
 
 class DatasetConfig(Config):
     scheme: DatasetSchemeConfig
     tables: DatasetTablesConfig
-    pipeline: AbstractDatasetPipelineConfig
+    overlapping_admissions: Literal["merge", "remove"] = "merge"
+    filter_subjects_with_observation: Optional[str] = None
 
 
-class Dataset(Module):
+class Dataset(AbstractDatasetRepresentation):
     """
     A class representing a dataset.
 
@@ -601,16 +633,50 @@ class Dataset(Module):
     """
     config: DatasetConfig
     tables: DatasetTables
-    core_pipeline_report: pd.DataFrame
 
     def __init__(self, config: DatasetConfig):
         super().__init__(config=config)
+        # TODO: offload table loading to the pipeline.
         self.tables = self.load_tables(config, self.scheme)
-        self.core_pipeline_report = pd.DataFrame()
 
-    @cached_property
-    def core_pipeline(self) -> AbstractDatasetPipeline:
-        return self._setup_core_pipeline(self.config)
+    @classmethod
+    @abstractmethod
+    def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
+        pass
+
+    def equals(self, other: 'Dataset'):
+        return self.config == other.config and self.tables.equals(other.tables) and self.scheme == other.scheme and \
+            self.pipeline_report.equals(other.pipeline_report)
+
+    def save(self, path: Union[str, Path], overwrite: bool = False):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        h5_path = str(path.with_suffix('.h5'))  # tables and pipeline report goes here.
+        json_path = path.with_suffix('.json')  # config goes here.
+        if json_path.exists():
+            if overwrite:
+                json_path.unlink()
+            else:
+                raise RuntimeError(f'File {json_path} already exists.')
+        write_config(self.config.to_dict(), str(json_path))
+
+        self.tables.save(h5_path, overwrite)
+        self.pipeline_report.to_hdf(h5_path,
+                                    key='report',
+                                    format='table')
+
+    @classmethod
+    def load(cls, path: Union[str, Path]):
+        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
+        json_path = str(Path(path).with_suffix('.json'))  # config goes here.
+
+        tables = DatasetTables.load(h5_path)
+        config = DatasetConfig.from_dict(load_config(json_path))
+        dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
+                              is_leaf=lambda x: x is None)
+        with pd.HDFStore(h5_path) as store:
+            report = store['report'] if 'report' in store else pd.DataFrame()
+            return eqx.tree_at(lambda x: x.pipeline_report, dataset, report)
 
     @cached_property
     def scheme(self) -> DatasetScheme:
@@ -619,31 +685,6 @@ class Dataset(Module):
     @classmethod
     def load_dataset_scheme(cls, config: DatasetConfig) -> DatasetScheme:
         return DatasetScheme(config=config.scheme)
-
-    @classmethod
-    @abstractmethod
-    def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
-        pass
-
-    @classmethod
-    @abstractmethod
-    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        pass
-
-    def execute_core_pipeline(self) -> Dataset:
-        if len(self.core_pipeline_report) > 0:
-            logging.warning("Pipeline has already been executed. Doing nothing.")
-            return self
-        dataset, report = self.core_pipeline(self)
-        dataset = eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
-        return dataset
-
-    def execute_external_transformations(self, transformations: List[AbstractDatasetTransformation]) -> Dataset:
-        dataset = self
-        report = tuple()
-        for t in transformations:
-            dataset, report = t(dataset, report)
-        return dataset
 
     @cached_property
     def supported_target_scheme_options(self):
@@ -720,41 +761,6 @@ class Dataset(Module):
 
         splits = np.searchsorted(probs, splits)
         return [a.tolist() for a in np.split(subject_ids, splits)]
-
-    def equals(self, other: 'Dataset'):
-        return self.config == other.config and self.tables.equals(other.tables) and self.scheme == other.scheme and \
-            self.core_pipeline_report.equals(other.core_pipeline_report)
-
-    def save(self, path: Union[str, Path], overwrite: bool = False):
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        h5_path = str(path.with_suffix('.h5'))  # tables and pipeline report goes here.
-        json_path = path.with_suffix('.json')  # config goes here.
-        if json_path.exists():
-            if overwrite:
-                json_path.unlink()
-            else:
-                raise RuntimeError(f'File {json_path} already exists.')
-        write_config(self.config.to_dict(), str(json_path))
-
-        self.tables.save(h5_path, overwrite)
-        self.core_pipeline_report.to_hdf(h5_path,
-                                         key='report',
-                                         format='table')
-
-    @classmethod
-    def load(cls, path: Union[str, Path]):
-        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        json_path = str(Path(path).with_suffix('.json'))  # config goes here.
-
-        tables = DatasetTables.load(h5_path)
-        config = DatasetConfig.from_dict(load_config(json_path))
-        dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
-                              is_leaf=lambda x: x is None)
-        with pd.HDFStore(h5_path) as store:
-            report = store['report'] if 'report' in store else pd.DataFrame()
-            return eqx.tree_at(lambda x: x.core_pipeline_report, dataset, report)
-
 # TODO: 31 Jan 2024:
 #  - [x] change from_fit to __init__().fit()
 #  - [x] SQLTableConfig to inherit from DatasetTablesConfig

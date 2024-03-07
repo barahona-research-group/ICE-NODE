@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import pickle
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 from functools import cached_property
 from pathlib import Path
 from typing import List, Optional, Dict, Union, Callable, Tuple
@@ -12,14 +12,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
-import pandas as pd
 
 from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig, ReportAttributes, \
-    AbstractDatasetTransformation, AbstractDatasetPipeline
+    AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient)
-from ..base import Config, Module
+from ..base import Config
 from ..utils import tqdm_constructor, write_config, load_config
 
 
@@ -108,6 +107,7 @@ class TVxEHRConfig(Config):
     """
     scheme: DatasetSchemeConfig
     demographic_vector: DemographicVectorConfig
+    sample: Optional[TVxEHRSampleConfig] = None
     splits: Optional[TVxEHRSplitsConfig] = None
     numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
     interventions: bool = False
@@ -120,20 +120,10 @@ class TVxReportAttributes(ReportAttributes):
     tvx_concept: str = None
 
 
-class AbstractTVxTransformation(AbstractDatasetTransformation, metaclass=ABCMeta):
-    name: str = None
-
-    @abstractmethod
-    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
-        pass
-
+class AbstractTVxTransformation(AbstractTransformation, metaclass=ABCMeta):
     @staticmethod
-    def static_report(report: Tuple[TVxReportAttributes, ...], **report_attributes) -> Tuple[TVxReportAttributes, ...]:
+    def report(report: Tuple[TVxReportAttributes, ...], **report_attributes) -> Tuple[TVxReportAttributes, ...]:
         return report + (TVxReportAttributes(**report_attributes),)
-
-    def report(self, report: Tuple[TVxReportAttributes, ...], **kwargs) -> Tuple[TVxReportAttributes, ...]:
-        return self.static_report(report, **self.meta, **kwargs)
 
 
 class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
@@ -149,21 +139,12 @@ class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
         training_subject_ids = tv_ehr.splits[0]
         return admissions[admissions[c_subject_id].isin(training_subject_ids)].index.unique().tolist()
 
-    @abstractmethod
-    def __call__(self, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
-        pass
-
 
 class AbstractTVxPipeline(AbstractDatasetPipeline, metaclass=ABCMeta):
     transformations: List[AbstractTVxTransformation]
 
-    @abstractmethod
-    def __call__(self, tv_ehr: TVxEHR) -> Tuple[TVxEHR, pd.DataFrame]:
-        pass
 
-
-class TVxEHR(Module):
+class TVxEHR(AbstractDatasetRepresentation):
     """
     A class representing a collection of patients in the EHR system, in ML-compliant format.
 
@@ -211,36 +192,14 @@ class TVxEHR(Module):
         """Get the list of subject IDs."""
         return sorted(self.subjects.keys())
 
-    @classmethod
-    def external_argnames(cls):
-        """Get the external argument names."""
-        return ['dataset', 'subjects']
-
     @cached_property
     def scheme(self):
         """Get the scheme."""
         return self.dataset.scheme.make_target_scheme(self.config.scheme)
 
-    def random_splits(self,
-                      splits: List[float],
-                      random_seed: int = 42,
-                      balanced: str = 'subjects'):
-        """Generate random splits of the dataset.
-
-        Args:
-            splits (List[float]): list of split ratios.
-            random_seed (int, optional): random seed for reproducibility. Defaults to 42.
-            balanced (str, optional): balancing strategy. Defaults to 'subjects'.
-
-        Returns:
-            Tuple[List[str]]: Tuple of lists containing the split subject IDs.
-        """
-        return self.dataset.random_splits(splits, self.subjects.keys(),
-                                          random_seed, balanced)
-
     def __len__(self):
         """Get the number of subjects."""
-        return len(self.subjects)
+        return len(self.subjects) if self.subjects is not None else 0
 
     @staticmethod
     def equal_config(path,

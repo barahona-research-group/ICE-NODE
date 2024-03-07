@@ -536,7 +536,7 @@ def dataset_config(dataset_scheme_config, dataset_tables_config):
 class NaiveDataset(Dataset):
 
     @classmethod
-    def _setup_core_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+    def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
         return AbstractDatasetPipeline(config=config.pipeline, transformations=[])
 
     @classmethod
