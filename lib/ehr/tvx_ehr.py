@@ -143,6 +143,12 @@ class TVxEHRScheme(DatasetScheme):
     def gender_mapper(self, source_scheme: DatasetScheme):
         return source_scheme.gender.mapper_to(self.gender.name)
 
+    def icu_procedures_mapper(self, source_scheme: DatasetScheme):
+        return source_scheme.icu_procedures.mapper_to(self.icu_procedures.name)
+
+    def hosp_procedures_mapper(self, source_scheme: DatasetScheme):
+        return source_scheme.hosp_procedures.mapper_to(self.hosp_procedures.name)
+
     @staticmethod
     def supported_target_scheme_options(dataset_scheme: DatasetScheme):
         supported_attr_targets = {
@@ -171,8 +177,9 @@ class TVxEHRConfig(Config):
     numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
     interventions: bool = False
     observables: bool = False
-    interventions_segmentation: bool = False
     time_binning: Optional[float] = None
+    leading_observable: Optional[LeadingObservableExtractorConfig] = None
+    interventions_segmentation: bool = False
 
 
 class TVxReportAttributes(ReportAttributes):
@@ -269,6 +276,23 @@ class TVxEHR(AbstractDatasetRepresentation):
     @cached_property
     def dx_mapper(self):
         return self.scheme.dx_mapper(self.dataset.scheme)
+
+    @cached_property
+    def icu_procedures_mapper(self):
+        return self.scheme.icu_procedures_mapper(self.dataset.scheme)
+
+    @cached_property
+    def hosp_procedures_mapper(self):
+        return self.scheme.hosp_procedures_mapper(self.dataset.scheme)
+
+    @cached_property
+    def subjects_sorted_admissions(self) -> Dict[str, List[str]]:
+        c_admittime = self.dataset.config.tables.admissions.admission_time_alias
+        c_subject_id = self.dataset.config.tables.admissions.subject_id_alias
+
+        # For each subject get the list of adm sorted by admission date.
+        return self.dataset.tables.admissions.groupby(c_subject_id).apply(
+            lambda x: x.sort_values(c_admittime).index.to_list()).to_dict()
 
     def __len__(self):
         """Get the number of subjects."""

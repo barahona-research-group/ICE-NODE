@@ -91,6 +91,20 @@ class CodesVector(Data):
         """
         return (self.scheme == other.scheme) and np.array_equal(self.vec, other.vec)
 
+    def union(self, other: CodesVector) -> CodesVector:
+        """
+        Returns the union of the current CodesVector with another CodesVector.
+
+        Args:
+            other (CodesVector): the other CodesVector to union with.
+
+        Returns:
+            CodesVector: the union of the two CodesVectors.
+        """
+        assert self.scheme == other.scheme, "Schemes should be the same."
+        assert self.vec.dtype == bool and other.vec.dtype == bool, "Vector types should be the same."
+        return CodesVector(self.vec | other.vec, self.scheme)
+
 
 class CodingSchemeConfig(Config):
     """The identifier name of the coding scheme."""
@@ -345,14 +359,6 @@ class CodingScheme(Module):
 
         return CodingScheme.vector_cls(vec, self.name)
 
-    def empty_vector(self) -> "CodingScheme.vector_cls":
-        """
-        Returns an empty vector representation of the current scheme.
-        Returns:
-            CodingScheme.vector_cls: an empty vector representation of the current scheme.
-        """
-        return CodingScheme.vector_cls.empty(self.name)
-
     @property
     def supported_targets(self):
         return tuple(t for s, t in set(CodeMap._load_maps.keys()) | set(CodeMap._maps.keys()) if s == self.name)
@@ -512,47 +518,6 @@ class NumericScheme(FlatScheme):
         assert set(self.index[c] for c in self.codes) == set(range(len(self))), \
             f"The order of codes ({self.codes}) does not match the order of type hints ({self.type_hint.keys()})."
         return np.array([self.type_hint[code] for code in self.codes])
-
-
-class BinaryCodesVector(CodesVector):
-    """
-    Represents a single-element binary code vector. It is used to represent a single code in a binary coding scheme, where the two codes are mutually exclusive.
-
-    Attributes:
-        vec (numpy.ndarray): the binary codes vector, which is a 1-element vector.
-        scheme (str): the binary coding scheme associated with the vector.
-    """
-
-    @classmethod
-    def empty(cls, scheme: str):
-        """
-        Creates a default binary codes vector.
-
-        Args:
-            scheme (str): the coding scheme associated with the vector.
-
-        Returns:
-            BinaryCodesVector: a vector representing the first code in the binary coding scheme.
-        """
-        return cls(np.zeros(1, dtype=bool), scheme)
-
-    def to_codeset(self):
-        """
-        Converts the binary codes vector to a set of one code.
-
-        Returns:
-            set: a set containing one code.
-        """
-        return {self.scheme_object.index2code[self.vec[0]]}
-
-    def __len__(self):
-        """
-        Returns 1, the length of the binary codes vector.
-
-        Returns:
-            int: the length of the binary codes vector.
-        """
-        return 1
 
 
 class CodesVectorWithMissing(CodesVector):
@@ -1260,6 +1225,16 @@ class CodeMap(Module):
         return self._source_scheme.index
 
     @property
+    def source_to_target_index(self) -> Dict[str, int]:
+        """
+        Returns a dictionary mapping source codes to their indices in the target coding scheme.
+
+        Returns:
+            Dict[str, int]: a dictionary mapping source codes to their indices in the target coding scheme.
+        """
+        return {c: self.target_index[c] for c in self.keys()}
+
+    @property
     def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
         """
         Returns the source coding scheme.
@@ -1680,7 +1655,7 @@ class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
 
         return codeset & set(self.codes)
 
-    def mapcodevector(self, codes: CodesVector) -> CodesVector:
+    def map_vector(self, codes: CodesVector) -> CodesVector:
         """
         Extract outcomes from a codes vector into a new codes vector.
 

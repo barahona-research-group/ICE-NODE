@@ -1187,16 +1187,16 @@ class DemographicVectorConfig(Config):
         age (bool): indicates whether age is included in the vector.
         ethnicity (bool): indicates whether ethnicity is included in the vector.
     """
-    gender: bool = False
-    age: bool = False
-    ethnicity: bool = False
+    gender: bool = True
+    age: bool = True
+    ethnicity: bool = True
 
 
 class CPRDDemographicVectorConfig(DemographicVectorConfig):
     """
     Configuration class for CPRD demographic vector.
     """
-    imd: bool = False
+    imd: bool = True
 
 
 class StaticInfo(Data):

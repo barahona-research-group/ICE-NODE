@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import logging
 import random
 from abc import abstractmethod
 from dataclasses import field
-from typing import Dict, Tuple, List, Callable, Final, Type, Set
+from typing import Dict, Tuple, List, Callable, Final, Type, Set, Hashable
 
+import dask.dataframe as dd
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
 from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables
-from .dataset import Dataset, TransformationsDependency, AbstractTransformation
+from .coding_scheme import CodeMap
+from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation
 
@@ -396,72 +399,191 @@ class TimeBinning(AbstractTVxTransformation):
     pass
 
 
+class LeadingObservableExtraction(AbstractTVxTransformation):
+    pass
+
+
 class TVxConcepts(AbstractTVxTransformation):
 
-    @classmethod
-    def _static_info(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, StaticInfo], Tuple[TVxReportAttributes, ...]]:
+    @staticmethod
+    def _static_info(tvx_ehr: TVxEHR) -> Dict[str, StaticInfo]:
         static = tvx_ehr.dataset.tables.static
         config = tvx_ehr.config.demographic_vector
         c_gender = tvx_ehr.dataset.config.tables.static
         c_date_of_birth = tvx_ehr.dataset.config.tables.static.date_of_birth_alias
         c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias
 
-        gender, ethnicity = {}, {}
-        dob: Dict[str, pd.Timestamp] = static[c_date_of_birth].to_dict()
-        if tvx_ehr.scheme.gender is not None:
+        gender, ethnicity, dob = {}, {}, {}
+        if c_date_of_birth in static.columns or config.age:
+            dob = static[c_date_of_birth].to_dict()
+        if tvx_ehr.scheme.gender is not None or config.gender:
             gender_m = tvx_ehr.gender_mapper
             gender = {k: gender_m.codeset2vec({c}) for k, c in static[c_gender].to_dict().items()}
 
-        if tvx_ehr.scheme.ethnicity is not None:
+        if tvx_ehr.scheme.ethnicity is not None or config.ethnicity:
             ethnicity_m = tvx_ehr.ethnicity_mapper
             ethnicity = {k: ethnicity_m.codeset2vec({c}) for k, c in static[c_ethnicity].to_dict().items()}
 
-        return {subject_id: StaticInfo(date_of_birth=dob[subject_id],
-                                       ethnicity=ethnicity[subject_id],
-                                       gender=gender[subject_id],
+        return {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
+                                       ethnicity=ethnicity.get(subject_id),
+                                       gender=gender.get(subject_id),
                                        demographic_vector_config=config)
-                for subject_id in static.index}, report
+                for subject_id in static.index}
 
-    @classmethod
-    def _dx_discharge(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+    @staticmethod
+    def _dx_discharge(tvx_ehr: TVxEHR) -> Dict[str, CodesVector]:
+        c_adm_id = tvx_ehr.dataset.config.tables.dx_discharge.admission_id_alias
+        c_code = tvx_ehr.dataset.config.tables.dx_discharge.code_alias
+        dx_discharge = tvx_ehr.dataset.tables.dx_discharge
+        dx_codes_set = dx_discharge.groupby(c_adm_id)[c_code].apply(set).to_dict()
+        dx_mapper = tvx_ehr.dx_mapper
+        return {adm_id: dx_mapper.codeset2vec(codeset) for adm_id, codeset in dx_codes_set.items()}
 
-    @classmethod
-    def _dx_discharge_history(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+    @staticmethod
+    def _dx_discharge_history(tvx_ehr: TVxEHR, dx_discharge: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
+        # TODO: test anti causality.
+        dx_scheme = tvx_ehr.scheme.dx_discharge
+        # For each subject accumulate previous dx_discharge codes.
+        dx_discharge_history = dict()
+        initial_history = dx_scheme.codeset2vec(set())
+        # For each subject get the list of adm sorted by admission date.
+        for subject_id, adm_ids in tvx_ehr.subjects_sorted_admissions.items():
+            current_history = initial_history
+            for adm_id in adm_ids:
+                dx_discharge_history[adm_id] = current_history
+                current_history = dx_discharge[adm_id].union(current_history)
+        return dx_discharge_history
 
-    @classmethod
-    def _outcome(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+    @staticmethod
+    def _outcome(tvx_ehr: TVxEHR, dx_discharge: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
+        outcome_extractor = tvx_ehr.scheme.outcome
+        return {adm_id: outcome_extractor.map_vector(code_vec) for adm_id, code_vec in dx_discharge.items()}
 
-    @classmethod
-    def _hosp_procedures(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+    @staticmethod
+    def _icu_inputs(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
+        c_admission_id = tvx_ehr.dataset.config.tables.icu_inputs.admission_id_alias
+        c_code = tvx_ehr.dataset.config.tables.icu_inputs.code_alias
+        c_rate = tvx_ehr.dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        c_start_time = tvx_ehr.dataset.config.tables.icu_inputs.start_time_alias
+        c_end_time = tvx_ehr.dataset.config.tables.icu_inputs.end_time_alias
 
-    @classmethod
-    def _icu_procedures(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+        # Here we avoid deep copy, and we can still replace
+        # a new column without affecting the original table.
+        table = tvx_ehr.dataset.tables.icu_inputs.iloc[:, :]
 
-    @classmethod
-    def _icu_inputs(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+        table[c_code] = table[c_code].map(tvx_ehr.scheme.icu_inputs.index)
+
+        def group_fun(x):
+            return pd.Series({
+                0: x[c_code].to_numpy(),
+                1: x[c_rate].to_numpy(),
+                2: x[c_start_time].to_numpy(),
+                3: x[c_end_time].to_numpy()
+            })
+
+        admission_icu_inputs = table.groupby(c_admission_id).apply(group_fun)
+        input_size = len(tvx_ehr.scheme.icu_inputs)
+        return {adm_id: InpatientInput(index=np.array(codes, dtype=np.int64),
+                                       rate=rates,
+                                       starttime=start,
+                                       endtime=end,
+                                       size=input_size)
+                for adm_id, (codes, rates, start, end) in admission_icu_inputs.iterrows()}
+
+    @staticmethod
+    def _procedures(table: pd.DataFrame, config: AdmissionIntervalBasedCodedTableConfig,
+                    code_map: CodeMap) -> Dict[str, InpatientInput]:
+        c_admission_id = config.admission_id_alias
+        c_code = config.code_alias
+        c_start_time = config.start_time_alias
+        c_end_time = config.end_time_alias
+
+        # Here we avoid deep copy, and we can still replace
+        # a new column without affecting the original table.
+        table = table.iloc[:, :]
+        table[c_code] = table[c_code].map(code_map.source_to_target_index)
+        assert not table[c_code].isnull().any(), 'Some codes are not in the target scheme.'
+
+        def group_fun(x):
+            return pd.Series({
+                0: x[c_code].to_numpy(),
+                1: x[c_start_time].to_numpy(),
+                2: x[c_end_time].to_numpy()
+            })
+
+        admission_procedures = table.groupby(c_admission_id).apply(group_fun)
+        size = len(code_map.target_scheme)
+        return {adm_id: InpatientInput(index=np.array(codes, dtype=np.int64),
+                                       rate=np.ones_like(codes, dtype=bool),
+                                       starttime=start,
+                                       endtime=end,
+                                       size=size)
+                for adm_id, (codes, start, end) in admission_procedures.iterrows()}
+
+    @staticmethod
+    def _hosp_procedures(tvx_ehr: TVxEHR) -> Dict[str | Hashable, InpatientInput]:
+        return TVxConcepts._procedures(tvx_ehr.dataset.tables.hosp_procedures,
+                                       tvx_ehr.dataset.config.tables.hosp_procedures,
+                                       tvx_ehr.hosp_procedures_mapper)
+
+    @staticmethod
+    def _icu_procedures(tvx_ehr: TVxEHR) -> Dict[str | Hashable, InpatientInput]:
+        return TVxConcepts._procedures(tvx_ehr.dataset.tables.icu_procedures,
+                                       tvx_ehr.dataset.config.tables.icu_procedures,
+                                       tvx_ehr.icu_procedures_mapper)
 
     @classmethod
     def _interventions(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         Dict[str, InpatientInterventions], Tuple[TVxReportAttributes, ...]]:
         raise NotImplementedError
 
-    @classmethod
-    def _observables(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientObservables], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+    @staticmethod
+    def _observables(tvx_ehr: TVxEHR) -> Dict[str, InpatientObservables]:
+        c_admission_id = tvx_ehr.dataset.config.tables.obs.admission_id_alias
+        c_code = tvx_ehr.dataset.config.tables.obs.code_alias
+        c_value = tvx_ehr.dataset.config.tables.obs.value_alias
+        c_timestamp = tvx_ehr.dataset.config.tables.obs.time_alias
+
+        # For dasking, we index by admission.
+        table = tvx_ehr.dataset.tables.obs.set_index(c_admission_id)
+        table[c_code] = table[c_code].map(tvx_ehr.scheme.obs.index)
+        assert not table[c_code].isnull().any(), 'Some codes are not in the target scheme.'
+        obs_dim = len(tvx_ehr.scheme.obs)
+
+        def ret_put(a, *args):
+            np.put(a, *args)
+            return a
+
+        def val_mask(x):
+            idx = x[c_code]
+            val = ret_put(np.zeros(obs_dim, dtype=np.float16), idx, x[c_value])
+            mask = ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
+            adm_id = x.index[0]
+            time = x[c_timestamp].iloc[0]
+            return pd.Series({0: adm_id, 1: time, 2: val, 3: mask})
+
+        def gen_observation(val_mask):
+            time = val_mask[1].to_numpy()
+            value = val_mask[2]
+            mask = val_mask[3]
+            mask = np.vstack(mask.values).reshape((len(time), obs_dim))
+            value = np.vstack(value.values).reshape((len(time), obs_dim))
+            return InpatientObservables(time=time, value=value, mask=mask)
+
+        def partition_fun(part_df):
+            g = part_df.groupby([c_admission_id, c_timestamp], sort=True, as_index=False)
+            return g.apply(val_mask).groupby(0).apply(gen_observation)
+
+        logging.debug("obs: dasking")
+        table = dd.from_pandas(table, npartitions=12, sort=True)
+        logging.debug("obs: groupby")
+        inpatient_observables_df = table.map_partitions(partition_fun, meta=(None, object))
+        logging.debug("obs: undasking")
+        inpatient_observables_df = inpatient_observables_df.compute()
+        logging.debug("obs: extract")
+        assert len(inpatient_observables_df.index.tolist()) == len(set(inpatient_observables_df.index.tolist())), \
+            "Duplicate admission ids in obs"
+        return inpatient_observables_df.to_dict()
 
     @classmethod
     def _leading_observables(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
@@ -471,54 +593,20 @@ class TVxConcepts(AbstractTVxTransformation):
     @classmethod
     def apply(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+        subject_admissions = tvx_ehr.subjects_sorted_admissions
+        static_info = cls._static_info(tvx_ehr)
+        dx_discharge = cls._dx_discharge(tvx_ehr)
+        dx_discharge_history = cls._dx_discharge_history(tvx_ehr, dx_discharge)
+        outcome = cls._outcome(tvx_ehr, dx_discharge)
+        if tvx_ehr.config.interventions:
+            interventions, report = cls._interventions(tvx_ehr, report)
+        else:
+            interventions = None
+        if tvx_ehr.config.observables:
+            observables = cls._observables(tvx_ehr)
+        else:
+            observables = None
 
-#
-#     def dx_codes_extractor(self, admission_ids_list, target_scheme):
-#         c_adm_id = self.colname["dx_discharge"].admission_id
-#         c_code = self.colname["dx_discharge"].code
-#         c_version = self.colname["dx_discharge"].version
-#
-#         df = self.df["dx_discharge"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#         codes_df = {
-#             adm_id: codes_df
-#             for adm_id, codes_df in df.groupby(c_adm_id)
-#         }
-#         empty_vector = target_scheme.dx_discharge.empty_vector()
-#
-#         dx_mapper = self.scheme.dx_mapper(target_scheme)
-#
-#         def _extract_codes(adm_id):
-#             _codes_df = codes_df.get(adm_id)
-#             if _codes_df is None:
-#                 return (adm_id, empty_vector)
-#
-#             vec = empty_vector
-#             for version, version_df in _codes_df.groupby(c_version):
-#                 mapper = dx_mapper[str(version)]
-#                 codeset = mapper.map_codeset(version_df[c_code])
-#                 vec = vec.union(mapper.codeset2vec(codeset))
-#             return (adm_id, vec)
-#
-#         return map(_extract_codes, admission_ids_list)
-#
-#
-# class MIMIC4ICUDataset(Dataset):
-#
-#     @classmethod
-#     def _setup_core_pipeline(cls, config: DatasetConfig) -> ValidatedDatasetPipeline:
-#         raise NotImplementedError("Not implemented")
-#
-#     def to_subjects(self,
-#                     subject_ids: List[int],
-#                     num_workers: int,
-#                     demographic_vector_config: DemographicVectorConfig,
-#                     leading_observable_config: LeadingObservableExtractorConfig,
-#                     target_scheme: MIMIC4ICUDatasetScheme,
-#                     time_binning: Optional[int] = None,
-#                     **kwargs):
-#
 #         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
 #             subject_ids, target_scheme)
 #         admission_ids = self.adm_extractor(subject_ids)
@@ -607,179 +695,11 @@ class TVxConcepts(AbstractTVxTransformation):
 #                            static_info=static_info)
 #
 #         return list(map(_gen_subject, subject_ids))
+
 #
-#     def procedure_extractor(self, admission_ids_list):
-#         c_adm_id = self.colname["int_proc"].admission_id
-#         c_code_index = self.colname["int_proc"].code_source_index
-#         c_start_time = self.colname["int_proc"].start_time
-#         c_end_time = self.colname["int_proc"].end_time
-#         df = self.df["int_proc"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
+
 #
-#         def group_fun(x):
-#             return pd.Series({
-#                 0: x[c_code_index].to_numpy(),
-#                 1: x[c_start_time].to_numpy(),
-#                 2: x[c_end_time].to_numpy()
-#             })
-#
-#         grouped = df.groupby(c_adm_id).apply(group_fun)
-#         adm_arr = grouped.index.tolist()
-#         input_size = len(self.scheme.int_proc)
-#         for i in adm_arr:
-#             yield (i,
-#                    InpatientInput(index=grouped.loc[i, 0],
-#                                   rate=np.ones_like(grouped.loc[i, 0],
-#                                                     dtype=bool),
-#                                   starttime=grouped.loc[i, 1],
-#                                   endtime=grouped.loc[i, 2],
-#                                   size=input_size))
-#
-#         for adm_id in set(admission_ids_list) - set(adm_arr):
-#             yield (adm_id, InpatientInput.empty(input_size))
-#
-#     def inputs_extractor(self, admission_ids_list):
-#         c_adm_id = self.colname["int_input"].admission_id
-#         c_start_time = self.colname["int_input"].start_time
-#         c_end_time = self.colname["int_input"].end_time
-#         c_rate = self.colname["int_input"].rate
-#         c_code_index = self.colname["int_input"].code_source_index
-#
-#         df = self.df["int_input"]
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#         def group_fun(x):
-#             return pd.Series({
-#                 0: x[c_code_index].to_numpy(),
-#                 1: x[c_rate].to_numpy(),
-#                 2: x[c_start_time].to_numpy(),
-#                 3: x[c_end_time].to_numpy()
-#             })
-#
-#         grouped = df.groupby(c_adm_id).apply(group_fun)
-#         adm_arr = grouped.index.tolist()
-#         input_size = len(self.scheme.int_input)
-#         for i in adm_arr:
-#             yield (i,
-#                    InpatientInput(index=grouped.loc[i, 0],
-#                                   rate=grouped.loc[i, 1],
-#                                   starttime=grouped.loc[i, 2],
-#                                   endtime=grouped.loc[i, 3],
-#                                   size=input_size))
-#         for adm_id in set(admission_ids_list) - set(adm_arr):
-#             yield (adm_id, InpatientInput.empty(input_size))
-#
-#     def observables_extractor(self, admission_ids_list, num_workers):
-#         c_adm_id = self.colname["obs"].admission_id
-#         c_time = self.colname["obs"].timestamp
-#         c_value = self.colname["obs"].value
-#         c_code_index = self.colname["obs"].code_source_index
-#
-#         df = self.df["obs"][[c_adm_id, c_time, c_value, c_code_index]]
-#         logging.debug("obs: filter adms")
-#         df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#         obs_dim = len(self.scheme.obs)
-#
-#         def ret_put(a, *args):
-#             np.put(a, *args)
-#             return a
-#
-#         def val_mask(x):
-#             idx = x[c_code_index]
-#             val = ret_put(np.zeros(obs_dim, dtype=np.float16), idx, x[c_value])
-#             mask = ret_put(np.zeros(obs_dim, dtype=bool), idx, 1.0)
-#             adm_id = x.index[0]
-#             time = x[c_time].iloc[0]
-#             return pd.Series({0: adm_id, 1: time, 2: val, 3: mask})
-#
-#         def gen_observation(val_mask):
-#             time = val_mask[1].to_numpy()
-#             value = val_mask[2]
-#             mask = val_mask[3]
-#             mask = np.vstack(mask.values).reshape((len(time), obs_dim))
-#             value = np.vstack(value.values).reshape((len(time), obs_dim))
-#             return InpatientObservables(time=time, value=value, mask=mask)
-#
-#         def partition_fun(part_df):
-#             g = part_df.groupby([c_adm_id, c_time], sort=True, as_index=False)
-#             return g.apply(val_mask).groupby(0).apply(gen_observation)
-#
-#         logging.debug("obs: dasking")
-#         df = df.set_index(c_adm_id)
-#         df = dd.from_pandas(df, npartitions=12, sort=True)
-#         logging.debug("obs: groupby")
-#         obs_obj_df = df.map_partitions(partition_fun, meta=(None, object))
-#         logging.debug("obs: undasking")
-#         obs_obj_df = obs_obj_df.compute()
-#         logging.debug("obs: extract")
-#
-#         collected_adm_ids = obs_obj_df.index.tolist()
-#         assert len(collected_adm_ids) == len(set(collected_adm_ids)), \
-#             "Duplicate admission ids in obs"
-#
-#         for adm_id, obs in obs_obj_df.items():
-#             yield (adm_id, obs)
-#
-#         logging.debug("obs: empty")
-#         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
-#             yield (adm_id, InpatientObservables.empty(obs_dim))
-#
-# def subject_info_extractor(self, subject_ids: List[int],
-#                            target_scheme: DatasetScheme):
-#     """
-#     Important comment from MIMIC-III documentation at \
-#         https://mimic.mit.edu/docs/iii/tables/patients/
-#     > DOB is the date of birth of the given patient. Patients who are \
-#         older than 89 years old at any time in the database have had their\
-#         date of birth shifted to obscure their age and comply with HIPAA.\
-#         The shift process was as follows: the patient’s age at their \
-#         first admission was determined. The date of birth was then set to\
-#         exactly 300 years before their first admission.
-#     """
-#     assert self.scheme.gender is target_scheme.gender, (
-#         "No conversion assumed for gender attribute")
-#
-#     c_gender = self.colname["static"].gender
-#     c_eth = self.colname["static"].ethnicity
-#     c_dob = self.colname["static"].date_of_birth
-#
-#     c_admittime = self.colname["adm"].admittime
-#     c_dischtime = self.colname["adm"].dischtime
-#     c_subject_id = self.colname["adm"].subject_id
-#
-#     adm_df = self.df['adm'][self.df['adm'][c_subject_id].isin(subject_ids)]
-#
-#     df = self.df['static'].copy()
-#     df = df.loc[subject_ids]
-#     gender = df[c_gender].map(self.scheme.gender.codeset2vec)
-#
-#     subject_gender = gender.to_dict()
-#
-#     df[c_dob] = pd.to_datetime(df[c_dob])
-#     last_disch_date = adm_df.groupby(c_subject_id)[c_dischtime].max()
-#     first_adm_date = adm_df.groupby(c_subject_id)[c_admittime].min()
-#
-#     last_disch_date = last_disch_date.loc[df.index]
-#     first_adm_date = first_adm_date.loc[df.index]
-#     uncertainty = (last_disch_date.dt.year - first_adm_date.dt.year) // 2
-#     shift = (uncertainty + 89).astype('timedelta64[Y]')
-#     df.loc[:, c_dob] = df[c_dob].mask(
-#         (last_disch_date.dt.year - df[c_dob].dt.year) > 150,
-#         first_adm_date - shift)
-#
-#     subject_dob = df[c_dob].dt.normalize().to_dict()
-#     # TODO: check https://mimic.mit.edu/docs/iii/about/time/
-#     eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
-#
-#     def eth2vec(eth):
-#         code = eth_mapper.map_codeset(eth)
-#         return eth_mapper.codeset2vec(code)
-#
-#     subject_eth = df[c_eth].map(eth2vec).to_dict()
-#
-#     return subject_dob, subject_gender, subject_eth
-#
+
 # def adm_extractor(self, subject_ids):
 #     c_subject_id = self.colname["adm"].subject_id
 #     df = self.df["adm"]
@@ -788,43 +708,3 @@ class TVxConcepts(AbstractTVxTransformation):
 #         subject_id: subject_df.index.tolist()
 #         for subject_id, subject_df in df.groupby(c_subject_id)
 #     }
-#
-# def dx_codes_extractor(self, admission_ids_list,
-#                        target_scheme: DatasetScheme):
-#     c_adm_id = self.colname["dx_discharge"].admission_id
-#     c_code = self.colname["dx_discharge"].code
-#
-#     df = self.df["dx_discharge"]
-#     df = df[df[c_adm_id].isin(admission_ids_list)]
-#
-#     codes_df = {
-#         adm_id: codes_df
-#         for adm_id, codes_df in df.groupby(c_adm_id)
-#     }
-#     empty_vector = target_scheme.dx_discharge.empty_vector()
-#     mapper = self.scheme.dx_mapper(target_scheme)
-#
-#     def _extract_codes(adm_id):
-#         _codes_df = codes_df.get(adm_id)
-#         if _codes_df is None:
-#             return (adm_id, empty_vector)
-#         codeset = mapper.map_codeset(_codes_df[c_code])
-#         return (adm_id, mapper.codeset2vec(codeset))
-#
-#     return dict(map(_extract_codes, admission_ids_list))
-#
-# def dx_codes_history_extractor(self, dx_codes, admission_ids,
-#                                target_scheme):
-#     for subject_id, subject_admission_ids in admission_ids.items():
-#         _adm_ids = sorted(subject_admission_ids)
-#         vec = target_scheme.dx_discharge.empty_vector()
-#         yield (_adm_ids[0], vec)
-#
-#         for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
-#             if prev_adm_id in dx_codes:
-#                 vec = vec.union(dx_codes[prev_adm_id])
-#             yield (adm_id, vec)
-#
-# def outcome_extractor(self, dx_codes, target_scheme):
-#     return zip(dx_codes.keys(),
-#                map(target_scheme.outcome.mapcodevector, dx_codes.values()))

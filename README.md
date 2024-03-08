@@ -7,7 +7,7 @@
 - [ ] `lib.ehr.coding_scheme.CodeMap` test.
 - [ ] `lib.ehr.*` documentation / document edge cases tested.
 - [ ] `lib.ehr` custom exceptions / adapt tests.
-
+- [ ] FHIR resources adaptation.
 
 
 ##### Coverage

@@ -314,14 +314,20 @@ class AggregatedICUInputsScheme(FlatScheme):
         self.aggregation = aggregation
 
     @staticmethod
-    def register_aggregated_scheme(scheme: FlatScheme, target_name: Optional[str], mapping: Optional[pd.DataFrame],
-                                   c_code: str, c_target_code: str, c_target_desc: str,
-                                   c_target_aggregation: str) -> FlatScheme:
+    def register_aggregated_scheme(scheme: FlatScheme,
+                                   dataset_scheme_config: MIMICIVDatasetSchemeConfig,
+                                   dataset_tables_config: MIMICIVSQLTablesConfig) -> FlatScheme:
         """
         Register a target scheme and its mapping.
         """
+        target_name = dataset_scheme_config.propose_target_scheme_name(scheme.name)
+        c_code = dataset_tables_config.icu_inputs.code_alias
+        c_target_code = dataset_scheme_config.target_column_name(dataset_tables_config.icu_inputs.code_alias)
+        c_target_desc = dataset_scheme_config.target_column_name(dataset_tables_config.icu_inputs.description_alias)
+        c_target_aggregation = dataset_scheme_config.icu_inputs_aggregation_column
 
         target_scheme_conf = CodingSchemeConfig(target_name)
+        mapping = dataset_scheme_config.icu_inputs_map
         target_codes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
         target_desc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
         target_agg = mapping.set_index(c_target_code)[c_target_aggregation].to_dict()
@@ -522,9 +528,11 @@ class MixedICDSQLTable(CategoricalSQLTable):
     def register_scheme(self, name: str,
                         engine: Engine,
                         icd_schemes: Dict[str, str],
-                        icd_version_selection: Optional[pd.DataFrame],
-                        target_name: Optional[str] = None,
-                        mapping: Optional[pd.DataFrame] = None) -> MixedICDScheme:
+                        icd_version_selection: pd.DataFrame,
+                        target_name: Optional[str],
+                        c_target_code: Optional[str],
+                        c_target_desc: Optional[str],
+                        mapping: Optional[pd.DataFrame]) -> MixedICDScheme:
         c_version = self.config.icd_version_alias
         c_code = self.config.icd_code_alias
         c_desc = self.config.description_alias
@@ -532,12 +540,11 @@ class MixedICDSQLTable(CategoricalSQLTable):
                                        supported_space=self.space(engine),
                                        icd_version_selection=icd_version_selection,
                                        c_version=c_version, c_code=c_code, c_desc=c_desc)
-
         if target_name is not None and mapping is not None:
             scheme.register_map(target_name, mapping,
                                 c_code=c_code, c_icd_code=c_code, c_icd_version=c_version,
-                                c_target_code=f'target_{c_code}',
-                                c_target_desc=f'target_{c_desc}')
+                                c_target_code=c_target_code,
+                                c_target_desc=c_target_desc)
         return scheme
 
     def _coerce_version_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -876,17 +883,10 @@ class MIMICIVSQLTablesInterface(Module):
         code_selection = config.icu_inputs_selection
         mapping = config.icu_inputs_map
         c_aggregation = config.icu_inputs_aggregation_column
-        target_name = config.propose_target_scheme_name(config.icu_inputs)
-
         table = CodedSQLTable(self.config.icu_inputs)
         scheme = table.register_scheme(config.icu_inputs, self.create_engine(), code_selection)
         if mapping is not None and c_aggregation is not None:
-            AggregatedICUInputsScheme.register_aggregated_scheme(
-                scheme, target_name, mapping,
-                c_code=self.config.icu_inputs.code_alias,
-                c_target_code=config.target_column_name(self.config.icu_inputs.code_alias),
-                c_target_desc=config.target_column_name(self.config.icu_inputs.description_alias),
-                c_target_aggregation=c_aggregation)
+            AggregatedICUInputsScheme.register_aggregated_scheme(scheme, config, self.config)
         return scheme
 
     def register_icu_procedures_scheme(self, config: MIMICIVDatasetSchemeConfig):
@@ -935,7 +935,11 @@ class MIMICIVSQLTablesInterface(Module):
                                      engine=self.create_engine(),
                                      icd_schemes={'9': 'pr_icd9', '10': 'pr_flat_icd10'},
                                      icd_version_selection=config.hosp_procedures_selection,
-                                     target_name=None, mapping=None)
+                                     target_name=config.propose_target_scheme_name(config.hosp_procedures),
+                                     c_target_code=config.target_column_name(self.config.hosp_procedures.code_alias),
+                                     c_target_desc=config.target_column_name(
+                                         self.config.hosp_procedures.description_alias),
+                                     mapping=config.hosp_procedures_map)
 
     def register_dx_discharge_scheme(self, config: MIMICIVDatasetSchemeConfig):
         """
@@ -953,7 +957,11 @@ class MIMICIVSQLTablesInterface(Module):
         table = MixedICDSQLTable(self.config.dx_discharge)
         return table.register_scheme(config.dx_discharge, self.create_engine(),
                                      {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
-                                     config.dx_discharge_selection)
+                                     config.dx_discharge_selection,
+                                     target_name=None,
+                                     c_target_code=None,
+                                     c_target_desc=None,
+                                     mapping=None)
 
     @cached_property
     def supported_gender(self) -> pd.DataFrame:
