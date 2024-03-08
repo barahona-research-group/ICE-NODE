@@ -9,9 +9,9 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from . import TVxEHR, StaticInfo
+from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation
-from .transformations import FilterUnsupportedCodes, CastTimestamps, SetIndex, DatasetTransformation
+from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation
 
 
@@ -55,30 +55,6 @@ class RandomSplits(AbstractTVxTransformation):
                             before=(len(tv_ehr.dataset.tables.static),),
                             after=tuple(len(x) for x in splits))
         tv_ehr = eqx.tree_at(lambda x: x.splits, tv_ehr, splits)
-        return tv_ehr, report
-
-
-class SetCodeIntegerIndices(AbstractTVxTransformation):
-    @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
-        tables_dict = tv_ehr.dataset.tables.tables_dict
-        for table_name, code_column in tv_ehr.dataset.config.tables.code_column.items():
-            table = tables_dict[table_name]
-            coding_scheme = getattr(tv_ehr.dataset.scheme, table_name)
-            dtype1 = table[code_column].dtype
-            n1 = len(table)
-            table = table.assign(**{code_column: table[code_column].map(coding_scheme.index)})
-            table = table[table[code_column].notnull()].astype({code_column: int})
-            dtype2 = table[code_column].dtype
-            n2 = len(table)
-            report = cls.report(report, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
-                                operation='filter_unsupported_codes')
-            report = cls.report(report, table=table_name, column=code_column, before=dtype1, after=dtype2,
-                                value_type='dtype',
-                                operation='code_integer_index')
-
-            tv_ehr = eqx.tree_at(lambda x: getattr(x.dataset.tables, table_name), tv_ehr, table)
         return tv_ehr, report
 
 
@@ -396,9 +372,8 @@ class InputScaler(TrainableTransformation):
 
 
 TVX_DEPENDS_RELATIONS: Final[Dict[Type[AbstractTransformation], Set[Type[AbstractTransformation]]]] = {
-    SetCodeIntegerIndices: {FilterUnsupportedCodes},
     RandomSplits: {SetIndex, CastTimestamps},
-    TrainableTransformation: {RandomSplits, SetIndex, SetCodeIntegerIndices},
+    TrainableTransformation: {RandomSplits, SetIndex},
     ObsAdaptiveScaler: {ObsIQROutlierRemover}
     # <- inherits also from TrainableTransformation (TODO: test the inheritance of dependencies).
 }
@@ -412,45 +387,92 @@ TVX_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDepend
     blocked_by=TVX_BLOCKED_BY_RELATIONS,
 )
 
+
+class InterventionSegmentation(AbstractTVxTransformation):
+    pass
+
+
+class TimeBinning(AbstractTVxTransformation):
+    pass
+
+
 class TVxConcepts(AbstractTVxTransformation):
 
     @classmethod
-    def _static_info_extractor(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+    def _static_info(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         Dict[str, StaticInfo], Tuple[TVxReportAttributes, ...]]:
         static = tvx_ehr.dataset.tables.static
-
         config = tvx_ehr.config.demographic_vector
         c_gender = tvx_ehr.dataset.config.tables.static
         c_date_of_birth = tvx_ehr.dataset.config.tables.static.date_of_birth_alias
+        c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias
 
+        gender, ethnicity = {}, {}
+        dob: Dict[str, pd.Timestamp] = static[c_date_of_birth].to_dict()
+        if tvx_ehr.scheme.gender is not None:
+            gender_m = tvx_ehr.gender_mapper
+            gender = {k: gender_m.codeset2vec({c}) for k, c in static[c_gender].to_dict().items()}
 
+        if tvx_ehr.scheme.ethnicity is not None:
+            ethnicity_m = tvx_ehr.ethnicity_mapper
+            ethnicity = {k: ethnicity_m.codeset2vec({c}) for k, c in static[c_ethnicity].to_dict().items()}
 
-#     def subject_info_extractor(self, subject_ids, target_scheme):
-#
-#         static_df = self.df['static']
-#         c_gender = self.colname["static"].gender
-#         c_anchor_year = self.colname["static"].anchor_year
-#         c_anchor_age = self.colname["static"].anchor_age
-#         c_eth = self.colname["static"].ethnicity
-#
-#         static_df = static_df.loc[subject_ids]
-#         gender = static_df[c_gender].map(self.scheme.gender.codeset2vec)
-#         subject_gender = gender.to_dict()
-#
-#         anchor_date = pd.to_datetime(static_df[c_anchor_year],
-#                                      format='%Y').dt.normalize()
-#         anchor_age = static_df[c_anchor_age].map(
-#             lambda y: pd.DateOffset(years=-y))
-#         dob = anchor_date + anchor_age
-#         subject_dob = dict(zip(static_df.index.values, dob))
-#         subject_eth = dict()
-#         eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
-#         for subject_id in static_df.index.values:
-#             eth_code = eth_mapper.map_codeset(
-#                 [static_df.loc[subject_id, c_eth]])
-#             subject_eth[subject_id] = eth_mapper.codeset2vec(eth_code)
-#
-#         return subject_dob, subject_gender, subject_eth
+        return {subject_id: StaticInfo(date_of_birth=dob[subject_id],
+                                       ethnicity=ethnicity[subject_id],
+                                       gender=gender[subject_id],
+                                       demographic_vector_config=config)
+                for subject_id in static.index}, report
+
+    @classmethod
+    def _dx_discharge(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _dx_discharge_history(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _outcome(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, CodesVector], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _hosp_procedures(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _icu_procedures(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _icu_inputs(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientInput], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _interventions(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientInterventions], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _observables(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientObservables], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def _leading_observables(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        Dict[str, InpatientObservables], Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
+    @classmethod
+    def apply(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
+        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+        raise NotImplementedError
+
 #
 #     def dx_codes_extractor(self, admission_ids_list, target_scheme):
 #         c_adm_id = self.colname["dx_discharge"].admission_id
@@ -703,106 +725,106 @@ class TVxConcepts(AbstractTVxTransformation):
 #         for adm_id in set(admission_ids_list) - set(obs_obj_df.index):
 #             yield (adm_id, InpatientObservables.empty(obs_dim))
 #
-    # def subject_info_extractor(self, subject_ids: List[int],
-    #                            target_scheme: DatasetScheme):
-    #     """
-    #     Important comment from MIMIC-III documentation at \
-    #         https://mimic.mit.edu/docs/iii/tables/patients/
-    #     > DOB is the date of birth of the given patient. Patients who are \
-    #         older than 89 years old at any time in the database have had their\
-    #         date of birth shifted to obscure their age and comply with HIPAA.\
-    #         The shift process was as follows: the patient’s age at their \
-    #         first admission was determined. The date of birth was then set to\
-    #         exactly 300 years before their first admission.
-    #     """
-    #     assert self.scheme.gender is target_scheme.gender, (
-    #         "No conversion assumed for gender attribute")
-    #
-    #     c_gender = self.colname["static"].gender
-    #     c_eth = self.colname["static"].ethnicity
-    #     c_dob = self.colname["static"].date_of_birth
-    #
-    #     c_admittime = self.colname["adm"].admittime
-    #     c_dischtime = self.colname["adm"].dischtime
-    #     c_subject_id = self.colname["adm"].subject_id
-    #
-    #     adm_df = self.df['adm'][self.df['adm'][c_subject_id].isin(subject_ids)]
-    #
-    #     df = self.df['static'].copy()
-    #     df = df.loc[subject_ids]
-    #     gender = df[c_gender].map(self.scheme.gender.codeset2vec)
-    #
-    #     subject_gender = gender.to_dict()
-    #
-    #     df[c_dob] = pd.to_datetime(df[c_dob])
-    #     last_disch_date = adm_df.groupby(c_subject_id)[c_dischtime].max()
-    #     first_adm_date = adm_df.groupby(c_subject_id)[c_admittime].min()
-    #
-    #     last_disch_date = last_disch_date.loc[df.index]
-    #     first_adm_date = first_adm_date.loc[df.index]
-    #     uncertainty = (last_disch_date.dt.year - first_adm_date.dt.year) // 2
-    #     shift = (uncertainty + 89).astype('timedelta64[Y]')
-    #     df.loc[:, c_dob] = df[c_dob].mask(
-    #         (last_disch_date.dt.year - df[c_dob].dt.year) > 150,
-    #         first_adm_date - shift)
-    #
-    #     subject_dob = df[c_dob].dt.normalize().to_dict()
-    #     # TODO: check https://mimic.mit.edu/docs/iii/about/time/
-    #     eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
-    #
-    #     def eth2vec(eth):
-    #         code = eth_mapper.map_codeset(eth)
-    #         return eth_mapper.codeset2vec(code)
-    #
-    #     subject_eth = df[c_eth].map(eth2vec).to_dict()
-    #
-    #     return subject_dob, subject_gender, subject_eth
-    #
-    # def adm_extractor(self, subject_ids):
-    #     c_subject_id = self.colname["adm"].subject_id
-    #     df = self.df["adm"]
-    #     df = df[df[c_subject_id].isin(subject_ids)]
-    #     return {
-    #         subject_id: subject_df.index.tolist()
-    #         for subject_id, subject_df in df.groupby(c_subject_id)
-    #     }
-    #
-    # def dx_codes_extractor(self, admission_ids_list,
-    #                        target_scheme: DatasetScheme):
-    #     c_adm_id = self.colname["dx_discharge"].admission_id
-    #     c_code = self.colname["dx_discharge"].code
-    #
-    #     df = self.df["dx_discharge"]
-    #     df = df[df[c_adm_id].isin(admission_ids_list)]
-    #
-    #     codes_df = {
-    #         adm_id: codes_df
-    #         for adm_id, codes_df in df.groupby(c_adm_id)
-    #     }
-    #     empty_vector = target_scheme.dx_discharge.empty_vector()
-    #     mapper = self.scheme.dx_mapper(target_scheme)
-    #
-    #     def _extract_codes(adm_id):
-    #         _codes_df = codes_df.get(adm_id)
-    #         if _codes_df is None:
-    #             return (adm_id, empty_vector)
-    #         codeset = mapper.map_codeset(_codes_df[c_code])
-    #         return (adm_id, mapper.codeset2vec(codeset))
-    #
-    #     return dict(map(_extract_codes, admission_ids_list))
-    #
-    # def dx_codes_history_extractor(self, dx_codes, admission_ids,
-    #                                target_scheme):
-    #     for subject_id, subject_admission_ids in admission_ids.items():
-    #         _adm_ids = sorted(subject_admission_ids)
-    #         vec = target_scheme.dx_discharge.empty_vector()
-    #         yield (_adm_ids[0], vec)
-    #
-    #         for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
-    #             if prev_adm_id in dx_codes:
-    #                 vec = vec.union(dx_codes[prev_adm_id])
-    #             yield (adm_id, vec)
-    #
-    # def outcome_extractor(self, dx_codes, target_scheme):
-    #     return zip(dx_codes.keys(),
-    #                map(target_scheme.outcome.mapcodevector, dx_codes.values()))
+# def subject_info_extractor(self, subject_ids: List[int],
+#                            target_scheme: DatasetScheme):
+#     """
+#     Important comment from MIMIC-III documentation at \
+#         https://mimic.mit.edu/docs/iii/tables/patients/
+#     > DOB is the date of birth of the given patient. Patients who are \
+#         older than 89 years old at any time in the database have had their\
+#         date of birth shifted to obscure their age and comply with HIPAA.\
+#         The shift process was as follows: the patient’s age at their \
+#         first admission was determined. The date of birth was then set to\
+#         exactly 300 years before their first admission.
+#     """
+#     assert self.scheme.gender is target_scheme.gender, (
+#         "No conversion assumed for gender attribute")
+#
+#     c_gender = self.colname["static"].gender
+#     c_eth = self.colname["static"].ethnicity
+#     c_dob = self.colname["static"].date_of_birth
+#
+#     c_admittime = self.colname["adm"].admittime
+#     c_dischtime = self.colname["adm"].dischtime
+#     c_subject_id = self.colname["adm"].subject_id
+#
+#     adm_df = self.df['adm'][self.df['adm'][c_subject_id].isin(subject_ids)]
+#
+#     df = self.df['static'].copy()
+#     df = df.loc[subject_ids]
+#     gender = df[c_gender].map(self.scheme.gender.codeset2vec)
+#
+#     subject_gender = gender.to_dict()
+#
+#     df[c_dob] = pd.to_datetime(df[c_dob])
+#     last_disch_date = adm_df.groupby(c_subject_id)[c_dischtime].max()
+#     first_adm_date = adm_df.groupby(c_subject_id)[c_admittime].min()
+#
+#     last_disch_date = last_disch_date.loc[df.index]
+#     first_adm_date = first_adm_date.loc[df.index]
+#     uncertainty = (last_disch_date.dt.year - first_adm_date.dt.year) // 2
+#     shift = (uncertainty + 89).astype('timedelta64[Y]')
+#     df.loc[:, c_dob] = df[c_dob].mask(
+#         (last_disch_date.dt.year - df[c_dob].dt.year) > 150,
+#         first_adm_date - shift)
+#
+#     subject_dob = df[c_dob].dt.normalize().to_dict()
+#     # TODO: check https://mimic.mit.edu/docs/iii/about/time/
+#     eth_mapper = self.scheme.ethnicity_mapper(target_scheme)
+#
+#     def eth2vec(eth):
+#         code = eth_mapper.map_codeset(eth)
+#         return eth_mapper.codeset2vec(code)
+#
+#     subject_eth = df[c_eth].map(eth2vec).to_dict()
+#
+#     return subject_dob, subject_gender, subject_eth
+#
+# def adm_extractor(self, subject_ids):
+#     c_subject_id = self.colname["adm"].subject_id
+#     df = self.df["adm"]
+#     df = df[df[c_subject_id].isin(subject_ids)]
+#     return {
+#         subject_id: subject_df.index.tolist()
+#         for subject_id, subject_df in df.groupby(c_subject_id)
+#     }
+#
+# def dx_codes_extractor(self, admission_ids_list,
+#                        target_scheme: DatasetScheme):
+#     c_adm_id = self.colname["dx_discharge"].admission_id
+#     c_code = self.colname["dx_discharge"].code
+#
+#     df = self.df["dx_discharge"]
+#     df = df[df[c_adm_id].isin(admission_ids_list)]
+#
+#     codes_df = {
+#         adm_id: codes_df
+#         for adm_id, codes_df in df.groupby(c_adm_id)
+#     }
+#     empty_vector = target_scheme.dx_discharge.empty_vector()
+#     mapper = self.scheme.dx_mapper(target_scheme)
+#
+#     def _extract_codes(adm_id):
+#         _codes_df = codes_df.get(adm_id)
+#         if _codes_df is None:
+#             return (adm_id, empty_vector)
+#         codeset = mapper.map_codeset(_codes_df[c_code])
+#         return (adm_id, mapper.codeset2vec(codeset))
+#
+#     return dict(map(_extract_codes, admission_ids_list))
+#
+# def dx_codes_history_extractor(self, dx_codes, admission_ids,
+#                                target_scheme):
+#     for subject_id, subject_admission_ids in admission_ids.items():
+#         _adm_ids = sorted(subject_admission_ids)
+#         vec = target_scheme.dx_discharge.empty_vector()
+#         yield (_adm_ids[0], vec)
+#
+#         for prev_adm_id, adm_id in zip(_adm_ids[:-1], _adm_ids[1:]):
+#             if prev_adm_id in dx_codes:
+#                 vec = vec.union(dx_codes[prev_adm_id])
+#             yield (adm_id, vec)
+#
+# def outcome_extractor(self, dx_codes, target_scheme):
+#     return zip(dx_codes.keys(),
+#                map(target_scheme.outcome.mapcodevector, dx_codes.values()))

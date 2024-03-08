@@ -301,7 +301,6 @@ class DatasetSchemeConfig(Config):
     icu_procedures: Optional[str] = None
     hosp_procedures: Optional[str] = None
     icu_inputs: Optional[str] = None
-    outcome: Optional[str] = None
 
 
 class DatasetScheme(Module):
@@ -363,61 +362,11 @@ class DatasetScheme(Module):
         return self._scheme(self.config.icu_inputs)
 
     @cached_property
-    def outcome(self) -> Optional[OutcomeExtractor]:
-        return OutcomeExtractor.from_name(self.config.outcome) if self.config.outcome else None
-
-    @property
     def scheme_dict(self):
         return {
             k: self._scheme(v)
             for k, v in self.config.as_dict().items() if isinstance(self._scheme(v), CodingScheme)
         }
-
-    @classmethod
-    def _assert_valid_maps(cls, source, target):
-        for attr in source.scheme_dict.keys():
-
-            if attr == 'outcome':
-                continue
-
-            att_s_scheme = getattr(source, attr)
-            att_t_scheme = getattr(target, attr)
-
-            assert att_s_scheme.mapper_to(
-                att_t_scheme.name
-            ), f"Cannot map {attr} from {att_s_scheme} to {att_t_scheme}"
-
-    def make_target_scheme(self, config: DatasetSchemeConfig):
-        t_scheme = type(self)(config)
-        self._assert_valid_maps(self, t_scheme)
-        return t_scheme
-
-    def demographic_vector_size(
-            self, demographic_vector_config: DemographicVectorConfig):
-        size = 0
-        if demographic_vector_config.gender:
-            size += len(self.gender)
-        if demographic_vector_config.age:
-            size += 1
-        if demographic_vector_config.ethnicity:
-            size += len(self.ethnicity)
-        return size
-
-    def dx_mapper(self, target_scheme: DatasetScheme):
-        return self.dx_discharge.mapper_to(target_scheme.dx_discharge.name)
-
-    def ethnicity_mapper(self, target_scheme: DatasetScheme):
-        return self.ethnicity.mapper_to(target_scheme.ethnicity.name)
-
-    @property
-    def supported_target_scheme_options(self):
-        supported_attr_targets = {
-            k: (v.name,) + v.supported_targets
-            for k, v in self.scheme_dict.items() if not isinstance(v, OutcomeExtractor)
-        }
-        supported_outcomes = FileBasedOutcomeExtractor.supported_outcomes(self.dx_discharge.name)
-        supported_attr_targets['outcome'] = supported_outcomes
-        return supported_attr_targets
 
 
 class ReportAttributes(Config):
@@ -481,6 +430,22 @@ class AbstractDatasetRepresentation(Module):
     @abstractmethod
     def load(cls, path: Union[str, Path]) -> AbstractDatasetPipeline:
         pass
+
+    @staticmethod
+    def load_config(path: Union[str, Path]) -> Config:
+        json_path = str(Path(path).with_suffix('.json'))  # config goes here.
+        return Config.from_dict(load_config(json_path))
+
+    def save_config(self, path: Union[str, Path], overwrite: bool = False):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        json_path = path.with_suffix('.json')  # config goes here.
+        if json_path.exists():
+            if overwrite:
+                json_path.unlink()
+            else:
+                raise RuntimeError(f'File {json_path} already exists.')
+        write_config(self.config.to_dict(), str(json_path))
 
 
 class AbstractTransformation(eqx.Module):
@@ -649,17 +614,8 @@ class Dataset(AbstractDatasetRepresentation):
             self.pipeline_report.equals(other.pipeline_report)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        h5_path = str(path.with_suffix('.h5'))  # tables and pipeline report goes here.
-        json_path = path.with_suffix('.json')  # config goes here.
-        if json_path.exists():
-            if overwrite:
-                json_path.unlink()
-            else:
-                raise RuntimeError(f'File {json_path} already exists.')
-        write_config(self.config.to_dict(), str(json_path))
-
+        self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.
+        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
         self.tables.save(h5_path, overwrite)
         self.pipeline_report.to_hdf(h5_path,
                                     key='report',
@@ -667,11 +623,9 @@ class Dataset(AbstractDatasetRepresentation):
 
     @classmethod
     def load(cls, path: Union[str, Path]):
+        config = cls.load_config(path)
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        json_path = str(Path(path).with_suffix('.json'))  # config goes here.
-
         tables = DatasetTables.load(h5_path)
-        config = DatasetConfig.from_dict(load_config(json_path))
         dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
                               is_leaf=lambda x: x is None)
         with pd.HDFStore(h5_path) as store:

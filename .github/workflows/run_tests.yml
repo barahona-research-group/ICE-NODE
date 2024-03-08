@@ -6,6 +6,9 @@ name: "Test Suite"
 
 on:
   push:
+    branches:
+      - main
+      - dev
   pull_request:
 
 defaults:

@@ -1,5 +1,15 @@
 **Note**: If you are referred from ICE-NODE paper, please follow the relevant instructions on the following snapshot of the codebase: [MLHC 2022 version](https://github.com/barahona-research-group/ICE-NODE/tree/mlhc2022).
 
+## Roadmap
+
+- [ ] Pipeline validators.
+- [ ] `lib.ehr.tvx*` test.
+- [ ] `lib.ehr.coding_scheme.CodeMap` test.
+- [ ] `lib.ehr.*` documentation / document edge cases tested.
+- [ ] `lib.ehr` custom exceptions / adapt tests.
+
+
+
 ##### Coverage
 
 | Branch | Coverage                                                                                                                                                   |

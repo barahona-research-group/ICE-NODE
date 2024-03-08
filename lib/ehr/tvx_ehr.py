@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from . import OutcomeExtractor
+from .coding_scheme import FileBasedOutcomeExtractor
 from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig, ReportAttributes, \
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
@@ -93,6 +95,63 @@ class DatasetNumericalProcessorsConfig(Config):
 class DatasetNumericalProcessors(eqx.Module):
     outlier_removers: OutlierRemovers = OutlierRemovers()
     scalers: Scalers = Scalers()
+
+
+class TVxEHRSchemeConfig(DatasetSchemeConfig):
+    outcome: Optional[str] = None
+
+
+class TVxEHRScheme(DatasetScheme):
+    config: TVxEHRSchemeConfig
+
+    @cached_property
+    def outcome(self) -> Optional[OutcomeExtractor]:
+        return OutcomeExtractor.from_name(self.config.outcome) if self.config.outcome else None
+
+    @staticmethod
+    def validate_outcome_scheme(dx_discharge: str, outcome: str) -> bool:
+        return outcome in FileBasedOutcomeExtractor.supported_outcomes(dx_discharge)
+
+    @staticmethod
+    def validate_mapping(source: DatasetScheme, target: TVxEHRScheme):
+        target_schemes = target.scheme_dict
+        for key, source_scheme in source.scheme_dict.items():
+            assert source_scheme.mapper_to(
+                target_schemes[key].name
+            ), f"Cannot map {key} from {source_scheme.name} to {target_schemes[key].name}"
+        if target.outcome is not None:
+            assert TVxEHRScheme.validate_outcome_scheme(
+                target.dx_discharge.name, target.outcome.name
+            ), f"Outcome {target.outcome.name} not supported for {target.dx_discharge.name}"
+
+    def demographic_vector_size(self, demographic_vector_config: DemographicVectorConfig):
+        size = 0
+        if demographic_vector_config.gender:
+            size += len(self.gender)
+        if demographic_vector_config.age:
+            size += 1
+        if demographic_vector_config.ethnicity:
+            size += len(self.ethnicity)
+        return size
+
+    def dx_mapper(self, source_scheme: DatasetScheme):
+        return source_scheme.dx_discharge.mapper_to(self.dx_discharge.name)
+
+    def ethnicity_mapper(self, source_scheme: DatasetScheme):
+        return source_scheme.ethnicity.mapper_to(self.ethnicity.name)
+
+    def gender_mapper(self, source_scheme: DatasetScheme):
+        return source_scheme.gender.mapper_to(self.gender.name)
+
+    @staticmethod
+    def supported_target_scheme_options(dataset_scheme: DatasetScheme):
+        supported_attr_targets = {
+            k: (v.name,) + v.supported_targets
+            for k, v in dataset_scheme.scheme_dict.items()
+        }
+        supported_outcomes = FileBasedOutcomeExtractor.supported_outcomes(dataset_scheme.dx_discharge.name)
+        supported_attr_targets['outcome'] = supported_outcomes
+        return supported_attr_targets
 
 
 class TVxEHRConfig(Config):
@@ -195,54 +254,25 @@ class TVxEHR(AbstractDatasetRepresentation):
     @cached_property
     def scheme(self):
         """Get the scheme."""
-        return self.dataset.scheme.make_target_scheme(self.config.scheme)
+        scheme = TVxEHRScheme(config=self.config.scheme)
+        TVxEHRScheme.validate_mapping(self.dataset.scheme, scheme)
+        return scheme
+
+    @cached_property
+    def gender_mapper(self):
+        return self.scheme.gender_mapper(self.dataset.scheme)
+
+    @cached_property
+    def ethnicity_mapper(self):
+        return self.scheme.ethnicity_mapper(self.dataset.scheme)
+
+    @cached_property
+    def dx_mapper(self):
+        return self.scheme.dx_mapper(self.dataset.scheme)
 
     def __len__(self):
         """Get the number of subjects."""
         return len(self.subjects) if self.subjects is not None else 0
-
-    @staticmethod
-    def equal_config(path,
-                     config=None,
-                     dataset_config=None,
-                     subject_ids=None):
-        """Check if the configuration is equal to the cached configuration.
-
-        Args:
-            path: path to the configuration file.
-            config: interface configuration.
-            dataset_config: Dataset configuration.
-            subject_ids: list of subject IDs.
-
-        Returns:
-            bool: True if the configurations are equal, False otherwise.
-        """
-        path = Path(path)
-        try:
-            cached_dsconfig = load_config(
-                path.with_suffix('.dataset.config.json'))
-            cached_config = load_config(path.with_suffix('.config.json'))
-            cached_ids = load_config(path.with_suffix('.subject_ids.json'))
-        except FileNotFoundError:
-            return False
-        pairs = []
-        for a, b in [(config, cached_config),
-                     (dataset_config, cached_dsconfig),
-                     (subject_ids, cached_ids)]:
-            if a is None:
-                continue
-            if issubclass(type(a), Config):
-                a = a.to_dict()
-            pairs.append((a, b))
-
-        for a, b in pairs:
-            if a != b:
-                logging.debug('Config mismatch:')
-                logging.debug(f'a:  {a}')
-                logging.debug(f'b:  {b}')
-                return False
-
-        return all(a == b for a, b in pairs)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
         """Save the Patients object to disk.

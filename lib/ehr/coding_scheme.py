@@ -555,53 +555,6 @@ class BinaryCodesVector(CodesVector):
         return 1
 
 
-class BinaryScheme(FlatScheme):
-    """
-    A class representing a special case of a coding scheme with two, mutually exclusive codes.
-
-    Inherits from the FlatScheme class.
-
-    Attributes:
-        codes (List[str]): List containing the two codes in the scheme.
-        index (Dict[str, int]): Dictionary mapping the two codes to their indices.
-        desc (Dict[str, str]): Dictionary mapping the two codes to their descriptions.
-        name (str): Name of the coding scheme.
-
-    Methods:
-        codeset2vec(code: str) -> BinaryCodesVector:
-            Converts a code to a BinaryCodesVector object.
-
-        __len__() -> int:
-            Returns the length of the coding scheme vectorized representation, i.e. one code can be represented at a time.
-    """
-
-    vector_cls: ClassVar[Type[BinaryCodesVector]] = BinaryCodesVector
-
-    def __init__(self, codes: List[str], index: Dict[str, int], desc: Dict[str, str], name: str) -> object:
-        assert all(len(c) == 2 for c in (codes, index, desc)), \
-            f"{self}: Codes should be of length 2."
-        super().__init__(codes, index, desc, name)
-
-    def codeset2vec(self, code: str) -> "BinaryCodesVector":
-        """
-        Converts a code to a BinaryCodesVector object.
-        Args:
-            code (str): The code to be converted to a BinaryCodesVector object.
-
-        Returns:
-            BinaryCodesVector: A BinaryCodesVector object representing the code.
-        """
-        return BinaryCodesVector(np.array(self.index[code], dtype=bool), self)
-
-    def __len__(self) -> int:
-        """
-        Returns the length of the coding scheme vectorized representation, i.e. one code can be represented at a time.
-        Returns:
-            int: The length of the coding scheme vectorized representation, i.e. one code can be represented at a time.
-        """
-        return 1
-
-
 class CodesVectorWithMissing(CodesVector):
     """
     A subclass of CodesVector that represents a vector of codes with the ability to handle missing values.
@@ -659,23 +612,6 @@ class SchemeWithMissing(FlatScheme):
                 continue
             assert idx == self.codes.index(
                 code), f"{self}: Index of {code} is not consistent with its position in the list."
-
-
-class NullScheme(FlatScheme):
-    """
-    A coding scheme that represents a null scheme.
-
-    This scheme does not contain any codes or mappings. Only used as a typed placeholder alternative to None.
-
-    Attributes:
-        None
-
-    Methods:
-        __init__: Initializes the NullScheme object.
-    """
-
-    def __init__(self):
-        super().__init__(CodingSchemeConfig('null'), [], {})
 
 
 class HierarchicalScheme(FlatScheme):
@@ -1115,6 +1051,10 @@ class CodeMapConfig(Config):
     mapped_to_dag_space: bool = False
 
 
+class UnsupportedMapping(ValueError):
+    pass
+
+
 class CodeMap(Module):
     """
     Represents a mapping between two coding schemes.
@@ -1377,8 +1317,7 @@ class CodeMap(Module):
             CodeMap: The mapper for the given source and target coding schemes.
         """
         if not cls.has_mapper(source_scheme, target_scheme):
-            logging.warning(f'Mapping {source_scheme}->{target_scheme} is not available')
-            return NullCodeMap()
+            raise UnsupportedMapping(f'Mapping {source_scheme}->{target_scheme} is not available')
 
         key = (source_scheme, target_scheme)
         with cls._maps_lock[key]:
@@ -1675,99 +1614,6 @@ class IdentityCodeMap(CodeMap):
         return codeset
 
 
-class NullCodeMap(CodeMap):
-    """
-    A code map implementation that represents a null mapping.
-
-    This class provides a null implementation of the CodeMap interface.
-    It does not perform any mapping and always returns None.
-
-    Attributes:
-        config (CodeMapConfig): the configuration for the code map.
-        data (dict): the data for the code map.
-
-    Methods:
-        map_codeset(codeset): teturns None.
-        codeset2vec(codeset): teturns None.
-        __bool__(): Returns False.
-    """
-
-    def __init__(self):
-        config = CodeMapConfig(source_scheme='null',
-                               target_scheme='null',
-                               mapped_to_dag_space=False)
-        super().__init__(config=config, data={})
-
-    def map_codeset(self, codeset):
-        return None
-
-    def codeset2vec(self, codeset):
-        return None
-
-    def __bool__(self):
-        return False
-
-    @classmethod
-    def empty(cls, scheme: str) -> CodesVector:
-        """
-        Creates an empty CodesVector with the specified coding scheme.
-
-        Args:
-            scheme (str): the coding scheme.
-
-        Returns:
-            CodesVector: the empty CodesVector.
-        """
-        return cls(np.zeros(len(CodingScheme.from_name(scheme)), dtype=bool), scheme)
-
-    def to_codeset(self):
-        """
-        Converts the CodesVector to a set of codes using the associated coding scheme.
-
-        Returns:
-            set: the set of codes.
-        """
-        index = self.vec.nonzero()[0]
-        scheme = self.scheme_object
-        return set(scheme.index2code[i] for i in index)
-
-    def union(self, other):
-        """
-        Performs a union operation with another CodesVector.
-
-        Args:
-            other (CodesVector): the CodesVector to perform the union with.
-
-        Returns:
-            CodesVector: the resulting CodesVector after the union operation.
-        """
-        return CodesVector(self.vec | other.vec, self.scheme)
-
-    def __len__(self):
-        """
-        Returns the length of the CodesVector.
-
-        Returns:
-            int: the length of the CodesVector.
-        """
-        return len(self.vec)
-
-
-def register_gender_scheme():
-    """
-    Register a binary gender coding scheme.
-
-    This function registers a binary coding scheme for gender, with codes 'M' for male and 'F' for female.
-    The index maps the codes to their corresponding positions, and the desc provides descriptions for each code.
-    """
-    CodingScheme.register_scheme(BinaryScheme(CodingSchemeConfig('gender'),
-                                              codes=['M', 'F'],
-                                              desc={'M': 'male', 'F': 'female'}))
-
-
-# _OUTCOME_DIR = os.path.join(resources_dir(), 'outcome_filters')
-
-
 class OutcomeExtractorConfig(CodingSchemeConfig):
     name: str
 
@@ -1941,6 +1787,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         def load():
             config = FileBasedOutcomeExtractorConfig(name=name, spec_file=spec_file)
             CodingScheme.register_scheme(FileBasedOutcomeExtractor(config))
+
         CodingScheme.register_scheme_loader(name, load)
         FileBasedOutcomeExtractor._spec_files[name] = spec_file
 
