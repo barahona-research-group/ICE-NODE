@@ -395,7 +395,7 @@ class InterventionSegmentation(AbstractTVxTransformation):
     pass
 
 
-class TimeBinning(AbstractTVxTransformation):
+class ObsTimeBinning(AbstractTVxTransformation):
     pass
 
 
@@ -447,7 +447,7 @@ class TVxConcepts(AbstractTVxTransformation):
         dx_discharge_history = dict()
         initial_history = dx_scheme.codeset2vec(set())
         # For each subject get the list of adm sorted by admission date.
-        for subject_id, adm_ids in tvx_ehr.subjects_sorted_admissions.items():
+        for subject_id, adm_ids in tvx_ehr.subjects_sorted_admission_ids.items():
             current_history = initial_history
             for adm_id in adm_ids:
                 dx_discharge_history[adm_id] = current_history
@@ -535,7 +535,28 @@ class TVxConcepts(AbstractTVxTransformation):
     @classmethod
     def _interventions(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         Dict[str, InpatientInterventions], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
+        concept_path = TVxReportAttributes.inpatient_input_prefix
+        hosp_procedures = cls._hosp_procedures(tvx_ehr)
+        report = cls.report(report, tvx_concept=concept_path('hosp_procedures'),
+                            table='hosp_procedures',
+                            column=None, value_type='count', operation='extract',
+                            after=len(hosp_procedures))
+
+        icu_procedures = cls._icu_procedures(tvx_ehr)
+        report = cls.report(report, tvx_concept=concept_path('icu_procedures'),
+                            table='icu_procedures',
+                            column=None, value_type='count', operation='extract',
+                            after=len(icu_procedures))
+
+        icu_inputs = cls._icu_inputs(tvx_ehr)
+        report = cls.report(report, tvx_concept=concept_path('icu_inputs'), table='icu_inputs',
+                            column=None, value_type='count', operation='extract',
+                            after=len(icu_inputs))
+        interventions = {admission_id: InpatientInterventions(hosp_procedures=hosp_procedures.get(admission_id),
+                                                              icu_procedures=icu_procedures.get(admission_id),
+                                                              icu_inputs=icu_inputs.get(admission_id))
+                         for admission_id in tvx_ehr.admission_ids}
+        return interventions, report
 
     @staticmethod
     def _observables(tvx_ehr: TVxEHR) -> Dict[str, InpatientObservables]:
@@ -562,7 +583,7 @@ class TVxConcepts(AbstractTVxTransformation):
             time = x[c_timestamp].iloc[0]
             return pd.Series({0: adm_id, 1: time, 2: val, 3: mask})
 
-        def gen_observation(val_mask):
+        def gen_observation(val_mask: pd.DataFrame) -> InpatientObservables:
             time = val_mask[1].to_numpy()
             value = val_mask[2]
             mask = val_mask[3]
@@ -586,14 +607,9 @@ class TVxConcepts(AbstractTVxTransformation):
         return inpatient_observables_df.to_dict()
 
     @classmethod
-    def _leading_observables(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientObservables], Tuple[TVxReportAttributes, ...]]:
-        raise NotImplementedError
-
-    @classmethod
     def apply(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
         TVxEHR, Tuple[TVxReportAttributes, ...]]:
-        subject_admissions = tvx_ehr.subjects_sorted_admissions
+        subject_admissions = tvx_ehr.subjects_sorted_admission_ids
         static_info = cls._static_info(tvx_ehr)
         dx_discharge = cls._dx_discharge(tvx_ehr)
         dx_discharge_history = cls._dx_discharge_history(tvx_ehr, dx_discharge)
@@ -607,31 +623,6 @@ class TVxConcepts(AbstractTVxTransformation):
         else:
             observables = None
 
-#         subject_dob, subject_gender, subject_eth = self.subject_info_extractor(
-#             subject_ids, target_scheme)
-#         admission_ids = self.adm_extractor(subject_ids)
-#         adm_ids_list = sum(map(list, admission_ids.values()), [])
-#         logging.debug('Extracting dx_discharge codes...')
-#         dx_codes = dict(self.dx_codes_extractor(adm_ids_list, target_scheme))
-#         logging.debug('[DONE] Extracting dx_discharge codes')
-#         logging.debug('Extracting dx_discharge codes history...')
-#         dx_codes_history = dict(
-#             self.dx_codes_history_extractor(dx_codes, admission_ids,
-#                                             target_scheme))
-#         logging.debug('[DONE] Extracting dx_discharge codes history')
-#         logging.debug('Extracting outcome...')
-#         outcome = dict(self.outcome_extractor(dx_codes, target_scheme))
-#         logging.debug('[DONE] Extracting outcome')
-#         logging.debug('Extracting procedures...')
-#         procedures = dict(self.procedure_extractor(adm_ids_list))
-#         logging.debug('[DONE] Extracting procedures')
-#         logging.debug('Extracting inputs...')
-#         inputs = dict(self.inputs_extractor(adm_ids_list))
-#         logging.debug('[DONE] Extracting inputs')
-#         logging.debug('Extracting observables...')
-#         observables = dict(
-#             self.observables_extractor(adm_ids_list, num_workers))
-#
 #         if time_binning is not None:
 #             observables = dict((k, v.time_binning(time_binning))
 #                                for k, v in observables.items())

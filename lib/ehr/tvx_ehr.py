@@ -5,7 +5,7 @@ import pickle
 from abc import ABCMeta
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional, Dict, Union, Callable, Tuple
+from typing import List, Optional, Dict, Union, Callable, Tuple, Type
 
 import dask
 import equinox as eqx
@@ -14,13 +14,13 @@ import jax.tree_util as jtu
 import numpy as np
 
 from . import OutcomeExtractor
-from .coding_scheme import FileBasedOutcomeExtractor
+from .coding_scheme import FileBasedOutcomeExtractor, CodesVector
 from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig, ReportAttributes, \
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
-                           LeadingObservableExtractorConfig, SegmentedPatient)
-from ..base import Config
+                           LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
+from ..base import Config, Data
 from ..utils import tqdm_constructor, write_config, load_config
 
 
@@ -185,6 +185,45 @@ class TVxEHRConfig(Config):
 class TVxReportAttributes(ReportAttributes):
     tvx_concept: str = None
 
+    @staticmethod
+    def _t(object_or_type: Union[Type, Data]) -> str:
+        return object_or_type.__name__ if isinstance(object_or_type, type) else object_or_type.__class__.__name__
+
+    @classmethod
+    def ehr_prefix(cls) -> str:
+        return cls._t(TVxEHR)
+
+    @classmethod
+    def subjects_prefix(cls) -> str:
+        return f'{cls.ehr_prefix()}.Dict[str, {cls._t(Patient)}]'
+
+    @classmethod
+    def subject_prefix(cls) -> str:
+        return f'{cls.subjects_prefix()}[i]'
+
+    @classmethod
+    def static_info_prefix(cls) -> str:
+        return f'{cls.subject_prefix()}.{cls._t(StaticInfo)}'
+
+    @classmethod
+    def admissions_prefix(cls) -> str:
+        return f'{cls.subject_prefix()}.List[{cls._t(Admission)}]'
+
+    @classmethod
+    def inpatient_input_prefix(cls, attribute) -> str:
+        return f'{cls.admissions_prefix()}[j].{cls._t(InpatientInterventions)}.{attribute}({cls._t(InpatientInput)})'
+
+    @classmethod
+    def admission_attribute_prefix(cls, attribute: str, attribute_type: str | type) -> str:
+        if isinstance(attribute_type, type):
+            attribute_type = cls._t(attribute_type)
+
+        return f'{cls.admissions_prefix()}[j].{attribute}({attribute_type})'
+
+    @classmethod
+    def admission_codes_attribute(cls, attribute) -> str:
+        return f'{cls.admission_attribute_prefix(attribute, CodesVector)}'
+
 
 class AbstractTVxTransformation(AbstractTransformation, metaclass=ABCMeta):
     @staticmethod
@@ -286,13 +325,17 @@ class TVxEHR(AbstractDatasetRepresentation):
         return self.scheme.hosp_procedures_mapper(self.dataset.scheme)
 
     @cached_property
-    def subjects_sorted_admissions(self) -> Dict[str, List[str]]:
+    def subjects_sorted_admission_ids(self) -> Dict[str, List[str]]:
         c_admittime = self.dataset.config.tables.admissions.admission_time_alias
         c_subject_id = self.dataset.config.tables.admissions.subject_id_alias
 
         # For each subject get the list of adm sorted by admission date.
         return self.dataset.tables.admissions.groupby(c_subject_id).apply(
             lambda x: x.sort_values(c_admittime).index.to_list()).to_dict()
+
+    @cached_property
+    def admission_ids(self) -> List[str]:
+        return sum(self.subjects_sorted_admission_ids.values(), [])
 
     def __len__(self):
         """Get the number of subjects."""
