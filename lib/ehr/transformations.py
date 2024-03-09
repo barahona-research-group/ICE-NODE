@@ -4,14 +4,14 @@ import logging
 from abc import ABCMeta
 from collections import defaultdict
 from dataclasses import field
-from typing import Dict, Tuple, List, Any, Callable, ClassVar, Final, Type, Set
+from typing import Dict, Tuple, List, Any, ClassVar, Final, Type, Set
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
 from .dataset import Dataset, AbstractTransformation, AbstractDatasetPipeline, \
-    ReportAttributes, TransformationsDependency
+    TransformationsDependency, Report
 from .example_datasets.mimiciv import MIMICIVDataset
 
 SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
@@ -21,8 +21,7 @@ class DatasetTransformation(AbstractTransformation, metaclass=ABCMeta):
 
     @staticmethod
     def synchronize_index(dataset: Dataset, indexed_table_name: str,
-                          index_name: str, report: Tuple[ReportAttributes, ...],
-                          reporter: Callable) -> Tuple[Dataset, Tuple[ReportAttributes, ...]]:
+                          index_name: str, report: Report) -> Tuple[Dataset, Report]:
         tables_dict = dataset.tables.tables_dict
 
         target_tables = {  # tables that have admission_id as column
@@ -37,15 +36,14 @@ class DatasetTransformation(AbstractTransformation, metaclass=ABCMeta):
             n1 = len(table)
             table = table[table[index_name].isin(index)]
             n2 = len(table)
-            report = reporter(report, table=table_name, column=index_name, before=n1, after=n2, value_type='count',
-                              operation='sync_index')
+            report = report.add(table=table_name, column=index_name, before=n1, after=n2, value_type='count',
+                                operation='sync_index')
             tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), report
 
     @staticmethod
-    def filter_no_admission_subjects(dataset: Dataset, report: Tuple[ReportAttributes, ...],
-                                     reporter: Callable) -> Tuple[Dataset, Tuple[ReportAttributes, ...]]:
+    def filter_no_admission_subjects(dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         static = dataset.tables.static
         admissions = dataset.tables.admissions
         c_subject = dataset.config.tables.static.subject_id_alias
@@ -53,25 +51,22 @@ class DatasetTransformation(AbstractTransformation, metaclass=ABCMeta):
         n1 = len(static)
         static = static.drop(no_admission_subjects, axis='index')
         n2 = len(static)
-        report = reporter(report, table='static', column=c_subject, before=n1, after=n2, value_type='count',
-                          operation='filter_no_admission_subjects')
+        report = report.add(table='static', column=c_subject, before=n1, after=n2, value_type='count',
+                            operation='filter_no_admission_subjects')
         return eqx.tree_at(lambda x: x.tables.static, dataset, static), report
 
     @classmethod
-    def synchronize_admissions(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...],
-                               reporter: Callable) -> Tuple[Dataset, Tuple[ReportAttributes, ...]]:
+    def synchronize_admissions(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         dataset, report = cls.synchronize_index(dataset, 'admissions',
-                                                dataset.config.tables.admissions.admission_id_alias, report,
-                                                reporter)
-        return cls.filter_no_admission_subjects(dataset, report, reporter)
+                                                dataset.config.tables.admissions.admission_id_alias, report)
+        return cls.filter_no_admission_subjects(dataset, report)
 
     @classmethod
-    def synchronize_subjects(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...],
-                             reporter: Callable) -> Tuple[Dataset, Tuple[ReportAttributes, ...]]:
+    def synchronize_subjects(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         # Synchronizing subjects might entail synchronizing admissions, so we need to call it first
         dataset, report = cls.synchronize_index(dataset, 'static',
-                                                dataset.config.tables.static.subject_id_alias, report, reporter)
-        return cls.synchronize_admissions(dataset, report, reporter)
+                                                dataset.config.tables.static.subject_id_alias, report)
+        return cls.synchronize_admissions(dataset, report)
 
 
 class ValidatedDatasetPipeline(AbstractDatasetPipeline):
@@ -81,15 +76,14 @@ class ValidatedDatasetPipeline(AbstractDatasetPipeline):
 
 class SetIndex(DatasetTransformation):
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         tables_dict = dataset.tables.tables_dict
         for indexed_table_name, index_name in dataset.config.tables.indices.items():
             table = tables_dict[indexed_table_name]
             index1 = table.index.name
             table = table.set_index(index_name)
             index2 = table.index.name
-            report = cls.report(report, table=indexed_table_name, column=index_name, before=index1, after=index2,
+            report = report.add(table=indexed_table_name, column=index_name, before=index1, after=index2,
                                 value_type='index_name',
                                 operation='set_index')
             dataset = eqx.tree_at(lambda x: getattr(x.tables, indexed_table_name), dataset, table)
@@ -98,8 +92,7 @@ class SetIndex(DatasetTransformation):
 
 class CastTimestamps(DatasetTransformation):
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         tables = dataset.tables
         tables_dict = tables.tables_dict
         for table_name, time_cols in dataset.config.tables.time_cols.items():
@@ -116,7 +109,7 @@ class CastTimestamps(DatasetTransformation):
                 dtype1 = table[time_col].dtype
                 table[time_col] = pd.to_datetime(table[time_col], errors='raise')
                 dtype2 = table[time_col].dtype
-                report = cls.report(report, table=table_name, column=time_col, before=dtype1, after=dtype2,
+                report = report.add(table=table_name, column=time_col, before=dtype1, after=dtype2,
                                     value_type='dtype',
                                     operation='cast')
 
@@ -126,8 +119,7 @@ class CastTimestamps(DatasetTransformation):
 
 class SetAdmissionRelativeTimes(DatasetTransformation):
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         time_cols = {k: v for k, v in dataset.config.tables.time_cols.items()
                      if dataset.config.tables.temporal_admission_linked_table(k)}
 
@@ -147,7 +139,7 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
                 df = df.assign(
                     **{time_col: (df[time_col] - df[c_admittime]).dt.total_seconds() * SECONDS_TO_HOURS_SCALER})
 
-                report = cls.report(report, table=table_name, column=time_col, before=table[time_col].dtype,
+                report = report.add(table=table_name, column=time_col, before=table[time_col].dtype,
                                     after=df[time_col].dtype,
                                     value_type='dtype', operation='set_admission_relative_times')
 
@@ -160,11 +152,11 @@ class SetAdmissionRelativeTimes(DatasetTransformation):
 class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
 
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        c_subject = dataset.config.tables.static.subject_id_alias
-        c_admittime = dataset.config.tables.admissions.admission_time_alias
-        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
+        table_config = dataset.config.tables.admissions
+        c_subject_id = table_config.subject_id_alias
+        c_dischtime = table_config.discharge_time_alias
+        c_admittime = table_config.admission_time_alias
         admissions = dataset.tables.admissions
 
         # assert dtypes are datetime64[ns]
@@ -173,20 +165,19 @@ class FilterSubjectsNegativeAdmissionLengths(DatasetTransformation):
             f'{c_admittime} and {c_dischtime} must be datetime64[ns]'
 
         static = dataset.tables.static
-        neg_los_subjects = admissions[admissions[c_dischtime] < admissions[c_admittime]][c_subject].unique()
+        neg_los_subjects = admissions[admissions[c_dischtime] < admissions[c_admittime]][c_subject_id].unique()
         n_before = len(static)
         static = static[~static.index.isin(neg_los_subjects)]
         n_after = len(static)
-        report = cls.report(report, table='static', column=c_subject, value_type='count', operation='filter',
+        report = report.add(table='static', column=c_subject_id, value_type='count', operation='filter',
                             before=n_before, after=n_after)
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return cls.synchronize_subjects(dataset, report, cls.reporter())
+        return cls.synchronize_subjects(dataset, report)
 
 
 class FilterUnsupportedCodes(DatasetTransformation):
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         tables_dict = dataset.tables.tables_dict
         for table_name, code_column in dataset.config.tables.code_column.items():
             table = tables_dict[table_name]
@@ -194,7 +185,7 @@ class FilterUnsupportedCodes(DatasetTransformation):
             n1 = len(table)
             table = table[table[code_column].isin(coding_scheme.codes)]
             n2 = len(table)
-            report = cls.report(report, table=table_name, column=code_column, before=n1, after=n2, value_type='count',
+            report = report.add(table=table_name, column=code_column, before=n1, after=n2, value_type='count',
                                 operation='filter')
             dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), dataset, table)
         return dataset, report
@@ -203,8 +194,7 @@ class FilterUnsupportedCodes(DatasetTransformation):
 class ProcessOverlappingAdmissions(DatasetTransformation):
 
     @staticmethod
-    def map_admission_ids(dataset: Dataset, report: Tuple[ReportAttributes, ...], sub2sup: Dict[str, Any],
-                          reporter: Callable) -> Tuple[Dataset, Tuple[ReportAttributes, ...]]:
+    def map_admission_ids(dataset: Dataset, sub2sup: Dict[str, Any], report: Report) -> Tuple[Dataset, Report]:
         tables_dict = dataset.tables.tables_dict
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
 
@@ -219,9 +209,9 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             n1 = table[c_admission_id].nunique()
             table.loc[:, c_admission_id] = table.loc[:, c_admission_id].map(lambda i: sub2sup.get(i, i))
             n2 = table[c_admission_id].nunique()
-            report = reporter(report, table=table_name, column=c_admission_id, before=n1, after=n2,
-                              value_type='nunique',
-                              operation='map_admission_id')
+            report = report.add(table=table_name, column=c_admission_id, before=n1, after=n2,
+                                value_type='nunique',
+                                operation='map_admission_id')
             tables = eqx.tree_at(lambda x: getattr(x, table_name), tables, table)
 
         return eqx.tree_at(lambda x: x.tables, dataset, tables), report
@@ -261,9 +251,8 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 
     @classmethod
     def _merge_overlapping_admissions(cls,
-                                      dataset: Dataset, report: Tuple[ReportAttributes, ...],
-                                      sub2sup: Dict[str, str], reporter: Callable) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+                                      dataset: Dataset,
+                                      sub2sup: Dict[str, str], report: Report) -> Tuple[Dataset, Report]:
         admissions = dataset.tables.admissions
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
         c_dischtime = dataset.config.tables.admissions.discharge_time_alias
@@ -285,20 +274,20 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         admissions = admissions.drop(list(sub2sup.keys()), axis='index')
         n2 = len(admissions)
         dataset = eqx.tree_at(lambda x: x.tables.admissions, dataset, admissions)
-        report = reporter(report, table='admissions', column=c_admission_id, value_type='count',
-                          operation='merge_overlapping_admissions',
-                          before=n1, after=n2)
+        report = report.add(table='admissions', column=c_admission_id, value_type='count',
+                            operation='merge_overlapping_admissions',
+                            before=n1, after=n2)
 
         # Step 4: update admission ids in other tables.
-        return cls.map_admission_ids(dataset, report, sub2sup, reporter)
+        return cls.map_admission_ids(dataset, sub2sup, report)
 
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         admissions = dataset.tables.admissions
-        c_subject_id = dataset.config.tables.admissions.subject_id_alias
-        c_admittime = dataset.config.tables.admissions.admission_time_alias
-        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
+        table_config = dataset.config.tables.admissions
+        c_subject_id = table_config.subject_id_alias
+        c_dischtime = table_config.discharge_time_alias
+        c_admittime = table_config.admission_time_alias
 
         # Step 1: Collect overlapping admissions
         # Map from sub-admissions to the new super-admissions.
@@ -309,7 +298,7 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
         if dataset.config.overlapping_admissions == "merge":
             # Step 3: Extend discharge time of super admissions, remove sub-admissions,
             # and update admission ids in other tables.
-            return cls._merge_overlapping_admissions(dataset, report, sub2sup, cls.reporter())
+            return cls._merge_overlapping_admissions(dataset, sub2sup, report)
         elif dataset.config.overlapping_admissions == "remove":
             # Step 3: Collect subjects with at least one overlapping admission and remove them entirely.
             subject_ids = admissions.loc[sub2sup.keys(), c_subject_id].unique()
@@ -317,12 +306,12 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
             n1 = len(static)
             static = static.drop(subject_ids, axis='index')
             n2 = len(static)
-            report = cls.report(report, table='static', column=c_subject_id, value_type='count',
+            report = report.add(table='static', column=c_subject_id, value_type='count',
                                 operation='filter_problematic_subjects',
                                 before=n1, after=n2)
             dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
             # Step 4: synchronize subjects
-            return cls.synchronize_subjects(dataset, report, cls.reporter())
+            return cls.synchronize_subjects(dataset, report)
         else:
             raise ValueError(f'Unsupported action: {dataset.config.overlapping_admissions}')
 
@@ -330,14 +319,15 @@ class ProcessOverlappingAdmissions(DatasetTransformation):
 class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
 
     @classmethod
-    def _filter_timestamped_tables(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def _filter_timestamped_tables(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         timestamped_tables_conf = dataset.config.tables.timestamped_table_config_dict
         timestamped_tables = {name: getattr(dataset.tables, name) for name in
                               timestamped_tables_conf.keys()}
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
-        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
-        c_admittime = dataset.config.tables.admissions.admission_time_alias
+        table_config = dataset.config.tables.admissions
+        c_admission_id = table_config.admission_id_alias
+        c_dischtime = table_config.discharge_time_alias
+        c_admittime = table_config.admission_time_alias
+
         admissions = dataset.tables.admissions[[c_admittime, c_dischtime]]
 
         for name, table in timestamped_tables.items():
@@ -349,21 +339,22 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
             n1 = len(table)
             table = table.loc[index]
             n2 = len(table)
-            report = cls.report(report, table=name, column=c_time, value_type='count', operation='filter',
+            report = report.add(table=name, column=c_time, value_type='count', operation='filter',
                                 before=n1, after=n2)
             dataset = eqx.tree_at(lambda x: getattr(x.tables, name), dataset, table)
 
         return dataset, report
 
     @classmethod
-    def _filter_interval_based_tables(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def _filter_interval_based_tables(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         interval_based_tables_conf = dataset.config.tables.interval_based_table_config_dict
         interval_based_tables: Dict[str, pd.DataFrame] = {name: getattr(dataset.tables, name) for name in
                                                           interval_based_tables_conf.keys()}
-        c_admission_id = dataset.config.tables.admissions.admission_id_alias
-        c_dischtime = dataset.config.tables.admissions.discharge_time_alias
-        c_admittime = dataset.config.tables.admissions.admission_time_alias
+        table_config = dataset.config.tables.admissions
+        c_admission_id = table_config.admission_id_alias
+        c_dischtime = table_config.discharge_time_alias
+        c_admittime = table_config.admission_time_alias
+
         admissions = dataset.tables.admissions[[c_admittime, c_dischtime]]
 
         for name, table in interval_based_tables.items():
@@ -378,13 +369,13 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
             n1 = len(df)
             df = df.loc[index]
             n2 = len(df)
-            report = cls.report(report, table=name, column=(c_start_time, c_end_time),
+            report = report.add(table=name, column=(c_start_time, c_end_time),
                                 value_type='count', operation='filter',
                                 before=n1, after=n2)
 
             # Step 2: Clamp intervals to admission interval if either side is outside.
             n_to_clamp = np.sum((df[c_start_time] < df[c_admittime]) | (df[c_end_time] > df[c_dischtime]))
-            report = cls.report(report, table=name, column=(c_start_time, c_end_time),
+            report = report.add(table=name, column=(c_start_time, c_end_time),
                                 value_type='count', operation='clamp',
                                 before=None, after=n_to_clamp)
             df[c_start_time] = df[c_start_time].clip(lower=df[c_admittime], upper=df[c_dischtime])
@@ -395,8 +386,7 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
         return dataset, report
 
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         dataset, report = cls._filter_timestamped_tables(dataset, report)
         return cls._filter_interval_based_tables(dataset, report)
 
@@ -404,8 +394,7 @@ class FilterClampTimestampsToAdmissionInterval(DatasetTransformation):
 class SelectSubjectsWithObservation(DatasetTransformation):
 
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         c_code = dataset.config.tables.obs.code_alias
         c_admission_id = dataset.config.tables.obs.admission_id_alias
         c_subject = dataset.config.tables.static.subject_id_alias
@@ -422,33 +411,35 @@ class SelectSubjectsWithObservation(DatasetTransformation):
         n1 = len(static)
         static = static[static.index.isin(subjects)]
         n2 = len(static)
-        report = cls.report(report, table='static', column=c_subject, value_type='count',
+        report = report.add(table='static', column=c_subject, value_type='count',
                             operation=f'select_subjects(has({code}))',
                             before=n1, after=n2)
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return cls.synchronize_subjects(dataset, report, cls.reporter())
+        return cls.synchronize_subjects(dataset, report)
 
 
 class ICUInputRateUnitConversion(DatasetTransformation):
 
     @classmethod
-    def apply(cls, dataset: MIMICIVDataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
-        c_code = dataset.config.tables.icu_inputs.code_alias
-        c_amount = dataset.config.tables.icu_inputs.amount_alias
-        c_start_time = dataset.config.tables.icu_inputs.start_time_alias
-        c_end_time = dataset.config.tables.icu_inputs.end_time_alias
-        c_amount_unit = dataset.config.tables.icu_inputs.amount_unit_alias
-        c_normalized_amount = dataset.config.tables.icu_inputs.derived_normalized_amount
-        c_normalized_amount_per_hour = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-        c_universal_unit = dataset.config.tables.icu_inputs.derived_universal_unit
-        c_normalization_factor = dataset.config.tables.icu_inputs.derived_unit_normalization_factor
+    def apply(cls, dataset: MIMICIVDataset, report: Report) -> Tuple[Dataset, Report]:
+        ds_config = dataset.config
+        tables_config = ds_config.tables
+        table_config = tables_config.icu_inputs
+        c_code = table_config.code_alias
+        c_amount = table_config.amount_alias
+        c_start_time = table_config.start_time_alias
+        c_end_time = table_config.end_time_alias
+        c_amount_unit = table_config.amount_unit_alias
+        c_normalized_amount = table_config.derived_normalized_amount
+        c_normalized_amount_per_hour = table_config.derived_normalized_amount_per_hour
+        c_universal_unit = table_config.derived_universal_unit
+        c_normalization_factor = table_config.derived_unit_normalization_factor
         icu_inputs = dataset.tables.icu_inputs
 
         _derived_columns = [c_normalized_amount, c_normalized_amount_per_hour, c_universal_unit, c_normalization_factor]
 
-        conversion_table = dataset.icu_inputs_uom_normalization(dataset.config.tables.icu_inputs,
-                                                                dataset.config.scheme.icu_inputs_uom_normalization_table)
+        conversion_table = dataset.icu_inputs_uom_normalization(
+            dataset.config.tables.icu_inputs, dataset.config.scheme.icu_inputs_uom_normalization_table)
 
         assert (c in icu_inputs.columns for c in [c_code, c_amount, c_amount_unit]), \
             f"Some columns in: {c_code}, {c_amount}, {c_amount_unit}, not found in icu_inputs table"
@@ -467,7 +458,7 @@ class ICUInputRateUnitConversion(DatasetTransformation):
         df[c_normalized_amount_per_hour] = df[c_normalized_amount] / delta_hours
         df = df[icu_inputs.columns.tolist() + _derived_columns]
         dataset = eqx.tree_at(lambda x: x.tables.icu_inputs, dataset, df)
-        report = cls.report(report, table='icu_inputs', column=None,
+        report = report.add(table='icu_inputs', column=None,
                             value_type='columns', operation='new_columns',
                             before=icu_inputs.columns.tolist(), after=df.columns.tolist())
 
@@ -476,8 +467,7 @@ class ICUInputRateUnitConversion(DatasetTransformation):
 
 class FilterInvalidInputRatesSubjects(DatasetTransformation):
     @classmethod
-    def apply(cls, dataset: Dataset, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        Dataset, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: Dataset, report: Report) -> Tuple[Dataset, Report]:
         c_rate = dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
         c_admission_id = dataset.config.tables.admissions.admission_id_alias
         c_subject_id = dataset.config.tables.admissions.subject_id_alias
@@ -494,7 +484,7 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         nan_subject_ids = admissions[admissions.index.isin(nan_adm_ids)][c_subject_id].unique()
         n_nan_subjects = len(nan_subject_ids)
 
-        report = cls.report(report, table=('icu_inputs', 'admissions', 'static'),
+        report = report.add(table=('icu_inputs', 'admissions', 'static'),
                             column=(c_rate, c_admission_id, c_subject_id),
                             value_type='nan_counts',
                             before=(n_nan_inputs, n_nan_adms, n_nan_subjects),
@@ -504,11 +494,11 @@ class FilterInvalidInputRatesSubjects(DatasetTransformation):
         n1 = len(static)
         static = static[~static.index.isin(nan_subject_ids)]
         n2 = len(static)
-        report = cls.report(report, table='static', column=c_subject_id, value_type='count',
+        report = report.add(table='static', column=c_subject_id, value_type='count',
                             before=n1, after=n2,
                             operation='filter_invalid_input_rates_subjects')
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
-        return cls.synchronize_subjects(dataset, report, cls.reporter())
+        return cls.synchronize_subjects(dataset, report)
 
 
 DS_DEPENDS_RELATIONS: Final[Dict[Type[DatasetTransformation], Set[Type[DatasetTransformation]]]] = {

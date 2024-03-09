@@ -49,7 +49,7 @@ class InpatientObservables(Data):
 
         assert self.value.ndim == 2, f"Expected value to be 2D, got {self.value.ndim}"
         assert self.mask.ndim == 2, f"Expected mask to be 2D, got {self.mask.ndim}"
-        assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, "\
+        assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, " \
                                                     f"got {self.value.shape}"
         assert self.time.ndim == 1, f"Expected time to be 1D, got {self.time.ndim}"
 
@@ -68,8 +68,7 @@ class InpatientObservables(Data):
         - InpatientObservables: an empty InpatientObservables object with zero time, value, and mask arrays.
         """
         return InpatientObservables(time=np.zeros(shape=0, dtype=time_dtype),
-                                    value=np.zeros(shape=(0, size),
-                                                   dtype=value_dtype),
+                                    value=np.zeros(shape=(0, size), dtype=value_dtype),
                                     mask=np.zeros(shape=(0, size), dtype=mask_dtype))
 
     def __len__(self):
@@ -77,6 +76,12 @@ class InpatientObservables(Data):
         Returns the length of the 'time' attribute.
         """
         return self.time.shape[0]
+
+    def count(self) -> int:
+        """
+        Returns the number of non-missing values in the 'value' attribute.
+        """
+        return np.sum(self.mask)
 
     def equals(self, other: InpatientObservables) -> bool:
         """
@@ -200,8 +205,7 @@ class InpatientObservables(Data):
             time_i = time[mask_i]
             dic[code] = InpatientObservables(time=time_i,
                                              value=value_i,
-                                             mask=_np.ones_like(value_i,
-                                                                dtype=bool))
+                                             mask=_np.ones_like(value_i, dtype=bool))
         return dic
 
     def segment(self, t_sep: Array) -> List[InpatientObservables]:
@@ -325,9 +329,7 @@ class InpatientObservables(Data):
         values = np.vstack(values)
         masks = np.vstack(masks)
         values = np.where(masks, values, 0.0)
-        return InpatientObservables(time=new_time[1:],
-                                    value=values,
-                                    mask=masks)
+        return InpatientObservables(time=new_time[1:], value=values, mask=masks)
 
 
 class LeadingObservableExtractorConfig(Config):
@@ -335,7 +337,7 @@ class LeadingObservableExtractorConfig(Config):
     Config for LeadingObservableExtractor.
 
     Attributes:
-        code_index (int): index of the observable in the observable scheme.
+        observable_code (str): the observable code to extract the leading window from.
         leading_hours (List[float]): list of leading hours to extract. Must be sorted.
         recovery_window (float): time window in hours to mask out between a nonzero value and zero.
         entry_neglect_window (float): hours to mask out in the beginning.
@@ -343,7 +345,7 @@ class LeadingObservableExtractorConfig(Config):
         scheme (str): name of the observation coding scheme to use.
     """
 
-    code_index: int
+    observable_code: str
     scheme: str
 
     leading_hours: List[float]
@@ -366,6 +368,17 @@ class LeadingObservableExtractorConfig(Config):
             "relevant to use max/min aggregation over numeric observables. Create a feature request "
             "if you need this feature.")
 
+    @cached_property
+    def code_index(self) -> int:
+        """
+        Returns the index of the observable code.
+
+        Returns:
+            int: the index of the observable code.
+        """
+        return self.scheme_object.index[self.observable_code]
+
+    @cached_property
     def scheme_object(self) -> NumericScheme:
         """
         Returns the scheme object based on the scheme name.
@@ -385,8 +398,7 @@ class LeadingObservableExtractorConfig(Config):
         Returns:
             NumericalTypeHint: the type hint for the observable.
         """
-        scheme = self.scheme_object()
-        return scheme.type_hint[scheme.codes[self.code_index]]
+        return self.scheme_object.type_hint[self.observable_code]
 
     @cached_property
     def aggregation(self) -> str:
@@ -433,8 +445,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Dict[int, str]: the mapping of index to code.
         """
-        scheme = CodingScheme.from_name(self.config.scheme)
-        desc = scheme.index2desc[self.config.index]
+        desc = self.config.scheme_object.desc[self.config.observable_code]
         return dict(
             zip(range(len(self.config.leading_hours)),
                 [f'{desc}_next_{h}hrs' for h in self.config.leading_hours]))

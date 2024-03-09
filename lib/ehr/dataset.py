@@ -5,16 +5,16 @@ import logging
 import random
 from abc import abstractmethod, ABCMeta
 from dataclasses import field
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Callable, Set, Literal
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Literal
 
 import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from .coding_scheme import (CodingScheme, OutcomeExtractor, FileBasedOutcomeExtractor, NumericalTypeHint)
-from .tvx_concepts import (DemographicVectorConfig)
+from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint)
 from ..base import Config, Module, Data
 from ..utils import write_config, load_config, tqdm_constructor
 
@@ -377,7 +377,8 @@ class ReportAttributes(Config):
     value_type: str = None
     before: Optional[str | int | float | bool] = None
     after: Optional[str | int | float | bool] = None
-    additional_parameters: Optional[str] = None
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat(), init=False,
+                           compare=False, repr=False, hash=False)
 
     def __post_init__(self):
 
@@ -387,6 +388,37 @@ class ReportAttributes(Config):
                     setattr(self, k, v.__name__)
                 elif isinstance(v, np.dtype):
                     setattr(self, k, v.name)
+
+
+class Report(Config):
+    incidents: Tuple[ReportAttributes, ...] = tuple()
+    incident_class: ClassVar[Type[ReportAttributes]] = ReportAttributes
+
+    def __add__(self, other: Report) -> Report:
+        return Report(incidents=self.incidents + other.incidents)
+
+    def add(self, *args, **kwargs):
+        return Report(incidents=self.incidents + (self.incident_class(*args, **kwargs),))
+
+    def compile(self, previous_report: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        report = self.incidents
+        if len(report) == 0:
+            report = (ReportAttributes(transformation='identity'),)
+
+        if previous_report is None:
+            return pd.DataFrame([x.as_dict() for x in report])
+        else:
+            return pd.concat([previous_report, pd.DataFrame([x.as_dict() for x in report])], ignore_index=True,
+                             axis=0, sort=False)
+
+    @staticmethod
+    def equal_tables(report: pd.DataFrame, other: pd.DataFrame) -> bool:
+        # Exclude timestamps from comparison.
+        if all('timestamp' in r for r in (report.columns, other.columns)):
+            report = report.drop(columns=['timestamp'])
+            other_report = other.drop(columns=['timestamp'])
+
+        return report.equals(other)
 
 
 class AbstractDatasetRepresentation(Module):
@@ -402,7 +434,7 @@ class AbstractDatasetRepresentation(Module):
     def _setup_pipeline(cls, config: Config) -> AbstractDatasetPipeline:
         pass
 
-    def execute_pipeline(self) -> AbstractDatasetPipeline:
+    def execute_pipeline(self) -> AbstractDatasetRepresentation:
         if len(self.pipeline_report) > 0:
             logging.warning("Pipeline has already been executed. Doing nothing.")
             return self
@@ -411,12 +443,16 @@ class AbstractDatasetRepresentation(Module):
         return dataset
 
     def execute_external_transformations(self,
-                                         transformations: List[AbstractTransformation]) -> AbstractDatasetPipeline:
+                                         transformations: List[
+                                             AbstractTransformation]) -> AbstractDatasetRepresentation:
         dataset = self
-        report = tuple()
+        report = Report()
         for t in transformations:
             dataset, report = t(dataset, report)
         return dataset
+
+    def equal_report(self, other: 'AbstractDatasetRepresentation') -> bool:
+        return Report.equal_tables(self.pipeline_report, other.pipeline_report)
 
     @abstractmethod
     def equals(self, other: 'AbstractDatasetPipeline'):
@@ -450,23 +486,15 @@ class AbstractDatasetRepresentation(Module):
 
 class AbstractTransformation(eqx.Module):
 
-    def __call__(self, dataset: AbstractDatasetRepresentation, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        AbstractDatasetRepresentation, Tuple[ReportAttributes, ...]]:
+    def __call__(self, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
+        AbstractDatasetRepresentation, Report]:
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def apply(cls, dataset: AbstractDatasetRepresentation, report: Tuple[ReportAttributes, ...]) -> Tuple[
-        AbstractDatasetRepresentation, Tuple[ReportAttributes, ...]]:
+    def apply(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
+        AbstractDatasetRepresentation, Report]:
         raise NotImplementedError
-
-    @staticmethod
-    def report(report: Tuple[ReportAttributes, ...], **report_attributes) -> Tuple[ReportAttributes, ...]:
-        return report + (ReportAttributes(**report_attributes),)
-
-    @classmethod
-    def reporter(cls) -> Callable:
-        return cls.report
 
 
 class TransformationSequenceException(TypeError):
@@ -521,7 +549,7 @@ class TransformationsDependency(Config):
         return self.inherit_features(transformation_type, self.blocked_by)
 
     def validate_sequence(self, transformations: List[AbstractTransformation]):
-        transformations_type = list(map(type, transformations))
+        transformations_type: List[Type[AbstractTransformation]] = list(map(type, transformations))
         if len(set(transformations_type)) != len(transformations_type):
             raise DuplicateTransformationException("Transformation sequence contains duplicate transformations. "
                                                    "Each transformation must appear only once. "
@@ -551,13 +579,6 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
     transformations: List[AbstractTransformation] = field(kw_only=True)
     validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
 
-    @staticmethod
-    def compile_report(report: Tuple[ReportAttributes, ...], current_report: pd.DataFrame) -> pd.DataFrame:
-        if len(report) == 0:
-            report = (ReportAttributes(transformation='identity'),)
-        new_report = pd.DataFrame([x.as_dict() for x in report]).astype(str)
-        return pd.concat([current_report, new_report], ignore_index=True, axis=0)
-
     def __post_init__(self):
         self.validator.validate_sequence(self.transformations)
 
@@ -569,7 +590,7 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
                 pbar.set_description(f"Transforming Dataset: {type(t).__name__}")
                 dataset, report = t.apply(dataset, report)
                 pbar.update(1)
-        return dataset, self.compile_report(report, dataset.pipeline_report)
+        return dataset, report.compile(dataset.pipeline_report)
 
 
 class DatasetConfig(Config):
@@ -611,7 +632,7 @@ class Dataset(AbstractDatasetRepresentation):
 
     def equals(self, other: 'Dataset'):
         return self.config == other.config and self.tables.equals(other.tables) and self.scheme == other.scheme and \
-            self.pipeline_report.equals(other.pipeline_report)
+            self.equal_report(other)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
         self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.

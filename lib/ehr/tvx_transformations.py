@@ -4,7 +4,7 @@ import logging
 import random
 from abc import abstractmethod
 from dataclasses import field
-from typing import Dict, Tuple, List, Callable, Final, Type, Set, Hashable
+from typing import Dict, Tuple, List, Callable, Final, Type, Set
 
 import dask.dataframe as dd
 import equinox as eqx
@@ -15,14 +15,13 @@ from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterven
 from .coding_scheme import CodeMap
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
-from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation
+from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport
 
 
 class SampleSubjects(AbstractTVxTransformation):
 
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         static = tv_ehr.dataset.tables.static
         # assert index name is subject_id
         c_subject_id = tv_ehr.dataset.config.tables.static.subject_id_alias
@@ -35,25 +34,25 @@ class SampleSubjects(AbstractTVxTransformation):
         n1 = len(static)
         static = static.loc[subjects]
         n2 = len(static)
-        report = cls.report(report, table='static', column='index', before=n1, after=n2, value_type='count',
+        report = report.add(table='static', column='index', before=n1, after=n2, value_type='count',
                             operation='sample')
         dataset = eqx.tree_at(lambda x: x.tables.static, tv_ehr.dataset, static)
-        dataset = DatasetTransformation.synchronize_subjects(dataset, report, cls.reporter())
+        dataset = DatasetTransformation.synchronize_subjects(dataset, report)
         return eqx.tree_at(lambda x: x.dataset, tv_ehr, dataset), report
 
 
 class RandomSplits(AbstractTVxTransformation):
 
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[
+        TVxEHR, TVxReport]:
         config = tv_ehr.config.splits
         splits = tv_ehr.dataset.random_splits(splits=config.split_quantiles,
                                               random_seed=config.seed,
                                               balance=config.balance,
                                               discount_first_admission=config.discount_first_admission)
 
-        report = cls.report(report, table='static', column=None, value_type='splits',
+        report = report.add(table='static', column=None, value_type='splits',
                             operation=f'TVxEHR.splits<-TVxEHR.dataset.random_splits(TVxEHR.config.splits)',
                             before=(len(tv_ehr.dataset.tables.static),),
                             after=tuple(len(x) for x in splits))
@@ -293,8 +292,7 @@ class IQROutlierRemover(CodedValueProcessor):
 
 class ObsIQROutlierRemover(TrainableTransformation):
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.outlier_removers.obs
         remover = IQROutlierRemover(table=lambda x: x.dataset.tables.obs,
                                     code_column=lambda x: x.dataset.config.tables.obs.code_alias,
@@ -305,24 +303,23 @@ class ObsIQROutlierRemover(TrainableTransformation):
                                     outlier_z1=config.outlier_z1,
                                     outlier_z2=config.outlier_z2).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover)
-        report = cls.report(report,
-                            table='obs', column=None, value_type='type',
-                            operation='TVxEHR.numerical_processors.outlier_removers.obs <- IQROutlierRemover',
-                            after=type(remover))
+        report = report.add(
+            table='obs', column=None, value_type='type',
+            operation='TVxEHR.numerical_processors.outlier_removers.obs <- IQROutlierRemover',
+            after=type(remover))
 
         n1 = len(tv_ehr.dataset.tables.obs)
         # TODO: report specific removals stats for each code.
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, remover(tv_ehr.dataset))
         n2 = len(tv_ehr.dataset.tables.obs)
-        report = cls.report(report, table='obs', column=None, value_type='count',
+        report = report.add(table='obs', column=None, value_type='count',
                             operation='filter', before=n1, after=n2)
         return tv_ehr, report
 
 
 class ObsAdaptiveScaler(TrainableTransformation):
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.scalers.obs
         value_column = lambda x: x.config.tables.obs.value_alias
         scaler = AdaptiveScaler(table=lambda x: x.tables.obs,
@@ -331,15 +328,15 @@ class ObsAdaptiveScaler(TrainableTransformation):
                                 use_float16=config.use_float16).fit(tv_ehr.dataset,
                                                                     cls.get_admission_ids(tv_ehr))
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler)
-        report = cls.report(report,
-                            table='obs', column=None, value_type='type',
-                            operation='TVxEHR.numerical_processors.scalers.obs <- AdaptiveScaler',
-                            after=type(scaler))
+        report = report.add(
+            table='obs', column=None, value_type='type',
+            operation='TVxEHR.numerical_processors.scalers.obs <- AdaptiveScaler',
+            after=type(scaler))
 
         dtype1 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
         dtype2 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
-        report = cls.report(report, table='obs', column=value_column(tv_ehr.dataset),
+        report = report.add(table='obs', column=value_column(tv_ehr.dataset),
                             value_type='dtype',
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                             before=dtype1, after=dtype2)
@@ -348,8 +345,7 @@ class ObsAdaptiveScaler(TrainableTransformation):
 
 class InputScaler(TrainableTransformation):
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         code_column = lambda x: x.config.tables.icu_inputs.code_alias
         value_column = lambda x: x.config.tables.icu_inputs.derived_normalized_amount_per_hour
         config = tv_ehr.config.numerical_processors.scalers.icu_inputs
@@ -359,15 +355,15 @@ class InputScaler(TrainableTransformation):
                            use_float16=config.use_float16).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
 
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.icu_inputs, tv_ehr, scaler)
-        report = cls.report(report,
-                            table='icu_inputs', column=None, value_type='type',
-                            operation='TVxEHR.numerical_processors.scalers.icu_inputs <- MaxScaler',
-                            after=type(scaler))
+        report = report.add(
+            table='icu_inputs', column=None, value_type='type',
+            operation='TVxEHR.numerical_processors.scalers.icu_inputs <- MaxScaler',
+            after=type(scaler))
 
         dtype1 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
         dtype2 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
-        report = cls.report(report, table='icu_inputs', column=value_column(tv_ehr.dataset),
+        report = report.add(table='icu_inputs', column=value_column(tv_ehr.dataset),
                             value_type='dtype',
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                             before=dtype1, after=dtype2)
@@ -405,13 +401,18 @@ class LeadingObservableExtraction(AbstractTVxTransformation):
 
 class TVxConcepts(AbstractTVxTransformation):
 
-    @staticmethod
-    def _static_info(tvx_ehr: TVxEHR) -> Dict[str, StaticInfo]:
+    @classmethod
+    def _static_info(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, StaticInfo], TVxReport]:
+
         static = tvx_ehr.dataset.tables.static
         config = tvx_ehr.config.demographic_vector
         c_gender = tvx_ehr.dataset.config.tables.static
         c_date_of_birth = tvx_ehr.dataset.config.tables.static.date_of_birth_alias
         c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias
+
+        report = report.add(
+            table='static', column=None, value_type='count', operation='extract_static_info',
+            after=len(static))
 
         gender, ethnicity, dob = {}, {}, {}
         if c_date_of_birth in static.columns or config.age:
@@ -424,11 +425,14 @@ class TVxConcepts(AbstractTVxTransformation):
             ethnicity_m = tvx_ehr.ethnicity_mapper
             ethnicity = {k: ethnicity_m.codeset2vec({c}) for k, c in static[c_ethnicity].to_dict().items()}
 
-        return {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
-                                       ethnicity=ethnicity.get(subject_id),
-                                       gender=gender.get(subject_id),
-                                       demographic_vector_config=config)
-                for subject_id in static.index}
+        static_info = {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
+                                              ethnicity=ethnicity.get(subject_id),
+                                              gender=gender.get(subject_id),
+                                              demographic_vector_config=config) for subject_id in static.index}
+        report = report.add(tvx_concept=TVxReportAttributes.static_info_prefix(),
+                            column=None, value_type='count', operation='extract_static_info',
+                            after=len(static_info))
+        return static_info, report
 
     @staticmethod
     def _dx_discharge(tvx_ehr: TVxEHR) -> Dict[str, CodesVector]:
@@ -461,11 +465,12 @@ class TVxConcepts(AbstractTVxTransformation):
 
     @staticmethod
     def _icu_inputs(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
-        c_admission_id = tvx_ehr.dataset.config.tables.icu_inputs.admission_id_alias
-        c_code = tvx_ehr.dataset.config.tables.icu_inputs.code_alias
-        c_rate = tvx_ehr.dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-        c_start_time = tvx_ehr.dataset.config.tables.icu_inputs.start_time_alias
-        c_end_time = tvx_ehr.dataset.config.tables.icu_inputs.end_time_alias
+        table_config = tvx_ehr.dataset.config.tables.icu_inputs
+        c_admission_id = table_config.admission_id_alias
+        c_code = table_config.code_alias
+        c_rate = table_config.derived_normalized_amount_per_hour
+        c_start_time = table_config.start_time_alias
+        c_end_time = table_config.end_time_alias
 
         # Here we avoid deep copy, and we can still replace
         # a new column without affecting the original table.
@@ -521,35 +526,34 @@ class TVxConcepts(AbstractTVxTransformation):
                 for adm_id, (codes, start, end) in admission_procedures.iterrows()}
 
     @staticmethod
-    def _hosp_procedures(tvx_ehr: TVxEHR) -> Dict[str | Hashable, InpatientInput]:
+    def _hosp_procedures(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
         return TVxConcepts._procedures(tvx_ehr.dataset.tables.hosp_procedures,
                                        tvx_ehr.dataset.config.tables.hosp_procedures,
                                        tvx_ehr.hosp_procedures_mapper)
 
     @staticmethod
-    def _icu_procedures(tvx_ehr: TVxEHR) -> Dict[str | Hashable, InpatientInput]:
+    def _icu_procedures(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
         return TVxConcepts._procedures(tvx_ehr.dataset.tables.icu_procedures,
                                        tvx_ehr.dataset.config.tables.icu_procedures,
                                        tvx_ehr.icu_procedures_mapper)
 
     @classmethod
-    def _interventions(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        Dict[str, InpatientInterventions], Tuple[TVxReportAttributes, ...]]:
+    def _interventions(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, InpatientInterventions], TVxReport]:
         concept_path = TVxReportAttributes.inpatient_input_prefix
         hosp_procedures = cls._hosp_procedures(tvx_ehr)
-        report = cls.report(report, tvx_concept=concept_path('hosp_procedures'),
+        report = report.add(tvx_concept=concept_path('hosp_procedures'),
                             table='hosp_procedures',
                             column=None, value_type='count', operation='extract',
                             after=len(hosp_procedures))
 
         icu_procedures = cls._icu_procedures(tvx_ehr)
-        report = cls.report(report, tvx_concept=concept_path('icu_procedures'),
+        report = report.add(tvx_concept=concept_path('icu_procedures'),
                             table='icu_procedures',
                             column=None, value_type='count', operation='extract',
                             after=len(icu_procedures))
 
         icu_inputs = cls._icu_inputs(tvx_ehr)
-        report = cls.report(report, tvx_concept=concept_path('icu_inputs'), table='icu_inputs',
+        report = report.add(tvx_concept=concept_path('icu_inputs'), table='icu_inputs',
                             column=None, value_type='count', operation='extract',
                             after=len(icu_inputs))
         interventions = {admission_id: InpatientInterventions(hosp_procedures=hosp_procedures.get(admission_id),
@@ -558,8 +562,8 @@ class TVxConcepts(AbstractTVxTransformation):
                          for admission_id in tvx_ehr.admission_ids}
         return interventions, report
 
-    @staticmethod
-    def _observables(tvx_ehr: TVxEHR) -> Dict[str, InpatientObservables]:
+    @classmethod
+    def _observables(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, InpatientObservables], TVxReport]:
         c_admission_id = tvx_ehr.dataset.config.tables.obs.admission_id_alias
         c_code = tvx_ehr.dataset.config.tables.obs.code_alias
         c_value = tvx_ehr.dataset.config.tables.obs.value_alias
@@ -570,6 +574,8 @@ class TVxConcepts(AbstractTVxTransformation):
         table[c_code] = table[c_code].map(tvx_ehr.scheme.obs.index)
         assert not table[c_code].isnull().any(), 'Some codes are not in the target scheme.'
         obs_dim = len(tvx_ehr.scheme.obs)
+        tvx_concept_path = TVxReportAttributes.admission_attribute_prefix('observables',
+                                                                          InpatientObservables)
 
         def ret_put(a, *args):
             np.put(a, *args)
@@ -604,13 +610,28 @@ class TVxConcepts(AbstractTVxTransformation):
         logging.debug("obs: extract")
         assert len(inpatient_observables_df.index.tolist()) == len(set(inpatient_observables_df.index.tolist())), \
             "Duplicate admission ids in obs"
-        return inpatient_observables_df.to_dict()
+        inpatient_observables = inpatient_observables_df.to_dict()
+        report = report.add(
+            table='obs', value_type='table_size', operation='extract_observables',
+            after=len(tvx_ehr.dataset.tables.obs))
+        report = report.add(tvx_concept=tvx_concept_path,
+                            table='obs', value_type='concepts_count', operation='extract_observables',
+                            after=len(inpatient_observables))
+        report = report.add(tvx_concept=TVxReportAttributes.admission_attribute_prefix('observables',
+                                                                                       InpatientObservables),
+                            table='obs', value_type='timestamps_count', operation='extract_observables',
+                            after=sum(len(o) for o in inpatient_observables.values()))
+        report = report.add(tvx_concept=TVxReportAttributes.admission_attribute_prefix('observables',
+                                                                                       InpatientObservables),
+                            table='obs', value_type='values_count', operation='extract_observables',
+                            after=sum(o.count() for o in inpatient_observables.values()))
+        return inpatient_observables, report
 
     @classmethod
-    def apply(cls, tvx_ehr: TVxEHR, report: Tuple[TVxReportAttributes, ...]) -> Tuple[
-        TVxEHR, Tuple[TVxReportAttributes, ...]]:
+    def apply(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         subject_admissions = tvx_ehr.subjects_sorted_admission_ids
-        static_info = cls._static_info(tvx_ehr)
+        static_info, report = cls._static_info(tvx_ehr, report)
+
         dx_discharge = cls._dx_discharge(tvx_ehr)
         dx_discharge_history = cls._dx_discharge_history(tvx_ehr, dx_discharge)
         outcome = cls._outcome(tvx_ehr, dx_discharge)
@@ -619,7 +640,7 @@ class TVxConcepts(AbstractTVxTransformation):
         else:
             interventions = None
         if tvx_ehr.config.observables:
-            observables = cls._observables(tvx_ehr)
+            observables, report = cls._observables(tvx_ehr, report)
         else:
             observables = None
 

@@ -5,7 +5,7 @@ import pickle
 from abc import ABCMeta
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional, Dict, Union, Callable, Tuple, Type
+from typing import List, Optional, Dict, Union, Callable, Tuple, Type, ClassVar
 
 import dask
 import equinox as eqx
@@ -16,7 +16,7 @@ import numpy as np
 from . import OutcomeExtractor
 from .coding_scheme import FileBasedOutcomeExtractor, CodesVector
 from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig, ReportAttributes, \
-    AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation
+    AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
@@ -225,10 +225,12 @@ class TVxReportAttributes(ReportAttributes):
         return f'{cls.admission_attribute_prefix(attribute, CodesVector)}'
 
 
+class TVxReport(Report):
+    incident_class: ClassVar[Type[TVxReportAttributes]] = TVxReportAttributes
+
+
 class AbstractTVxTransformation(AbstractTransformation, metaclass=ABCMeta):
-    @staticmethod
-    def report(report: Tuple[TVxReportAttributes, ...], **report_attributes) -> Tuple[TVxReportAttributes, ...]:
-        return report + (TVxReportAttributes(**report_attributes),)
+    pass
 
 
 class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
@@ -856,5 +858,5 @@ class SegmentedTVxEHR(TVxEHR):
 # [ ] Add support for FHIR resources.
 # [ ] Add support for medication and prescriptions.
 # [ ] Add support for referrals and locations.
-# [ ] Add examples folder.
+# [x] Add examples folder.
 # [ ] Add support for process-mining models.

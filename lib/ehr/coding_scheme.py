@@ -1062,8 +1062,6 @@ class CodeMap(Module):
         codeset2dagvec(self, codeset: Set[str]): converts a codeset to a DAG vector representation.
     """
     config: CodeMapConfig
-    _source_scheme: Union[CodingScheme, HierarchicalScheme]
-    _target_scheme: Union[CodingScheme, HierarchicalScheme]
     _data: Dict[str, Set[str]]
 
     _maps: ClassVar[Dict[Tuple[str, str], CodeMap]] = {}
@@ -1080,8 +1078,26 @@ class CodeMap(Module):
         """
         super().__init__(config=config)
         self._data = data
-        self._source_scheme = CodingScheme.from_name(config.source_scheme)
-        self._target_scheme = CodingScheme.from_name(config.target_scheme)
+
+    @cached_property
+    def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
+        """
+        Returns the source coding scheme.
+
+        Returns:
+            Union[CodingScheme, HierarchicalScheme]: the source coding scheme.
+        """
+        return CodingScheme.from_name(self.config.source_scheme)
+
+    @cached_property
+    def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
+        """
+        Returns the target coding scheme.
+
+        Returns:
+            Union[CodingScheme, HierarchicalScheme]: the target coding scheme.
+        """
+        return CodingScheme.from_name(self.config.target_scheme)
 
     @classmethod
     def register_map(cls, mapper: CodeMap):
@@ -1198,9 +1214,9 @@ class CodeMap(Module):
         Returns:
             dict: the target coding scheme index.
         """
-        if self.config.mapped_to_dag_space and self._source_scheme.name != self._target_scheme.name:
-            return self._target_scheme.dag_index
-        return self._target_scheme.index
+        if self.config.mapped_to_dag_space and self.source_scheme.name != self.target_scheme.name:
+            return self.target_scheme.dag_index
+        return self.target_scheme.index
 
     @property
     def target_desc(self):
@@ -1210,9 +1226,9 @@ class CodeMap(Module):
         Returns:
             dict: the target coding scheme description.
         """
-        if self.config.mapped_to_dag_space and self._source_scheme.name != self._target_scheme.name:
-            return self._target_scheme.dag_desc
-        return self._target_scheme.desc
+        if self.config.mapped_to_dag_space and self.source_scheme.name != self.target_scheme.name:
+            return self.target_scheme.dag_desc
+        return self.target_scheme.desc
 
     @property
     def source_index(self) -> dict:
@@ -1222,7 +1238,7 @@ class CodeMap(Module):
         Returns:
             dict: the source coding scheme index.
         """
-        return self._source_scheme.index
+        return self.source_scheme.index
 
     @property
     def source_to_target_index(self) -> Dict[str, int]:
@@ -1233,26 +1249,6 @@ class CodeMap(Module):
             Dict[str, int]: a dictionary mapping source codes to their indices in the target coding scheme.
         """
         return {c: self.target_index[c] for c in self.keys()}
-
-    @property
-    def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        """
-        Returns the source coding scheme.
-
-        Returns:
-            Union[CodingScheme, HierarchicalScheme]: the source coding scheme.
-        """
-        return self._source_scheme
-
-    @property
-    def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        """
-        Returns the target coding scheme.
-
-        Returns:
-            Union[CodingScheme, HierarchicalScheme]: the target coding scheme.
-        """
-        return self._target_scheme
 
     @property
     def mapped_to_dag_space(self) -> bool:
@@ -1365,7 +1361,7 @@ class CodeMap(Module):
         Returns:
             List[str]: The ancestors of the target code.
         """
-        if self.config.mapped_to_dag_space == False:
+        if not self.config.mapped_to_dag_space:
             t_code = self.target_scheme.code2dag[t_code]
         return self.target_scheme.code_ancestors_bfs(t_code, include_itself=include_itself)
 
@@ -1387,7 +1383,7 @@ class CodeMap(Module):
         except KeyError as missing:
             logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
-        return CodesVector(vec, self.target_scheme)
+        return CodesVector(vec, self.config.target_scheme)
 
     def codeset2dagset(self, codeset: Set[str]):
         """
@@ -1399,7 +1395,7 @@ class CodeMap(Module):
         Returns:
             Set[str]: the DAG set representation of the codeset.
         """
-        if self.config.mapped_to_dag_space == False:
+        if not self.config.mapped_to_dag_space:
             return set(self.target_scheme.code2dag[c] for c in codeset)
         else:
             return codeset
@@ -1427,125 +1423,6 @@ class CodeMap(Module):
             logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
         return vec
-
-
-#     def log_unrecognised_range(self, json_fname):
-#         if self._unrecognised_range:
-#             write_config(
-#                 {
-#                     'code_scheme': self._t_scheme.name,
-#                     'conv_file': self._conv_file,
-#                     'n': len(self._unrecognised_range),
-#                     'codes': sorted(self._unrecognised_range)
-#                 }, json_fname)
-
-#     def log_unrecognised_domain(self, json_fname):
-#         if self._unrecognised_domain:
-#             write_config(
-#                 {
-#                     'code_scheme': self._s_scheme.name,
-#                     'conv_file': self._conv_file,
-#                     'n': len(self._unrecognised_domain),
-#                     'codes': sorted(self._unrecognised_domain)
-#                 }, json_fname)
-
-#     def log_uncovered_source_codes(self, json_fname):
-#         res = self.report_source_discrepancy()
-#         uncovered = res["fwd_diff"]
-#         if len(uncovered) > 0:
-#             write_config(
-#                 {
-#                     'code_scheme': self._s_scheme.name,
-#                     'conv_file': self._conv_file,
-#                     'n': len(uncovered),
-#                     'p': len(uncovered) / len(self._s_scheme.index),
-#                     'codes': sorted(uncovered),
-#                     'desc': {
-#                         c: self._s_scheme.desc[c]
-#                         for c in uncovered
-#                     }
-#                 }, json_fname)
-
-#     def report_discrepancy(self):
-#         assert all(type(c) == str
-#                    for c in self), f"All M_domain({self}) types should be str"
-#         assert all(type(c) == str for c in set().union(
-#             *self.values())), f"All M_range({self}) types should be str"
-#         try:
-#             s_discrepancy = self.report_source_discrepancy()
-#             t_discrepancy = self.report_target_discrepancy()
-#         except TypeError as e:
-#             logging.error(f'{self}: {e}')
-
-#         if s_discrepancy['fwd_p'] > 0:
-#             logging.debug('Source discrepancy')
-#             logging.debug(s_discrepancy['msg'])
-
-#         if t_discrepancy['fwd_p'] > 0:
-#             logging.debug('Target discrepancy')
-#             logging.debug(t_discrepancy['msg'])
-
-#     def report_target_discrepancy(self):
-#         """
-#         S={S-Space}  ---M={S:T MAPPER}---> T={T-Space}
-#         M-domain = M.keys()
-#         M-range = set().union(*M.values())
-#         """
-#         M_range = set().union(*self.values())
-#         T = set(self.t_index)
-#         fwd_diff = M_range - T
-#         bwd_diff = T - M_range
-#         fwd_p = len(fwd_diff) / len(M_range)
-#         bwd_p = len(bwd_diff) / len(T)
-#         msg = f"""M: {self} \n
-# Mapping converts to codes that are not supported by the target scheme.
-# |M-range - T|={len(fwd_diff)}; \
-# |M-range - T|/|M-range|={fwd_p:0.2f}); \
-# first5(M-range - T)={sorted(fwd_diff)[:5]}\n
-# Target codes that not covered by the mapping. \
-# |T - M-range|={len(bwd_diff)}; \
-# |T - M-range|/|T|={bwd_p:0.2f}; \
-# first5(T - M-range)={sorted(bwd_diff)[:5]}\n
-# |M-range|={len(M_range)}; \
-# first5(M-range) {sorted(M_range)[:5]}.\n
-# |T|={len(T)}; first5(T)={sorted(T)[:5]}
-#         """
-#         return dict(fwd_diff=fwd_diff,
-#                     bwd_diff=bwd_diff,
-#                     fwd_p=fwd_p,
-#                     bwd_p=bwd_p,
-#                     msg=msg)
-
-#     def report_source_discrepancy(self):
-#         """
-#         S={S-Space}  ---M={S:T MAPPER}---> T={T-Space}
-#         M-domain = M.keys()
-#         M-range = set().union(*M.values())
-#         """
-#         M_domain = set(self.keys())
-#         S = set(self.s_index)
-#         fwd_diff = S - M_domain
-#         bwd_diff = M_domain - S
-#         fwd_p = len(fwd_diff) / len(S)
-#         bwd_p = len(bwd_diff) / len(M_domain)
-#         msg = f"""M: {self} \n
-# Mapping converts codes that are not supported by the source scheme.\
-# |M-domain - S|={len(bwd_diff)}; \
-# |M-domain - S|/|M-domain|={bwd_p:0.2f}); \
-# first5(M-domain - S)={sorted(bwd_diff)[:5]}\n
-# Source codes that not covered by the mapping. \
-# |S - M-domain|={len(fwd_diff)}; \
-# |S - M-domain|/|S|={fwd_p:0.2f}; \
-# first5(S - M-domain)={sorted(fwd_diff)[:5]}\n
-# |M-domain|={len(M_domain)}; \
-# first5(M-domain) {sorted(M_domain)[:5]}.\n
-# |S|={len(S)}; first5(S)={sorted(S)[:5]}
-#         """
-#         return dict(fwd_diff=fwd_diff,
-#                     bwd_diff=bwd_diff,
-#                     fwd_p=fwd_p,
-#                     bwd_p=bwd_p,
-#                     msg=msg)
 
 
 class IdentityCodeMap(CodeMap):

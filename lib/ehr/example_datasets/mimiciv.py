@@ -1106,8 +1106,10 @@ class MIMICIVDatasetConfig(MIMICIVSQLConfig):
 
 
 class MIMICIVDataset(Dataset):
+    config: MIMICIVDatasetConfig
+
     @staticmethod
-    def icu_inputs_uom_normalization(icu_inputs_config: RatedInputSQLTableConfig,
+    def icu_inputs_uom_normalization(icu_inputs_config: RatedInputTableConfig,
                                      icu_inputs_uom_normalization_table: pd.DataFrame) -> pd.DataFrame:
         c_universal_uom = icu_inputs_config.derived_universal_unit
         c_code = icu_inputs_config.code_alias
