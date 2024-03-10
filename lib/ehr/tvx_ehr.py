@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import pickle
 from abc import ABCMeta
+from datetime import date
 from functools import cached_property
 from pathlib import Path
 from typing import List, Optional, Dict, Union, Callable, Tuple, Type, ClassVar
@@ -230,7 +231,9 @@ class TVxReport(Report):
 
 
 class AbstractTVxTransformation(AbstractTransformation, metaclass=ABCMeta):
-    pass
+    @classmethod
+    def skip(cls, dataset: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
+        return dataset, report.add(transformation=cls, operation='skip')
 
 
 class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
@@ -338,6 +341,13 @@ class TVxEHR(AbstractDatasetRepresentation):
     @cached_property
     def admission_ids(self) -> List[str]:
         return sum(self.subjects_sorted_admission_ids.values(), [])
+
+    @cached_property
+    def admission_dates(self) -> Dict[str, Tuple[date, date]]:
+        admissions = self.dataset.tables.admissions
+        c_admittime = self.dataset.config.tables.admissions.admission_time_alias
+        c_dischtime = self.dataset.config.tables.admissions.discharge_time_alias
+        return dict(zip(admissions.index, zip(admissions[c_admittime], admissions[c_dischtime])))
 
     def __len__(self):
         """Get the number of subjects."""

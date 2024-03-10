@@ -11,7 +11,8 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables
+from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables, \
+    LeadingObservableExtractor, Admission, Patient
 from .coding_scheme import CodeMap
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
@@ -35,6 +36,7 @@ class SampleSubjects(AbstractTVxTransformation):
         static = static.loc[subjects]
         n2 = len(static)
         report = report.add(table='static', column='index', before=n1, after=n2, value_type='count',
+                            transformation=cls,
                             operation='sample')
         dataset = eqx.tree_at(lambda x: x.tables.static, tv_ehr.dataset, static)
         dataset = DatasetTransformation.synchronize_subjects(dataset, report)
@@ -53,6 +55,7 @@ class RandomSplits(AbstractTVxTransformation):
                                               discount_first_admission=config.discount_first_admission)
 
         report = report.add(table='static', column=None, value_type='splits',
+                            transformation=cls,
                             operation=f'TVxEHR.splits<-TVxEHR.dataset.random_splits(TVxEHR.config.splits)',
                             before=(len(tv_ehr.dataset.tables.static),),
                             after=tuple(len(x) for x in splits))
@@ -305,6 +308,7 @@ class ObsIQROutlierRemover(TrainableTransformation):
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover)
         report = report.add(
             table='obs', column=None, value_type='type',
+            transformation=cls,
             operation='TVxEHR.numerical_processors.outlier_removers.obs <- IQROutlierRemover',
             after=type(remover))
 
@@ -313,6 +317,7 @@ class ObsIQROutlierRemover(TrainableTransformation):
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, remover(tv_ehr.dataset))
         n2 = len(tv_ehr.dataset.tables.obs)
         report = report.add(table='obs', column=None, value_type='count',
+                            transformation=cls,
                             operation='filter', before=n1, after=n2)
         return tv_ehr, report
 
@@ -330,6 +335,7 @@ class ObsAdaptiveScaler(TrainableTransformation):
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler)
         report = report.add(
             table='obs', column=None, value_type='type',
+            transformation=cls,
             operation='TVxEHR.numerical_processors.scalers.obs <- AdaptiveScaler',
             after=type(scaler))
 
@@ -338,6 +344,7 @@ class ObsAdaptiveScaler(TrainableTransformation):
         dtype2 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
         report = report.add(table='obs', column=value_column(tv_ehr.dataset),
                             value_type='dtype',
+                            transformation=cls,
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                             before=dtype1, after=dtype2)
         return tv_ehr, report
@@ -365,6 +372,7 @@ class InputScaler(TrainableTransformation):
         dtype2 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
         report = report.add(table='icu_inputs', column=value_column(tv_ehr.dataset),
                             value_type='dtype',
+                            transformation=cls,
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
                             before=dtype1, after=dtype2)
         return tv_ehr, report
@@ -392,11 +400,78 @@ class InterventionSegmentation(AbstractTVxTransformation):
 
 
 class ObsTimeBinning(AbstractTVxTransformation):
-    pass
+    @classmethod
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
+        if tv_ehr.config.time_binning is None:
+            return cls.skip(tv_ehr, report)
+
+        interval = tv_ehr.config.time_binning
+        obs_scheme = tv_ehr.scheme.obs
+        tvx_concept_path = TVxReportAttributes.admission_attribute_prefix('observables',
+                                                                          InpatientObservables)
+        original_obs = [admission.observables for subject in tv_ehr.subjects.values()
+                        for admission in subject.admissions]
+        tv_ehr = eqx.tree_at(lambda x: x.subjects, tv_ehr,
+                             {subject_id: subject.observables_time_binning(interval, obs_scheme)
+                              for subject_id, subject in tv_ehr.subjects.items()})
+        binned_obs = [admission.observables for subject in tv_ehr.subjects.values()
+                      for admission in subject.admissions]
+
+        report = report.add(tvx_concept=tvx_concept_path,
+                            value_type='concepts_count', operation='time_binning',
+                            transformation=cls,
+                            before=len(original_obs),
+                            after=len(binned_obs))
+        report = report.add(tvx_concept=tvx_concept_path,
+                            value_type='timestamps_count', operation='time_binning',
+                            transformation=cls,
+                            before=sum(len(o) for o in original_obs),
+                            after=sum(len(o) for o in binned_obs))
+        report = report.add(tvx_concept=tvx_concept_path,
+                            transformation=cls,
+                            value_type='values_count', operation='time_binning',
+                            before=sum(o.count() for o in original_obs),
+                            after=sum(o.count() for o in binned_obs))
+        return tv_ehr, report
 
 
 class LeadingObservableExtraction(AbstractTVxTransformation):
-    pass
+
+    # TODO: blocks time binning.
+    @classmethod
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
+        extractor = LeadingObservableExtractor(tv_ehr.config.leading_observable)
+
+        if tv_ehr.config.leading_observable is None:
+            return cls.skip(tv_ehr, report)
+
+        tvx_concept_path = TVxReportAttributes.admission_attribute_prefix('leading_observables',
+                                                                          InpatientObservables)
+        tv_ehr = eqx.tree_at(lambda x: x.subjects, tv_ehr,
+                             {subject_id: subject.extract_leading_observables(extractor)
+                              for subject_id, subject in tv_ehr.subjects.items()})
+        extracted = [admission.leading_observables for subject in tv_ehr.subjects.values()
+                     for admission in subject.admissions]
+
+        report = report.add(tvx_concept=tvx_concept_path,
+                            value_type='concepts_count', operation='LeadingObservableExtractor',
+                            transformation=cls,
+                            after=len(extracted))
+        report = report.add(tvx_concept=tvx_concept_path,
+                            value_type='timestamps_count', operation='LeadingObservableExtractor',
+                            transformation=cls,
+                            after=sum(len(o) for o in extracted))
+        report = report.add(tvx_concept=tvx_concept_path,
+                            transformation=cls,
+                            value_type='values_count', operation='LeadingObservableExtractor',
+                            after=sum(o.count() for o in extracted))
+        report = report.add(
+            transformation=cls,
+            tvx_concept_path=tvx_concept_path,
+            value_type='type',
+            operation='LeadingObservableExtractor',
+            after=InpatientObservables)
+        return tv_ehr, report
 
 
 class TVxConcepts(AbstractTVxTransformation):
@@ -411,6 +486,7 @@ class TVxConcepts(AbstractTVxTransformation):
         c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias
 
         report = report.add(
+            transformation=cls,
             table='static', column=None, value_type='count', operation='extract_static_info',
             after=len(static))
 
@@ -430,6 +506,7 @@ class TVxConcepts(AbstractTVxTransformation):
                                               gender=gender.get(subject_id),
                                               demographic_vector_config=config) for subject_id in static.index}
         report = report.add(tvx_concept=TVxReportAttributes.static_info_prefix(),
+                            transformation=cls,
                             column=None, value_type='count', operation='extract_static_info',
                             after=len(static_info))
         return static_info, report
@@ -542,19 +619,23 @@ class TVxConcepts(AbstractTVxTransformation):
         concept_path = TVxReportAttributes.inpatient_input_prefix
         hosp_procedures = cls._hosp_procedures(tvx_ehr)
         report = report.add(tvx_concept=concept_path('hosp_procedures'),
+                            transformation=cls,
                             table='hosp_procedures',
-                            column=None, value_type='count', operation='extract',
+                            column=None, value_type='count', operation='extract_hosp_procedures',
                             after=len(hosp_procedures))
 
         icu_procedures = cls._icu_procedures(tvx_ehr)
         report = report.add(tvx_concept=concept_path('icu_procedures'),
                             table='icu_procedures',
-                            column=None, value_type='count', operation='extract',
+                            transformation=cls,
+                            column=None, value_type='count', operation='extract_icu_procedures',
                             after=len(icu_procedures))
 
         icu_inputs = cls._icu_inputs(tvx_ehr)
         report = report.add(tvx_concept=concept_path('icu_inputs'), table='icu_inputs',
-                            column=None, value_type='count', operation='extract',
+                            transformation=cls,
+
+                            column=None, value_type='count', operation='extract_icu_inputs',
                             after=len(icu_inputs))
         interventions = {admission_id: InpatientInterventions(hosp_procedures=hosp_procedures.get(admission_id),
                                                               icu_procedures=icu_procedures.get(admission_id),
@@ -616,13 +697,16 @@ class TVxConcepts(AbstractTVxTransformation):
             after=len(tvx_ehr.dataset.tables.obs))
         report = report.add(tvx_concept=tvx_concept_path,
                             table='obs', value_type='concepts_count', operation='extract_observables',
+                            transformation=cls,
                             after=len(inpatient_observables))
         report = report.add(tvx_concept=TVxReportAttributes.admission_attribute_prefix('observables',
                                                                                        InpatientObservables),
                             table='obs', value_type='timestamps_count', operation='extract_observables',
+                            transformation=cls,
                             after=sum(len(o) for o in inpatient_observables.values()))
         report = report.add(tvx_concept=TVxReportAttributes.admission_attribute_prefix('observables',
                                                                                        InpatientObservables),
+                            transformation=cls,
                             table='obs', value_type='values_count', operation='extract_observables',
                             after=sum(o.count() for o in inpatient_observables.values()))
         return inpatient_observables, report
@@ -644,79 +728,23 @@ class TVxConcepts(AbstractTVxTransformation):
         else:
             observables = None
 
-#         if time_binning is not None:
-#             observables = dict((k, v.time_binning(time_binning))
-#                                for k, v in observables.items())
-#
-#         logging.debug('[DONE] Extracting observables')
-#
-#         logging.debug('Compiling admissions...')
-#         c_admittime = self.colname['adm'].admittime
-#         c_dischtime = self.colname['adm'].dischtime
-#         c_adm_interval = self.colname['adm'].adm_interval
-#         adf = self.df['adm']
-#         adm_dates = dict(
-#             zip(adf.index, zip(adf[c_admittime], adf[c_dischtime])))
-#         adm_interval = dict(zip(adf.index, adf[c_adm_interval]))
-#         proc_repr = AggregateRepresentation(self.scheme.int_proc,
-#                                             target_scheme.int_proc)
-#
-#         leading_obs_extractor = LeadingObservableExtractor(leading_observable_config)
-#
-#         def gen_admission(i):
-#             interventions = InpatientInterventions(
-#                 proc=procedures[i],
-#                 input_=inputs[i],
-#                 adm_interval=adm_interval[i])
-#
-#             obs = observables[i]
-#             lead_obs = leading_obs_extractor(obs)
-#
-#             if time_binning is None:
-#                 interventions = interventions.segment_proc(proc_repr)
-#                 interventions = interventions.segment_input()
-#                 lead_obs = lead_obs.segment(interventions.t_sep)
-#                 obs = obs.segment(interventions.t_sep)
-#
-#             return Admission(admission_id=i,
-#                              admission_dates=adm_dates[i],
-#                              dx_codes=dx_codes[i],
-#                              dx_codes_history=dx_codes_history[i],
-#                              outcome=outcome[i],
-#                              observables=obs,
-#                              leading_observable=lead_obs,
-#                              interventions=interventions)
-#
-#         def _gen_subject(subject_id):
-#
-#             _admission_ids = admission_ids[subject_id]
-#             # for subject_id, subject_admission_ids in admission_ids.items():
-#             _admission_ids = sorted(_admission_ids,
-#                                     key=lambda aid: adm_dates[aid][0])
-#
-#             static_info = StaticInfo(
-#                 date_of_birth=subject_dob[subject_id],
-#                 gender=subject_gender[subject_id],
-#                 ethnicity=subject_eth[subject_id],
-#                 demographic_vector_config=demographic_vector_config)
-#
-#             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-#                 admissions = list(executor.map(gen_admission, _admission_ids))
-#             return Patient(subject_id=subject_id,
-#                            admissions=admissions,
-#                            static_info=static_info)
-#
-#         return list(map(_gen_subject, subject_ids))
+        def _admissions(admission_ids: List[str]) -> List[Admission]:
+            return [Admission(admission_id=i,
+                              admission_dates=tvx_ehr.admission_dates[i],
+                              dx_codes=dx_discharge[i],
+                              dx_codes_history=dx_discharge_history[i],
+                              outcome=outcome[i],
+                              observables=observables[i],
+                              interventions=interventions[i])
+                    for i in admission_ids]
 
-#
-
-#
-
-# def adm_extractor(self, subject_ids):
-#     c_subject_id = self.colname["adm"].subject_id
-#     df = self.df["adm"]
-#     df = df[df[c_subject_id].isin(subject_ids)]
-#     return {
-#         subject_id: subject_df.index.tolist()
-#         for subject_id, subject_df in df.groupby(c_subject_id)
-#     }
+        subjects = {subject_id: Patient(subject_id=subject_id,
+                                        admissions=_admissions(admission_ids),
+                                        static_info=static_info[subject_id])
+                    for subject_id, admission_ids in subject_admissions.items()}
+        tv_ehr = eqx.tree_at(lambda x: x.subjects, tvx_ehr, subjects)
+        report = report.add(tvx_concept=TVxReportAttributes.subjects_prefix(),
+                            transformation=cls,
+                            column=None, value_type='size', operation='extract_subjects',
+                            after=len(subjects))
+        return tv_ehr, report

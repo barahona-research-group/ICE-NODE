@@ -991,6 +991,48 @@ class Admission(Data):
     interventions: Optional[InpatientInterventions] = None
     leading_observable: Optional[InpatientObservables] = None
 
+    def extract_leading_observable(self, leading_observable_extractor: LeadingObservableExtractor) -> Admission:
+        """
+        Extracts the leading observable from the admission data.
+
+        Args:
+            leading_observable_extractor (LeadingObservableExtractor): the leading observable extractor.
+
+        Returns:
+            Admission: the admission data with the leading observable extracted.
+        """
+        leading_observable = leading_observable_extractor(self.observables)
+        return Admission(admission_id=self.admission_id,
+                         admission_dates=self.admission_dates,
+                         dx_codes=self.dx_codes,
+                         dx_codes_history=self.dx_codes_history,
+                         outcome=self.outcome,
+                         observables=self.observables,
+                         leading_observable=leading_observable,
+                         interventions=self.interventions)
+
+    def observables_time_binning(self, interval: float, obs_scheme: NumericScheme) -> Admission:
+        """
+        Bins the observables data into time intervals of the specified length.
+
+        Args:
+            interval (float): the length of the time intervals.
+            obs_scheme (NumericScheme): the numeric scheme for the observables, which is used to guide to aggregation
+                operations.
+        Returns:
+            Admission: the admission data with the observables data binned.
+
+        """
+        observables = self.observables.time_binning(interval, obs_scheme.type_array)
+        return Admission(admission_id=self.admission_id,
+                         admission_dates=self.admission_dates,
+                         dx_codes=self.dx_codes,
+                         dx_codes_history=self.dx_codes_history,
+                         outcome=self.outcome,
+                         observables=observables,
+                         leading_observable=self.leading_observable,
+                         interventions=self.interventions)
+
     @classmethod
     def _hdf_serialize_observables(cls, observables: Optional[InpatientObservables], path: str, key: str,
                                    meta_prefix: str = '') -> Dict[str, Any]:
@@ -1554,7 +1596,37 @@ class Patient(Data):
                 self.static_info.equals(other.static_info) and
                 all(a.equals(b) for a, b in zip(self.admissions, other.admissions)))
 
+    def extract_leading_observables(self, leading_observable_extractor: LeadingObservableExtractor) -> Patient:
+        """
+        Extracts the leading observable from all admissions.
+
+        Args:
+            leading_observable_extractor (LeadingObservableExtractor): the leading observable extractor.
+
+        Returns:
+            Patient: the patient data with the leading observable extracted.
+        """
+        admissions = [a.extract_leading_observable(leading_observable_extractor) for a in self.admissions]
+        return Patient(subject_id=self.subject_id, static_info=self.static_info, admissions=admissions)
+
+    def observables_time_binning(self, interval: float,
+                                 obs_scheme: NumericScheme) -> Patient:
+        """
+        Bins the observables for all admissions.
+
+        Args:
+            interval (float): the interval in hours to bin the observables.
+
+        Returns:
+            Patient: the patient data with the observables binned.
+        """
+        admissions = [a.observables_time_binning(interval, obs_scheme) for a in self.admissions]
+        return Patient(subject_id=self.subject_id, static_info=self.static_info, admissions=admissions)
+
 
 class SegmentedPatient(Patient):
     admissions: List[SegmentedAdmission]
     admission_cls: ClassVar[Type[SegmentedAdmission]] = SegmentedAdmission
+
+    def extract_leading_observables(self, leading_observable_extractor: LeadingObservableExtractor) -> Patient:
+        raise NotImplementedError("SegmentedPatient does not support leading observable extraction")

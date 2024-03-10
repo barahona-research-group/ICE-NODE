@@ -416,7 +416,7 @@ class Report(Config):
         # Exclude timestamps from comparison.
         if all('timestamp' in r for r in (report.columns, other.columns)):
             report = report.drop(columns=['timestamp'])
-            other_report = other.drop(columns=['timestamp'])
+            other = other.drop(columns=['timestamp'])
 
         return report.equals(other)
 
@@ -495,6 +495,19 @@ class AbstractTransformation(eqx.Module):
     def apply(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
         AbstractDatasetRepresentation, Report]:
         raise NotImplementedError
+
+    @classmethod
+    def transform(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
+        AbstractDatasetRepresentation, Report]:
+        report = report.add(transformation=cls, operation='start')
+        dataset, report = cls.apply(dataset, report)
+        report = report.add(transformation=cls, operation='end')
+        return dataset, report
+
+    @classmethod
+    def skip(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
+        AbstractDatasetRepresentation, Report]:
+        return dataset, report.add(transformation=cls, operation='skip')
 
 
 class TransformationSequenceException(TypeError):
