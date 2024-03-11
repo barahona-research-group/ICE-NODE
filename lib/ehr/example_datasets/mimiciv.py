@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from collections import defaultdict
 from dataclasses import field
 from functools import cached_property
-from typing import Dict, List, Optional, Iterable, Tuple
+from typing import Dict, List, Optional, Iterable, Tuple, Final
 
 import pandas as pd
 import sqlalchemy
@@ -663,14 +664,38 @@ class StaticSQLTable(SQLTable):
         return scheme
 
 
-class MIMICIVSQLTablesConfig(DatasetTablesConfig):
-    # TODO: Document this class.
+ENV_MIMICIV_HOST: Final[str] = 'MIMICIV_HOST'
+ENV_MIMICIV_PORT: Final[str] = 'MIMICIV_PORT'
+ENV_MIMICIV_USER: Final[str] = 'MIMICIV_USER'
+ENV_MIMICIV_PASSWORD: Final[str] = 'MIMICIV_PASSWORD'
+ENV_MIMICIV_DBNAME: Final[str] = 'MIMICIV_DBNAME'
+ENV_MIMICIV_URL: Final[str] = 'MIMICIV_URL'
 
-    host: str
-    port: int
-    user: str
-    password: str
-    dbname: str
+
+class MIMICIVSQLTablesConfig(DatasetTablesConfig):
+    @staticmethod
+    def url() -> str:
+        if ENV_MIMICIV_URL in os.environ:
+            return os.environ[ENV_MIMICIV_URL]
+        elif all(e in os.environ for e in
+                 [ENV_MIMICIV_USER, ENV_MIMICIV_PASSWORD, ENV_MIMICIV_HOST, ENV_MIMICIV_PORT, ENV_MIMICIV_DBNAME]):
+            return MIMICIVSQLTablesConfig.url_from_credentials(
+                user=os.environ[ENV_MIMICIV_USER],
+                password=os.environ[ENV_MIMICIV_PASSWORD],
+                host=os.environ[ENV_MIMICIV_HOST],
+                port=os.environ[ENV_MIMICIV_PORT],
+                dbname=os.environ[ENV_MIMICIV_DBNAME]
+            )
+        else:
+            credentials_env_list = [ENV_MIMICIV_USER, ENV_MIMICIV_PASSWORD, ENV_MIMICIV_HOST, ENV_MIMICIV_PORT,
+                                    ENV_MIMICIV_DBNAME]
+            raise ValueError(f"Environment variables {ENV_MIMICIV_URL} or "
+                             f"{', '.join(credentials_env_list)} "
+                             f"are not set.")
+
+    @staticmethod
+    def url_from_credentials(user: str, password: str, host: str, port: str, dbname: str) -> str:
+        return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}'
 
     static: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF, kw_only=True)
     admissions: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF, kw_only=True)
@@ -830,9 +855,7 @@ class MIMICIVSQLTablesInterface(Module):
     config: MIMICIVSQLTablesConfig
 
     def create_engine(self) -> Engine:
-        return sqlalchemy.create_engine(
-            f'postgresql+psycopg2://{self.config.user}:{self.config.password}@'
-            f'{self.config.host}:{self.config.port}/{self.config.dbname}')
+        return sqlalchemy.create_engine(self.config.url())
 
     def register_gender_scheme(self, config: MIMICIVDatasetSchemeConfig) -> FlatScheme:
         """

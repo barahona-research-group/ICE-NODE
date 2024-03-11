@@ -745,6 +745,6 @@ class TVxConcepts(AbstractTVxTransformation):
         tv_ehr = eqx.tree_at(lambda x: x.subjects, tvx_ehr, subjects)
         report = report.add(tvx_concept=TVxReportAttributes.subjects_prefix(),
                             transformation=cls,
-                            column=None, value_type='size', operation='extract_subjects',
+                            value_type='count', operation='extract_subjects',
                             after=len(subjects))
         return tv_ehr, report

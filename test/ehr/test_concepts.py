@@ -17,10 +17,11 @@ from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtract
 from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
     NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 
+LENGTH_OF_STAY = 10.0
 
-@pytest.fixture
-def gender_scheme_(gender_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(gender_scheme)
+
+
+
 
 
 def _singular_codevec(scheme: CodingScheme) -> CodesVector:
@@ -28,18 +29,13 @@ def _singular_codevec(scheme: CodingScheme) -> CodesVector:
 
 
 @pytest.fixture
-def gender(gender_scheme_: CodingScheme) -> CodesVector:
-    return _singular_codevec(gender_scheme_)
+def gender(gender_scheme: CodingScheme) -> CodesVector:
+    return _singular_codevec(gender_scheme)
 
 
 @pytest.fixture
-def ethnicity_scheme_(ethnicity_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(ethnicity_scheme)
-
-
-@pytest.fixture
-def ethnicity(ethnicity_scheme_: CodingScheme) -> CodesVector:
-    return _singular_codevec(ethnicity_scheme_)
+def ethnicity(ethnicity_scheme: CodingScheme) -> CodesVector:
+    return _singular_codevec(ethnicity_scheme)
 
 
 def date_of_birth() -> pd.Timestamp:
@@ -62,36 +58,11 @@ def static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
 
 
 @pytest.fixture
-def dx_scheme_(dx_scheme: str) -> CodingScheme:
+def dx_scheme(dx_scheme: str) -> CodingScheme:
     return CodingScheme.from_name(dx_scheme)
 
 
-@pytest.fixture
-def outcome_extractor_(outcome_extractor: str) -> CodingScheme:
-    return OutcomeExtractor.from_name(outcome_extractor)
 
-
-@pytest.fixture
-def obs_scheme(observation_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(observation_scheme)
-
-
-@pytest.fixture
-def icu_inputs_scheme_(icu_inputs_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(icu_inputs_scheme)
-
-
-@pytest.fixture
-def icu_proc_scheme_(icu_proc_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(icu_proc_scheme)
-
-
-@pytest.fixture
-def hosp_proc_scheme_(hosp_proc_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(hosp_proc_scheme)
-
-
-LENGTH_OF_STAY = 10.0
 
 
 def _dx_codes(dx_scheme: CodingScheme):
@@ -100,8 +71,8 @@ def _dx_codes(dx_scheme: CodingScheme):
 
 
 @pytest.fixture
-def dx_codes(dx_scheme_: CodingScheme):
-    return _dx_codes(dx_scheme_)
+def dx_codes(dx_scheme: CodingScheme):
+    return _dx_codes(dx_scheme)
 
 
 def _dx_codes_history(dx_codes: CodesVector):
@@ -152,13 +123,13 @@ def inpatient_rated_input(n: int, p: int):
                           rate=nrand.uniform(0, 1, size=(n,)))
 
 
-def _icu_inputs(icu_inputs_scheme_: CodingScheme, n_timestamps: int):
-    return inpatient_rated_input(n_timestamps, len(icu_inputs_scheme_))
+def _icu_inputs(icu_inputs_scheme: CodingScheme, n_timestamps: int):
+    return inpatient_rated_input(n_timestamps, len(icu_inputs_scheme))
 
 
 @pytest.fixture(params=[0, 1, 501])
-def icu_inputs(icu_inputs_scheme_: CodingScheme, request):
-    return _icu_inputs(icu_inputs_scheme_, request.param)
+def icu_inputs(icu_inputs_scheme: CodingScheme, request):
+    return _icu_inputs(icu_inputs_scheme, request.param)
 
 
 def _proc(scheme: CodingScheme, n_timestamps: int):
@@ -166,13 +137,13 @@ def _proc(scheme: CodingScheme, n_timestamps: int):
 
 
 @pytest.fixture(params=[0, 1, 501])
-def icu_proc(icu_proc_scheme_: CodingScheme, request):
-    return _proc(icu_proc_scheme_, request.param)
+def icu_proc(icu_proc_scheme: CodingScheme, request):
+    return _proc(icu_proc_scheme, request.param)
 
 
 @pytest.fixture(params=[0, 1, 501])
-def hosp_proc(hosp_proc_scheme_: CodingScheme, request):
-    return _proc(hosp_proc_scheme_, n_timestamps=request.param)
+def hosp_proc(hosp_proc_scheme: CodingScheme, request):
+    return _proc(hosp_proc_scheme, n_timestamps=request.param)
 
 
 def _inpatient_interventions(hosp_proc, icu_proc, icu_inputs):
@@ -200,13 +171,13 @@ def _segmented_inpatient_interventions(inpatient_interventions: InpatientInterve
 
 
 @pytest.fixture
-def segmented_inpatient_interventions(inpatient_interventions: InpatientInterventions, hosp_proc_scheme_,
-                                      icu_proc_scheme_,
-                                      icu_inputs_scheme_) -> SegmentedInpatientInterventions:
+def segmented_inpatient_interventions(inpatient_interventions: InpatientInterventions, hosp_proc_scheme,
+                                      icu_proc_scheme,
+                                      icu_inputs_scheme) -> SegmentedInpatientInterventions:
     return _segmented_inpatient_interventions(inpatient_interventions,
-                                              hosp_proc_scheme=hosp_proc_scheme_,
-                                              icu_proc_scheme=icu_proc_scheme_,
-                                              icu_inputs_scheme=icu_inputs_scheme_,
+                                              hosp_proc_scheme=hosp_proc_scheme,
+                                              icu_proc_scheme=icu_proc_scheme,
+                                              icu_inputs_scheme=icu_inputs_scheme,
                                               maximum_padding=1)
 
 
@@ -254,26 +225,26 @@ def admission(dx_codes: CodesVector, dx_codes_history: CodesVector,
 
 
 @pytest.fixture
-def segmented_admission(admission: Admission, icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
-                        hosp_proc_scheme_: CodingScheme) -> SegmentedAdmission:
+def segmented_admission(admission: Admission, icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
+                        hosp_proc_scheme: CodingScheme) -> SegmentedAdmission:
     return SegmentedAdmission.from_admission(admission=admission, maximum_padding=1,
-                                             icu_inputs_size=len(icu_inputs_scheme_),
-                                             icu_procedures_size=len(icu_proc_scheme_),
-                                             hosp_procedures_size=len(hosp_proc_scheme_))
+                                             icu_inputs_size=len(icu_inputs_scheme),
+                                             icu_procedures_size=len(icu_proc_scheme),
+                                             hosp_procedures_size=len(hosp_proc_scheme))
 
 
-def _admissions(n_admissions, dx_scheme_: CodingScheme,
+def _admissions(n_admissions, dx_scheme: CodingScheme,
                 outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
-                icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
-                hosp_proc_scheme_: CodingScheme) -> List[Admission]:
+                icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
+                hosp_proc_scheme: CodingScheme) -> List[Admission]:
     admissions = []
     for i in range(n_admissions):
-        dx_codes = _dx_codes(dx_scheme_)
+        dx_codes = _dx_codes(dx_scheme)
         obs = _inpatient_observables(obs_scheme, n_timestamps=nrand.randint(0, 100))
         lead = leading_observables_extractor(observation_scheme=obs_scheme.name)(obs)
-        icu_proc = _proc(icu_proc_scheme_, n_timestamps=nrand.randint(0, 50))
-        hosp_proc = _proc(hosp_proc_scheme_, n_timestamps=nrand.randint(0, 50))
-        icu_inputs = _icu_inputs(icu_inputs_scheme_, n_timestamps=nrand.randint(0, 50))
+        icu_proc = _proc(icu_proc_scheme, n_timestamps=nrand.randint(0, 50))
+        hosp_proc = _proc(hosp_proc_scheme, n_timestamps=nrand.randint(0, 50))
+        icu_inputs = _icu_inputs(icu_inputs_scheme, n_timestamps=nrand.randint(0, 50))
 
         admissions.append(_admission(admission_id=f'test_{i}', admission_date=pd.to_datetime('now'),
                                      dx_codes=dx_codes,
@@ -288,14 +259,14 @@ def _admissions(n_admissions, dx_scheme_: CodingScheme,
 
 @pytest.fixture
 def patient(n_admissions, static_info: StaticInfo,
-            dx_scheme_: CodingScheme,
+            dx_scheme: CodingScheme,
             outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
-            icu_inputs_scheme_: CodingScheme, icu_proc_scheme_: CodingScheme,
-            hosp_proc_scheme_: CodingScheme) -> List[Patient]:
-    admissions = _admissions(n_admissions=n_admissions, dx_scheme_=dx_scheme_,
+            icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
+            hosp_proc_scheme: CodingScheme) -> List[Patient]:
+    admissions = _admissions(n_admissions=n_admissions, dx_scheme=dx_scheme,
                              outcome_extractor_=outcome_extractor_, obs_scheme=obs_scheme,
-                             icu_inputs_scheme_=icu_inputs_scheme_, icu_proc_scheme_=icu_proc_scheme_,
-                             hosp_proc_scheme_=hosp_proc_scheme_)
+                             icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
+                             hosp_proc_scheme=hosp_proc_scheme)
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)
 
 
@@ -711,17 +682,17 @@ class TestInpatientInterventions:
 
 class TestSegmentedInpatientInterventions:
 
-    def test_from_inpatient_interventions(self, inpatient_interventions, hosp_proc_scheme_, icu_proc_scheme_,
-                                          icu_inputs_scheme_):
+    def test_from_inpatient_interventions(self, inpatient_interventions, hosp_proc_scheme, icu_proc_scheme,
+                                          icu_inputs_scheme):
         assert all(
-            isinstance(scheme, CodingScheme) for scheme in (hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_))
-        schemes = {"hosp_procedures": hosp_proc_scheme_,
-                   "icu_procedures": icu_proc_scheme_,
-                   "icu_inputs": icu_inputs_scheme_}
+            isinstance(scheme, CodingScheme) for scheme in (hosp_proc_scheme, icu_proc_scheme, icu_inputs_scheme))
+        schemes = {"hosp_procedures": hosp_proc_scheme,
+                   "icu_procedures": icu_proc_scheme,
+                   "icu_inputs": icu_inputs_scheme}
         seg = SegmentedInpatientInterventions.from_interventions(inpatient_interventions, LENGTH_OF_STAY,
-                                                                 hosp_procedures_size=len(hosp_proc_scheme_),
-                                                                 icu_procedures_size=len(icu_proc_scheme_),
-                                                                 icu_inputs_size=len(icu_inputs_scheme_),
+                                                                 hosp_procedures_size=len(hosp_proc_scheme),
+                                                                 icu_procedures_size=len(icu_proc_scheme),
+                                                                 icu_inputs_size=len(icu_inputs_scheme),
                                                                  maximum_padding=1)
         assert abs(len(seg.time) - len(inpatient_interventions.timestamps)) <= 2
         for k in ("hosp_procedures", "icu_procedures", "icu_inputs"):
@@ -750,14 +721,14 @@ class TestSegmentedInpatientInterventions:
 
     @pytest.mark.parametrize("test_target", ["hosp_procedures", "icu_procedures", "icu_inputs"])
     def test_segmentation(self, inpatient_interventions: InpatientInterventions, test_target: str,
-                          hosp_proc_scheme_, icu_proc_scheme_, icu_inputs_scheme_):
+                          hosp_proc_scheme, icu_proc_scheme, icu_inputs_scheme):
         inpatient_intervention = getattr(inpatient_interventions, test_target)
         if inpatient_intervention is None or inpatient_intervention.starttime.size == 0:
             pytest.skip("No interventions to test")
 
-        scheme = {"hosp_procedures": hosp_proc_scheme_,
-                  "icu_procedures": icu_proc_scheme_,
-                  "icu_inputs": icu_inputs_scheme_}[test_target]
+        scheme = {"hosp_procedures": hosp_proc_scheme,
+                  "icu_procedures": icu_proc_scheme,
+                  "icu_inputs": icu_inputs_scheme}[test_target]
         seg = SegmentedInpatientInterventions._segment(inpatient_intervention.starttime,
                                                        inpatient_intervention,
                                                        len(scheme))
