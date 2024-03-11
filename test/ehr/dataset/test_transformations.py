@@ -10,100 +10,142 @@ import pytest
 
 from lib import Config
 from lib.ehr import Dataset
-from lib.ehr.transformations import DatasetTransformation, SampleSubjects, CastTimestamps, \
-    FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetCodeIntegerIndices, SetIndex, ProcessOverlappingAdmissions, \
-    FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects, ICUInputRateUnitConversion, \
-    ObsIQROutlierRemover, RandomSplits, FilterSubjectsNegativeAdmissionLengths, CodedValueScaler, ObsAdaptiveScaler, \
-    InputScaler, TrainableTransformation, ValidatedDatasetPipeline, ReportAttributes
-
-
-
-def test_synchronize_index_subjects(indexed_dataset: Dataset):
-    if len(indexed_dataset.tables.admissions) == 0:
-        pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    c_subject_id = indexed_dataset.config.tables.subject_id_alias
-    sample_subject_id = indexed_dataset.tables.admissions[c_subject_id].iloc[0]
-    static = indexed_dataset.tables.static
-    static = static.drop(index=sample_subject_id)
-    indexed_dataset = eqx.tree_at(lambda x: x.tables.static, indexed_dataset, static)
-
-    synced_indexed_dataset, _ = DatasetTransformation.synchronize_index(indexed_dataset, 'static', c_subject_id, aux={},
-                                                                        report=lambda *args, **kwargs: None)
-    assert sample_subject_id in indexed_dataset.tables.admissions[c_subject_id].values
-    assert not sample_subject_id in synced_indexed_dataset.tables.admissions[c_subject_id].values
-    assert set(indexed_dataset.tables.static.index) == set(synced_indexed_dataset.tables.admissions[c_subject_id])
-
-
-def test_synchronize_index_admissions(indexed_dataset: Dataset):
-    if len(indexed_dataset.tables.admissions) == 0:
-        pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    c_admission_id = indexed_dataset.config.tables.admission_id_alias
-    sample_admission_id = indexed_dataset.tables.admissions.index[0]
-    admissions = indexed_dataset.tables.admissions
-    admissions = admissions.drop(index=sample_admission_id)
-    indexed_dataset = eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
-
-    synced_indexed_dataset, aux = DatasetTransformation.synchronize_index(
-        indexed_dataset, 'admissions', c_admission_id,
-        aux={}, report=DatasetTransformation.static_reporter())
-
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
-
-    for table_name, table in indexed_dataset.tables.tables_dict.items():
-        if table is not None and c_admission_id in table.columns and len(table) > 0:
-            assert sample_admission_id in table[c_admission_id].values
-            synced_table = getattr(synced_indexed_dataset.tables, table_name)
-            assert sample_admission_id not in synced_table[c_admission_id].values
-            assert set(synced_table[c_admission_id]).issubset(set(synced_indexed_dataset.tables.admissions.index))
+from lib.ehr.dataset import ReportAttributes, Report
+from lib.ehr.transformations import (DatasetTransformation, CastTimestamps,
+                                     FilterUnsupportedCodes, SetAdmissionRelativeTimes, SetIndex,
+                                     ProcessOverlappingAdmissions,
+                                     FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects,
+                                     ICUInputRateUnitConversion, FilterSubjectsNegativeAdmissionLengths)
+from lib.ehr.tvx_transformations import (SampleSubjects, RandomSplits, CodedValueScaler,
+                                         ObsAdaptiveScaler, InputScaler, TrainableTransformation)
 
 
 class TestDatasetTransformation:
 
-    @pytest.fixture(scope='class')
+    @pytest.fixture
+    def has_admissions_dataset(self, indexed_dataset):
+        if len(indexed_dataset.tables.admissions) == 0:
+            pytest.skip("No admissions data found in dataset.")
+        return indexed_dataset.execute_pipeline()
+
+    @pytest.fixture
     def subject_id_column(self, indexed_dataset: Dataset) -> str:
         return indexed_dataset.config.tables.subject_id_alias
 
-    @pytest.fixture(scope='class')
-    def sample_subject_id(self, indexed_dataset: Dataset, subject_id_column: str) -> str:
-        if len(indexed_dataset.tables.admissions) == 0:
-            pytest.skip("No static table found in dataset.")
-        return indexed_dataset.tables.admissions[subject_id_column].iloc[0]
+    @pytest.fixture
+    def admission_id_column(self, indexed_dataset: Dataset) -> str:
+        return indexed_dataset.config.tables.admission_id_alias
 
-    @pytest.fixture(scope='class')
-    def indexed_dataset_removed_admission(self, indexed_dataset: Dataset, sample_subject_id: str,
-                                          subject_id_column: str):
+    @pytest.fixture
+    def sample_subject_id(self, has_admissions_dataset: Dataset, subject_id_column: str) -> str:
+        return has_admissions_dataset.tables.admissions[subject_id_column].iloc[0]
+
+    @pytest.fixture
+    def sample_admission_id(self, has_admissions_dataset: Dataset) -> str:
+        return has_admissions_dataset.tables.admissions.index[0]
+
+    @pytest.fixture
+    def removed_subject_admissions_dataset(self, indexed_dataset: Dataset, sample_subject_id: str,
+                                           subject_id_column: str):
         admissions = indexed_dataset.tables.admissions
         admissions = admissions[admissions[subject_id_column] != sample_subject_id]
         return eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
 
-    @pytest.fixture(scope='class')
-    def filter_no_admission_subjects_result(self, indexed_dataset_removed_admission: Dataset):
+    @pytest.fixture
+    def removed_no_admission_subjects_RESULTS(self, removed_subject_admissions_dataset: Dataset):
         filtered_dataset, report = DatasetTransformation.filter_no_admission_subjects(
-            indexed_dataset_removed_admission, report=tuple(), reporter=DatasetTransformation.static_reporter())
+            removed_subject_admissions_dataset, report=Report())
         return filtered_dataset, report
 
-    def test_generated_report(self, filter_no_admission_subjects_result: Tuple[Dataset, Tuple[ReportAttributes]]):
-        _, report = filter_no_admission_subjects_result
-        assert isinstance(report, tuple)
-        assert len(report) > 0
-        assert isinstance(report[0], ReportAttributes)
+    @pytest.fixture
+    def removed_no_admission_subjects(self, removed_no_admission_subjects_RESULTS) -> Dataset:
+        return removed_no_admission_subjects_RESULTS[0]
 
-    def test_serializable_report(self, filter_no_admission_subjects_result: Tuple[Dataset, Tuple[ReportAttributes]]):
-        _, report = filter_no_admission_subjects_result
-        assert all(isinstance(v.as_dict(), dict) for v in report)
-        assert all([Config.from_dict(v.to_dict()).equals(v) for v in report])
+    @pytest.fixture
+    def removed_no_admission_subjects_REPORT(self, removed_no_admission_subjects_RESULTS) -> Report:
+        return removed_no_admission_subjects_RESULTS[1]
 
-    def test_filter_no_admissions_subjects(self, indexed_dataset: Dataset,
-                                           filter_no_admission_subjects_result: Tuple[Dataset, Tuple[ReportAttributes]],
+    @pytest.fixture
+    def removed_subject_dataset_unsync(self, has_admissions_dataset: Dataset, sample_subject_id: str,
+                                       subject_id_column: str):
+        static = has_admissions_dataset.tables.static
+        static = static.drop(index=sample_subject_id)
+        return eqx.tree_at(lambda x: x.tables.static, has_admissions_dataset, static)
+
+    @pytest.fixture
+    def removed_admission_dataset_unsync(self, has_admissions_dataset: Dataset, sample_admission_id: str,
+                                         admission_id_column: str):
+        admissions = has_admissions_dataset.tables.admissions
+        admissions = admissions.drop(index=sample_admission_id)
+        return eqx.tree_at(lambda x: x.tables.admissions, has_admissions_dataset, admissions)
+
+    @pytest.fixture
+    def removed_subject_dataset_sync_RESULTS(self, removed_subject_dataset_unsync,
+                                             subject_id_column: str):
+        return DatasetTransformation.synchronize_index(removed_subject_dataset_unsync,
+                                                       'static', subject_id_column,
+                                                       Report())
+
+    @pytest.fixture
+    def removed_subject_dataset_sync(self, removed_subject_dataset_sync_RESULTS) -> Dataset:
+        return removed_subject_dataset_sync_RESULTS[0]
+
+    @pytest.fixture
+    def removed_subject_dataset_sync_REPORT(self, removed_subject_dataset_sync_RESULTS) -> Report:
+        return removed_subject_dataset_sync_RESULTS[1]
+
+    @pytest.fixture
+    def removed_admission_dataset_sync_RESUTLS(self, removed_admission_dataset_unsync,
+                                               admission_id_column: str):
+        return DatasetTransformation.synchronize_index(removed_admission_dataset_unsync,
+                                                       'admissions', admission_id_column,
+                                                       Report())
+
+    @pytest.fixture
+    def removed_admission_dataset_sync(self, removed_admission_dataset_sync_RESUTLS) -> Dataset:
+        return removed_admission_dataset_sync_RESUTLS[0]
+
+    @pytest.fixture
+    def removed_admission_dataset_sync_REPORT(self, removed_admission_dataset_sync_RESUTLS) -> Report:
+        return removed_admission_dataset_sync_RESUTLS[1]
+
+    def test_filter_no_admissions_subjects(self, removed_no_admission_subjects: Dataset,
                                            sample_subject_id: str):
-        filtered_dataset, _ = filter_no_admission_subjects_result
-        assert sample_subject_id not in filtered_dataset.tables.static
+        assert sample_subject_id not in removed_no_admission_subjects.tables.static
+
+    def test_synchronize_index_subjects(self,
+                                        has_admissions_dataset: Dataset,
+                                        removed_subject_dataset_unsync: Dataset,
+                                        removed_subject_dataset_sync: Dataset,
+                                        sample_subject_id: str,
+                                        subject_id_column: str):
+        assert sample_subject_id in has_admissions_dataset.tables.admissions[subject_id_column].values
+        assert sample_subject_id in removed_subject_dataset_unsync.tables.admissions[subject_id_column].values
+        assert sample_subject_id not in removed_subject_dataset_sync.tables.admissions[subject_id_column].values
+        assert set(removed_subject_dataset_sync.tables.static.index) == set(
+            removed_subject_dataset_sync.tables.admissions[subject_id_column])
+
+    def test_synchronize_index_admissions(self, has_admissions_dataset: Dataset,
+                                          removed_admission_dataset_unsync: Dataset,
+                                          removed_admission_dataset_sync: Dataset,
+                                          sample_admission_id: str,
+                                          admission_id_column: str):
+        for table_name, table in removed_admission_dataset_unsync.tables.tables_dict.items():
+            if table is not None and admission_id_column in table.columns and len(table) > 0:
+                assert sample_admission_id in table[admission_id_column].values
+                synced_table = getattr(removed_admission_dataset_sync.tables, table_name)
+                assert sample_admission_id not in synced_table[admission_id_column].values
+                assert set(synced_table[admission_id_column]).issubset(
+                    set(removed_admission_dataset_sync.tables.admissions.index))
+
+    def test_generated_report1(self, removed_no_admission_subjects_REPORT: Report):
+        assert isinstance(removed_no_admission_subjects_REPORT, Report)
+        assert len(removed_no_admission_subjects_REPORT) > 0
+        assert isinstance(removed_no_admission_subjects_REPORT[0], ReportAttributes)
+
+    def test_serializable_report1(self, removed_no_admission_subjects_REPORT: Report):
+        assert all(isinstance(v.as_dict(), dict) for v in removed_no_admission_subjects_REPORT)
+        assert all([Config.from_dict(v.to_dict()).equals(v) for v in removed_no_admission_subjects_REPORT])
 
 
 @pytest.mark.parametrize('seed', [0, 1])

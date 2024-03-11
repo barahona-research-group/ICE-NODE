@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import pickle
 from abc import ABCMeta
+from dataclasses import field
 from datetime import date
 from functools import cached_property
 from pathlib import Path
@@ -251,7 +252,8 @@ class TrainableTransformation(AbstractTVxTransformation, metaclass=ABCMeta):
 
 
 class AbstractTVxPipeline(AbstractDatasetPipeline, metaclass=ABCMeta):
-    transformations: List[AbstractTVxTransformation]
+    transformations: List[AbstractTVxTransformation] = field(kw_only=True)
+    report_class: ClassVar[Type[TVxReport]] = TVxReport
 
 
 class TVxEHR(AbstractDatasetRepresentation):
@@ -291,8 +293,8 @@ class TVxEHR(AbstractDatasetRepresentation):
         _unscaled_leading_observable: unscales the leading observable values, undos the preprocessing scaling.
     """
 
-    config: TVxEHRConfig
-    dataset: Dataset
+    config: TVxEHRConfig = field(kw_only=True)
+    dataset: Dataset = field(kw_only=True)
     dataset_numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
     subjects: Optional[Dict[str, Patient]] = None
     splits: Optional[Tuple[Tuple[str]]] = None

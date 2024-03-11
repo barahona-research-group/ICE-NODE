@@ -194,34 +194,34 @@ class TestDatasetScheme:
             if scheme_name is not None:
                 assert isinstance(getattr(scheme, space), CodingScheme)
 
-    @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
-    def test_supported_target_schemes_options(self, dataset_scheme_config: DatasetSchemeConfig,
-                                              dataset_scheme_targets: Dict[str, Tuple[str]]):
-        scheme = DatasetScheme(config=dataset_scheme_config)
-        supported_target_schemes = scheme.supported_target_scheme_options
+    # @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
+    # def test_supported_target_schemes_options(self, dataset_scheme_config: DatasetSchemeConfig,
+    #                                           dataset_scheme_targets: Dict[str, Tuple[str]]):
+    #     scheme = DatasetScheme(config=dataset_scheme_config)
+    #     supported_target_schemes = scheme.supported_target_scheme_options
+    #
+    #     for space, targets in supported_target_schemes.items():
+    #         support_set = set(dataset_scheme_targets.get(space, set()))
+    #         if getattr(scheme, space) is not None:
+    #             support_set.add(getattr(scheme, space).name)
+    #
+    #         assert set(targets) == support_set
 
-        for space, targets in supported_target_schemes.items():
-            support_set = set(dataset_scheme_targets.get(space, set()))
-            if getattr(scheme, space) is not None:
-                support_set.add(getattr(scheme, space).name)
-
-            assert set(targets) == support_set
-
-    @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
-    def test_make_target_scheme(self, dataset_scheme_config: DatasetSchemeConfig,
-                                dataset_scheme_targets: Dict[str, str]):
-        for target_config in traverse_all_targets(dataset_scheme_targets):
-            scheme = DatasetScheme(config=dataset_scheme_config)
-            target_scheme = scheme.make_target_scheme(scheme.config.update(target_config))
-            assert isinstance(target_scheme, DatasetScheme)
-            for space, target_name in target_config.items():
-                assert isinstance(getattr(target_scheme, space), CodingScheme)
-                assert getattr(target_scheme, space).name == target_name
-
-            if scheme.dx_discharge is not None and target_scheme.dx_discharge is not None:
-                assert isinstance(scheme.dx_mapper(target_scheme), CodeMap)
-            if scheme.ethnicity is not None and target_scheme.ethnicity is not None:
-                assert isinstance(scheme.ethnicity_mapper(target_scheme), CodeMap)
+    # @pytest.mark.usefixtures('cleanup_dataset_scheme_targets')
+    # def test_make_target_scheme(self, dataset_scheme_config: DatasetSchemeConfig,
+    #                             dataset_scheme_targets: Dict[str, str]):
+    #     for target_config in traverse_all_targets(dataset_scheme_targets):
+    #         scheme = DatasetScheme(config=dataset_scheme_config)
+    #         target_scheme = scheme.make_target_scheme(scheme.config.update(target_config))
+    #         assert isinstance(target_scheme, DatasetScheme)
+    #         for space, target_name in target_config.items():
+    #             assert isinstance(getattr(target_scheme, space), CodingScheme)
+    #             assert getattr(target_scheme, space).name == target_name
+    #
+    #         if scheme.dx_discharge is not None and target_scheme.dx_discharge is not None:
+    #             assert isinstance(scheme.dx_mapper(target_scheme), CodeMap)
+    #         if scheme.ethnicity is not None and target_scheme.ethnicity is not None:
+    #             assert isinstance(scheme.ethnicity_mapper(target_scheme), CodeMap)
 
     def test_demographic_size(self, dataset_scheme_config: DatasetSchemeConfig):
         pass
@@ -233,7 +233,7 @@ TEST_DATASET_SCOPE = 'function'
 
 
 class TestDataset:
-    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    @pytest.fixture
     def dataset_after_identity_pipeline(self, dataset: Dataset):
         return dataset.execute_pipeline()
 

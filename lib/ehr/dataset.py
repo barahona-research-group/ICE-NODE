@@ -8,7 +8,7 @@ from dataclasses import field
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Literal
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Literal, Final
 
 import equinox as eqx
 import numpy as np
@@ -17,6 +17,8 @@ import pandas as pd
 from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint)
 from ..base import Config, Module, Data
 from ..utils import write_config, load_config, tqdm_constructor
+
+SECONDS_TO_HOURS_SCALER: Final[float] = 1 / 3600.0  # convert seconds to hours
 
 
 class TableConfig(Config):
@@ -377,7 +379,7 @@ class ReportAttributes(Config):
     value_type: str = None
     before: Optional[str | int | float | bool] = None
     after: Optional[str | int | float | bool] = None
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat(), init=False,
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat(), init=True,
                            compare=False, repr=False, hash=False)
 
     def __post_init__(self):
@@ -399,6 +401,15 @@ class Report(Config):
 
     def add(self, *args, **kwargs):
         return Report(incidents=self.incidents + (self.incident_class(*args, **kwargs),))
+
+    def __len__(self):
+        return len(self.incidents)
+
+    def __getitem__(self, item):
+        return self.incidents[item]
+
+    def __iter__(self):
+        return iter(self.incidents)
 
     def compile(self, previous_report: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         report = self.incidents
@@ -448,7 +459,7 @@ class AbstractDatasetRepresentation(Module):
         dataset = self
         report = Report()
         for t in transformations:
-            dataset, report = t(dataset, report)
+            dataset, report = t.apply(dataset, report)
         return dataset
 
     def equal_report(self, other: 'AbstractDatasetRepresentation') -> bool:
@@ -497,14 +508,6 @@ class AbstractTransformation(eqx.Module):
         raise NotImplementedError
 
     @classmethod
-    def transform(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
-        AbstractDatasetRepresentation, Report]:
-        report = report.add(transformation=cls, operation='start')
-        dataset, report = cls.apply(dataset, report)
-        report = report.add(transformation=cls, operation='end')
-        return dataset, report
-
-    @classmethod
     def skip(cls, dataset: AbstractDatasetRepresentation, report: Report) -> Tuple[
         AbstractDatasetRepresentation, Report]:
         return dataset, report.add(transformation=cls, operation='skip')
@@ -532,7 +535,7 @@ class TransformationsDependency(Config):
 
     @staticmethod
     def empty():
-        return TransformationsDependency(depends={}, blocks={})
+        return TransformationsDependency(depends={}, blocked_by={})
 
     @staticmethod
     def inherit_features(transformation_type: Type[AbstractTransformation],
@@ -591,17 +594,20 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
     config: AbstractDatasetPipelineConfig = field(default_factory=AbstractDatasetPipelineConfig)
     transformations: List[AbstractTransformation] = field(kw_only=True)
     validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
+    report_class: ClassVar[Type[Report]] = Report
 
     def __post_init__(self):
         self.validator.validate_sequence(self.transformations)
 
     def __call__(self, dataset: AbstractDatasetRepresentation) -> Tuple[AbstractDatasetRepresentation, pd.DataFrame]:
-        report = tuple()
+        report = self.report_class()
         with tqdm_constructor(desc='Transforming Dataset', unit='transformations',
                               total=len(self.transformations)) as pbar:
             for t in self.transformations:
                 pbar.set_description(f"Transforming Dataset: {type(t).__name__}")
+                report = report.add(transformation=type(t), operation='start')
                 dataset, report = t.apply(dataset, report)
+                report = report.add(transformation=type(t), operation='end')
                 pbar.update(1)
         return dataset, report.compile(dataset.pipeline_report)
 

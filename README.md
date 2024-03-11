@@ -8,6 +8,7 @@
 - [ ] `lib.ehr.*` documentation / document edge cases tested.
 - [ ] `lib.ehr` custom exceptions / adapt tests.
 - [ ] FHIR resources adaptation.
+- [ ] Support for SNOMED-CT.
 
 
 ##### Coverage

@@ -20,10 +20,6 @@ from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVA
 LENGTH_OF_STAY = 10.0
 
 
-
-
-
-
 def _singular_codevec(scheme: CodingScheme) -> CodesVector:
     return scheme.codeset2vec({random.choice(scheme.codes)})
 
@@ -57,14 +53,6 @@ def static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
     return _static_info(ethnicity, gender)
 
 
-@pytest.fixture
-def dx_scheme(dx_scheme: str) -> CodingScheme:
-    return CodingScheme.from_name(dx_scheme)
-
-
-
-
-
 def _dx_codes(dx_scheme: CodingScheme):
     v = nrand.binomial(1, 0.5, size=len(dx_scheme)).astype(bool)
     return CodesVector(vec=v, scheme=dx_scheme.name)
@@ -86,12 +74,12 @@ def dx_codes_history(dx_codes: CodesVector):
 
 
 def _outcome(outcome_extractor_: OutcomeExtractor, dx_codes: CodesVector):
-    return outcome_extractor_.mapcodevector(dx_codes)
+    return outcome_extractor_.map_vector(dx_codes)
 
 
 @pytest.fixture
-def outcome(dx_codes: CodesVector, outcome_extractor_: OutcomeExtractor):
-    return _outcome(outcome_extractor_, dx_codes)
+def outcome(dx_codes: CodesVector, outcome_extractor: OutcomeExtractor):
+    return _outcome(outcome_extractor, dx_codes)
 
 
 def _inpatient_observables(obs_scheme: CodingScheme, n_timestamps: int):
@@ -181,13 +169,13 @@ def segmented_inpatient_interventions(inpatient_interventions: InpatientInterven
                                               maximum_padding=1)
 
 
-def leading_observables_extractor(observation_scheme: str, leading_hours: List[float] = (1.0,),
+def leading_observables_extractor(obs_scheme: NumericScheme, leading_hours: List[float] = (1.0,),
                                   entry_neglect_window: float = 0.0,
                                   recovery_window: float = 0.0,
                                   minimum_acquisitions: int = 0,
                                   code_index: int = BINARY_OBSERVATION_CODE_INDEX) -> LeadingObservableExtractor:
-    config = LeadingObservableExtractorConfig(code_index=code_index,
-                                              scheme=observation_scheme,
+    config = LeadingObservableExtractorConfig(observable_code=obs_scheme.codes[code_index],
+                                              scheme=obs_scheme.name,
                                               entry_neglect_window=entry_neglect_window,
                                               recovery_window=recovery_window,
                                               minimum_acquisitions=minimum_acquisitions,
@@ -196,8 +184,8 @@ def leading_observables_extractor(observation_scheme: str, leading_hours: List[f
 
 
 @pytest.fixture
-def leading_observable(observation_scheme: str, inpatient_observables: InpatientObservables) -> InpatientObservables:
-    return leading_observables_extractor(observation_scheme=observation_scheme)(inpatient_observables)
+def leading_observable(obs_scheme: NumericScheme, inpatient_observables: InpatientObservables) -> InpatientObservables:
+    return leading_observables_extractor(obs_scheme=obs_scheme)(inpatient_observables)
 
 
 def _admission(admission_id: str, admission_date: pd.Timestamp,
@@ -234,14 +222,14 @@ def segmented_admission(admission: Admission, icu_inputs_scheme: CodingScheme, i
 
 
 def _admissions(n_admissions, dx_scheme: CodingScheme,
-                outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
+                outcome_extractor_: OutcomeExtractor, obs_scheme: NumericScheme,
                 icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
                 hosp_proc_scheme: CodingScheme) -> List[Admission]:
     admissions = []
     for i in range(n_admissions):
         dx_codes = _dx_codes(dx_scheme)
         obs = _inpatient_observables(obs_scheme, n_timestamps=nrand.randint(0, 100))
-        lead = leading_observables_extractor(observation_scheme=obs_scheme.name)(obs)
+        lead = leading_observables_extractor(obs_scheme=obs_scheme)(obs)
         icu_proc = _proc(icu_proc_scheme, n_timestamps=nrand.randint(0, 50))
         hosp_proc = _proc(hosp_proc_scheme, n_timestamps=nrand.randint(0, 50))
         icu_inputs = _icu_inputs(icu_inputs_scheme, n_timestamps=nrand.randint(0, 50))
@@ -260,11 +248,11 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
 @pytest.fixture
 def patient(n_admissions, static_info: StaticInfo,
             dx_scheme: CodingScheme,
-            outcome_extractor_: OutcomeExtractor, obs_scheme: CodingScheme,
+            outcome_extractor: OutcomeExtractor, obs_scheme: CodingScheme,
             icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
             hosp_proc_scheme: CodingScheme) -> List[Patient]:
     admissions = _admissions(n_admissions=n_admissions, dx_scheme=dx_scheme,
-                             outcome_extractor_=outcome_extractor_, obs_scheme=obs_scheme,
+                             outcome_extractor_=outcome_extractor, obs_scheme=obs_scheme,
                              icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
                              hosp_proc_scheme=hosp_proc_scheme)
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)
@@ -427,8 +415,8 @@ class TestInpatientObservables:
 class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
-    def test_len(self, observation_scheme: str, leading_hours: List[float]):
-        extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+    def test_len(self, obs_scheme: NumericScheme, leading_hours: List[float]):
+        extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                   leading_hours=leading_hours)
         assert len(extractor) == len(leading_hours)
 
@@ -436,7 +424,7 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
-    def test_init(self, observation_scheme: str, leading_hours: List[float],
+    def test_init(self, obs_scheme: NumericScheme, leading_hours: List[float],
                   entry_neglect_window: float, recovery_window: float,
                   minimum_acquisitions: int):
         if len(leading_hours) < 2:
@@ -444,7 +432,7 @@ class TestLeadingObservableExtractor:
 
         with pytest.raises(AssertionError):
             # leading hours must be sorted
-            leading_observables_extractor(observation_scheme=observation_scheme,
+            leading_observables_extractor(obs_scheme=obs_scheme,
                                           leading_hours=list(reversed(leading_hours)),
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -453,7 +441,7 @@ class TestLeadingObservableExtractor:
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
-            leading_observables_extractor(observation_scheme=observation_scheme,
+            leading_observables_extractor(obs_scheme=obs_scheme,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -462,7 +450,7 @@ class TestLeadingObservableExtractor:
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
-            leading_observables_extractor(observation_scheme=observation_scheme,
+            leading_observables_extractor(obs_scheme=obs_scheme,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -480,8 +468,8 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
     @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
-    def test_empty(self, observation_scheme: str, leading_hours: List[float], code_index: int):
-        extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+    def test_empty(self, obs_scheme: NumericScheme, leading_hours: List[float], code_index: int):
+        extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                   leading_hours=leading_hours,
                                                   code_index=code_index)
         empty = extractor.empty()
@@ -526,9 +514,9 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
     def test_filter_first_acquisitions(self, inpatient_observables: InpatientObservables,
-                                       observation_scheme: str,
+                                       obs_scheme: NumericScheme,
                                        minimum_acquisitions: int):
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                        minimum_acquisitions=minimum_acquisitions)
         m = lead_extractor.filter_first_acquisitions(len(inpatient_observables), minimum_acquisitions)
         n_affected = min(minimum_acquisitions, len(inpatient_observables))
@@ -537,9 +525,9 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     def test_neutralize_entry_neglect_window(self, inpatient_observables: InpatientObservables,
-                                             observation_scheme: str,
+                                             obs_scheme: NumericScheme,
                                              entry_neglect_window: int):
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                        entry_neglect_window=entry_neglect_window)
         t = inpatient_observables.time
         m = lead_extractor.filter_entry_neglect_window(t, entry_neglect_window)
@@ -549,12 +537,12 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     def test_neutralize_recovery_window(self, inpatient_observables: InpatientObservables,
-                                        observation_scheme: str,
+                                        obs_scheme: NumericScheme,
                                         recovery_window: float):
         if len(inpatient_observables) == 0:
             pytest.skip("No observations to test")
 
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                        entry_neglect_window=recovery_window)
         x = inpatient_observables.value[:, lead_extractor.config.code_index]
         t = inpatient_observables.time
@@ -579,11 +567,11 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1000.0])
     @pytest.mark.parametrize("recovery_window", [0.0, 10000.0])
     def test_mask_noisy_observations(self, inpatient_observables: InpatientObservables,
-                                     observation_scheme: str,
+                                     obs_scheme: NumericScheme,
                                      minimum_acquisitions: int,
                                      entry_neglect_window: int,
                                      recovery_window: float):
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                        minimum_acquisitions=minimum_acquisitions,
                                                        entry_neglect_window=entry_neglect_window,
                                                        recovery_window=recovery_window)
@@ -602,8 +590,8 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
     def test_extract_leading_window(self, inpatient_observables: InpatientObservables,
-                                    observation_scheme: str, code_index: int):
-        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                    obs_scheme: NumericScheme, code_index: int):
+        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
                                                        code_index=code_index)
         x = inpatient_observables.value[:, lead_extractor.config.code_index]
         m = inpatient_observables.mask[:, lead_extractor.config.code_index]

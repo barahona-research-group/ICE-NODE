@@ -10,11 +10,9 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 
-from .dataset import Dataset, AbstractTransformation, AbstractDatasetPipeline, \
-    TransformationsDependency, Report
+from .dataset import (Dataset, AbstractTransformation, AbstractDatasetPipeline,
+                      TransformationsDependency, Report, SECONDS_TO_HOURS_SCALER)
 from .example_datasets.mimiciv import MIMICIVDataset
-
-SECONDS_TO_HOURS_SCALER: float = 1 / 3600.0  # convert seconds to hours
 
 
 class DatasetTransformation(AbstractTransformation, metaclass=ABCMeta):
@@ -67,11 +65,6 @@ class DatasetTransformation(AbstractTransformation, metaclass=ABCMeta):
         dataset, report = cls.synchronize_index(dataset, 'static',
                                                 dataset.config.tables.static.subject_id_alias, report)
         return cls.synchronize_admissions(dataset, report)
-
-
-class ValidatedDatasetPipeline(AbstractDatasetPipeline):
-    transformations: List[DatasetTransformation]
-    validator: ClassVar[TransformationsDependency] = field(default_factory=lambda: DS_PIPELINE_VALIDATOR)
 
 
 class SetIndex(DatasetTransformation):
@@ -517,3 +510,8 @@ DS_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDepende
     depends=DS_DEPENDS_RELATIONS,
     blocked_by=DS_BLOCKED_BY_RELATIONS,
 )
+
+
+class ValidatedDatasetPipeline(AbstractDatasetPipeline):
+    transformations: List[DatasetTransformation] = field(kw_only=True)
+    validator: ClassVar[TransformationsDependency] = DS_PIPELINE_VALIDATOR
