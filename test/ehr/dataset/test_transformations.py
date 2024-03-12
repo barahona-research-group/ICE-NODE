@@ -1,7 +1,7 @@
 import random
 import string
 from collections import defaultdict
-from typing import List, Tuple, Set, Dict, Type, Any
+from typing import List, Tuple, Set, Dict
 
 import equinox as eqx
 import numpy as np
@@ -16,33 +16,9 @@ from lib.ehr.transformations import (DatasetTransformation, CastTimestamps,
                                      ProcessOverlappingAdmissions,
                                      FilterClampTimestampsToAdmissionInterval, FilterInvalidInputRatesSubjects,
                                      ICUInputRateUnitConversion, FilterSubjectsNegativeAdmissionLengths)
-from lib.ehr.tvx_transformations import (SampleSubjects, RandomSplits, CodedValueScaler,
-                                         ObsAdaptiveScaler, InputScaler, TrainableTransformation)
 
 
 class TestDatasetTransformation:
-
-    @pytest.fixture
-    def has_admissions_dataset(self, indexed_dataset):
-        if len(indexed_dataset.tables.admissions) == 0:
-            pytest.skip("No admissions data found in dataset.")
-        return indexed_dataset.execute_pipeline()
-
-    @pytest.fixture
-    def subject_id_column(self, indexed_dataset: Dataset) -> str:
-        return indexed_dataset.config.tables.subject_id_alias
-
-    @pytest.fixture
-    def admission_id_column(self, indexed_dataset: Dataset) -> str:
-        return indexed_dataset.config.tables.admission_id_alias
-
-    @pytest.fixture
-    def sample_subject_id(self, has_admissions_dataset: Dataset, subject_id_column: str) -> str:
-        return has_admissions_dataset.tables.admissions[subject_id_column].iloc[0]
-
-    @pytest.fixture
-    def sample_admission_id(self, has_admissions_dataset: Dataset) -> str:
-        return has_admissions_dataset.tables.admissions.index[0]
 
     @pytest.fixture
     def removed_subject_admissions_dataset(self, indexed_dataset: Dataset, sample_subject_id: str,
@@ -148,300 +124,300 @@ class TestDatasetTransformation:
         assert all([Config.from_dict(v.to_dict()).equals(v) for v in removed_no_admission_subjects_REPORT])
 
 
-@pytest.mark.parametrize('seed', [0, 1])
-def test_sample_subjects(indexed_dataset: Dataset, seed: int):
-    indexed_dataset = indexed_dataset.execute_pipeline()
+class TestCastTimestamps:
+    @pytest.fixture
+    def str_timestamps_dataset(self, indexed_dataset: Dataset):
+        indexed_dataset = indexed_dataset.execute_pipeline()
 
-    if len(indexed_dataset.tables.static) <= 1:
-        pytest.skip("Only one subject in dataset.")
-    if len(indexed_dataset.tables.admissions) == 0:
-        pytest.skip("No admissions table found in dataset. The sampling will result on empty dataset.")
+        for table_name, time_cols in indexed_dataset.config.tables.time_cols.items():
+            if len(time_cols) == 0:
+                continue
+            table = indexed_dataset.tables.tables_dict[table_name]
+            for col in time_cols:
+                table[col] = table[col].astype(str)
+            indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), indexed_dataset, table)
+        return indexed_dataset
 
-    n_subjects = len(indexed_dataset.tables.static)
-    n_sample = int(n_subjects / 5)
+    @pytest.fixture
+    def casted_timestamps_dataset(self, str_timestamps_dataset: Dataset):
+        return CastTimestamps.apply(str_timestamps_dataset, Report())[0]
 
-    for offset in range(n_subjects - n_sample):
-        sampled_dataset, aux = SampleSubjects(n_subjects=n_sample, seed=seed, offset=offset)(indexed_dataset, {})
-        # assert serialization/deserialization of aux reports
-        assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-        assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
-
-        sampled_subjects = sampled_dataset.subject_ids
-        assert len(sampled_subjects) == n_sample
-        assert len(set(sampled_subjects)) == n_sample
-        assert set(sampled_subjects).issubset(set(indexed_dataset.subject_ids))
-
-
-@pytest.fixture
-def indexed_dataset_str_timestamps(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    for table_name, time_cols in indexed_dataset.config.tables.time_cols.items():
-        if len(time_cols) == 0:
-            continue
-        table = indexed_dataset.tables.tables_dict[table_name]
-        for col in time_cols:
-            table[col] = table[col].astype(str)
-        indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), indexed_dataset, table)
-    return indexed_dataset
+    def test_cast_timestamps(self, str_timestamps_dataset: Dataset,
+                             casted_timestamps_dataset: Dataset):
+        for table_name, time_cols in str_timestamps_dataset.config.tables.time_cols.items():
+            if len(time_cols) == 0:
+                continue
+            table1 = str_timestamps_dataset.tables.tables_dict[table_name]
+            table2 = casted_timestamps_dataset.tables.tables_dict[table_name]
+            for col in time_cols:
+                assert table1[col].dtype == np.dtype('O')
+                assert table2[col].dtype == np.dtype('datetime64[ns]')
 
 
-def test_cast_timestamps(indexed_dataset_str_timestamps: Dataset):
-    dataset, _ = CastTimestamps()(indexed_dataset_str_timestamps, {})
+class TestFilterUnsupportedCodes:
+    @pytest.fixture
+    def dataset_with_unsupported_codes(self, has_codes_dataset: Dataset) -> Tuple[Dataset, Dict[str, Set[str]]]:
+        unsupported_codes = {}
+        for table_name, code_col in has_codes_dataset.config.tables.code_column.items():
+            table = has_codes_dataset.tables.tables_dict[table_name]
+            unsupported_code = f'UNSUPPORTED_CODE_{"".join(random.choices(string.ascii_uppercase, k=5))}'
+            table.loc[table.index[0], code_col] = unsupported_code
+            unsupported_codes[table_name] = unsupported_code
+            has_codes_dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), has_codes_dataset, table)
+        return has_codes_dataset, unsupported_codes
 
-    for table_name, time_cols in dataset.config.tables.time_cols.items():
-        if len(time_cols) == 0:
-            continue
-        table = dataset.tables.tables_dict[table_name]
-        for col in time_cols:
-            assert table[col].dtype == np.dtype('datetime64[ns]')
+    @pytest.fixture
+    def filtered_dataset(self, dataset_with_unsupported_codes: Tuple[Dataset, Dict[str, Set[str]]]) -> Dataset:
+        dataset, _ = dataset_with_unsupported_codes
+        return FilterUnsupportedCodes.apply(dataset, Report())[0]
 
-
-@pytest.fixture
-def indexed_dataset_unsupported_codes(indexed_dataset: Dataset):
-    if all(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.code_column.keys()):
-        pytest.skip("No coded tables or they are all empty.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    unsupported_codes = {}
-    for table_name, code_col in indexed_dataset.config.tables.code_column.items():
-        table = indexed_dataset.tables.tables_dict[table_name]
-        unsupported_code = f'UNSUPPORTED_CODE_{"".join(random.choices(string.ascii_uppercase, k=5))}'
-        table.loc[table.index[0], code_col] = unsupported_code
-        unsupported_codes[table_name] = unsupported_code
-        indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), indexed_dataset, table)
-    return indexed_dataset, unsupported_codes
+    def test_filter_unsupported_codes(self, dataset_with_unsupported_codes: Tuple[Dataset, Dict[str, Set[str]]],
+                                      filtered_dataset: Dataset):
+        unfiltered_dataset, unsupported_codes = dataset_with_unsupported_codes
+        for table_name, code_col in filtered_dataset.config.tables.code_column.items():
+            assert unsupported_codes[table_name] in getattr(unfiltered_dataset.tables, table_name)[code_col].values
+            assert unsupported_codes[table_name] not in getattr(filtered_dataset.tables, table_name)[code_col].values
 
 
-def test_filter_unsupported_codes(indexed_dataset_unsupported_codes: Tuple[Dataset, Dict[str, Set[str]]]):
-    indexed_dataset, unsupported_codes = indexed_dataset_unsupported_codes
-    filtered_dataset, _ = FilterUnsupportedCodes()(indexed_dataset, {})
-    for table_name, code_col in filtered_dataset.config.tables.code_column.items():
-        assert unsupported_codes[table_name] in getattr(indexed_dataset.tables, table_name)[code_col].values
-        assert unsupported_codes[table_name] not in getattr(filtered_dataset.tables, table_name)[code_col].values
+class TestSetRelativeTimes:
+
+    @pytest.fixture
+    def relative_times_dataset(self, has_obs_dataset: Dataset):
+        return SetAdmissionRelativeTimes.apply(has_obs_dataset, Report())[0]
+
+    @pytest.fixture
+    def admission_los_table(self, has_obs_dataset: Dataset):
+        admissions = has_obs_dataset.tables.admissions.copy()
+        c_admittime = has_obs_dataset.config.tables.admissions.admission_time_alias
+        c_dischtime = has_obs_dataset.config.tables.admissions.discharge_time_alias
+        admissions['los_hours'] = (admissions[c_dischtime] - admissions[c_admittime]).dt.total_seconds() / (60 * 60)
+
+    def test_set_relative_times(self, has_obs_dataset: Dataset,
+                                relative_times_dataset: Dataset,
+                                admission_los_table: pd.DataFrame,
+                                admission_id_column: str):
+
+        for table_name, time_cols in has_obs_dataset.config.tables.time_cols.items():
+            if table_name in ('admissions', 'static'):
+                continue
+            table = getattr(relative_times_dataset.tables, table_name)
+            table = table.merge(admission_los_table,
+                                left_on=admission_id_column,
+                                right_index=True)
+            for col in time_cols:
+                assert table[col].dtype == float
+                assert table[col].min() >= 0
+                assert all(table[col] <= table['los_hours'])
 
 
-def test_set_relative_times(indexed_dataset: Dataset):
-    if len(indexed_dataset.tables.admissions) == 0 or len(indexed_dataset.tables.obs) == 0:
-        pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
+class TestFilterSubjectsWithNegativeAdmissionInterval:
+    @pytest.fixture
+    def dataset_with_negative_admission(self, has_admissions_dataset: Dataset,
+                                        sample_admission_id: str) -> Dataset:
+        admissions = has_admissions_dataset.tables.admissions.copy()
+        c_admittime = has_admissions_dataset.config.tables.admissions.admission_time_alias
+        c_dischtime = has_admissions_dataset.config.tables.admissions.discharge_time_alias
+        admittime = admissions.loc[sample_admission_id, c_admittime]
+        dischtime = admissions.loc[sample_admission_id, c_dischtime]
+        admissions.loc[sample_admission_id, c_admittime] = dischtime
+        admissions.loc[sample_admission_id, c_dischtime] = admittime
+        return eqx.tree_at(lambda x: x.tables.admissions, has_admissions_dataset, admissions)
 
-    dataset, _ = SetAdmissionRelativeTimes()(indexed_dataset, {})
+    @pytest.fixture
+    def filtered_dataset(self, dataset_with_negative_admission: Dataset):
+        return FilterSubjectsNegativeAdmissionLengths.apply(dataset_with_negative_admission, Report())[0]
 
-    admissions = indexed_dataset.tables.admissions.copy()
-    c_admittime = dataset.config.tables.admissions.admission_time_alias
-    c_dischtime = dataset.config.tables.admissions.discharge_time_alias
-    admissions['los_hours'] = (admissions[c_dischtime] - admissions[c_admittime]).dt.total_seconds() / (60 * 60)
+    def test_filter_subjects_negative_admission_length(self, indexed_dataset_first_negative_admission: Dataset,
+                                                       filtered_dataset: Dataset,
+                                                       admission_time_alias: str,
+                                                       discharge_time_alias: str):
+        admissions0 = indexed_dataset_first_negative_admission.tables.admissions
+        static0 = indexed_dataset_first_negative_admission.tables.static
+        admissions1 = filtered_dataset.tables.admissions
+        static1 = filtered_dataset.tables.static
 
-    for table_name, time_cols in dataset.config.tables.time_cols.items():
-        if table_name in ('admissions', 'static'):
-            continue
-
-        table = getattr(dataset.tables, table_name).copy()
-        table = table.merge(admissions[['los_hours']],
-                            left_on=dataset.config.tables.admissions.admission_id_alias,
-                            right_index=True)
-
-        for col in time_cols:
-            assert table[col].dtype == float
-            assert table[col].min() >= 0
-            assert all(table[col] <= table['los_hours'])
-
-
-@pytest.fixture
-def indexed_dataset_first_negative_admission(indexed_dataset: Dataset):
-    if len(indexed_dataset.tables.admissions) == 0:
-        pytest.skip("No admissions table found in dataset.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    admissions = indexed_dataset.tables.admissions.copy()
-    first_admission_i = admissions.index[0]
-    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
-    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
-    admittime = admissions.loc[first_admission_i, c_admittime]
-    dischtime = admissions.loc[first_admission_i, c_dischtime]
-    admissions.loc[first_admission_i, c_admittime] = dischtime
-    admissions.loc[first_admission_i, c_dischtime] = admittime
-    return eqx.tree_at(lambda x: x.tables.admissions, indexed_dataset, admissions)
+        assert admissions0.shape[0] > admissions1.shape[0]
+        assert static0.shape[0] == static1.shape[0] + 1
+        assert admissions0.loc[admissions0.index[0], admission_time_alias] > admissions0.loc[
+            admissions0.index[0], discharge_time_alias]
+        assert any(admissions0[admission_time_alias] > admissions0[discharge_time_alias])
+        assert all(admissions1[admission_time_alias] <= admissions1[discharge_time_alias])
+        assert admissions0.index[0] not in admissions1.index
 
 
-def test_filter_subjects_negative_admission_length(indexed_dataset_first_negative_admission: Dataset):
-    dataset0 = indexed_dataset_first_negative_admission
-    admissions0 = dataset0.tables.admissions
-    static0 = dataset0.tables.static
+class TestOverlappingAdmissions:
+    def _generate_admissions_from_pattern(self, pattern: List[str],
+                                          c_admission_time: str, c_discharge_time: str) -> pd.DataFrame:
+        if len(pattern) == 0:
+            return pd.DataFrame(columns=[c_admission_time, c_discharge_time])
+        random_monotonic_positive_integers = np.random.randint(1, 30, size=len(pattern)).cumsum()
+        sequence_dates = list(
+            map(lambda x: pd.Timestamp.today().normalize() + pd.Timedelta(days=x), random_monotonic_positive_integers))
+        event_times = dict(zip(pattern, sequence_dates))
+        admission_time = {k: v for k, v in event_times.items() if k.startswith('A')}
+        discharge_time = {k.replace('D', 'A'): v for k, v in event_times.items() if k.startswith('D')}
+        admissions = pd.DataFrame(index=admission_time.keys())
+        admissions[c_admission_time] = admissions.index.map(admission_time)
+        admissions[c_discharge_time] = admissions.index.map(discharge_time)
+        # shuffle the rows shuffled.
+        return admissions.sample(frac=1)
 
-    dataset1, _ = FilterSubjectsNegativeAdmissionLengths()(dataset0, {})
-    admissions1 = dataset1.tables.admissions
-    static1 = dataset1.tables.static
-    c_admittime = dataset1.config.tables.admissions.admission_time_alias
-    c_dischtime = dataset1.config.tables.admissions.discharge_time_alias
+    @pytest.fixture(params=[
+        # Below are a list of tuples of the form (admission_pattern, expected_super_sub).
+        # The admission pattern is a sequence of admission/discharge.
+        # In the database it is possible to have overlapping admissions, so we merge them.
+        # A1 and D1 represent the admission and discharge time of a particular admission record in the database.
+        # A2 and D2 means the same and that A2 happened after A1 (and not necessarily after D1).
+        (['A1', 'A2', 'A3', 'D1', 'D3', 'D2'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'A3', 'D1', 'D2', 'D3'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'A3', 'D2', 'D1', 'D3'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'A3', 'D2', 'D3', 'D1'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'A3', 'D3', 'D1', 'D2'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'A3', 'D3', 'D2', 'D1'], {'A1': ['A2', 'A3']}),
+        ##
+        (['A1', 'A2', 'D1', 'A3', 'D3', 'D2'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'D1', 'A3', 'D2', 'D3'], {'A1': ['A2', 'A3']}),
+        ##
+        (['A1', 'A2', 'D1', 'D2', 'A3', 'D3'], {'A1': ['A2']}),
+        (['A1', 'A2', 'D1', 'D2'], {'A1': ['A2']}),
+        ##
+        (['A1', 'A2', 'D2', 'A3', 'D1', 'D3'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'D2', 'A3', 'D3', 'D1'], {'A1': ['A2', 'A3']}),
+        (['A1', 'A2', 'D2', 'D1', 'A3', 'D3'], {'A1': ['A2']}),
+        ##
+        (['A1', 'D1', 'A2', 'A3', 'D2', 'D3'], {'A2': ['A3']}),
+        (['A1', 'D1', 'A2', 'A3', 'D3', 'D2'], {'A2': ['A3']}),
+        (['A1', 'D1', 'A2', 'D2', 'A3', 'D3'], {}),
+        ##
+        (['A1', 'D1'], {}),
+        ([], {}),
+        (['A1', 'D1', 'A2', 'A3', 'D3', 'A4', 'D2', 'D4'], {'A2': ['A3', 'A4']}),
+        (['A1', 'A2', 'D2', 'D1', 'A3', 'A4', 'D3', 'D4'], {'A1': ['A2'], 'A3': ['A4']}),
+    ])
+    def admission_pattern_with_expected_out(self, request):
+        return request.param
 
-    assert admissions0.shape[0] > admissions1.shape[0]
-    assert static0.shape[0] == static1.shape[0] + 1
+    @pytest.fixture
+    def admission_pattern(self, admission_pattern_with_expected_out):
+        return admission_pattern_with_expected_out[0]
 
-    assert admissions0.loc[admissions0.index[0], c_admittime] > admissions0.loc[admissions0.index[0], c_dischtime]
-    assert any(admissions0[c_admittime] > admissions0[c_dischtime])
-    assert all(admissions1[c_admittime] <= admissions1[c_dischtime])
-    assert admissions0.index[0] not in admissions1.index
+    @pytest.fixture
+    def expected_out(self, admission_pattern_with_expected_out):
+        return admission_pattern_with_expected_out[1]
 
+    @pytest.fixture
+    def admissions_table(self, admission_pattern, admission_time_alias: str, discharge_time_alias: str) -> pd.DataFrame:
+        return self._generate_admissions_from_pattern(admission_pattern, admission_time_alias, discharge_time_alias)
 
-def test_set_code_integer_indices(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_pipeline()
+    @pytest.fixture
+    def superset_admissions_dictionary(self, admissions_table: pd.DataFrame, admission_time_alias: str,
+                                       discharge_time_alias: str) -> Dict[str, List[str]]:
+        sub2sup = ProcessOverlappingAdmissions._collect_overlaps(admissions_table,
+                                                                 admission_time_alias,
+                                                                 discharge_time_alias)
+        sup2sub = defaultdict(list)
+        for sub, sup in sub2sup.items():
+            sup2sub[sup].append(sub)
+        return sup2sub
 
-    dataset, _ = SetCodeIntegerIndices()(indexed_dataset, {})
-    for table_name, code_col in dataset.config.tables.code_column.items():
-        table = getattr(dataset.tables, table_name)
-        scheme = getattr(dataset.scheme, table_name)
-        assert table[code_col].dtype == int
-        assert all(table[code_col].isin(scheme.index.values()))
+    @pytest.fixture
+    def large_admissions_dataset(self, has_admissions_dataset: Dataset):
+        if len(has_admissions_dataset.tables.admissions) < 10:
+            pytest.skip("Not enough admissions for the test in dataset.")
+        return has_admissions_dataset
 
+    def test_overlapping_cases(self, superset_admissions_dictionary, expected_out):
+        assert superset_admissions_dictionary == expected_out
 
-def generate_admissions_from_pattern(pattern: List[str]) -> pd.DataFrame:
-    if len(pattern) == 0:
-        return pd.DataFrame(columns=['admittime', 'dischtime'])
-    random_monotonic_positive_integers = np.random.randint(1, 30, size=len(pattern)).cumsum()
-    sequence_dates = list(
-        map(lambda x: pd.Timestamp.today().normalize() + pd.Timedelta(days=x), random_monotonic_positive_integers))
-    event_times = dict(zip(pattern, sequence_dates))
-    admittimes = {k: v for k, v in event_times.items() if k.startswith('A')}
-    dischtimes = {k.replace('D', 'A'): v for k, v in event_times.items() if k.startswith('D')}
-    admissions = pd.DataFrame(index=admittimes.keys())
-    admissions['admittime'] = admissions.index.map(admittimes)
-    admissions['dischtime'] = admissions.index.map(dischtimes)
-    # shuffle the rows shuffled.
-    return admissions.sample(frac=1)
+    @pytest.fixture
+    def sample_admission_ids_map(self, large_admissions_dataset: Dataset):
+        index = large_admissions_dataset.tables.admissions.index
+        return {
+            index[1]: index[0],
+            index[2]: index[0],
+            index[3]: index[0],
+            index[5]: index[4],
+            index[6]: index[4],
+        }
 
+    @pytest.fixture
+    def merged_admissions_dataset(self, large_admissions_dataset: Dataset, sample_admission_ids_map: Dict[str, str]):
+        return ProcessOverlappingAdmissions._merge_overlapping_admissions(large_admissions_dataset,
+                                                                          sample_admission_ids_map,
+                                                                          Report())[0]
 
-@pytest.mark.parametrize('admission_pattern, expected_out', [
-    # Below are a list of tuples of the form (admission_pattern, expected_super_sub).
-    # The admission pattern is a sequence of admission/discharge.
-    # In the database it is possible to have overlapping admissions, so we merge them.
-    # A1 and D1 represent the admission and discharge time of a particular admission record in the database.
-    # A2 and D2 means the same and that A2 happened after A1 (and not necessarily after D1).
-    (['A1', 'A2', 'A3', 'D1', 'D3', 'D2'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'A3', 'D1', 'D2', 'D3'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'A3', 'D2', 'D1', 'D3'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'A3', 'D2', 'D3', 'D1'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'A3', 'D3', 'D1', 'D2'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'A3', 'D3', 'D2', 'D1'], {'A1': ['A2', 'A3']}),
-    ##
-    (['A1', 'A2', 'D1', 'A3', 'D3', 'D2'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'D1', 'A3', 'D2', 'D3'], {'A1': ['A2', 'A3']}),
-    ##
-    (['A1', 'A2', 'D1', 'D2', 'A3', 'D3'], {'A1': ['A2']}),
-    (['A1', 'A2', 'D1', 'D2'], {'A1': ['A2']}),
-    ##
-    (['A1', 'A2', 'D2', 'A3', 'D1', 'D3'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'D2', 'A3', 'D3', 'D1'], {'A1': ['A2', 'A3']}),
-    (['A1', 'A2', 'D2', 'D1', 'A3', 'D3'], {'A1': ['A2']}),
-    ##
-    (['A1', 'D1', 'A2', 'A3', 'D2', 'D3'], {'A2': ['A3']}),
-    (['A1', 'D1', 'A2', 'A3', 'D3', 'D2'], {'A2': ['A3']}),
-    (['A1', 'D1', 'A2', 'D2', 'A3', 'D3'], {}),
-    ##
-    (['A1', 'D1'], {}),
-    ([], {}),
-    (['A1', 'D1', 'A2', 'A3', 'D3', 'A4', 'D2', 'D4'], {'A2': ['A3', 'A4']}),
-    (['A1', 'A2', 'D2', 'D1', 'A3', 'A4', 'D3', 'D4'], {'A1': ['A2'], 'A3': ['A4']}),
-])
-def test_overlapping_cases(admission_pattern, expected_out):
-    admissions = generate_admissions_from_pattern(admission_pattern)
-    sub2sup = ProcessOverlappingAdmissions._collect_overlaps(admissions, 'admittime', 'dischtime')
-    sup2sub = defaultdict(list)
-    for sub, sup in sub2sup.items():
-        sup2sub[sup].append(sub)
-    assert sup2sub == expected_out
+    def test_map_admission_ids(self, large_admissions_dataset: Dataset,
+                               merged_admissions_dataset: Dataset,
+                               admission_ids_map: Dict[str, str],
+                               admission_id_column: str):
+        admissions0 = large_admissions_dataset.tables.admissions
+        admissions1 = merged_admissions_dataset.tables.admissions
 
+        assert len(admissions0) == len(admissions1) + len(admission_ids_map)
+        assert set(admissions1.index).issubset(set(admissions0.index))
+        for table_name, table1 in merged_admissions_dataset.tables.tables_dict.items():
+            table0 = getattr(large_admissions_dataset.tables, table_name)
+            if admission_id_column in table1.columns:
+                assert len(table1) == len(table0)
+                assert set(table1[admission_id_column]) - set(admissions1.index.values) == set()
+                assert set(table0[admission_id_column]) - set(admissions0.index.values) == set()
+                assert set(table1[admission_id_column]) - set(table0[admission_id_column]) == set()
 
-@pytest.fixture
-def admission_ids_map(indexed_dataset: Dataset):
-    indexed_dataset = indexed_dataset.execute_pipeline()
+    @pytest.fixture
+    def large_dataset_overlaps_dictionary(self, large_admissions_dataset: Dataset, subject_id_alias: str,
+                                          admission_time_alias: str, discharge_time_alias: str):
+        admissions = large_admissions_dataset.tables.admissions
 
-    if len(indexed_dataset.tables.admissions) < 10:
-        pytest.skip("Not enough admissions for the test in dataset.")
-    index = indexed_dataset.tables.admissions.index
-    return {
-        index[1]: index[0],
-        index[2]: index[0],
-        index[3]: index[0],
-        index[5]: index[4],
-        index[6]: index[4],
-    }
+        sub2sup = {adm_id: super_adm_id for _, subject_adms in admissions.groupby(subject_id_alias)
+                   for adm_id, super_adm_id in ProcessOverlappingAdmissions._collect_overlaps(subject_adms,
+                                                                                              admission_time_alias,
+                                                                                              discharge_time_alias).items()}
 
+        if len(sub2sup) == 0:
+            pytest.skip("No overlapping admissions in dataset.")
 
-def test_map_admission_ids(indexed_dataset: Dataset, admission_ids_map: Dict[str, str]):
-    indexed_dataset = indexed_dataset.execute_pipeline()
+        return sub2sup
 
-    # Assert no data loss from records.
-    # Assert children admissions are mapped in records and removed from admissions.
-    dataset, aux = ProcessOverlappingAdmissions._merge_overlapping_admissions(indexed_dataset, {},
-                                                                              admission_ids_map,
-                                                                              DatasetTransformation.static_reporter())
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+    @pytest.fixture
+    def merged_overlapping_admission_dataset(self, large_admissions_dataset: Dataset):
+        large_admissions_dataset = eqx.tree_at(lambda x: x.config.overlapping_admissions, large_admissions_dataset,
+                                               "merge")
+        return ProcessOverlappingAdmissions.apply(large_admissions_dataset, Report())[0]
 
-    admissions0 = indexed_dataset.tables.admissions
-    admissions1 = dataset.tables.admissions
+    @pytest.fixture
+    def removed_overlapping_admission_subjects_dataset(self, large_admissions_dataset: Dataset):
+        large_admissions_dataset = eqx.tree_at(lambda x: x.config.overlapping_admissions, large_admissions_dataset,
+                                               "remove")
+        return ProcessOverlappingAdmissions.apply(large_admissions_dataset, Report())[0]
 
-    assert len(admissions0) == len(admissions1) + len(admission_ids_map)
-    assert set(admissions1.index).issubset(set(admissions0.index))
+    def test_process_overlapping_admissions(self, large_admissions_dataset: Dataset,
+                                            large_dataset_overlaps_dictionary: Dict[str, str],
+                                            merged_overlapping_admission_dataset: Dataset,
+                                            removed_overlapping_admission_subjects_dataset: Dataset,
+                                            admission_id_alias: str):
 
-    c_admission_id = dataset.config.tables.admissions.admission_id_alias
-    for table_name, table in dataset.tables.tables_dict.items():
-        table0 = getattr(indexed_dataset.tables, table_name)
-        if c_admission_id in table.columns:
-            assert len(table) == len(table0)
-            assert set(table[c_admission_id]) - set(admissions1.index.values) == set()
-            assert set(table0[c_admission_id]) - set(admissions0.index.values) == set()
-            assert set(table[c_admission_id]) - set(table0[c_admission_id]) == set()
+        admissions0 = large_admissions_dataset.tables.admissions
+        admissions_m = merged_overlapping_admission_dataset.tables.admissions
+        admissions_r = removed_overlapping_admission_subjects_dataset.tables.admissions
 
+        assert len(admissions0) == len(admissions_m) + len(large_dataset_overlaps_dictionary)
+        assert len(admissions_m) > len(admissions_r)
+        assert len(merged_overlapping_admission_dataset.tables.static) > len(
+            removed_overlapping_admission_subjects_dataset.tables.static)
 
-def test_merge_overlapping_admissions(indexed_dataset: Dataset):
-    if len(indexed_dataset.tables.admissions) == 0:
-        pytest.skip("No admissions in dataset.")
-    indexed_dataset = indexed_dataset.execute_pipeline()
+        for table_name, table0 in large_admissions_dataset.tables.tables_dict.items():
+            table_m = getattr(merged_overlapping_admission_dataset.tables, table_name)
+            table_r = getattr(removed_overlapping_admission_subjects_dataset.tables, table_name)
 
-    admissions = indexed_dataset.tables.admissions
-    c_subject_id = indexed_dataset.config.tables.admissions.subject_id_alias
-    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
-    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
-
-    sub2sup = {adm_id: super_adm_id for _, subject_adms in admissions.groupby(c_subject_id)
-               for adm_id, super_adm_id in ProcessOverlappingAdmissions._collect_overlaps(subject_adms,
-                                                                                          c_admittime,
-                                                                                          c_dischtime).items()}
-
-    if len(sub2sup) == 0:
-        pytest.skip("No overlapping admissions in dataset.")
-
-    merged_dataset, aux1 = ProcessOverlappingAdmissions(merge=True)(indexed_dataset, {})
-    filtered_dataset, aux2 = ProcessOverlappingAdmissions(merge=False)(indexed_dataset, {})
-    for aux in [aux1, aux2]:
-        # assert serialization/deserialization of aux reports
-        assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-        assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
-
-    admissions0 = indexed_dataset.tables.admissions
-    admissions_m = merged_dataset.tables.admissions
-    admissions_f = filtered_dataset.tables.admissions
-
-    assert len(admissions0) == len(admissions_m) + len(sub2sup)
-    assert len(admissions_m) > len(admissions_f)
-    assert len(merged_dataset.tables.static) > len(filtered_dataset.tables.static)
-
-    c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
-    for table_name, table0 in indexed_dataset.tables.tables_dict.items():
-        table_m = getattr(merged_dataset.tables, table_name)
-        table_f = getattr(filtered_dataset.tables, table_name)
-
-        if c_admission_id in table0.columns and len(table0) > 0:
-            assert len(table_m) == len(table0)
-            assert set(table_m[c_admission_id]) - set(admissions_m.index.values) == set()
-            assert set(table0[c_admission_id]) - set(admissions0.index.values) == set()
-            assert set(table_m[c_admission_id]) - set(table0[c_admission_id]) == set()
-            assert len(table_f) <= len(table0)
-            assert set(table_f[c_admission_id]).intersection(set(sub2sup.keys()) | set(sub2sup.values())) == set()
+            if admission_id_alias in table0.columns and len(table0) > 0:
+                assert len(table_m) == len(table0)
+                assert set(table_m[admission_id_alias]) - set(admissions_m.index.values) == set()
+                assert set(table0[admission_id_alias]) - set(admissions0.index.values) == set()
+                assert set(table_m[admission_id_alias]) - set(table0[admission_id_alias]) == set()
+                assert len(table_r) <= len(table0)
+                assert set(table_r[admission_id_alias]).intersection(
+                    set(large_dataset_overlaps_dictionary.keys()) | set(
+                        large_dataset_overlaps_dictionary.values())) == set()
 
 
 def test_select_subjects_with_observation(indexed_dataset: Dataset):
@@ -449,389 +425,97 @@ def test_select_subjects_with_observation(indexed_dataset: Dataset):
     pass
 
 
-@pytest.fixture
-def shifted_timestamps_dataset(indexed_dataset: Dataset):
-    if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):
-        pytest.skip("No temporal data in dataset.")
+class TestClampTimestamps:
+    @pytest.fixture
+    def shifted_timestamps_dataset(self, indexed_dataset: Dataset):
+        if any(len(getattr(indexed_dataset.tables, k)) == 0 for k in indexed_dataset.config.tables.time_cols.keys()):
+            pytest.skip("No temporal data in dataset.")
 
-    indexed_dataset = indexed_dataset.execute_pipeline()
+        indexed_dataset = indexed_dataset.execute_pipeline()
 
-    admissions = indexed_dataset.tables.admissions
+        admissions = indexed_dataset.tables.admissions
 
-    c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
-    c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
-    c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
-    admission_id = admissions.index[0]
-    admittime = admissions.loc[admission_id, c_admittime]
-    dischtime = admissions.loc[admission_id, c_dischtime]
-    if 'obs' in indexed_dataset.tables.tables_dict:
-        c_time = indexed_dataset.config.tables.obs.time_alias
+        c_admission_id = indexed_dataset.config.tables.admissions.admission_id_alias
+        c_admittime = indexed_dataset.config.tables.admissions.admission_time_alias
+        c_dischtime = indexed_dataset.config.tables.admissions.discharge_time_alias
+        admission_id = admissions.index[0]
+        admittime = admissions.loc[admission_id, c_admittime]
+        dischtime = admissions.loc[admission_id, c_dischtime]
+        if 'obs' in indexed_dataset.tables.tables_dict:
+            c_time = indexed_dataset.config.tables.obs.time_alias
 
-        obs = indexed_dataset.tables.obs.copy()
-        admission_obs = obs[obs[c_admission_id] == admission_id]
-        if len(admission_obs) > 0:
-            obs.loc[admission_obs.index[0], c_time] = dischtime + pd.Timedelta(days=1)
-        if len(admission_obs) > 1:
-            obs.loc[admission_obs.index[1], c_time] = admittime + pd.Timedelta(days=-1)
-        indexed_dataset = eqx.tree_at(lambda x: x.tables.obs, indexed_dataset, obs)
-    for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
-        if k in indexed_dataset.tables.tables_dict:
-            c_starttime = getattr(indexed_dataset.config.tables, k).start_time_alias
-            c_endtime = getattr(indexed_dataset.config.tables, k).end_time_alias
-            procedures = getattr(indexed_dataset.tables, k).copy()
+            obs = indexed_dataset.tables.obs.copy()
+            admission_obs = obs[obs[c_admission_id] == admission_id]
+            if len(admission_obs) > 0:
+                obs.loc[admission_obs.index[0], c_time] = dischtime + pd.Timedelta(days=1)
+            if len(admission_obs) > 1:
+                obs.loc[admission_obs.index[1], c_time] = admittime + pd.Timedelta(days=-1)
+            indexed_dataset = eqx.tree_at(lambda x: x.tables.obs, indexed_dataset, obs)
+        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
+            if k in indexed_dataset.tables.tables_dict:
+                c_starttime = getattr(indexed_dataset.config.tables, k).start_time_alias
+                c_endtime = getattr(indexed_dataset.config.tables, k).end_time_alias
+                procedures = getattr(indexed_dataset.tables, k).copy()
 
-            admission_procedures = procedures[procedures[c_admission_id] == admission_id]
-            if len(admission_procedures) > 0:
-                procedures.loc[admission_procedures.index[0], c_starttime] = admittime + pd.Timedelta(days=-1)
-                procedures.loc[admission_procedures.index[0], c_endtime] = dischtime + pd.Timedelta(days=1)
+                admission_procedures = procedures[procedures[c_admission_id] == admission_id]
+                if len(admission_procedures) > 0:
+                    procedures.loc[admission_procedures.index[0], c_starttime] = admittime + pd.Timedelta(days=-1)
+                    procedures.loc[admission_procedures.index[0], c_endtime] = dischtime + pd.Timedelta(days=1)
 
-            if len(admission_procedures) > 1:
-                procedures.loc[admission_procedures.index[1], c_starttime] = dischtime + pd.Timedelta(days=1)
-                procedures.loc[admission_procedures.index[1], c_endtime] = dischtime + pd.Timedelta(days=2)
+                if len(admission_procedures) > 1:
+                    procedures.loc[admission_procedures.index[1], c_starttime] = dischtime + pd.Timedelta(days=1)
+                    procedures.loc[admission_procedures.index[1], c_endtime] = dischtime + pd.Timedelta(days=2)
 
-            if len(admission_procedures) > 2:
-                procedures.loc[admission_procedures.index[2], c_starttime] = admittime + pd.Timedelta(days=-2)
-                procedures.loc[admission_procedures.index[2], c_endtime] = admittime + pd.Timedelta(days=-1)
+                if len(admission_procedures) > 2:
+                    procedures.loc[admission_procedures.index[2], c_starttime] = admittime + pd.Timedelta(days=-2)
+                    procedures.loc[admission_procedures.index[2], c_endtime] = admittime + pd.Timedelta(days=-1)
 
-            indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, k), indexed_dataset, procedures)
+                indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, k), indexed_dataset, procedures)
 
-    return indexed_dataset
+        return indexed_dataset
 
-
-def test_clamp_timestamps_to_admission_interval(shifted_timestamps_dataset: Dataset):
-    fixed_dataset, aux = FilterClampTimestampsToAdmissionInterval()(shifted_timestamps_dataset, {})
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
-
-    admissions = shifted_timestamps_dataset.tables.admissions
-
-    c_admission_id = shifted_timestamps_dataset.config.tables.admissions.admission_id_alias
-    c_admittime = shifted_timestamps_dataset.config.tables.admissions.admission_time_alias
-    c_dischtime = shifted_timestamps_dataset.config.tables.admissions.discharge_time_alias
-    admission_id = admissions.index[0]
-    admittime = admissions.loc[admission_id, c_admittime]
-    dischtime = admissions.loc[admission_id, c_dischtime]
-
-    if 'obs' in shifted_timestamps_dataset.tables.tables_dict:
-        c_time = shifted_timestamps_dataset.config.tables.obs.time_alias
-
-        obs0 = shifted_timestamps_dataset.tables.obs
-        obs1 = fixed_dataset.tables.obs
-
-        admission_obs0 = obs0[obs0[c_admission_id] == admission_id]
-        admission_obs1 = obs1[obs1[c_admission_id] == admission_id]
-        if len(admission_obs0) > 0:
-            assert len(admission_obs0) > len(admission_obs1)
-            assert not admission_obs0[c_time].between(admittime, dischtime).all()
-            assert admission_obs1[c_time].between(admittime, dischtime).all()
-
-    for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
-        if k in shifted_timestamps_dataset.tables.tables_dict:
-            c_starttime = getattr(shifted_timestamps_dataset.config.tables, k).start_time_alias
-            c_endtime = getattr(shifted_timestamps_dataset.config.tables, k).end_time_alias
-            procedures0 = getattr(shifted_timestamps_dataset.tables, k)
-            procedures1 = getattr(fixed_dataset.tables, k)
-
-            admission_procedures0 = procedures0[procedures0[c_admission_id] == admission_id]
-            admission_procedures1 = procedures1[procedures1[c_admission_id] == admission_id]
-            if len(admission_procedures0) > 0:
-                assert len(admission_procedures0) >= len(admission_procedures1)
-                assert admission_procedures1[c_starttime].between(admittime, dischtime).all()
-                assert admission_procedures1[c_endtime].between(admittime, dischtime).all()
-
-            if len(admission_procedures0) > 1:
-                assert len(admission_procedures0) > len(admission_procedures1)
+    @pytest.fixture
+    def fixed_dataset(self, shifted_timestamps_dataset: Dataset):
+        return FilterClampTimestampsToAdmissionInterval.apply(shifted_timestamps_dataset, Report())[0]
 
 
-@pytest.fixture
-def unit_converter_table(dataset_config, dataset_tables):
-    if 'icu_inputs' not in dataset_tables.tables_dict or len(dataset_tables.icu_inputs) == 0:
-        pytest.skip("No ICU inputs in dataset.")
-    c_code = dataset_config.tables.icu_inputs.code_alias
-    c_amount_unit = dataset_config.tables.icu_inputs.amount_unit_alias
-    c_norm_factor = dataset_config.tables.icu_inputs.derived_unit_normalization_factor
-    c_universal_unit = dataset_config.tables.icu_inputs.derived_universal_unit
-    icu_inputs = dataset_tables.icu_inputs
+    def test_clamp_timestamps_to_admission_interval(self, shifted_timestamps_dataset: Dataset,
+                                                    fixed_dataset: Dataset,
+                                                    admission_id_alias: str,
+                                                    admission_time_alias: str,
+                                                    discharge_time_alias: str):
+        admissions = shifted_timestamps_dataset.tables.admissions
 
-    table = pd.DataFrame(columns=[c_code, c_amount_unit],
-                         data=[(code, unit) for code, unit in
-                               icu_inputs.groupby([c_code, c_amount_unit]).groups.keys()])
+        admission_id = admissions.index[0]
+        admittime = admissions.loc[admission_id, admission_time_alias]
+        dischtime = admissions.loc[admission_id, discharge_time_alias]
 
-    for code, df in table.groupby(c_code):
-        units = df[c_amount_unit].unique()
-        universal_unit = np.random.choice(units, size=1)[0]
-        norm_factor = 1
-        if len(units) > 1:
-            norm_factor = np.random.choice([1e-3, 100, 10, 1e3], size=len(units))
-            norm_factor = np.where(units == universal_unit, 1, norm_factor)
-        table.loc[df.index, c_norm_factor] = norm_factor
-        table.loc[df.index, c_universal_unit] = universal_unit
+        if 'obs' in shifted_timestamps_dataset.tables.tables_dict:
+            c_time = shifted_timestamps_dataset.config.tables.obs.time_alias
 
-    return table
+            obs0 = shifted_timestamps_dataset.tables.obs
+            obs1 = fixed_dataset.tables.obs
 
+            admission_obs0 = obs0[obs0[admission_id_alias] == admission_id]
+            admission_obs1 = obs1[obs1[admission_id_alias] == admission_id]
+            if len(admission_obs0) > 0:
+                assert len(admission_obs0) > len(admission_obs1)
+                assert not admission_obs0[c_time].between(admittime, dischtime).all()
+                assert admission_obs1[c_time].between(admittime, dischtime).all()
 
-def test_icu_input_rate_unit_conversion(indexed_dataset: Dataset, unit_converter_table: pd.DataFrame):
-    indexed_dataset = indexed_dataset.execute_pipeline()
+        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
+            if k in shifted_timestamps_dataset.tables.tables_dict:
+                c_starttime = getattr(shifted_timestamps_dataset.config.tables, k).start_time_alias
+                c_endtime = getattr(shifted_timestamps_dataset.config.tables, k).end_time_alias
+                procedures0 = getattr(shifted_timestamps_dataset.tables, k)
+                procedures1 = getattr(fixed_dataset.tables, k)
 
-    fixed_dataset, aux = ICUInputRateUnitConversion(conversion_table=unit_converter_table)(indexed_dataset, {})
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
+                admission_procedures0 = procedures0[procedures0[admission_id_alias] == admission_id]
+                admission_procedures1 = procedures1[procedures1[admission_id_alias] == admission_id]
+                if len(admission_procedures0) > 0:
+                    assert len(admission_procedures0) >= len(admission_procedures1)
+                    assert admission_procedures1[c_starttime].between(admittime, dischtime).all()
+                    assert admission_procedures1[c_endtime].between(admittime, dischtime).all()
 
-    icu_inputs0 = indexed_dataset.tables.icu_inputs
-    icu_inputs1 = fixed_dataset.tables.icu_inputs
-    c_code = indexed_dataset.config.tables.icu_inputs.code_alias
-    c_amount = indexed_dataset.config.tables.icu_inputs.amount_alias
-    c_amount_unit = indexed_dataset.config.tables.icu_inputs.amount_unit_alias
-    c_norm_factor = indexed_dataset.config.tables.icu_inputs.derived_unit_normalization_factor
-    c_universal_unit = indexed_dataset.config.tables.icu_inputs.derived_universal_unit
-    c_norm_amount = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount
-    c_rate = indexed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-    _derived_cols = [c_norm_amount, c_rate, c_norm_factor, c_universal_unit]
-    assert all(c not in icu_inputs0.columns for c in _derived_cols)
-    assert all(c in icu_inputs1.columns for c in _derived_cols)
-
-    # For every (code, unit) pair, a unique normalization factor and universal unit is assigned.
-    for (code, unit), inputs_df in icu_inputs1.groupby([c_code, c_amount_unit]):
-        ctable = unit_converter_table[(unit_converter_table[c_code] == code)]
-        ctable = ctable[ctable[c_amount_unit] == unit]
-
-        norm_factor = ctable[c_norm_factor].iloc[0]
-        universal_unit = ctable[c_universal_unit].iloc[0]
-
-        assert inputs_df[c_universal_unit].unique() == universal_unit
-        assert inputs_df[c_norm_factor].unique() == norm_factor
-        assert inputs_df[c_norm_amount].equals(inputs_df[c_amount] * norm_factor)
-
-
-@pytest.fixture
-def preprocessed_dataset(dataset, unit_converter_table):
-    conv = ICUInputRateUnitConversion(conversion_table=unit_converter_table)
-    transformations = [SetIndex(), conv, SetCodeIntegerIndices()]
-    return dataset.execute_external_transformations(transformations)
-
-
-@pytest.fixture
-def nan_inputs_dataset(preprocessed_dataset: Dataset):
-    if 'icu_inputs' not in preprocessed_dataset.tables.tables_dict or len(preprocessed_dataset.tables.icu_inputs) == 0:
-        pytest.skip("No ICU inputs in dataset.")
-
-    preprocessed_dataset = preprocessed_dataset.execute_pipeline()
-
-    c_rate = preprocessed_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-    c_admission_id = preprocessed_dataset.config.tables.icu_inputs.admission_id_alias
-    icu_inputs = preprocessed_dataset.tables.icu_inputs.copy()
-    admission_id = icu_inputs.iloc[0][c_admission_id]
-    icu_inputs.loc[icu_inputs[c_admission_id] == admission_id, c_rate] = np.nan
-    return eqx.tree_at(lambda x: x.tables.icu_inputs, preprocessed_dataset, icu_inputs)
-
-
-def test_filter_invalid_input_rates_subjects(nan_inputs_dataset: Dataset):
-    fixed_dataset, aux = FilterInvalidInputRatesSubjects()(nan_inputs_dataset, {})
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for v in aux['report'])
-    assert all([Config.from_dict(v.to_dict()).equals(v) for v in aux['report']])
-
-    icu_inputs0 = nan_inputs_dataset.tables.icu_inputs
-    admissions0 = nan_inputs_dataset.tables.admissions
-    static0 = nan_inputs_dataset.tables.static
-
-    icu_inputs1 = fixed_dataset.tables.icu_inputs
-    admissions1 = fixed_dataset.tables.admissions
-    static1 = fixed_dataset.tables.static
-
-    c_rate = nan_inputs_dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
-    c_admission_id = nan_inputs_dataset.config.tables.icu_inputs.admission_id_alias
-    c_subject_id = nan_inputs_dataset.config.tables.admissions.subject_id_alias
-    admission_id = icu_inputs0.iloc[0][c_admission_id]
-    subject_id = static0[static0.index == admissions0.loc[admission_id, c_subject_id]].index[0]
-    subject_admissions = admissions0[admissions0[c_subject_id] == subject_id]
-
-    assert not subject_id in static1.index
-    assert not subject_admissions.index.isin(admissions1.index).all()
-    assert not subject_admissions.index.isin(icu_inputs1[c_admission_id]).all()
-    assert icu_inputs0[c_rate].isna().any()
-    assert not icu_inputs1[c_rate].isna().any()
-
-
-@pytest.mark.parametrize('splits', [[0.5], [0.2, 0.5, 0.7], [0.1, 0.2, 0.3, 0.4, 0.5]])
-def test_random_splits(indexed_dataset: Dataset, splits: List[float]):
-    indexed_dataset = indexed_dataset.execute_pipeline()
-
-    if len(indexed_dataset.tables.admissions) == 0 or len(splits) >= len(indexed_dataset.subject_ids):
-        pytest.skip("No admissions in dataset or splits requested exceeds the number of subjects.")
-
-    _, aux_subjs = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='subjects',
-                                discount_first_admission=False)(indexed_dataset, {})
-    _, aux_adms = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='admissions',
-                               discount_first_admission=False)(indexed_dataset, {})
-    _, aux_los = RandomSplits(splits=splits, splits_key='splits', seed=0, balance='admissions_intervals',
-                              discount_first_admission=False)(indexed_dataset, {})
-
-    # assert serialization/deserialization of aux reports
-    assert all(isinstance(v.as_dict(), dict) for aux in (aux_subjs, aux_adms, aux_los) for v in aux['report'])
-    assert all(
-        [Config.from_dict(v.to_dict()).equals(v) for aux in (aux_subjs, aux_adms, aux_los) for v in aux['report']])
-
-    for aux in (aux_subjs, aux_adms, aux_los):
-        assert len(aux['splits']) == len(splits) + 1
-        # No overlaps.
-        assert sum(len(v) for v in aux['splits']) == len(indexed_dataset.subject_ids)
-        assert set.union(*[set(v) for v in aux['splits']]) == set(indexed_dataset.subject_ids)
-
-    # # test proportionality
-    # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
-    # is not appropriate.
-    splits_proportions = [p1 - p0 for p0, p1 in zip([0] + splits, splits + [1])]
-    n_adms = lambda subjects: sum(indexed_dataset.subjects_n_admissions.loc[subjects])
-    total_los = lambda subjects: sum(indexed_dataset.subjects_intervals_sum.loc[subjects])
-    p_threshold = 1 / len(indexed_dataset.subject_ids)
-    for i in range(len(splits_proportions)):
-        for j in range(i + 1, len(splits_proportions)):
-            if abs(splits_proportions[i] - splits_proportions[j]) < p_threshold:
-                assert abs(len(aux_subjs['splits'][i]) - len(aux_subjs['splits'][j])) <= 1
-            elif splits_proportions[i] > splits_proportions[j]:
-                assert len(aux_subjs['splits'][i]) >= len(aux_subjs['splits'][j])
-                assert n_adms(aux_adms['splits'][i]) >= n_adms(aux_adms['splits'][j])
-                assert total_los(aux_los['splits'][i]) >= total_los(aux_los['splits'][j])
-            else:
-                assert len(aux_subjs['splits'][i]) <= len(aux_subjs['splits'][j])
-                assert n_adms(aux_adms['splits'][i]) <= n_adms(aux_adms['splits'][j])
-                assert total_los(aux_los['splits'][i]) <= total_los(aux_los['splits'][j])
-
-
-@pytest.mark.parametrize('fit_only', [True, False])
-@pytest.mark.parametrize('use_float16', [True, False])
-@pytest.mark.parametrize('scaler', [('obs', ObsAdaptiveScaler), ('icu_inputs', InputScaler)])
-def test_trainable_transformer(preprocessed_dataset: Dataset, use_float16: bool, fit_only: bool,
-                               scaler: Tuple[str, Type[TrainableTransformation]]):
-    if len(preprocessed_dataset.tables.static) < 5 or len(getattr(preprocessed_dataset.tables, scaler[0])) == 0:
-        pytest.skip("Not enough subjects in dataset or no data to scale.")
-    table_name, scaler_class = scaler
-    scaler_name = f'{table_name}_scaler'
-
-    with pytest.raises(AssertionError):
-        scaler_class(use_float16=use_float16, transformer_key=scaler_name,
-                     fit_only=fit_only, splits_key='splits',
-                     training_split_index=0)(preprocessed_dataset, {})
-
-    aux = {'splits': [preprocessed_dataset.subject_ids[:3], preprocessed_dataset.subject_ids[3:]]}
-    transformer = scaler_class(use_float16=use_float16, transformer_key=scaler_name,
-                               splits_key='splits',
-                               fit_only=fit_only,
-                               training_split_index=0)
-
-    assert isinstance(transformer, TrainableTransformation)
-    assert transformer.fit_only == fit_only
-    assert transformer.transformer_key == scaler_name
-
-    scaled_ds, aux = transformer(preprocessed_dataset, aux)
-    scaler = aux[scaler_name]
-    assert scaler is not None
-    assert isinstance(scaler, CodedValueScaler)
-    assert scaler.table(scaled_ds) is getattr(scaled_ds.tables, table_name)
-    assert scaler.table(preprocessed_dataset) is getattr(preprocessed_dataset.tables, table_name)
-    assert scaler.use_float16 == use_float16
-
-    table0 = scaler.table(preprocessed_dataset)
-    table1 = scaler.table(scaled_ds)
-    c_value = scaler.value_column(scaled_ds)
-    c_code = scaler.code_column(scaled_ds)
-    assert c_value in table1.columns
-    assert c_code in table1.columns
-    if fit_only:
-        assert table1 is table0
-        assert table1[c_value].dtype == scaler.original_dtype
-    else:
-        assert table1 is not table0
-
-        if use_float16:
-            assert table1[c_value].dtype == np.float16
-        else:
-            assert table1[c_value].dtype == table0[c_value].dtype
-
-
-# def test_obs_minmax_scaler(int_indexed_dataset: Dataset):
-#     assert False
-#
-#
-# def test_obs_adaptive_scaler(int_indexed_dataset: Dataset):
-#     assert False
-#
-#
-# def test_obs_iqr_outlier_remover(indexed_dataset: Dataset):
-#     assert False
-
-#
-# @pytest.mark.parametrize('illegal_transformation_sequence', [
-#     (SetIndex(), SetCodeIntegerIndices(), SetIndex()),  # No duplicates.
-#     (SetIndex(), SetCodeIntegerIndices(), SetCodeIntegerIndices()),  # No duplicates.
-#     (SampleSubjects(n_subjects=1),),  # Needs SetIndex before.
-#     # SetAdmissionRelativeTimes() needs SetIndex, CastTimestamps before.
-#     (SetAdmissionRelativeTimes(),),
-#     (SetIndex(), SetAdmissionRelativeTimes()),
-#     (CastTimestamps(), SetAdmissionRelativeTimes()),
-#     # FilterSubjectsNegativeAdmissionLengths() needs SetIndex, CastTimestamps before.
-#     (FilterSubjectsNegativeAdmissionLengths(),),
-#     (SetIndex(), FilterSubjectsNegativeAdmissionLengths()),
-#     (CastTimestamps(), FilterSubjectsNegativeAdmissionLengths()),
-#     # FilterUnsupportedCodes() blocked by SetCodeIntegerIndices before.
-#     (SetCodeIntegerIndices(), FilterUnsupportedCodes(),),
-#     # ProcessOverlappingAdmissions() needs SetIndex, CastTimestamps before.
-#     (ProcessOverlappingAdmissions(merge=True),),
-#     (SetIndex(), ProcessOverlappingAdmissions(merge=True)),
-#     (CastTimestamps(), ProcessOverlappingAdmissions(merge=True)),
-#     # FilterClampTimestampsToAdmissionInterval() needs SetIndex, CastTimestamps before.
-#     # Blocked by SetAdmissionRelativeTimes
-#     (FilterClampTimestampsToAdmissionInterval(),),
-#     (SetIndex(), FilterClampTimestampsToAdmissionInterval()),
-#     (CastTimestamps(), FilterClampTimestampsToAdmissionInterval()),
-#     (SetIndex(), CastTimestamps(), SetAdmissionRelativeTimes(), FilterClampTimestampsToAdmissionInterval()),
-#     # ICUInputRateUnitConversion() is blocked by SetCodeIntegerIndices.
-#     (SetCodeIntegerIndices(), ICUInputRateUnitConversion(conversion_table=None),),
-#     # FilterInvalidInputRatesSubjects() needs SetIndex, ICUInputRateUnitConversion before.
-#     (FilterInvalidInputRatesSubjects(),),
-#     (SetIndex(), FilterInvalidInputRatesSubjects()),
-#     (ICUInputRateUnitConversion(conversion_table=None), FilterInvalidInputRatesSubjects()),
-#     # RandomSplits() needs SetIndex, CastTimestamps before.
-#     (RandomSplits(),),
-#     (SetIndex(), RandomSplits(splits=[0.5], splits_key='')),
-#     (CastTimestamps(), RandomSplits(splits=[0.5], splits_key='')),
-#     # ObsIQROutlierRemover(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices before.
-#     (ObsIQROutlierRemover(splits_key=''),),
-#     (RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-#     (SetIndex(), ObsIQROutlierRemover(splits_key='')),
-#     (SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
-#     (SetIndex(), SetCodeIntegerIndices(), ObsIQROutlierRemover(splits_key='')),
-#     (SetIndex(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-#     (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsIQROutlierRemover(splits_key='')),
-#     # ObsAdaptiveScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
-#     # ObsIQROutlierRemover before.
-#     (ObsAdaptiveScaler(splits_key=''),),
-#     (SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
-#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), ObsAdaptiveScaler(splits_key='')),
-#     # InputScaler(TrainableTransformation) needs RandomSplits, SetIndex, SetCodeIntegerIndices,
-#     # ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects before.
-#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''),
-#      ICUInputRateUnitConversion(conversion_table=None), InputScaler(splits_key='')),
-#     (SetIndex(), SetCodeIntegerIndices(), RandomSplits(splits=[0.5], splits_key=''), FilterInvalidInputRatesSubjects(),
-#      InputScaler(splits_key=''))])
-# def test_pipeline_transformers_sequence(illegal_transformation_sequence: List[DatasetTransformation]):
-#     with pytest.raises(AssertionError):
-#         ValidatedDatasetPipeline(transformations=illegal_transformation_sequence,
-#                         config=Config())
-
-
-@pytest.mark.parametrize('invalid_attrs', [
-    {'before': int, 'after': 0},
-    {'column': float, 'before': 2},
-    {'before': np.dtype('bool')}
-])
-def test_report_attributes_coercion(invalid_attrs: Dict[str, Any]):
-    report_attr = ReportAttributes(**invalid_attrs)
-    as_dict = report_attr.as_dict()
-    for k, v in invalid_attrs.items():
-        if isinstance(v, (np.dtype, type)):
-            assert isinstance(as_dict[k], str)
-            assert as_dict[k] == v.name if isinstance(v, np.dtype) else v.__name__
+                if len(admission_procedures0) > 1:
+                    assert len(admission_procedures0) > len(admission_procedures1)

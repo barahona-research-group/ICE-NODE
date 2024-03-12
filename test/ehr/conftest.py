@@ -12,7 +12,7 @@ from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutc
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
-    AbstractDatasetPipelineConfig, DatasetScheme
+    DatasetScheme
 from lib.ehr.transformations import SetIndex
 
 DATASET_SCOPE = "function"
@@ -463,9 +463,11 @@ def gender_scheme(gender_scheme_name: str) -> CodingScheme:
 def ethnicity_scheme(ethnicity_scheme_name: str) -> CodingScheme:
     return CodingScheme.from_name(ethnicity_scheme_name)
 
+
 @pytest.fixture
 def dx_scheme(dx_scheme_name: str) -> CodingScheme:
     return CodingScheme.from_name(dx_scheme_name)
+
 
 @pytest.fixture
 def outcome_extractor(outcome_extractor_name: str) -> CodingScheme:
@@ -600,3 +602,45 @@ def dataset(dataset_config, dataset_tables):
 @pytest.fixture
 def indexed_dataset(dataset) -> NaiveDataset:
     return dataset.execute_external_transformations([SetIndex()])
+
+
+@pytest.fixture
+def has_admissions_dataset(indexed_dataset):
+    if len(indexed_dataset.tables.admissions) == 0:
+        pytest.skip("No admissions data found in dataset.")
+    return indexed_dataset.execute_pipeline()
+
+
+@pytest.fixture
+def has_codes_dataset(has_admissions_dataset: Dataset):
+    if all(len(getattr(has_admissions_dataset.tables, k)) == 0 for k in
+           has_admissions_dataset.config.tables.code_column.keys()):
+        pytest.skip("No coded tables or they are all empty.")
+    return has_admissions_dataset
+
+
+@pytest.fixture
+def has_obs_dataset(has_admissions_dataset: Dataset):
+    if len(has_admissions_dataset.tables.obs) == 0:
+        pytest.skip("No obs data found in dataset.")
+    return has_admissions_dataset
+
+
+@pytest.fixture
+def subject_id_column(indexed_dataset: Dataset) -> str:
+    return indexed_dataset.config.tables.subject_id_alias
+
+
+@pytest.fixture
+def admission_id_column(indexed_dataset: Dataset) -> str:
+    return indexed_dataset.config.tables.admission_id_alias
+
+
+@pytest.fixture
+def sample_subject_id(has_admissions_dataset: Dataset, subject_id_column: str) -> str:
+    return has_admissions_dataset.tables.admissions[subject_id_column].iloc[0]
+
+
+@pytest.fixture
+def sample_admission_id(has_admissions_dataset: Dataset) -> str:
+    return has_admissions_dataset.tables.admissions.index[0]

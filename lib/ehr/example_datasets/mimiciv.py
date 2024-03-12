@@ -22,8 +22,8 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              TableConfig, CodedTableConfig, AdmissionTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
                              DatasetTables, DatasetConfig, DatasetSchemeConfig, Dataset, AbstractDatasetPipelineConfig)
-from lib.ehr.example_schemes.icd import ICDScheme
 from lib.ehr.dataset import SECONDS_TO_HOURS_SCALER
+from lib.ehr.example_schemes.icd import ICDScheme
 from lib.utils import tqdm_constructor
 
 warnings.filterwarnings('error',
@@ -673,6 +673,17 @@ ENV_MIMICIV_URL: Final[str] = 'MIMICIV_URL'
 
 
 class MIMICIVSQLTablesConfig(DatasetTablesConfig):
+    static: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF, kw_only=True)
+    admissions: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF, kw_only=True)
+    dx_discharge: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF, kw_only=True)
+    obs: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG,
+                                                              kw_only=True)
+    icu_procedures: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROCEDURES_CONF,
+                                                               kw_only=True)
+    icu_inputs: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUTS_CONF, kw_only=True)
+    hosp_procedures: AdmissionIntervalBasedMixedICDTableConfig = field(default_factory=lambda: HOSP_PROCEDURES_CONF,
+                                                                       kw_only=True)
+
     @staticmethod
     def url() -> str:
         if ENV_MIMICIV_URL in os.environ:
@@ -696,17 +707,6 @@ class MIMICIVSQLTablesConfig(DatasetTablesConfig):
     @staticmethod
     def url_from_credentials(user: str, password: str, host: str, port: str, dbname: str) -> str:
         return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}'
-
-    static: StaticSQLTableConfig = field(default_factory=lambda: STATIC_CONF, kw_only=True)
-    admissions: AdmissionSQLTableConfig = field(default_factory=lambda: ADMISSIONS_CONF, kw_only=True)
-    dx_discharge: AdmissionMixedICDSQLTableConfig = field(default_factory=lambda: DX_DISCHARGE_CONF, kw_only=True)
-    obs: AdmissionTimestampedCodedValueSQLTableConfig = field(default_factory=lambda: OBS_TABLE_CONFIG,
-                                                              kw_only=True)
-    icu_procedures: IntervalICUProcedureSQLTableConfig = field(default_factory=lambda: ICU_PROCEDURES_CONF,
-                                                               kw_only=True)
-    icu_inputs: RatedInputSQLTableConfig = field(default_factory=lambda: ICU_INPUTS_CONF, kw_only=True)
-    hosp_procedures: AdmissionIntervalBasedMixedICDTableConfig = field(default_factory=lambda: HOSP_PROCEDURES_CONF,
-                                                                       kw_only=True)
 
 
 class MIMICIVDatasetSchemeMapsFiles(Config):
