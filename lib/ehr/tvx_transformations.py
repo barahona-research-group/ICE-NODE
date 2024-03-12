@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import logging
 import random
-from abc import abstractmethod
 from dataclasses import field
-from typing import Dict, Tuple, List, Callable, Final, Type, Set
+from typing import Dict, Tuple, List, Final, Type, Set
 
 import dask.dataframe as dd
 import equinox as eqx
@@ -16,7 +15,8 @@ from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterven
 from .coding_scheme import CodeMap
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
-from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport
+from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport, \
+    CodedValueScaler, CodedValueProcessor
 
 
 class SampleSubjects(AbstractTVxTransformation):
@@ -39,7 +39,7 @@ class SampleSubjects(AbstractTVxTransformation):
                             transformation=cls,
                             operation='sample')
         dataset = eqx.tree_at(lambda x: x.tables.static, tv_ehr.dataset, static)
-        dataset = DatasetTransformation.synchronize_subjects(dataset, report)
+        dataset, report = DatasetTransformation.synchronize_subjects(dataset, report)
         return eqx.tree_at(lambda x: x.dataset, tv_ehr, dataset), report
 
 
@@ -63,50 +63,6 @@ class RandomSplits(AbstractTVxTransformation):
         return tv_ehr, report
 
 
-class CodedValueProcessor(eqx.Module):
-    code_column: Callable[[Dataset], str]
-    value_column: Callable[[Dataset], str]
-    table: Callable[[Dataset], pd.DataFrame]
-
-    def fit(self, dataset: Dataset, admission_ids: List[str]) -> 'CodedValueProcessor':
-        df = self.table(dataset)
-        c_value = self.value_column(dataset)
-        c_code = self.code_column(dataset)
-        c_adm_id = dataset.config.tables.obs.admission_id_alias
-        df = df[[c_code, c_value, c_adm_id]]
-        df = df[df[c_adm_id].isin(admission_ids)]
-
-        fitted = self
-        for k, v in self._extract_stats(df, c_code, c_value).items():
-            fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
-        return fitted
-
-    @abstractmethod
-    def _extract_stats(self, df: pd.DataFrame, c_code: str, c_value: str) -> Dict[str, pd.Series]:
-        pass
-
-    @abstractmethod
-    def __call__(self, dataset: Dataset) -> Dataset:
-        pass
-
-
-class CodedValueScaler(CodedValueProcessor):
-    use_float16: bool
-
-    @property
-    @abstractmethod
-    def original_dtype(self) -> np.dtype:
-        pass
-
-    @abstractmethod
-    def unscale(self, array: np.ndarray) -> np.ndarray:
-        pass
-
-    @abstractmethod
-    def unscale_code(self, array: np.ndarray, code_index: int) -> np.ndarray:
-        pass
-
-
 class ZScoreScaler(CodedValueScaler):
     mean: pd.Series = field(default_factory=lambda: pd.Series())
     std: pd.Series = field(default_factory=lambda: pd.Series())
@@ -117,14 +73,12 @@ class ZScoreScaler(CodedValueScaler):
 
     def __call__(self, dataset: Dataset) -> Dataset:
         table = self.table(dataset)
-        c_value = self.value_column(dataset)
-        c_code = self.code_column(dataset)
 
-        mean = table[c_code].map(self.mean)
-        std = table[c_code].map(self.std)
-        table.loc[:, c_value] = (table[c_value] - mean) / std
+        mean = table[self.code_column].map(self.mean)
+        std = table[self.code_column].map(self.std)
+        table.loc[:, self.value_column] = (table[self.value_column] - mean) / std
         if self.use_float16:
-            table = table.astype({c_value: np.float16})
+            table = table.astype({self.value_column: np.float16})
 
         return eqx.tree_at(lambda x: self.table(dataset), dataset, table)
 
@@ -155,13 +109,11 @@ class MaxScaler(CodedValueScaler):
 
     def __call__(self, dataset: Dataset) -> Dataset:
         df = self.table(dataset).copy()
-        c_value = self.value_column(dataset)
-        c_code = self.code_column(dataset)
 
-        max_val = df[c_code].map(self.max_val)
-        df.loc[:, c_value] = (df[c_value] / max_val)
+        max_val = df[self.code_column].map(self.max_val)
+        df.loc[:, self.value_column] = (df[self.value_column] / max_val)
         if self.use_float16:
-            df = df.astype({c_value: np.float16})
+            df = df.astype({self.value_column: np.float16})
         return eqx.tree_at(self.table, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
@@ -201,20 +153,18 @@ class AdaptiveScaler(CodedValueScaler):
 
     def __call__(self, dataset: Dataset) -> Dataset:
         df = self.table(dataset).copy()
-        c_value = self.value_column(dataset)
-        c_code = self.code_column(dataset)
 
-        min_val = df[c_code].map(self.min_val)
-        max_val = df[c_code].map(self.max_val)
-        mean = df[c_code].map(self.mean)
-        std = df[c_code].map(self.std)
+        min_val = df[self.code_column].map(self.min_val)
+        max_val = df[self.code_column].map(self.max_val)
+        mean = df[self.code_column].map(self.mean)
+        std = df[self.code_column].map(self.std)
 
-        minmax_scaled = (df[c_value] - min_val) / max_val
-        z_scaled = ((df[c_value] - mean) / std)
+        minmax_scaled = (df[self.value_column] - min_val) / max_val
+        z_scaled = ((df[self.value_column] - mean) / std)
 
-        df.loc[:, c_value] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
+        df.loc[:, self.value_column] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
         if self.use_float16:
-            df = df.astype({c_value: np.float16})
+            df = df.astype({self.value_column: np.float16})
         return eqx.tree_at(self.table, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
@@ -263,12 +213,10 @@ class IQROutlierRemover(CodedValueProcessor):
 
     def __call__(self, dataset: Dataset) -> Dataset:
         table = self.table(dataset)
-        c_value = self.value_column(dataset)
-        c_code = self.code_column(dataset)
 
-        min_val = table[c_code].map(self.min_val)
-        max_val = table[c_code].map(self.max_val)
-        table = table[table[c_value].between(min_val, max_val)]
+        min_val = table[self.code_column].map(self.min_val)
+        max_val = table[self.code_column].map(self.max_val)
+        table = table[table[self.value_column].between(min_val, max_val)]
 
         return eqx.tree_at(self.table, dataset, table)
 
@@ -297,15 +245,16 @@ class ObsIQROutlierRemover(TrainableTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.outlier_removers.obs
-        remover = IQROutlierRemover(table=lambda x: x.dataset.tables.obs,
-                                    code_column=lambda x: x.dataset.config.tables.obs.code_alias,
-                                    value_column=lambda x: x.dataset.config.tables.obs.value_alias,
+        remover = IQROutlierRemover(table_name='obs',
+                                    code_column=tv_ehr.dataset.config.tables.obs.code_alias,
+                                    value_column=tv_ehr.dataset.config.tables.obs.value_alias,
                                     outlier_q1=config.outlier_q1,
                                     outlier_q2=config.outlier_q2,
                                     outlier_iqr_scale=config.outlier_iqr_scale,
                                     outlier_z1=config.outlier_z1,
                                     outlier_z2=config.outlier_z2).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
-        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover)
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover,
+                             is_leaf=lambda x: x is None)
         report = report.add(
             table='obs', column=None, value_type='type',
             transformation=cls,
@@ -326,23 +275,24 @@ class ObsAdaptiveScaler(TrainableTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.scalers.obs
-        value_column = lambda x: x.config.tables.obs.value_alias
-        scaler = AdaptiveScaler(table=lambda x: x.tables.obs,
-                                code_column=lambda x: x.config.tables.obs.code_alias,
+        value_column = tv_ehr.dataset.config.tables.obs.value_alias
+        scaler = AdaptiveScaler(table_name='obs',
+                                code_column=tv_ehr.dataset.config.tables.obs.code_alias,
                                 value_column=value_column,
                                 use_float16=config.use_float16).fit(tv_ehr.dataset,
                                                                     cls.get_admission_ids(tv_ehr))
-        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler)
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler,
+                             is_leaf=lambda x: x is None)
         report = report.add(
             table='obs', column=None, value_type='type',
             transformation=cls,
             operation='TVxEHR.numerical_processors.scalers.obs <- AdaptiveScaler',
             after=type(scaler))
 
-        dtype1 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
+        dtype1 = tv_ehr.dataset.tables.obs[value_column].dtype
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
-        dtype2 = tv_ehr.dataset.tables.obs[value_column(tv_ehr.dataset)].dtype
-        report = report.add(table='obs', column=value_column(tv_ehr.dataset),
+        dtype2 = tv_ehr.dataset.tables.obs[value_column].dtype
+        report = report.add(table='obs', column=value_column,
                             value_type='dtype',
                             transformation=cls,
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
@@ -353,24 +303,25 @@ class ObsAdaptiveScaler(TrainableTransformation):
 class InputScaler(TrainableTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
-        code_column = lambda x: x.config.tables.icu_inputs.code_alias
-        value_column = lambda x: x.config.tables.icu_inputs.derived_normalized_amount_per_hour
+        code_column = tv_ehr.dataset.config.tables.icu_inputs.code_alias
+        value_column = tv_ehr.dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
         config = tv_ehr.config.numerical_processors.scalers.icu_inputs
-        scaler = MaxScaler(table=lambda x: x.tables.icu_inputs,
+        scaler = MaxScaler(table_name='icu_inputs',
                            code_column=code_column,
                            value_column=value_column,
                            use_float16=config.use_float16).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
 
-        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.icu_inputs, tv_ehr, scaler)
+        tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.icu_inputs, tv_ehr, scaler,
+                             is_leaf=lambda x: x is None)
         report = report.add(
             table='icu_inputs', column=None, value_type='type',
             operation='TVxEHR.numerical_processors.scalers.icu_inputs <- MaxScaler',
             after=type(scaler))
 
-        dtype1 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
+        dtype1 = tv_ehr.dataset.tables.icu_inputs[value_column].dtype
         tv_ehr = eqx.tree_at(lambda x: x.dataset, tv_ehr, scaler(tv_ehr.dataset))
-        dtype2 = tv_ehr.dataset.tables.icu_inputs[value_column(tv_ehr.dataset)].dtype
-        report = report.add(table='icu_inputs', column=value_column(tv_ehr.dataset),
+        dtype2 = tv_ehr.dataset.tables.icu_inputs[value_column].dtype
+        report = report.add(table='icu_inputs', column=value_column,
                             value_type='dtype',
                             transformation=cls,
                             operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
@@ -480,7 +431,7 @@ class TVxConcepts(AbstractTVxTransformation):
     def _static_info(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, StaticInfo], TVxReport]:
 
         static = tvx_ehr.dataset.tables.static
-        config = tvx_ehr.config.demographic_vector
+        config = tvx_ehr.config.demographic
         c_gender = tvx_ehr.dataset.config.tables.static
         c_date_of_birth = tvx_ehr.dataset.config.tables.static.date_of_birth_alias
         c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import pickle
-from abc import ABCMeta
+from abc import ABCMeta, abstractmethod
 from dataclasses import field
 from datetime import date
 from functools import cached_property
@@ -14,6 +14,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+import pandas as pd
 
 from . import OutcomeExtractor
 from .coding_scheme import FileBasedOutcomeExtractor, CodesVector
@@ -24,6 +25,51 @@ from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
 from ..base import Config, Data
 from ..utils import tqdm_constructor, write_config, load_config
+
+
+class CodedValueProcessor(eqx.Module):
+    code_column: str
+    value_column: str
+    table_name: str
+
+    def table(self, ds: Dataset) -> pd.DataFrame:
+        return getattr(ds.tables, self.table_name)
+
+    def fit(self, dataset: Dataset, admission_ids: List[str]) -> 'CodedValueProcessor':
+        df = self.table(dataset)
+        c_adm_id = getattr(dataset.config.tables, self.table_name).admission_id_alias
+        df = df[[self.code_column, self.value_column, c_adm_id]]
+        df = df[df[c_adm_id].isin(admission_ids)]
+
+        fitted = self
+        for k, v in self._extract_stats(df, self.code_column, self.value_column).items():
+            fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
+        return fitted
+
+    @abstractmethod
+    def _extract_stats(self, df: pd.DataFrame, c_code: str, c_value: str) -> Dict[str, pd.Series]:
+        pass
+
+    @abstractmethod
+    def __call__(self, dataset: Dataset) -> Dataset:
+        pass
+
+
+class CodedValueScaler(CodedValueProcessor):
+    use_float16: bool
+
+    @property
+    @abstractmethod
+    def original_dtype(self) -> np.dtype:
+        pass
+
+    @abstractmethod
+    def unscale(self, array: np.ndarray) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def unscale_code(self, array: np.ndarray, code_index: int) -> np.ndarray:
+        pass
 
 
 def outcome_first_occurrence(sorted_admissions: List[Admission]):
@@ -76,7 +122,7 @@ class OutlierRemoversConfig(Config):
 
 
 class OutlierRemovers(eqx.Module):
-    obs: Optional[eqx.Module] = None
+    obs: Optional[CodedValueProcessor] = None
 
 
 class ScalersConfig(Config):
@@ -85,8 +131,8 @@ class ScalersConfig(Config):
 
 
 class Scalers(eqx.Module):
-    obs: Optional[eqx.Module] = None
-    icu_inputs: Optional[eqx.Module] = None
+    obs: Optional[CodedValueScaler] = None
+    icu_inputs: Optional[CodedValueScaler] = None
 
 
 class DatasetNumericalProcessorsConfig(Config):
@@ -167,13 +213,13 @@ class TVxEHRConfig(Config):
     Configuration class for the interface.
 
     Attributes:
-        demographic_vector (DemographicVectorConfig): configuration for the demographic vector.
+        demographic (DemographicVectorConfig): configuration for the demographic vector.
         leading_observable (Optional[LeadingObservableExtractorConfig]): configuration for the leading observable (optional).
         scheme (Dict[str, str]): dictionary representing the scheme.
         time_binning (Optional[int]): time binning configuration to aggregate observables/measurements over intervals (optional).
     """
-    scheme: DatasetSchemeConfig
-    demographic_vector: DemographicVectorConfig
+    scheme: TVxEHRSchemeConfig
+    demographic: DemographicVectorConfig
     sample: Optional[TVxEHRSampleConfig] = None
     splits: Optional[TVxEHRSplitsConfig] = None
     numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
@@ -295,7 +341,7 @@ class TVxEHR(AbstractDatasetRepresentation):
 
     config: TVxEHRConfig = field(kw_only=True)
     dataset: Dataset = field(kw_only=True)
-    dataset_numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
+    numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
     subjects: Optional[Dict[str, Patient]] = None
     splits: Optional[Tuple[Tuple[str]]] = None
 
@@ -303,6 +349,12 @@ class TVxEHR(AbstractDatasetRepresentation):
     def subject_ids(self):
         """Get the list of subject IDs."""
         return sorted(self.subjects.keys())
+
+    def equals(self, other: 'TVxEHR'):
+        return self.config == other.config and self.dataset.equals(
+            other.dataset) and self.subjects == other.subjects and \
+            self.equal_report(
+                other) and self.splits == other.splits and self.numerical_processors == other.numerical_processors
 
     @cached_property
     def scheme(self):
@@ -456,7 +508,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         subjects = self.dataset.to_subjects(
             subject_ids,
             num_workers=num_workers,
-            demographic_vector_config=self.config.demographic_vector,
+            demographic_vector_config=self.config.demographic,
             leading_observable_config=self.config.leading_observable,
             target_scheme=self._scheme,
             time_binning=self.config.time_binning)

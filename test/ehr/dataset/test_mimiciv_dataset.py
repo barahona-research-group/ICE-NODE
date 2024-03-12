@@ -9,87 +9,10 @@ import pytest
 from lib.ehr.dataset import Report, Dataset, RatedInputTableConfig, DatasetSchemeConfig, DatasetConfig, \
     AbstractDatasetPipeline
 from lib.ehr.transformations import ICUInputRateUnitConversion, SetIndex, FilterInvalidInputRatesSubjects
-from test.ehr.conftest import NaiveDataset
+from test.ehr.conftest import NaiveDataset, MockMIMICIVDataset
 
 
-class MockDatasetSchemeConfig(DatasetSchemeConfig):
-    _icu_inputs_uom_normalization_table: pd.DataFrame = field(kw_only=True)
-
-    @property
-    def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
-        return self._icu_inputs_uom_normalization_table
-
-    @classmethod
-    def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return AbstractDatasetPipeline(transformations=[SetIndex()])
-
-
-class MockMIMICIVDataset(NaiveDataset):
-    @staticmethod
-    def icu_inputs_uom_normalization(icu_inputs_config: RatedInputTableConfig,
-                                     icu_inputs_uom_normalization_table: pd.DataFrame) -> pd.DataFrame:
-        return icu_inputs_uom_normalization_table
-
-
-@pytest.fixture
-def unit_converter_table(dataset_config, dataset_tables):
-    if 'icu_inputs' not in dataset_tables.tables_dict or len(dataset_tables.icu_inputs) == 0:
-        pytest.skip("No ICU inputs in dataset.")
-    c_code = dataset_config.tables.icu_inputs.code_alias
-    c_amount_unit = dataset_config.tables.icu_inputs.amount_unit_alias
-    c_norm_factor = dataset_config.tables.icu_inputs.derived_unit_normalization_factor
-    c_universal_unit = dataset_config.tables.icu_inputs.derived_universal_unit
-    icu_inputs = dataset_tables.icu_inputs
-
-    table = pd.DataFrame(columns=[c_code, c_amount_unit],
-                         data=[(code, unit) for code, unit in
-                               icu_inputs.groupby([c_code, c_amount_unit]).groups.keys()])
-
-    for code, df in table.groupby(c_code):
-        units = df[c_amount_unit].unique()
-        universal_unit = np.random.choice(units, size=1)[0]
-        norm_factor = 1
-        if len(units) > 1:
-            norm_factor = np.random.choice([1e-3, 100, 10, 1e3], size=len(units))
-            norm_factor = np.where(units == universal_unit, 1, norm_factor)
-        table.loc[df.index, c_norm_factor] = norm_factor
-        table.loc[df.index, c_universal_unit] = universal_unit
-    return table
-
-
-@pytest.fixture
-def mimiciv_dataset_scheme_config(ethnicity_scheme_name: str,
-                                  gender_scheme_name: str,
-                                  dx_scheme_name: str,
-                                  icu_proc_scheme_name: str,
-                                  icu_inputs_scheme_name: str,
-                                  observation_scheme_name: str,
-                                  hosp_proc_scheme_name: str,
-                                  unit_converter_table) -> MockDatasetSchemeConfig:
-    return MockDatasetSchemeConfig(
-        ethnicity=ethnicity_scheme_name,
-        gender=gender_scheme_name,
-        dx_discharge=dx_scheme_name,
-        icu_procedures=icu_proc_scheme_name,
-        icu_inputs=icu_inputs_scheme_name,
-        obs=observation_scheme_name,
-        hosp_procedures=hosp_proc_scheme_name,
-        _icu_inputs_uom_normalization_table=unit_converter_table)
-
-
-@pytest.fixture
-def mimiciv_dataset_config(mimiciv_dataset_scheme_config, dataset_tables_config):
-    return DatasetConfig(scheme=mimiciv_dataset_scheme_config, tables=dataset_tables_config)
-
-
-@pytest.fixture
-def mimiciv_dataset(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
-    ds = MockMIMICIVDataset(config=dataset_config)
-    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
-                       is_leaf=lambda x: x is None).execute_pipeline()
-
-
-class TestUnitConversion:
+class TestUnitConversionAndFilterInvalidInputRates:
 
     @pytest.fixture
     def fixed_dataset(self, mimiciv_dataset: MockMIMICIVDataset) -> Dataset:
@@ -138,7 +61,6 @@ class TestUnitConversion:
                 inputs_df[icu_input_amount_alias] * norm_factor)
 
 
-class TestFilterInvalidInputRatesSubjects:
     @pytest.fixture
     def nan_inputs_dataset(self, fixed_dataset: pd.DataFrame, admission_id_alias: str,
                            icu_input_derived_normalized_amount_per_hour: str):

@@ -1596,6 +1596,9 @@ class Patient(Data):
                 self.static_info.equals(other.static_info) and
                 all(a.equals(b) for a, b in zip(self.admissions, other.admissions)))
 
+    def __eq__(self, other):
+        return self.equals(other)
+
     def extract_leading_observables(self, leading_observable_extractor: LeadingObservableExtractor) -> Patient:
         """
         Extracts the leading observable from all admissions.

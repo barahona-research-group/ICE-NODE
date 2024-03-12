@@ -130,9 +130,7 @@ class TestCastTimestamps:
         indexed_dataset = indexed_dataset.execute_pipeline()
 
         for table_name, time_cols in indexed_dataset.config.tables.time_cols.items():
-            if len(time_cols) == 0:
-                continue
-            table = indexed_dataset.tables.tables_dict[table_name]
+            table = indexed_dataset.tables.tables_dict[table_name].copy()
             for col in time_cols:
                 table[col] = table[col].astype(str)
             indexed_dataset = eqx.tree_at(lambda x: getattr(x.tables, table_name), indexed_dataset, table)
@@ -145,8 +143,6 @@ class TestCastTimestamps:
     def test_cast_timestamps(self, str_timestamps_dataset: Dataset,
                              casted_timestamps_dataset: Dataset):
         for table_name, time_cols in str_timestamps_dataset.config.tables.time_cols.items():
-            if len(time_cols) == 0:
-                continue
             table1 = str_timestamps_dataset.tables.tables_dict[table_name]
             table2 = casted_timestamps_dataset.tables.tables_dict[table_name]
             for col in time_cols:
@@ -191,6 +187,7 @@ class TestSetRelativeTimes:
         c_admittime = has_obs_dataset.config.tables.admissions.admission_time_alias
         c_dischtime = has_obs_dataset.config.tables.admissions.discharge_time_alias
         admissions['los_hours'] = (admissions[c_dischtime] - admissions[c_admittime]).dt.total_seconds() / (60 * 60)
+        return admissions[['los_hours']]
 
     def test_set_relative_times(self, has_obs_dataset: Dataset,
                                 relative_times_dataset: Dataset,
@@ -227,12 +224,12 @@ class TestFilterSubjectsWithNegativeAdmissionInterval:
     def filtered_dataset(self, dataset_with_negative_admission: Dataset):
         return FilterSubjectsNegativeAdmissionLengths.apply(dataset_with_negative_admission, Report())[0]
 
-    def test_filter_subjects_negative_admission_length(self, indexed_dataset_first_negative_admission: Dataset,
+    def test_filter_subjects_negative_admission_length(self, dataset_with_negative_admission: Dataset,
                                                        filtered_dataset: Dataset,
                                                        admission_time_alias: str,
                                                        discharge_time_alias: str):
-        admissions0 = indexed_dataset_first_negative_admission.tables.admissions
-        static0 = indexed_dataset_first_negative_admission.tables.static
+        admissions0 = dataset_with_negative_admission.tables.admissions
+        static0 = dataset_with_negative_admission.tables.static
         admissions1 = filtered_dataset.tables.admissions
         static1 = filtered_dataset.tables.static
 
@@ -348,12 +345,12 @@ class TestOverlappingAdmissions:
 
     def test_map_admission_ids(self, large_admissions_dataset: Dataset,
                                merged_admissions_dataset: Dataset,
-                               admission_ids_map: Dict[str, str],
+                               sample_admission_ids_map: Dict[str, str],
                                admission_id_column: str):
         admissions0 = large_admissions_dataset.tables.admissions
         admissions1 = merged_admissions_dataset.tables.admissions
 
-        assert len(admissions0) == len(admissions1) + len(admission_ids_map)
+        assert len(admissions0) == len(admissions1) + len(sample_admission_ids_map)
         assert set(admissions1.index).issubset(set(admissions0.index))
         for table_name, table1 in merged_admissions_dataset.tables.tables_dict.items():
             table0 = getattr(large_admissions_dataset.tables, table_name)

@@ -76,7 +76,7 @@ class Experiment(Module):
         return model_class(
             self.config.model,
             schemes=interface.schemes,
-            demographic_vector_config=self.config.interface.demographic_vector,
+            demographic_vector_config=self.config.interface.demographic,
             key=key)
 
     def load_metrics(self, interface, splits):
@@ -145,6 +145,6 @@ class InpatientExperiment(Experiment):
         return model_class(
             self.config.model,
             schemes=interface.schemes,
-            demographic_vector_config=self.config.interface.demographic_vector,
+            demographic_vector_config=self.config.interface.demographic,
             leading_observable_config=self.config.interface.leading_observable,
             key=key)

@@ -1,4 +1,5 @@
 import random
+from dataclasses import field
 from typing import List
 
 import equinox as eqx
@@ -7,13 +8,14 @@ import pandas as pd
 import pytest
 
 from lib.ehr import CodingScheme, FlatScheme, \
-    CodingSchemeConfig, OutcomeExtractor
+    CodingSchemeConfig, OutcomeExtractor, TVxEHR, TVxEHRConfig, DemographicVectorConfig
 from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutcomeExtractor, NumericScheme
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
     DatasetScheme
-from lib.ehr.transformations import SetIndex
+from lib.ehr.transformations import SetIndex, ICUInputRateUnitConversion
+from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, AbstractTVxPipeline
 
 DATASET_SCOPE = "function"
 
@@ -512,6 +514,25 @@ def dataset_scheme_config(ethnicity_scheme_name: str,
 
 
 @pytest.fixture
+def tvx_ehr_scheme_config(ethnicity_scheme_name: str,
+                          gender_scheme_name: str,
+                          dx_scheme_name: str,
+                          outcome_extractor_name: str,
+                          icu_proc_scheme_name: str,
+                          icu_inputs_scheme_name: str,
+                          observation_scheme_name: str,
+                          hosp_proc_scheme_name: str) -> DatasetSchemeConfig:
+    return TVxEHRSchemeConfig(ethnicity=ethnicity_scheme_name,
+                              gender=gender_scheme_name,
+                              dx_discharge=dx_scheme_name,
+                              outcome=outcome_extractor_name,
+                              icu_procedures=icu_proc_scheme_name,
+                              icu_inputs=icu_inputs_scheme_name,
+                              obs=observation_scheme_name,
+                              hosp_procedures=hosp_proc_scheme_name)
+
+
+@pytest.fixture
 def dataset_tables_config(static_table_config: StaticTableConfig,
                           admission_table_config: AdmissionTableConfig,
                           obs_table_config: AdmissionTimestampedCodedValueTableConfig,
@@ -644,3 +665,97 @@ def sample_subject_id(has_admissions_dataset: Dataset, subject_id_column: str) -
 @pytest.fixture
 def sample_admission_id(has_admissions_dataset: Dataset) -> str:
     return has_admissions_dataset.tables.admissions.index[0]
+
+
+class MockMIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
+    _icu_inputs_uom_normalization_table: pd.DataFrame = field(kw_only=True)
+
+    @property
+    def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
+        return self._icu_inputs_uom_normalization_table
+
+
+class MockMIMICIVDataset(NaiveDataset):
+    @staticmethod
+    def icu_inputs_uom_normalization(icu_inputs_config: RatedInputTableConfig,
+                                     icu_inputs_uom_normalization_table: pd.DataFrame) -> pd.DataFrame:
+        return icu_inputs_uom_normalization_table
+
+    @classmethod
+    def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return AbstractDatasetPipeline(transformations=[SetIndex()])
+
+
+@pytest.fixture
+def unit_converter_table(dataset_config, dataset_tables):
+    if 'icu_inputs' not in dataset_tables.tables_dict or len(dataset_tables.icu_inputs) == 0:
+        pytest.skip("No ICU inputs in dataset.")
+    c_code = dataset_config.tables.icu_inputs.code_alias
+    c_amount_unit = dataset_config.tables.icu_inputs.amount_unit_alias
+    c_norm_factor = dataset_config.tables.icu_inputs.derived_unit_normalization_factor
+    c_universal_unit = dataset_config.tables.icu_inputs.derived_universal_unit
+    icu_inputs = dataset_tables.icu_inputs
+
+    table = pd.DataFrame(columns=[c_code, c_amount_unit],
+                         data=[(code, unit) for code, unit in
+                               icu_inputs.groupby([c_code, c_amount_unit]).groups.keys()])
+
+    for code, df in table.groupby(c_code):
+        units = df[c_amount_unit].unique()
+        universal_unit = np.random.choice(units, size=1)[0]
+        norm_factor = 1
+        if len(units) > 1:
+            norm_factor = np.random.choice([1e-3, 100, 10, 1e3], size=len(units))
+            norm_factor = np.where(units == universal_unit, 1, norm_factor)
+        table.loc[df.index, c_norm_factor] = norm_factor
+        table.loc[df.index, c_universal_unit] = universal_unit
+    return table
+
+
+@pytest.fixture
+def mimiciv_dataset_scheme_config(ethnicity_scheme_name: str,
+                                  gender_scheme_name: str,
+                                  dx_scheme_name: str,
+                                  icu_proc_scheme_name: str,
+                                  icu_inputs_scheme_name: str,
+                                  observation_scheme_name: str,
+                                  hosp_proc_scheme_name: str,
+                                  unit_converter_table) -> MockMIMICIVDatasetSchemeConfig:
+    return MockMIMICIVDatasetSchemeConfig(
+        ethnicity=ethnicity_scheme_name,
+        gender=gender_scheme_name,
+        dx_discharge=dx_scheme_name,
+        icu_procedures=icu_proc_scheme_name,
+        icu_inputs=icu_inputs_scheme_name,
+        obs=observation_scheme_name,
+        hosp_procedures=hosp_proc_scheme_name,
+        _icu_inputs_uom_normalization_table=unit_converter_table)
+
+
+@pytest.fixture
+def mimiciv_dataset_config(mimiciv_dataset_scheme_config, dataset_tables_config):
+    return DatasetConfig(scheme=mimiciv_dataset_scheme_config, tables=dataset_tables_config)
+
+
+@pytest.fixture
+def mimiciv_dataset(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
+    ds = MockMIMICIVDataset(config=mimiciv_dataset_config)
+    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                       is_leaf=lambda x: x is None).execute_pipeline()
+
+
+class NaiveEHR(TVxEHR):
+    @classmethod
+    def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
+        return AbstractTVxPipeline(transformations=[])
+
+
+@pytest.fixture
+def tvx_ehr_config(tvx_ehr_scheme_config: TVxEHRSchemeConfig) -> TVxEHRConfig:
+    return TVxEHRConfig(scheme=tvx_ehr_scheme_config, demographic=DemographicVectorConfig())
+
+
+@pytest.fixture
+def tvx_ehr(mimiciv_dataset: MockMIMICIVDataset, tvx_ehr_config: TVxEHRConfig) -> TVxEHR:
+    return NaiveEHR(dataset=mimiciv_dataset.execute_external_transformations([ICUInputRateUnitConversion()]),
+                    config=tvx_ehr_config)

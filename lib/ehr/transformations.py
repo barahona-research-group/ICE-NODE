@@ -89,10 +89,8 @@ class CastTimestamps(DatasetTransformation):
         tables = dataset.tables
         tables_dict = tables.tables_dict
         for table_name, time_cols in dataset.config.tables.time_cols.items():
-            if len(time_cols) == 0:
-                continue
-            table = tables_dict[table_name]
 
+            table = tables_dict[table_name].iloc[:, :]
             for time_col in time_cols:
                 assert time_col in table.columns, f'{time_col} not found in {table_name}'
 
