@@ -23,26 +23,75 @@ from .dataset import Dataset, DatasetScheme, DatasetConfig, DatasetSchemeConfig,
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
-from ..base import Config, Data
+from ..base import Config, Data, Module, FlatConfig
 from ..utils import tqdm_constructor, write_config, load_config
 
 
-class CodedValueProcessor(eqx.Module):
-    code_column: str
-    value_column: str
-    table_name: str
+class CodedValueProcessorConfig(Config):
+    pass
 
-    def table(self, ds: Dataset) -> pd.DataFrame:
-        return getattr(ds.tables, self.table_name)
 
-    def fit(self, dataset: Dataset, admission_ids: List[str]) -> 'CodedValueProcessor':
-        df = self.table(dataset)
-        c_adm_id = getattr(dataset.config.tables, self.table_name).admission_id_alias
-        df = df[[self.code_column, self.value_column, c_adm_id]]
+class CodedValueScalerConfig(CodedValueProcessorConfig):
+    use_float16: bool
+
+
+class TVxEHRSplitsConfig(Config):
+    split_quantiles: List[float]
+    seed: int = 0
+    balance: str = 'subjects'
+    discount_first_admission: bool = False
+
+
+class TVxEHRSampleConfig(FlatConfig):
+    n_subjects: int
+    seed: int = 0
+    offset: int = 0
+
+
+class IQROutlierRemoverConfig(FlatConfig):
+    outlier_q1: float = 0.25
+    outlier_q2: float = 0.75
+    outlier_iqr_scale: float = 1.5
+    outlier_z1: float = -2.5
+    outlier_z2: float = 2.5
+
+
+class ScalerConfig(Config):
+    use_float16: bool = True
+
+
+class OutlierRemoversConfig(Config):
+    obs: Optional[IQROutlierRemoverConfig] = None
+
+
+class ScalersConfig(Config):
+    obs: Optional[ScalerConfig] = None
+    icu_inputs: Optional[ScalerConfig] = None
+
+
+class DatasetNumericalProcessorsConfig(Config):
+    scalers: Optional[ScalersConfig] = ScalersConfig()
+    outlier_removers: Optional[OutlierRemoversConfig] = OutlierRemoversConfig()
+
+
+class CodedValueProcessor(Module):
+    config: CodedValueProcessorConfig
+    table_name: Optional[str] = None
+    code_column: Optional[str] = None
+    value_column: Optional[str] = None
+
+    def fit(self, dataset: Dataset, admission_ids: List[str],
+            table_name: str, code_column: str, value_column: str) -> 'CodedValueProcessor':
+        df = getattr(dataset.tables, table_name)
+        c_adm_id = getattr(dataset.config.tables, table_name).admission_id_alias
+        df = df[[code_column, value_column, c_adm_id]]
         df = df[df[c_adm_id].isin(admission_ids)]
 
         fitted = self
-        for k, v in self._extract_stats(df, self.code_column, self.value_column).items():
+        for k, v in self._extract_stats(df, code_column, value_column).items():
+            fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
+
+        for k, v in {'table_name': table_name, 'code_column': code_column, 'value_column': value_column}.items():
             fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
         return fitted
 
@@ -54,9 +103,57 @@ class CodedValueProcessor(eqx.Module):
     def __call__(self, dataset: Dataset) -> Dataset:
         pass
 
+    @property
+    def series_dict(self) -> Dict[str, pd.Series]:
+        return {k: v for k, v in self.__dict__.items() if isinstance(v, pd.Series)}
+
+    @property
+    def processing_target(self) -> Dict[str, str]:
+        return {'table_name': self.table_name, 'code_column': self.code_column, 'value_column': self.value_column}
+
+    def save_series(self, path: Path, key: str):
+        for k, v in self.series_dict.items():
+            v.to_hdf(path, f'{key}/{k}', format='table')
+
+    @staticmethod
+    def load_series(path: Path, key: str):
+        with pd.HDFStore(path, mode='r') as store:
+            return {k.split('/')[-1]: store[k] for k in store.keys() if k.startswith(key)}
+
+    def save_config(self, path: Path, key: str):
+        config = self.config.to_dict()
+        config['classname'] = self.__class__.__name__
+        pd.DataFrame(config, index=[0]).to_hdf(path, f'{key}/config', format='table')
+        pd.DataFrame(self.processing_target, index=[0]).to_hdf(path, f'{key}/target', format='table')
+
+    @staticmethod
+    def load_config(path: Path, key: str) -> Tuple[CodedValueProcessorConfig, str, Dict[str, str]]:
+        with pd.HDFStore(path, mode='r') as store:
+            config_data = store[f"{key}/config"].loc[0].to_dict()
+            classname = config_data.pop('classname')
+            target = store[f"{key}/target"].loc[0].to_dict()
+            return CodedValueProcessorConfig.from_dict(config_data), classname, target
+
+    def save(self, path: Path, key: str):
+        self.save_series(path, f'{key}/series')
+        self.save_config(path, f'{key}/config')
+
+    @staticmethod
+    def load(path: Path, key: str) -> CodedValueProcessor:
+        config, classname, target = CodedValueProcessor.load_config(path, f'{key}/config')
+        series = CodedValueProcessor.load_series(path, f'{key}/series')
+        return Module.import_module(config=config, classname=classname, **series, **target)
+
+    def equals(self, other: CodedValueProcessor):
+        return self.config == other.config and self.processing_target == other.processing_target and \
+            all(getattr(self, k).equals(getattr(other, k)) for k in self.series_dict.keys())
+
+    def __eq__(self, other):
+        return self.equals(other)
+
 
 class CodedValueScaler(CodedValueProcessor):
-    use_float16: bool
+    config: CodedValueScalerConfig
 
     @property
     @abstractmethod
@@ -92,42 +189,8 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
     return first_occurrence
 
 
-class TVxEHRSplitsConfig(Config):
-    split_quantiles: List[float]
-    seed: int = 0
-    balance: str = 'subjects'
-    discount_first_admission: bool = False
-
-
-class TVxEHRSampleConfig(Config):
-    n_subjects: int
-    seed: int = 0
-    offset: int = 0
-
-
-class IQROutlierRemoverConfig(Config):
-    outlier_q1: float = 0.25
-    outlier_q2: float = 0.75
-    outlier_iqr_scale: float = 1.5
-    outlier_z1: float = -2.5
-    outlier_z2: float = 2.5
-
-
-class ScalerConfig(Config):
-    use_float16: bool = True
-
-
-class OutlierRemoversConfig(Config):
-    obs: Optional[IQROutlierRemoverConfig] = None
-
-
 class OutlierRemovers(eqx.Module):
     obs: Optional[CodedValueProcessor] = None
-
-
-class ScalersConfig(Config):
-    obs: Optional[ScalerConfig] = None
-    icu_inputs: Optional[ScalerConfig] = None
 
 
 class Scalers(eqx.Module):
@@ -135,14 +198,35 @@ class Scalers(eqx.Module):
     icu_inputs: Optional[CodedValueScaler] = None
 
 
-class DatasetNumericalProcessorsConfig(Config):
-    scalers: Optional[ScalersConfig] = ScalersConfig()
-    outlier_removers: Optional[OutlierRemoversConfig] = OutlierRemoversConfig()
-
-
 class DatasetNumericalProcessors(eqx.Module):
     outlier_removers: OutlierRemovers = OutlierRemovers()
     scalers: Scalers = Scalers()
+
+    def save(self, path: Path, key: str):
+        if self.outlier_removers.obs is not None:
+            self.outlier_removers.obs.save(path, f'{key}/outlier_removers/obs')
+
+        if self.scalers.obs is not None:
+            self.scalers.obs.save(path, f'{key}/scalers/obs')
+
+        if self.scalers.icu_inputs is not None:
+            self.scalers.icu_inputs.save(path, f'{key}/scalers/icu_inputs')
+
+    @staticmethod
+    def load(path: Path, key: str) -> DatasetNumericalProcessors:
+        scalers = {}
+        outlier_removers = {}
+        with pd.HDFStore(path, mode='r') as store:
+            if f'{key}/outlier_removers' in store:
+                if f'{key}/outlier_removers/obs' in store:
+                    outlier_removers['obs'] = CodedValueProcessor.load(path, f'{key}/outlier_removers')
+            if f'{key}/scalers' in store:
+                if f'{key}/scalers/obs' in store:
+                    scalers['obs'] = CodedValueScaler.load(path, f'{key}/scalers/obs')
+                if f'{key}/scalers/icu_inputs' in store:
+                    scalers['icu_inputs'] = CodedValueScaler.load(path, f'{key}/scalers/icu_inputs')
+        return DatasetNumericalProcessors(outlier_removers=OutlierRemovers(**outlier_removers),
+                                          scalers=Scalers(**scalers))
 
 
 class TVxEHRSchemeConfig(DatasetSchemeConfig):
@@ -342,8 +426,22 @@ class TVxEHR(AbstractDatasetRepresentation):
     config: TVxEHRConfig = field(kw_only=True)
     dataset: Dataset = field(kw_only=True)
     numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
-    subjects: Optional[Dict[str, Patient]] = None
     splits: Optional[Tuple[Tuple[str]]] = None
+    subjects: Optional[Dict[str, Patient]] = None
+
+    @property
+    def header(self) -> Tuple[Tuple[Tuple[str]], DatasetNumericalProcessors]:
+        return self.splits, self.numerical_processors
+
+    @staticmethod
+    def compile_header(splits: Optional[Tuple[Tuple[str]]],
+                       numerical_processors: DatasetNumericalProcessors) -> Tuple[Tuple[Tuple[str]], DatasetNumericalProcessors]:
+        return splits, numerical_processors
+
+    #
+    # def save_header(self, path: Path, key: str):
+    #     pd.DataFrame()
+
 
     @property
     def subject_ids(self):

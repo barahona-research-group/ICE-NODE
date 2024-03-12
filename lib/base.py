@@ -85,6 +85,9 @@ class Config(eqx.Module):
     def equals(self, other: 'Config') -> bool:
         return other.as_dict() == self.as_dict()
 
+    def __eq__(self, other: 'Config') -> bool:
+        return self.equals(other)
+
     @staticmethod
     def as_normal_dict(x: 'Config') -> Dict[str, Any]:
         return {k: v for k, v in x.__dict__.items() if not k.startswith("_")}
@@ -148,6 +151,13 @@ class Config(eqx.Module):
         _type = type(_get(self))
 
         return eqx.tree_at(_get, self, _type(value))
+
+
+class FlatConfig(Config):
+
+    def __post_init__(self):
+        assert all(not isinstance(v, Config) for v in self.__dict__.values()), \
+            "FlatConfig cannot contain nested Configs."
 
 
 class Module(eqx.Module, metaclass=ABCMeta):

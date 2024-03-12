@@ -16,7 +16,7 @@ from .coding_scheme import CodeMap
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport, \
-    CodedValueScaler, CodedValueProcessor
+    CodedValueScaler, CodedValueProcessor, IQROutlierRemoverConifg
 
 
 class SampleSubjects(AbstractTVxTransformation):
@@ -74,11 +74,11 @@ class ZScoreScaler(CodedValueScaler):
     def __call__(self, dataset: Dataset) -> Dataset:
         table = self.table(dataset)
 
-        mean = table[self.code_column].map(self.mean)
-        std = table[self.code_column].map(self.std)
-        table.loc[:, self.value_column] = (table[self.value_column] - mean) / std
-        if self.use_float16:
-            table = table.astype({self.value_column: np.float16})
+        mean = table[self.config.code_column].map(self.mean)
+        std = table[self.config.code_column].map(self.std)
+        table.loc[:, self.config.value_column] = (table[self.config.value_column] - mean) / std
+        if self.config.use_float16:
+            table = table.astype({self.config.value_column: np.float16})
 
         return eqx.tree_at(lambda x: self.table(dataset), dataset, table)
 
@@ -110,10 +110,10 @@ class MaxScaler(CodedValueScaler):
     def __call__(self, dataset: Dataset) -> Dataset:
         df = self.table(dataset).copy()
 
-        max_val = df[self.code_column].map(self.max_val)
-        df.loc[:, self.value_column] = (df[self.value_column] / max_val)
-        if self.use_float16:
-            df = df.astype({self.value_column: np.float16})
+        max_val = df[self.config.code_column].map(self.max_val)
+        df.loc[:, self.config.value_column] = (df[self.config.value_column] / max_val)
+        if self.config.use_float16:
+            df = df.astype({self.config.value_column: np.float16})
         return eqx.tree_at(self.table, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
@@ -154,17 +154,17 @@ class AdaptiveScaler(CodedValueScaler):
     def __call__(self, dataset: Dataset) -> Dataset:
         df = self.table(dataset).copy()
 
-        min_val = df[self.code_column].map(self.min_val)
-        max_val = df[self.code_column].map(self.max_val)
-        mean = df[self.code_column].map(self.mean)
-        std = df[self.code_column].map(self.std)
+        min_val = df[self.config.code_column].map(self.min_val)
+        max_val = df[self.config.code_column].map(self.max_val)
+        mean = df[self.config.code_column].map(self.mean)
+        std = df[self.config.code_column].map(self.std)
 
-        minmax_scaled = (df[self.value_column] - min_val) / max_val
-        z_scaled = ((df[self.value_column] - mean) / std)
+        minmax_scaled = (df[self.config.value_column] - min_val) / max_val
+        z_scaled = ((df[self.config.value_column] - mean) / std)
 
-        df.loc[:, self.value_column] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
-        if self.use_float16:
-            df = df.astype({self.value_column: np.float16})
+        df.loc[:, self.config.value_column] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
+        if self.config.use_float16:
+            df = df.astype({self.config.value_column: np.float16})
         return eqx.tree_at(self.table, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
@@ -203,20 +203,16 @@ class AdaptiveScaler(CodedValueScaler):
 
 
 class IQROutlierRemover(CodedValueProcessor):
-    outlier_q1: float
-    outlier_q2: float
-    outlier_iqr_scale: float
-    outlier_z1: float
-    outlier_z2: float
+    config: IQROutlierRemoverConifg
     min_val: pd.Series = field(default_factory=lambda: pd.Series())
     max_val: pd.Series = field(default_factory=lambda: pd.Series())
 
     def __call__(self, dataset: Dataset) -> Dataset:
         table = self.table(dataset)
 
-        min_val = table[self.code_column].map(self.min_val)
-        max_val = table[self.code_column].map(self.max_val)
-        table = table[table[self.value_column].between(min_val, max_val)]
+        min_val = table[self.config.code_column].map(self.min_val)
+        max_val = table[self.config.code_column].map(self.max_val)
+        table = table[table[self.config.value_column].between(min_val, max_val)]
 
         return eqx.tree_at(self.table, dataset, table)
 
