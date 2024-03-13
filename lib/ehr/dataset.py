@@ -8,7 +8,7 @@ from dataclasses import field
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Literal, Final
+from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Literal, Final, Any
 
 import equinox as eqx
 import numpy as np
@@ -479,9 +479,11 @@ class AbstractDatasetRepresentation(Module):
         pass
 
     @staticmethod
-    def load_config(path: Union[str, Path]) -> Config:
+    def load_config(path: Union[str, Path]) -> Tuple[Config, str]:
         json_path = str(Path(path).with_suffix('.json'))  # config goes here.
-        return Config.from_dict(load_config(json_path))
+        data = load_config(json_path)
+        classname = data.pop('classname')
+        return Config.from_dict(data), classname
 
     def save_config(self, path: Union[str, Path], overwrite: bool = False):
         path = Path(path)
@@ -492,7 +494,33 @@ class AbstractDatasetRepresentation(Module):
                 json_path.unlink()
             else:
                 raise RuntimeError(f'File {json_path} already exists.')
-        write_config(self.config.to_dict(), str(json_path))
+        data = self.config.to_dict()
+        data['classname'] = type(self).__name__
+        write_config(data, str(json_path))
+
+    @abstractmethod
+    @property
+    def header(self) -> Tuple[Any, ...]:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def compile_header(
+            *args, **kwargs) -> Tuple[Any, ...]:
+        pass
+
+    @staticmethod
+    def compare_header(header1: Tuple[Any, ...], header2: Tuple[Any, ...]) -> bool:
+        eq = lambda x, y: x.equals(y) if hasattr(x, 'equals') else x == y
+        for h1, h2 in zip(header1, header2):
+            if not eq(h1, h2):
+                return False
+        return True
+
+    @staticmethod
+    @abstractmethod
+    def load_header(path: Path, key: str) -> Tuple[Any, ...]:
+        pass
 
 
 class AbstractTransformation(eqx.Module):
@@ -656,14 +684,14 @@ class Dataset(AbstractDatasetRepresentation):
     def save(self, path: Union[str, Path], overwrite: bool = False):
         self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        self.tables.save(h5_path, overwrite)
         self.pipeline_report.to_hdf(h5_path,
                                     key='report',
                                     format='table')
+        self.tables.save(h5_path, overwrite)
 
     @classmethod
     def load(cls, path: Union[str, Path]):
-        config = cls.load_config(path)
+        config, _ = cls.load_config(path)
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
         tables = DatasetTables.load(h5_path)
         dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,

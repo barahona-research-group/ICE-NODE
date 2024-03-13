@@ -16,7 +16,7 @@ from .coding_scheme import CodeMap
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport, \
-    CodedValueScaler, CodedValueProcessor, IQROutlierRemoverConifg
+    CodedValueScaler, CodedValueProcessor, IQROutlierRemoverConfig
 
 
 class SampleSubjects(AbstractTVxTransformation):
@@ -72,15 +72,15 @@ class ZScoreScaler(CodedValueScaler):
         return self.mean.dtype
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        table = self.table(dataset)
+        table = self.table_getter(dataset)
 
-        mean = table[self.config.code_column].map(self.mean)
-        std = table[self.config.code_column].map(self.std)
-        table.loc[:, self.config.value_column] = (table[self.config.value_column] - mean) / std
+        mean = table[self.code_column].map(self.mean)
+        std = table[self.code_column].map(self.std)
+        table.loc[:, self.value_column] = (table[self.value_column] - mean) / std
         if self.config.use_float16:
-            table = table.astype({self.config.value_column: np.float16})
+            table = table.astype({self.value_column: np.float16})
 
-        return eqx.tree_at(lambda x: self.table(dataset), dataset, table)
+        return eqx.tree_at(lambda x: self.table_getter(dataset), dataset, table)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
         array = array.astype(self.original_dtype)
@@ -108,13 +108,13 @@ class MaxScaler(CodedValueScaler):
         return self.max_val.dtype
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        df = self.table(dataset).copy()
+        df = self.table_getter(dataset).copy()
 
-        max_val = df[self.config.code_column].map(self.max_val)
-        df.loc[:, self.config.value_column] = (df[self.config.value_column] / max_val)
+        max_val = df[self.code_column].map(self.max_val)
+        df.loc[:, self.value_column] = (df[self.value_column] / max_val)
         if self.config.use_float16:
-            df = df.astype({self.config.value_column: np.float16})
-        return eqx.tree_at(self.table, dataset, df)
+            df = df.astype({self.value_column: np.float16})
+        return eqx.tree_at(self.table_getter, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
         array = array.astype(self.original_dtype)
@@ -152,20 +152,20 @@ class AdaptiveScaler(CodedValueScaler):
         return self.max_val.dtype
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        df = self.table(dataset).copy()
+        df = self.table_getter(dataset).copy()
 
-        min_val = df[self.config.code_column].map(self.min_val)
-        max_val = df[self.config.code_column].map(self.max_val)
-        mean = df[self.config.code_column].map(self.mean)
-        std = df[self.config.code_column].map(self.std)
+        min_val = df[self.code_column].map(self.min_val)
+        max_val = df[self.code_column].map(self.max_val)
+        mean = df[self.code_column].map(self.mean)
+        std = df[self.code_column].map(self.std)
 
-        minmax_scaled = (df[self.config.value_column] - min_val) / max_val
-        z_scaled = ((df[self.config.value_column] - mean) / std)
+        minmax_scaled = (df[self.value_column] - min_val) / max_val
+        z_scaled = ((df[self.value_column] - mean) / std)
 
-        df.loc[:, self.config.value_column] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
+        df.loc[:, self.value_column] = np.where(min_val >= 0.0, minmax_scaled, z_scaled)
         if self.config.use_float16:
-            df = df.astype({self.config.value_column: np.float16})
-        return eqx.tree_at(self.table, dataset, df)
+            df = df.astype({self.value_column: np.float16})
+        return eqx.tree_at(self.table_getter, dataset, df)
 
     def unscale(self, array: np.ndarray) -> np.ndarray:
         array = array.astype(self.original_dtype)
@@ -203,27 +203,27 @@ class AdaptiveScaler(CodedValueScaler):
 
 
 class IQROutlierRemover(CodedValueProcessor):
-    config: IQROutlierRemoverConifg
+    config: IQROutlierRemoverConfig
     min_val: pd.Series = field(default_factory=lambda: pd.Series())
     max_val: pd.Series = field(default_factory=lambda: pd.Series())
 
     def __call__(self, dataset: Dataset) -> Dataset:
-        table = self.table(dataset)
+        table = self.table_getter(dataset)
 
-        min_val = table[self.config.code_column].map(self.min_val)
-        max_val = table[self.config.code_column].map(self.max_val)
-        table = table[table[self.config.value_column].between(min_val, max_val)]
+        min_val = table[self.code_column].map(self.min_val)
+        max_val = table[self.code_column].map(self.max_val)
+        table = table[table[self.value_column].between(min_val, max_val)]
 
-        return eqx.tree_at(self.table, dataset, table)
+        return eqx.tree_at(self.table_getter, dataset, table)
 
     def _extract_stats(self, df: pd.DataFrame, c_code: str, c_value: str) -> Dict[str, pd.Series]:
-        outlier_q = np.array([self.outlier_q1, self.outlier_q2])
+        outlier_q = np.array([self.config.outlier_q1, self.config.outlier_q2])
         q = df.groupby(c_code).apply(lambda x: x[c_value].quantile(outlier_q))
 
         q.columns = ['q1', 'q2']
         q['iqr'] = q['q2'] - q['q1']
-        q['out_q1'] = q['q1'] - self.outlier_iqr_scale * q['iqr']
-        q['out_q2'] = q['q2'] + self.outlier_iqr_scale * q['iqr']
+        q['out_q1'] = q['q1'] - self.config.outlier_iqr_scale * q['iqr']
+        q['out_q2'] = q['q2'] + self.config.outlier_iqr_scale * q['iqr']
 
         stat = df.groupby(c_code).apply(
             lambda x: pd.Series({
@@ -231,8 +231,8 @@ class IQROutlierRemover(CodedValueProcessor):
                 'sigma': x[c_value].std()
             }))
 
-        stat['out_z1'] = stat['mu'] - self.outlier_z1 * stat['sigma']
-        stat['out_z2'] = stat['mu'] + self.outlier_z2 * stat['sigma']
+        stat['out_z1'] = stat['mu'] - self.config.outlier_z1 * stat['sigma']
+        stat['out_z2'] = stat['mu'] + self.config.outlier_z2 * stat['sigma']
         return dict(min_val=np.minimum(q['out_q1'], stat['out_z1']),
                     max_val=np.maximum(q['out_q2'], stat['out_z2']))
 
@@ -241,14 +241,12 @@ class ObsIQROutlierRemover(TrainableTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.outlier_removers.obs
-        remover = IQROutlierRemover(table_name='obs',
-                                    code_column=tv_ehr.dataset.config.tables.obs.code_alias,
-                                    value_column=tv_ehr.dataset.config.tables.obs.value_alias,
-                                    outlier_q1=config.outlier_q1,
-                                    outlier_q2=config.outlier_q2,
-                                    outlier_iqr_scale=config.outlier_iqr_scale,
-                                    outlier_z1=config.outlier_z1,
-                                    outlier_z2=config.outlier_z2).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
+        if config is None:
+            return cls.skip(tv_ehr, report)
+        remover = IQROutlierRemover(config=config).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr),
+                                                       table_name='obs',
+                                                       code_column=tv_ehr.dataset.config.tables.obs.code_alias,
+                                                       value_column=tv_ehr.dataset.config.tables.obs.value_alias)
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.outlier_removers.obs, tv_ehr, remover,
                              is_leaf=lambda x: x is None)
         report = report.add(
@@ -271,12 +269,16 @@ class ObsAdaptiveScaler(TrainableTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         config = tv_ehr.config.numerical_processors.scalers.obs
+
+        if config is None:
+            return cls.skip(tv_ehr, report)
+
         value_column = tv_ehr.dataset.config.tables.obs.value_alias
-        scaler = AdaptiveScaler(table_name='obs',
-                                code_column=tv_ehr.dataset.config.tables.obs.code_alias,
-                                value_column=value_column,
-                                use_float16=config.use_float16).fit(tv_ehr.dataset,
-                                                                    cls.get_admission_ids(tv_ehr))
+        scaler = AdaptiveScaler(config=config).fit(tv_ehr.dataset,
+                                                   cls.get_admission_ids(tv_ehr),
+                                                   table_name='obs',
+                                                   code_column=tv_ehr.dataset.config.tables.obs.code_alias,
+                                                   value_column=value_column)
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.obs, tv_ehr, scaler,
                              is_leaf=lambda x: x is None)
         report = report.add(
@@ -291,7 +293,7 @@ class ObsAdaptiveScaler(TrainableTransformation):
         report = report.add(table='obs', column=value_column,
                             value_type='dtype',
                             transformation=cls,
-                            operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
+                            operation=f'scaled_and_maybe_cast_{scaler.config.use_float16}',
                             before=dtype1, after=dtype2)
         return tv_ehr, report
 
@@ -302,10 +304,14 @@ class InputScaler(TrainableTransformation):
         code_column = tv_ehr.dataset.config.tables.icu_inputs.code_alias
         value_column = tv_ehr.dataset.config.tables.icu_inputs.derived_normalized_amount_per_hour
         config = tv_ehr.config.numerical_processors.scalers.icu_inputs
-        scaler = MaxScaler(table_name='icu_inputs',
-                           code_column=code_column,
-                           value_column=value_column,
-                           use_float16=config.use_float16).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr))
+
+        if config is None:
+            return cls.skip(tv_ehr, report)
+        
+        scaler = MaxScaler(config=config).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr),
+                                              table_name='icu_inputs',
+                                              code_column=code_column,
+                                              value_column=value_column)
 
         tv_ehr = eqx.tree_at(lambda x: x.numerical_processors.scalers.icu_inputs, tv_ehr, scaler,
                              is_leaf=lambda x: x is None)
@@ -320,7 +326,7 @@ class InputScaler(TrainableTransformation):
         report = report.add(table='icu_inputs', column=value_column,
                             value_type='dtype',
                             transformation=cls,
-                            operation=f'scaled_and_maybe_cast_{scaler.use_float16}',
+                            operation=f'scaled_and_maybe_cast_{scaler.config.use_float16}',
                             before=dtype1, after=dtype2)
         return tv_ehr, report
 

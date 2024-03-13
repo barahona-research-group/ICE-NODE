@@ -200,19 +200,23 @@ class Module(eqx.Module, metaclass=ABCMeta):
         return self.config.to_dict()
 
     @classmethod
+    def module_class(cls, label: str):
+        return cls._class_registry[label]
+
+    @classmethod
     def import_module(cls,
                       config: Union[Dict[str, Any], Config],
                       classname=None,
                       **external_kwargs):
         if issubclass(type(config), Config):
-            module_class = cls._class_registry[classname or cls.__name__]
+            module_class = cls.module_class(classname or cls.__name__)
             return module_class(config=config, **external_kwargs)
 
         if len(external_kwargs) > 0:
             assert set(config['external_argnames']) == set(external_kwargs.keys()), \
                 "External kwargs do not match external argnames."
 
-        module_class = cls._class_registry[config.get('classname', classname)]
+        module_class = cls.module_class(config.get('classname', classname))
         if isinstance(config['config'], dict):
             config = Config.from_dict(config['config'])
         else:

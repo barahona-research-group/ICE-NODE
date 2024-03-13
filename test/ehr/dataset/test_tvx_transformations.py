@@ -5,8 +5,11 @@ import numpy as np
 import pytest
 
 from lib.ehr import Dataset
-from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSampleConfig, ScalerConfig
-from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler
+from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSampleConfig, ScalerConfig, \
+    DatasetNumericalProcessorsConfig, ScalersConfig, OutlierRemoversConfig, IQROutlierRemoverConfig, \
+    DatasetNumericalProcessors
+from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler, \
+    ObsIQROutlierRemover
 
 
 @pytest.fixture
@@ -62,6 +65,16 @@ class TestTrainableTransformer:
     def scaler_class(self, scalable_table_name) -> TrainableTransformation:
         return {'obs': ObsAdaptiveScaler, 'icu_inputs': InputScaler}[scalable_table_name]
 
+    @pytest.fixture(params=[True, False])
+    def numerical_processor_config(self, request) -> DatasetNumericalProcessorsConfig:
+        null = request.param
+        if null:
+            return DatasetNumericalProcessorsConfig()
+        scalers_conf = ScalersConfig(obs=ScalerConfig(use_float16=True),
+                                     icu_inputs=ScalerConfig(use_float16=True))
+        outliers_conf = OutlierRemoversConfig(obs=IQROutlierRemoverConfig())
+        return DatasetNumericalProcessorsConfig(scalers_conf, outliers_conf)
+
     @pytest.fixture
     def large_scalable_splitted_ehr(self, large_ehr: TVxEHR, scalable_table_name: str, use_float16: bool):
         if len(getattr(large_ehr.dataset.tables, scalable_table_name)) == 0:
@@ -87,13 +100,14 @@ class TestTrainableTransformer:
         assert getattr(large_scalable_splitted_ehr.numerical_processors.scalers, scalable_table_name) is None
         scaler = getattr(scaled_ehr.numerical_processors.scalers, scalable_table_name)
         assert isinstance(scaler, CodedValueScaler)
-        assert scaler.table(scaled_ehr.dataset) is getattr(scaled_ehr.dataset.tables, scalable_table_name)
-        assert scaler.table(large_scalable_splitted_ehr.dataset) is getattr(large_scalable_splitted_ehr.dataset.tables,
-                                                                            scalable_table_name)
-        assert scaler.use_float16 == use_float16
+        assert scaler.table_getter(scaled_ehr.dataset) is getattr(scaled_ehr.dataset.tables, scalable_table_name)
+        assert scaler.table_getter(large_scalable_splitted_ehr.dataset) is getattr(
+            large_scalable_splitted_ehr.dataset.tables,
+            scalable_table_name)
+        assert scaler.config.use_float16 == use_float16
 
-        table0 = scaler.table(large_scalable_splitted_ehr.dataset)
-        table1 = scaler.table(scaled_ehr.dataset)
+        table0 = scaler.table_getter(large_scalable_splitted_ehr.dataset)
+        table1 = scaler.table_getter(scaled_ehr.dataset)
         assert scaler.value_column in table1.columns
         assert scaler.code_column in table1.columns
         assert table1 is not table0
@@ -101,6 +115,23 @@ class TestTrainableTransformer:
             assert table1[scaler.value_column].dtype == np.float16
         else:
             assert table1[scaler.value_column].dtype == table0[scaler.value_column].dtype
+
+    @pytest.fixture
+    def processed_ehr(self, large_scalable_splitted_ehr: TVxEHR, numerical_processor_config: DatasetNumericalProcessorsConfig) -> TVxEHR:
+        large_scalable_splitted_ehr = eqx.tree_at(lambda x: x.config.numerical_processors, large_scalable_splitted_ehr, numerical_processor_config)
+        return large_scalable_splitted_ehr.execute_external_transformations([ObsIQROutlierRemover(), InputScaler(), ObsAdaptiveScaler()])
+
+    @pytest.fixture
+    def fitted_numerical_processors(self, processed_ehr: TVxEHR) -> DatasetNumericalProcessors:
+        return processed_ehr.numerical_processors
+
+    def test_numerical_processors_serialization(self, fitted_numerical_processors: DatasetNumericalProcessors,
+                                                tmpdir: str):
+        path = f'{tmpdir}/numerical_processors.h5'
+        fitted_numerical_processors.save(path, key='numerical_processors')
+        loaded_numerical_processors = DatasetNumericalProcessors.load(path, key='numerical_processors')
+        assert fitted_numerical_processors.equals(loaded_numerical_processors)
+
 
 
 # def test_obs_minmax_scaler(int_indexed_dataset: Dataset):

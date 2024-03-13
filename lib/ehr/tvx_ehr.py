@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import pickle
 from abc import ABCMeta, abstractmethod
 from dataclasses import field
 from datetime import date
@@ -24,7 +23,7 @@ from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
 from ..base import Config, Data, Module, FlatConfig
-from ..utils import tqdm_constructor, write_config, load_config
+from ..utils import tqdm_constructor
 
 
 class CodedValueProcessorConfig(Config):
@@ -80,6 +79,9 @@ class CodedValueProcessor(Module):
     code_column: Optional[str] = None
     value_column: Optional[str] = None
 
+    def table_getter(self, dataset: Dataset) -> pd.DataFrame:
+        return getattr(dataset.tables, self.table_name)
+
     def fit(self, dataset: Dataset, admission_ids: List[str],
             table_name: str, code_column: str, value_column: str) -> 'CodedValueProcessor':
         df = getattr(dataset.tables, table_name)
@@ -92,7 +94,8 @@ class CodedValueProcessor(Module):
             fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
 
         for k, v in {'table_name': table_name, 'code_column': code_column, 'value_column': value_column}.items():
-            fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v)
+            fitted = eqx.tree_at(lambda x: getattr(x, k), fitted, v,
+                                 is_leaf=lambda x: x is None)
         return fitted
 
     @abstractmethod
@@ -118,7 +121,7 @@ class CodedValueProcessor(Module):
     @staticmethod
     def load_series(path: Path, key: str):
         with pd.HDFStore(path, mode='r') as store:
-            return {k.split('/')[-1]: store[k] for k in store.keys() if k.startswith(key)}
+            return {k.split('/')[-1]: store[k] for k in store.keys() if key in k}
 
     def save_config(self, path: Path, key: str):
         config = self.config.to_dict()
@@ -192,17 +195,24 @@ def outcome_first_occurrence(sorted_admissions: List[Admission]):
 class OutlierRemovers(eqx.Module):
     obs: Optional[CodedValueProcessor] = None
 
+    def equals(self, other: OutlierRemovers) -> bool:
+        return self.obs is None and other.obs is None or self.obs.equals(other.obs)
+
 
 class Scalers(eqx.Module):
     obs: Optional[CodedValueScaler] = None
     icu_inputs: Optional[CodedValueScaler] = None
+
+    def equals(self, other: Scalers) -> bool:
+        return self.obs is None and other.obs is None or self.obs.equals(other.obs) and \
+            self.icu_inputs is None and other.icu_inputs is None or self.icu_inputs.equals(other.icu_inputs)
 
 
 class DatasetNumericalProcessors(eqx.Module):
     outlier_removers: OutlierRemovers = OutlierRemovers()
     scalers: Scalers = Scalers()
 
-    def save(self, path: Path, key: str):
+    def save(self, path: Path | str, key: str):
         if self.outlier_removers.obs is not None:
             self.outlier_removers.obs.save(path, f'{key}/outlier_removers/obs')
 
@@ -213,20 +223,27 @@ class DatasetNumericalProcessors(eqx.Module):
             self.scalers.icu_inputs.save(path, f'{key}/scalers/icu_inputs')
 
     @staticmethod
-    def load(path: Path, key: str) -> DatasetNumericalProcessors:
+    def load(path: Path | str, key: str) -> DatasetNumericalProcessors:
         scalers = {}
         outlier_removers = {}
-        with pd.HDFStore(path, mode='r') as store:
-            if f'{key}/outlier_removers' in store:
-                if f'{key}/outlier_removers/obs' in store:
-                    outlier_removers['obs'] = CodedValueProcessor.load(path, f'{key}/outlier_removers')
-            if f'{key}/scalers' in store:
-                if f'{key}/scalers/obs' in store:
-                    scalers['obs'] = CodedValueScaler.load(path, f'{key}/scalers/obs')
-                if f'{key}/scalers/icu_inputs' in store:
-                    scalers['icu_inputs'] = CodedValueScaler.load(path, f'{key}/scalers/icu_inputs')
+        if Path(path).is_file():
+            with pd.HDFStore(path, mode='r') as store:
+                if f'{key}/outlier_removers' in store:
+                    if f'{key}/outlier_removers/obs' in store:
+                        outlier_removers['obs'] = CodedValueProcessor.load(path, f'{key}/outlier_removers/obs')
+                if f'{key}/scalers' in store:
+                    if f'{key}/scalers/obs' in store:
+                        scalers['obs'] = CodedValueScaler.load(path, f'{key}/scalers/obs')
+                    if f'{key}/scalers/icu_inputs' in store:
+                        scalers['icu_inputs'] = CodedValueScaler.load(path, f'{key}/scalers/icu_inputs')
         return DatasetNumericalProcessors(outlier_removers=OutlierRemovers(**outlier_removers),
                                           scalers=Scalers(**scalers))
+
+    def equals(self, other: DatasetNumericalProcessors) -> bool:
+        return self.outlier_removers.equals(other.outlier_removers) and self.scalers.equals(other.scalers)
+
+    def __eq__(self, other):
+        return self.equals(other)
 
 
 class TVxEHRSchemeConfig(DatasetSchemeConfig):
@@ -386,6 +403,10 @@ class AbstractTVxPipeline(AbstractDatasetPipeline, metaclass=ABCMeta):
     report_class: ClassVar[Type[TVxReport]] = TVxReport
 
 
+_SplitsType = Tuple[Tuple[str, ...], ...]
+_HeaderType = Tuple[TVxEHRConfig, List[str], Optional[_SplitsType], DatasetNumericalProcessors, pd.DataFrame]
+
+
 class TVxEHR(AbstractDatasetRepresentation):
     """
     A class representing a collection of patients in the EHR system, in ML-compliant format.
@@ -426,22 +447,22 @@ class TVxEHR(AbstractDatasetRepresentation):
     config: TVxEHRConfig = field(kw_only=True)
     dataset: Dataset = field(kw_only=True)
     numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
-    splits: Optional[Tuple[Tuple[str]]] = None
+    splits: Optional[_SplitsType] = None
     subjects: Optional[Dict[str, Patient]] = None
+    patient_class: ClassVar[Type[Patient]] = Patient
 
     @property
-    def header(self) -> Tuple[Tuple[Tuple[str]], DatasetNumericalProcessors]:
-        return self.splits, self.numerical_processors
+    def header(self) -> _HeaderType:
+        return self.config, list(self.subjects.keys()), self.splits, self.numerical_processors, self.pipeline_report
 
     @staticmethod
-    def compile_header(splits: Optional[Tuple[Tuple[str]]],
-                       numerical_processors: DatasetNumericalProcessors) -> Tuple[Tuple[Tuple[str]], DatasetNumericalProcessors]:
-        return splits, numerical_processors
-
-    #
-    # def save_header(self, path: Path, key: str):
-    #     pd.DataFrame()
-
+    def compile_header(
+            config: TVxEHRConfig,
+            subject_ids: List[str],
+            splits: Optional[_SplitsType],
+            numerical_processors: DatasetNumericalProcessors,
+            pipeline_report: pd.DataFrame) -> _HeaderType:
+        return config, subject_ids, splits, numerical_processors, pipeline_report
 
     @property
     def subject_ids(self):
@@ -452,7 +473,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         return self.config == other.config and self.dataset.equals(
             other.dataset) and self.subjects == other.subjects and \
             self.equal_report(
-                other) and self.splits == other.splits and self.numerical_processors == other.numerical_processors
+                other) and self.splits == other.splits and self.numerical_processors.equals(other.numerical_processors)
 
     @cached_property
     def scheme(self):
@@ -505,6 +526,61 @@ class TVxEHR(AbstractDatasetRepresentation):
         """Get the number of subjects."""
         return len(self.subjects) if self.subjects is not None else 0
 
+    @staticmethod
+    def load_header(path: Path | str, key: str) -> _HeaderType:
+        config, _ = TVxEHR.load_config(path)
+        with pd.HDFStore(path, mode='r') as store:
+            splits = TVxEHR.load_splits(path, key)
+            numerical_processors = DatasetNumericalProcessors.load(path, key)
+            pipeline_report = store['report']
+            subject_ids = TVxEHR.load_subjects_ids(path, key)
+            return TVxEHR.compile_header(config, subject_ids, splits, numerical_processors, pipeline_report)
+
+    def save_splits(self, path: Path | str, key: str):
+        if self.splits is not None:
+            for i, split in enumerate(self.splits):
+                pd.Series(split).to_hdf(path, f'{key}/split_{i:05d}', format='table')
+
+    @staticmethod
+    def load_splits(path: Path | str, key: str) -> Optional[_SplitsType]:
+        if Path(path).is_file():
+            with pd.HDFStore(path, mode='r') as store:
+                splits = []
+                for k in sorted(store.keys()):
+                    if key in k:
+                        splits.append(tuple(store[k].values))
+                return tuple(splits)
+        return None
+
+    def _save_subjects_ids(self, path: Path, key: str):
+        if self.subjects is not None:
+            pd.Series(list(self.subjects.keys())).to_hdf(path, f'{key}/subject_ids', format='table')
+
+    @staticmethod
+    def load_subjects_ids(path: Path, key: str) -> Optional[List[str]]:
+        if Path(path).is_file():
+            with pd.HDFStore(path, mode='r') as store:
+                if f'{key}/subject_ids' in store:
+                    return store[f'{key}/subject_ids'].values.tolist()
+        return []
+
+    def save_subjects(self, path: Path | str, key: str):
+        self._save_subjects_ids(path, key)
+        if self.subjects is not None:
+            for subject_id, subject in self.subjects.items():
+                subject.to_hdf(path, f'{key}/{subject_id}')
+
+    @classmethod
+    def load_subjects(cls, path: Path | str, key: str, demographic_vector_config: DemographicVectorConfig) -> Optional[
+        Dict[str, Patient]]:
+        if Path(path).is_file():
+            with pd.HDFStore(path, mode='r') as store:
+                subject_ids = TVxEHR.load_subjects_ids(path, key)
+                _load = cls.patient_class.from_hdf_store
+                _conf = demographic_vector_config
+                return {subject_id: _load(path, f'{key}/{subject_id}', _conf) for subject_id in subject_ids}
+        return None
+
     def save(self, path: Union[str, Path], overwrite: bool = False):
         """Save the Patients object to disk.
 
@@ -512,26 +588,18 @@ class TVxEHR(AbstractDatasetRepresentation):
             path (Union[str, Path]): path to save the Patients object.
             overwrite (bool, optional): whether to overwrite existing files. Defaults to False.
         """
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.dataset.save(path.with_suffix('.dataset'), overwrite)
+        self.save_config(path, overwrite)
+        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
+        self.pipeline_report.to_hdf(h5_path,
+                                    key='report',
+                                    format='table')
+        self.save_splits(h5_path, 'splits')
+        self.numerical_processors.save(h5_path, 'numerical_processors')
+        self.save_subjects(h5_path, 'tvx')
+        self.dataset.save(f"{path}_dataset", overwrite)
 
-        subj_path = path.with_suffix('.subjects.pickle')
-        if subj_path.exists():
-            if overwrite:
-                subj_path.unlink()
-            else:
-                raise RuntimeError(f'File {subj_path} already exists.')
-        with open(subj_path, 'wb') as file:
-            pickle.dump(self.subjects, file)
-
-        write_config(self.dataset.config.to_dict(),
-                     path.with_suffix('.dataset.config.json'))
-        write_config(self.config.to_dict(), path.with_suffix('.config.json'))
-        write_config(self.subject_ids, path.with_suffix('.subject_ids.json'))
-
-    @staticmethod
-    def load(path: Union[str, Path]) -> TVxEHR:
+    @classmethod
+    def load(cls, path: Union[str, Path]) -> TVxEHR:
         """Load the Patients object from disk.
 
         Args:
@@ -540,14 +608,20 @@ class TVxEHR(AbstractDatasetRepresentation):
         Returns:
             TVxEHR: loaded Patients object.
         """
-        path = Path(path)
-        with open(path.with_suffix('.subjects.pickle'), 'rb') as file:
-            subjects = pickle.load(file)
-        dataset = Dataset.load(path.with_suffix('.dataset'))
-        config = load_config(path.with_suffix('.config.json'))
-        config = Config.from_dict(config)
-        return TVxEHR.import_module(config,
-                                    dataset=dataset,
+        config, classname = cls.load_config(path)
+        tvx_class = cls.module_class(classname)
+
+        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
+        numerical_processors = DatasetNumericalProcessors.load(h5_path, 'numerical_processors')
+        pipeline_report = pd.read_hdf(h5_path, key='report')
+        subjects = tvx_class.load_subjects(h5_path, 'tvx', config.demographic)
+        splits = cls.load_splits(h5_path, 'tvx')
+        return TVxEHR.import_module(config=config,
+                                    classname=classname,
+                                    splits=splits,
+                                    numerical_processors=numerical_processors,
+                                    pipeline_report=pipeline_report,
+                                    dataset=Dataset.load(f"{path}_dataset"),
                                     subjects=subjects)
 
     @staticmethod
@@ -1006,6 +1080,7 @@ class TVxEHR(AbstractDatasetRepresentation):
 
 class SegmentedTVxEHR(TVxEHR):
     subjects: Dict[str, SegmentedPatient]
+    patient_class: ClassVar[Type[SegmentedPatient]] = SegmentedPatient
 
 ## TODO:
 # [ ] Four modes of temporal EHR access:

@@ -1,7 +1,7 @@
 import inspect
 
 from .base import Config, Module
-from .ehr import tvx_concepts, dataset, coding_scheme, transformations
+from .ehr import tvx_concepts, dataset, coding_scheme, transformations, tvx_transformations, tvx_ehr
 from .ehr.example_datasets import mimic3, cprd, mimiciv, mimiciv_aki
 from .metric import stat
 from .ml import dx_models
@@ -17,7 +17,9 @@ modules = [
     model, dx_models, in_models, in_models_modular, embeddings, trainer,
     experiment, evaluation, stat,
     # ehr
-    tvx_concepts, dataset, coding_scheme, transformations, mimic3, cprd, mimiciv, mimiciv_aki
+    dataset, coding_scheme, transformations, mimic3, cprd, mimiciv, mimiciv_aki,
+    # tvx_ehr
+    tvx_ehr, tvx_concepts, tvx_concepts, tvx_transformations
 ]
 for m in modules:
     for name, _class in inspect.getmembers(m, inspect.isclass):
