@@ -307,7 +307,7 @@ class InputScaler(TrainableTransformation):
 
         if config is None:
             return cls.skip(tv_ehr, report)
-        
+
         scaler = MaxScaler(config=config).fit(tv_ehr.dataset, cls.get_admission_ids(tv_ehr),
                                               table_name='icu_inputs',
                                               code_column=code_column,
@@ -433,10 +433,11 @@ class TVxConcepts(AbstractTVxTransformation):
     def _static_info(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, StaticInfo], TVxReport]:
 
         static = tvx_ehr.dataset.tables.static
+        static_config = tvx_ehr.dataset.config.tables.static
         config = tvx_ehr.config.demographic
-        c_gender = tvx_ehr.dataset.config.tables.static
-        c_date_of_birth = tvx_ehr.dataset.config.tables.static.date_of_birth_alias
-        c_ethnicity = tvx_ehr.dataset.config.tables.static.race_alias
+        c_gender = static_config.gender_alias
+        c_date_of_birth = static_config.date_of_birth_alias
+        c_ethnicity = static_config.race_alias
 
         report = report.add(
             transformation=cls,
@@ -444,13 +445,13 @@ class TVxConcepts(AbstractTVxTransformation):
             after=len(static))
 
         gender, ethnicity, dob = {}, {}, {}
-        if c_date_of_birth in static.columns or config.age:
+        if c_date_of_birth in static.columns and config.age:
             dob = static[c_date_of_birth].to_dict()
-        if tvx_ehr.scheme.gender is not None or config.gender:
+        if tvx_ehr.scheme.gender is not None and config.gender:
             gender_m = tvx_ehr.gender_mapper
             gender = {k: gender_m.codeset2vec({c}) for k, c in static[c_gender].to_dict().items()}
 
-        if tvx_ehr.scheme.ethnicity is not None or config.ethnicity:
+        if tvx_ehr.scheme.ethnicity is not None and config.ethnicity:
             ethnicity_m = tvx_ehr.ethnicity_mapper
             ethnicity = {k: ethnicity_m.codeset2vec({c}) for k, c in static[c_ethnicity].to_dict().items()}
 
@@ -485,7 +486,7 @@ class TVxConcepts(AbstractTVxTransformation):
             current_history = initial_history
             for adm_id in adm_ids:
                 dx_discharge_history[adm_id] = current_history
-                current_history = dx_discharge[adm_id].union(current_history)
+                current_history = dx_discharge.get(adm_id, initial_history).union(current_history)
         return dx_discharge_history
 
     @staticmethod
@@ -517,12 +518,10 @@ class TVxConcepts(AbstractTVxTransformation):
             })
 
         admission_icu_inputs = table.groupby(c_admission_id).apply(group_fun)
-        input_size = len(tvx_ehr.scheme.icu_inputs)
-        return {adm_id: InpatientInput(index=np.array(codes, dtype=np.int64),
+        return {adm_id: InpatientInput(code_index=np.array(codes, dtype=np.int64),
                                        rate=rates,
                                        starttime=start,
-                                       endtime=end,
-                                       size=input_size)
+                                       endtime=end)
                 for adm_id, (codes, rates, start, end) in admission_icu_inputs.iterrows()}
 
     @staticmethod
@@ -548,11 +547,10 @@ class TVxConcepts(AbstractTVxTransformation):
 
         admission_procedures = table.groupby(c_admission_id).apply(group_fun)
         size = len(code_map.target_scheme)
-        return {adm_id: InpatientInput(index=np.array(codes, dtype=np.int64),
+        return {adm_id: InpatientInput(code_index=np.array(codes, dtype=np.int64),
                                        rate=np.ones_like(codes, dtype=bool),
                                        starttime=start,
-                                       endtime=end,
-                                       size=size)
+                                       endtime=end)
                 for adm_id, (codes, start, end) in admission_procedures.iterrows()}
 
     @staticmethod

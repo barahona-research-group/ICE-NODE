@@ -14,7 +14,8 @@ from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLi
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
     DatasetScheme
-from lib.ehr.transformations import SetIndex, ICUInputRateUnitConversion
+from lib.ehr.transformations import SetIndex, ICUInputRateUnitConversion, CastTimestamps, SetAdmissionRelativeTimes, \
+    ValidatedDatasetPipeline
 from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, AbstractTVxPipeline
 
 DATASET_SCOPE = "function"
@@ -683,13 +684,14 @@ class MockMIMICIVDataset(NaiveDataset):
 
     @classmethod
     def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
-        return AbstractDatasetPipeline(transformations=[SetIndex()])
+        return ValidatedDatasetPipeline(transformations=[SetIndex(), CastTimestamps(), ICUInputRateUnitConversion(),
+                                                         SetAdmissionRelativeTimes()])
 
 
 @pytest.fixture
 def unit_converter_table(dataset_config, dataset_tables):
     if 'icu_inputs' not in dataset_tables.tables_dict or len(dataset_tables.icu_inputs) == 0:
-        pytest.skip("No ICU inputs in dataset.")
+        pytest.skip("No ICU inputs in dataset. Required for the unit conversion table generation.")
     c_code = dataset_config.tables.icu_inputs.code_alias
     c_amount_unit = dataset_config.tables.icu_inputs.amount_unit_alias
     c_norm_factor = dataset_config.tables.icu_inputs.derived_unit_normalization_factor
@@ -738,6 +740,13 @@ def mimiciv_dataset_config(mimiciv_dataset_scheme_config, dataset_tables_config)
 
 
 @pytest.fixture
+def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
+    ds = MockMIMICIVDataset(config=mimiciv_dataset_config)
+    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                       is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
+
+
+@pytest.fixture
 def mimiciv_dataset(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
     ds = MockMIMICIVDataset(config=mimiciv_dataset_config)
     return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
@@ -757,5 +766,4 @@ def tvx_ehr_config(tvx_ehr_scheme_config: TVxEHRSchemeConfig) -> TVxEHRConfig:
 
 @pytest.fixture
 def tvx_ehr(mimiciv_dataset: MockMIMICIVDataset, tvx_ehr_config: TVxEHRConfig) -> TVxEHR:
-    return NaiveEHR(dataset=mimiciv_dataset.execute_external_transformations([ICUInputRateUnitConversion()]),
-                    config=tvx_ehr_config)
+    return NaiveEHR(dataset=mimiciv_dataset, config=tvx_ehr_config)

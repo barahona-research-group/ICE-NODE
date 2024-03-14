@@ -5,7 +5,7 @@ from dataclasses import field
 from datetime import date
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional, Dict, Union, Tuple, Type, ClassVar, Iterable
+from typing import List, Optional, Dict, Union, Tuple, Type, ClassVar, Iterable, Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -402,7 +402,6 @@ class AbstractTVxPipeline(AbstractDatasetPipeline, metaclass=ABCMeta):
 
 
 _SplitsType = Tuple[Tuple[str, ...], ...]
-_HeaderType = Tuple[TVxEHRConfig, List[str], Optional[_SplitsType], DatasetNumericalProcessors, pd.DataFrame]
 
 
 class TVxEHR(AbstractDatasetRepresentation):
@@ -450,17 +449,16 @@ class TVxEHR(AbstractDatasetRepresentation):
     patient_class: ClassVar[Type[Patient]] = Patient
 
     @property
-    def header(self) -> _HeaderType:
-        return self.config, list(self.subjects.keys()), self.splits, self.numerical_processors, self.pipeline_report
+    def header(self) -> Dict[str, Any]:
+        return super().header | {'splits': self.splits, 'numerical_processors': self.numerical_processors,
+                                 'subjects_list': self.subject_ids}
 
     @staticmethod
-    def compile_header(
-            config: TVxEHRConfig,
-            subject_ids: List[str],
-            splits: Optional[_SplitsType],
-            numerical_processors: DatasetNumericalProcessors,
-            pipeline_report: pd.DataFrame) -> _HeaderType:
-        return config, subject_ids, splits, numerical_processors, pipeline_report
+    def compare_header(header1: Dict[str, Any], header2: Dict[str, Any]) -> bool:
+        return AbstractDatasetRepresentation.compare_header(header1, header2) and \
+            header1['splits'] == header2['splits'] and \
+            header1['numerical_processors'].equals(header2['numerical_processors']) and \
+            header1['subjects_list'] == header2['subjects_list']
 
     @property
     def subject_ids(self):
@@ -468,10 +466,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         return sorted(self.subjects.keys())
 
     def equals(self, other: 'TVxEHR'):
-        return self.config == other.config and self.dataset.equals(
-            other.dataset) and self.subjects == other.subjects and \
-            self.equal_report(
-                other) and self.splits == other.splits and self.numerical_processors.equals(other.numerical_processors)
+        return self.equal_header(other) and self.dataset.equals(other.dataset) and self.subjects == other.subjects
 
     @cached_property
     def scheme(self):
@@ -523,16 +518,6 @@ class TVxEHR(AbstractDatasetRepresentation):
     def __len__(self):
         """Get the number of subjects."""
         return len(self.subjects) if self.subjects is not None else 0
-
-    @staticmethod
-    def load_header(path: Path | str, key: str) -> _HeaderType:
-        config, _ = TVxEHR.load_config(path)
-        with pd.HDFStore(path, mode='r') as store:
-            splits = TVxEHR.load_splits(path, key)
-            numerical_processors = DatasetNumericalProcessors.load(path, key)
-            pipeline_report = store['report']
-            subject_ids = TVxEHR.load_subjects_ids(path, key)
-            return TVxEHR.compile_header(config, subject_ids, splits, numerical_processors, pipeline_report)
 
     def save_splits(self, path: Path | str, key: str):
         if self.splits is not None:
@@ -870,7 +855,6 @@ class TVxEHR(AbstractDatasetRepresentation):
         obs_scaler = self.numerical_processors.scalers.obs
         value = obs_scaler.unscale(obs.value)
         return InpatientObservables(time=obs.time, value=value, mask=obs.mask)
-
 
     def _unscaled_leading_observable(self, lead: InpatientObservables):
         """Unscale the leading observable values, undo the preprocessing scaling.

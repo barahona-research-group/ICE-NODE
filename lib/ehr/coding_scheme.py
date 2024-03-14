@@ -1473,6 +1473,8 @@ class OutcomeExtractorConfig(CodingSchemeConfig):
 class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
     config: OutcomeExtractorConfig
 
+    _supported_outcomes: ClassVar[Dict[str, Set[str]]] = defaultdict(set)
+
     @property
     @abstractmethod
     def base_scheme(self) -> CodingScheme:
@@ -1549,6 +1551,19 @@ class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
             vec[self.index[c]] = True
         return CodesVector(np.array(vec), self.name)
 
+    @staticmethod
+    def supported_outcomes(base_scheme: str) -> Set[str]:
+        """
+        Gets the supported outcomes for a given base coding scheme.
+
+        Args:
+            base_scheme (str): the base coding scheme.
+
+        Returns:
+            Tuple[str]: the supported outcomes.
+        """
+        return OutcomeExtractor._supported_outcomes[base_scheme]
+
 
 class ExcludingOutcomeExtractorConfig(OutcomeExtractorConfig):
     base_scheme: str
@@ -1565,6 +1580,8 @@ class ExcludingOutcomeExtractor(OutcomeExtractor):
         super().__init__(config=config,
                          codes=codes,
                          desc=desc)
+
+        OutcomeExtractor._supported_outcomes[base_scheme.name].add(self.name)
 
     @property
     def base_scheme(self) -> CodingScheme:
@@ -1642,6 +1659,9 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
 
         CodingScheme.register_scheme_loader(name, load)
         FileBasedOutcomeExtractor._spec_files[name] = spec_file
+        base_scheme = load_config(spec_file, relative_to=resources_dir('outcome_filters'))['code_scheme']
+        OutcomeExtractor._supported_outcomes[base_scheme].add(name)
+
 
     @staticmethod
     def spec_from_json(json_file: str):
@@ -1673,21 +1693,3 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         elif 'exclude_codes' in conf:
             return conf
 
-    @staticmethod
-    def supported_outcomes(base_scheme: str):
-        """
-        Gets the supported outcomes for a given base coding scheme.
-
-        Args:
-            base_scheme (str): the base coding scheme.
-
-        Returns:
-            Tuple[str]: the supported outcomes.
-        """
-
-        outcome_base = {
-            k: load_config(v, relative_to=resources_dir('outcome_filters'))['code_scheme']
-            for k, v in FileBasedOutcomeExtractor._spec_files.items()
-        }
-        return tuple(k for k, v in outcome_base.items()
-                     if v == base_scheme or v in CodingScheme.from_name(base_scheme).supported_targets)

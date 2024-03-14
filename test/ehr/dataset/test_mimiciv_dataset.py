@@ -15,12 +15,12 @@ from test.ehr.conftest import NaiveDataset, MockMIMICIVDataset
 class TestUnitConversionAndFilterInvalidInputRates:
 
     @pytest.fixture
-    def fixed_dataset(self, mimiciv_dataset: MockMIMICIVDataset) -> Dataset:
-        return ICUInputRateUnitConversion.apply(mimiciv_dataset, Report())[0]
+    def fixed_dataset(self, mimiciv_dataset_no_conv: MockMIMICIVDataset) -> Dataset:
+        return ICUInputRateUnitConversion.apply(mimiciv_dataset_no_conv, Report())[0]
 
     @pytest.fixture
-    def icu_inputs_unfixed(self, mimiciv_dataset: MockMIMICIVDataset):
-        return mimiciv_dataset.tables.icu_inputs
+    def icu_inputs_unfixed(self, mimiciv_dataset_no_conv: MockMIMICIVDataset):
+        return mimiciv_dataset_no_conv.tables.icu_inputs
 
     @pytest.fixture
     def icu_inputs_fixed(self, fixed_dataset: Dataset):

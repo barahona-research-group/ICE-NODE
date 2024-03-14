@@ -503,6 +503,7 @@ DS_DEPENDS_RELATIONS: Final[Dict[Type[DatasetTransformation], Set[Type[DatasetTr
 
 DS_BLOCKED_BY_RELATIONS: Final[Dict[Type[DatasetTransformation], Set[Type[DatasetTransformation]]]] = {
     FilterClampTimestampsToAdmissionInterval: {SetAdmissionRelativeTimes},
+    ICUInputRateUnitConversion: {SetAdmissionRelativeTimes}
 }
 DS_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDependency(
     depends=DS_DEPENDS_RELATIONS,

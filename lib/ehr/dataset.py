@@ -397,10 +397,10 @@ class Report(Config):
     incident_class: ClassVar[Type[ReportAttributes]] = ReportAttributes
 
     def __add__(self, other: Report) -> Report:
-        return Report(incidents=self.incidents + other.incidents)
+        return type(self)(incidents=self.incidents + other.incidents)
 
     def add(self, *args, **kwargs):
-        return Report(incidents=self.incidents + (self.incident_class(*args, **kwargs),))
+        return type(self)(incidents=self.incidents + (self.incident_class(*args, **kwargs),))
 
     def __len__(self):
         return len(self.incidents)
@@ -466,9 +466,6 @@ class AbstractDatasetRepresentation(Module):
             dataset, report = t.apply(dataset, report)
         return dataset
 
-    def equal_report(self, other: 'AbstractDatasetRepresentation') -> bool:
-        return Report.equal_tables(self.pipeline_report, other.pipeline_report)
-
     @abstractmethod
     def equals(self, other: 'AbstractDatasetRepresentation'):
         pass
@@ -504,29 +501,13 @@ class AbstractDatasetRepresentation(Module):
         data['classname'] = type(self).__name__
         write_config(data, str(json_path))
 
-    @abstractmethod
     @property
-    def header(self) -> Tuple[Any, ...]:
-        pass
+    def header(self) -> Dict[str, Any]:
+        return {'config': self.config, 'pipeline_report': self.pipeline_report}
 
-    @staticmethod
-    @abstractmethod
-    def compile_header(
-            *args, **kwargs) -> Tuple[Any, ...]:
-        pass
-
-    @staticmethod
-    def compare_header(header1: Tuple[Any, ...], header2: Tuple[Any, ...]) -> bool:
-        eq = lambda x, y: x.equals(y) if hasattr(x, 'equals') else x == y
-        for h1, h2 in zip(header1, header2):
-            if not eq(h1, h2):
-                return False
-        return True
-
-    @staticmethod
-    @abstractmethod
-    def load_header(path: Path, key: str) -> Tuple[Any, ...]:
-        pass
+    def equal_header(self, other: AbstractDatasetRepresentation) -> bool:
+        h1, h2 = self.header, other.header
+        return h1['config'].equals(h2['config']) and Report.equal_tables(h1['pipeline_report'], h2['pipeline_report'])
 
 
 class AbstractTransformation(eqx.Module):
@@ -683,17 +664,16 @@ class Dataset(AbstractDatasetRepresentation):
     def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
         pass
 
-    def equals(self, other: 'Dataset'):
-        return self.config == other.config and self.tables.equals(other.tables) and self.scheme == other.scheme and \
-            self.equal_report(other)
+    def equals(self, other: 'Dataset') -> bool:
+        return self.equal_header(other) and self.tables.equals(other.tables)
 
     def save(self, path: Union[str, Path], overwrite: bool = False):
         self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
+        self.tables.save(h5_path, overwrite)
         self.pipeline_report.to_hdf(h5_path,
                                     key='report',
                                     format='table')
-        self.tables.save(h5_path, overwrite)
 
     @classmethod
     def load(cls, path: Union[str, Path]):
