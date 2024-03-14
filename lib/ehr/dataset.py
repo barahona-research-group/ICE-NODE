@@ -440,6 +440,10 @@ class AbstractDatasetRepresentation(Module):
     def pipeline(self) -> AbstractDatasetPipeline:
         return self._setup_pipeline(self.config)
 
+    @cached_property
+    def pipeline_executed(self) -> bool:
+        return len(self.pipeline_report) > 0
+
     @classmethod
     @abstractmethod
     def _setup_pipeline(cls, config: Config) -> AbstractDatasetPipeline:
@@ -466,16 +470,18 @@ class AbstractDatasetRepresentation(Module):
         return Report.equal_tables(self.pipeline_report, other.pipeline_report)
 
     @abstractmethod
-    def equals(self, other: 'AbstractDatasetPipeline'):
+    def equals(self, other: 'AbstractDatasetRepresentation'):
         pass
 
     @abstractmethod
-    def save(self, path: Union[str, Path], overwrite: bool = False):
+    def save(self, path: Union[str, Path], overwrite: bool = False,
+             **child_representation_kwargs):
         pass
 
     @classmethod
     @abstractmethod
-    def load(cls, path: Union[str, Path]) -> AbstractDatasetPipeline:
+    def load(cls, path: Union[str, Path],
+             **child_representation_kwargs) -> AbstractDatasetRepresentation:
         pass
 
     @staticmethod
@@ -740,7 +746,7 @@ class Dataset(AbstractDatasetRepresentation):
                       random_seed: int = 42,
                       balance: str = 'subjects',
                       discount_first_admission: bool = False):
-        assert len(splits) > 0, "Splits must be non-empty."
+        assert len(splits) > 0, "Split quantiles must be non-empty."
         assert list(splits) == sorted(splits), "Splits must be sorted."
         assert balance in ('subjects', 'admissions',
                            'admissions_intervals'), "Balanced must be'subjects', 'admissions', or 'admissions_intervals'."
