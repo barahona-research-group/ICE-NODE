@@ -1,5 +1,5 @@
 from dataclasses import field
-from typing import Literal, Final, Optional, List
+from typing import Literal, Final, Optional, List, Callable
 
 from lib import Config
 from lib.ehr import TVxEHR, TVxEHRConfig, DemographicVectorConfig, LeadingObservableExtractorConfig
@@ -57,7 +57,8 @@ class AKIMIMICIVDataset(MIMICIVDataset):
 DEFAULT_AKI_DEMOGRAPHIC: Final[DemographicVectorConfig] = DemographicVectorConfig(age=True,
                                                                                   gender=True,
                                                                                   ethnicity=True)
-DEFAULT_AKI_LEAD_EXTRACTION: Final[LeadingObservableExtractorConfig] = LeadingObservableExtractorConfig(
+DEFAULT_AKI_LEAD_EXTRACTION_FACTORY: Final[
+    Callable[[], LeadingObservableExtractorConfig]] = lambda: LeadingObservableExtractorConfig(
     observable_code=OBSERVABLE_AKI_TARGET_CODE,
     scheme=DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG.obs,
     leading_hours=[6., 12., 24., 48., 72.],  # hours
@@ -88,7 +89,8 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
     scheme: TVxAKIMIMICIVDatasetSchemeConfig = field(default=DEFAULT_TVX_AKI_MIMICIV_DATASET_SCHEME_CONFIG,
                                                      kw_only=True)
     demographic: DemographicVectorConfig = field(default=DEFAULT_AKI_DEMOGRAPHIC, kw_only=True)
-    leading_observable: LeadingObservableExtractorConfig = field(default=DEFAULT_AKI_LEAD_EXTRACTION, kw_only=True)
+    leading_observable: LeadingObservableExtractorConfig = field(default_factory=DEFAULT_AKI_LEAD_EXTRACTION_FACTORY,
+                                                                 kw_only=True)
     sample: Optional[TVxEHRSampleConfig] = field(default=None, kw_only=True)
     splits: Optional[TVxEHRSplitsConfig] = field(default=None, kw_only=True)
     numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
@@ -126,8 +128,8 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
 
 
 class TVxAKIMIMICIVDataset(TVxEHR):
-    config: TVxAKIMIMICIVDatasetConfig
-    dataset: AKIMIMICIVDataset
+    config: TVxAKIMIMICIVDatasetConfig = field(kw_only=True)
+    dataset: AKIMIMICIVDataset = field(kw_only=True)
 
     @classmethod
     def _setup_pipeline(cls, config: Config) -> AbstractTVxPipeline:
@@ -138,9 +140,9 @@ class TVxAKIMIMICIVDataset(TVxEHR):
             ObsAdaptiveScaler(),
             InputScaler(),
             TVxConcepts(),
+            # ExcludeShortAdmissions() # TODO: implement it first.
             ObsTimeBinning(),
             LeadingObservableExtractorConfig(),
             InterventionSegmentation(),
-            # ExcludeShortAdmissions() # TODO: implement it first.
         ]
         return AbstractTVxPipeline(transformations=pipeline)
