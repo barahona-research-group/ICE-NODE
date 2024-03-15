@@ -4,12 +4,16 @@ import equinox as eqx
 import numpy as np
 import pytest
 
-from lib.ehr import Dataset, CodesVector, InpatientInput, InpatientObservables, DemographicVectorConfig, StaticInfo
+from lib.ehr import Dataset, CodesVector, InpatientInput, InpatientObservables, DemographicVectorConfig, StaticInfo, \
+    InpatientInterventions
+from lib.ehr.tvx_concepts import SegmentedPatient, Patient, SegmentedAdmission, Admission, \
+    SegmentedInpatientInterventions, LeadingObservableExtractorConfig
 from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSampleConfig, ScalerConfig, \
     DatasetNumericalProcessorsConfig, ScalersConfig, OutlierRemoversConfig, IQROutlierRemoverConfig, \
-    DatasetNumericalProcessors
+    DatasetNumericalProcessors, SegmentedTVxEHR
 from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler, \
-    ObsIQROutlierRemover, TVxConcepts
+    ObsIQROutlierRemover, TVxConcepts, InterventionSegmentation, ObsTimeBinning, LeadingObservableExtraction
+from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX
 
 
 @pytest.fixture
@@ -211,10 +215,8 @@ class TestTVxConcepts:
         return TVxConcepts._dx_discharge(tvx_ehr_with_dx)
 
     def test_admission_dx_codes(self, tvx_ehr_with_dx: TVxEHR, admission_dx_codes: Dict[str, CodesVector]):
-        c_admission_id = tvx_ehr_with_dx.dataset.config.tables.admissions.admission_id_alias
-        assert len(admission_dx_codes) == tvx_ehr_with_dx.dataset.tables.dx_discharge[c_admission_id].nunique()
+        assert set(admission_dx_codes.keys()) == set(tvx_ehr_with_dx.admission_ids)
         for admission_id, codes in admission_dx_codes.items():
-            assert codes.vec.sum() > 0
             assert codes.vec.dtype == bool
             assert codes.scheme == tvx_ehr_with_dx.scheme.dx_discharge.name
             assert len(codes) == len(tvx_ehr_with_dx.scheme.dx_discharge)
@@ -227,9 +229,8 @@ class TestTVxConcepts:
     def test_admission_dx_history_codes(self, tvx_ehr_with_dx: TVxEHR,
                                         admission_dx_codes: Dict[str, CodesVector],
                                         admission_dx_history_codes: Dict[str, CodesVector]):
-        assert len(admission_dx_history_codes) == len(tvx_ehr_with_dx.dataset.tables.admissions)
-        # because of the random admission_id we removed from dx_discharge.
-        assert len(admission_dx_history_codes) == len(admission_dx_codes) + 1
+        assert set(admission_dx_history_codes.keys()) == set(tvx_ehr_with_dx.admission_ids)
+        assert set(admission_dx_history_codes.keys()) == set(admission_dx_codes.keys())
         for subject_id, admission_ids in tvx_ehr_with_dx.subjects_sorted_admission_ids.items():
             assert admission_dx_history_codes[admission_ids[0]].vec.sum() == 0
 
@@ -252,7 +253,7 @@ class TestTVxConcepts:
     def test_admission_outcome(self, tvx_ehr_with_dx: TVxEHR,
                                admission_dx_codes: Dict[str, CodesVector],
                                admission_outcome: Dict[str, CodesVector]):
-        assert len(admission_outcome) == len(admission_dx_codes)
+        assert set(admission_outcome.keys()) == set(admission_dx_codes.keys())
         for admission_id, outcome in admission_outcome.items():
             assert outcome.scheme == tvx_ehr_with_dx.scheme.outcome.name
             assert len(outcome) == len(tvx_ehr_with_dx.scheme.outcome)
@@ -271,7 +272,7 @@ class TestTVxConcepts:
                                   admission_icu_inputs: Dict[str, InpatientInput]):
         icu_inputs = tvx_ehr_with_icu_inputs.dataset.tables.icu_inputs
         c_admission_id = tvx_ehr_with_icu_inputs.dataset.config.tables.admissions.admission_id_alias
-        assert len(admission_icu_inputs) == len(tvx_ehr_with_icu_inputs.dataset.tables.admissions)
+        assert set(admission_icu_inputs.keys()) == set(tvx_ehr_with_icu_inputs.admission_ids)
         assert sum(len(inputs.starttime) for inputs in admission_icu_inputs.values()) == len(icu_inputs)
 
         for admission_id, admission_inputs_df in icu_inputs.groupby(c_admission_id):
@@ -285,8 +286,6 @@ class TestTVxConcepts:
             pytest.skip("No observations table found in dataset.")
         return large_ehr
 
-
-
     @pytest.fixture
     def admission_obs(self, tvx_ehr_with_obs: TVxEHR) -> Dict[str, InpatientObservables]:
         return TVxConcepts._observables(tvx_ehr_with_obs, TVxReport())[0]
@@ -294,7 +293,7 @@ class TestTVxConcepts:
     def test_admission_obs(self, tvx_ehr_with_obs: TVxEHR, admission_obs: Dict[str, InpatientObservables]):
         obs_df = tvx_ehr_with_obs.dataset.tables.obs
         c_admission_id = tvx_ehr_with_obs.dataset.config.tables.admissions.admission_id_alias
-        assert len(admission_obs) == len(tvx_ehr_with_obs.dataset.tables.admissions)
+        assert set(admission_obs.keys()) == set(tvx_ehr_with_obs.admission_ids)
         assert sum(obs.mask.sum() for obs in admission_obs.values()) == len(obs_df)
 
         for admission_id, admission_obs_df in obs_df.groupby(c_admission_id):
@@ -313,16 +312,16 @@ class TestTVxConcepts:
         return TVxConcepts._hosp_procedures(tvx_ehr_with_hosp_procedures)
 
     def test_admission_hosp_procedures(self, tvx_ehr_with_hosp_procedures: TVxEHR,
-                                  admission_hosp_procedures: Dict[str, InpatientInput]):
+                                       admission_hosp_procedures: Dict[str, InpatientInput]):
         hosp_procedures = tvx_ehr_with_hosp_procedures.dataset.tables.hosp_procedures
         c_admission_id = tvx_ehr_with_hosp_procedures.dataset.config.tables.admissions.admission_id_alias
-        assert len(admission_hosp_procedures) == len(tvx_ehr_with_hosp_procedures.dataset.tables.admissions)
+        assert set(admission_hosp_procedures.keys()) == set(tvx_ehr_with_hosp_procedures.admission_ids)
         assert sum(len(proc.starttime) for proc in admission_hosp_procedures.values()) == len(hosp_procedures)
 
         for admission_id, admission_hosp_procedures_df in hosp_procedures.groupby(c_admission_id):
             tvx_hosp_proc = admission_hosp_procedures[admission_id]
             assert len(tvx_hosp_proc.starttime) == len(admission_hosp_procedures_df)
-            assert all(tvx_hosp_proc.code_index < len(tvx_ehr_with_hosp_procedures.dataset.scheme.hosp_procedures))
+            assert all(tvx_hosp_proc.code_index < len(tvx_ehr_with_hosp_procedures.scheme.hosp_procedures))
 
     @pytest.fixture
     def tvx_ehr_with_icu_procedures(self, large_ehr: TVxEHR) -> TVxEHR:
@@ -335,17 +334,40 @@ class TestTVxConcepts:
         return TVxConcepts._icu_procedures(tvx_ehr_with_icu_procedures)
 
     def test_admission_icu_procedures(self, tvx_ehr_with_icu_procedures: TVxEHR,
-                                       admission_icu_procedures: Dict[str, InpatientInput]):
+                                      admission_icu_procedures: Dict[str, InpatientInput]):
         icu_procedures = tvx_ehr_with_icu_procedures.dataset.tables.icu_procedures
         c_admission_id = tvx_ehr_with_icu_procedures.dataset.config.tables.admissions.admission_id_alias
-        assert len(admission_icu_procedures) == len(tvx_ehr_with_icu_procedures.dataset.tables.admissions)
+        assert set(admission_icu_procedures.keys()) == set(tvx_ehr_with_icu_procedures.admission_ids)
         assert sum(len(proc.starttime) for proc in admission_icu_procedures.values()) == len(icu_procedures)
 
         for admission_id, admission_icu_procedures_df in icu_procedures.groupby(c_admission_id):
             tvx_icu_proc = admission_icu_procedures[admission_id]
             assert len(tvx_icu_proc.starttime) == len(admission_icu_procedures_df)
-            assert all(tvx_icu_proc.code_index < len(tvx_ehr_with_icu_procedures.dataset.scheme.icu_procedures))
+            assert all(tvx_icu_proc.code_index < len(tvx_ehr_with_icu_procedures.scheme.icu_procedures))
 
+    @pytest.fixture
+    def tvx_ehr_with_all_interventions(self, large_ehr: TVxEHR) -> TVxEHR:
+        if len(large_ehr.dataset.tables.icu_procedures) == 0:
+            pytest.skip("No icu procedures table found in dataset.")
+        if len(large_ehr.dataset.tables.hosp_procedures) == 0:
+            pytest.skip("No hospital procedures table found in dataset.")
+        if len(large_ehr.dataset.tables.icu_inputs) == 0:
+            pytest.skip("No icu inputs table found in dataset.")
+        return large_ehr
+
+    @pytest.fixture
+    def admission_interventions(self, tvx_ehr_with_all_interventions: TVxEHR) -> Dict[str, InpatientInterventions]:
+        return TVxConcepts._interventions(tvx_ehr_with_all_interventions, TVxReport())[0]
+
+    def test_admission_interventions(self, tvx_ehr_with_all_interventions: TVxEHR,
+                                     admission_interventions: Dict[str, InpatientInterventions]):
+        assert set(admission_interventions.keys()) == set(tvx_ehr_with_all_interventions.admission_ids)
+        assert sum(len(ii.icu_procedures.starttime) for ii in admission_interventions.values()) == len(
+            tvx_ehr_with_all_interventions.dataset.tables.icu_procedures)
+        assert sum(len(ii.hosp_procedures.starttime) for ii in admission_interventions.values()) == len(
+            tvx_ehr_with_all_interventions.dataset.tables.hosp_procedures)
+        assert sum(len(ii.icu_inputs.starttime) for ii in admission_interventions.values()) == len(
+            tvx_ehr_with_all_interventions.dataset.tables.icu_inputs)
 
     @pytest.fixture(params=['interventions', 'observables'])
     def tvx_ehr_conf_concept(self, large_ehr: TVxEHR, request) -> TVxEHR:
@@ -358,4 +380,103 @@ class TestTVxConcepts:
 
     @pytest.fixture
     def tvx_ehr_concept(self, tvx_ehr_conf_concept: TVxEHR):
-        return tvx_ehr_conf_concept.execute_external_transformations([TVxConcepts()])[0]
+        return tvx_ehr_conf_concept.execute_external_transformations([TVxConcepts()])
+
+    def test_tvx_ehr_concept(self, tvx_ehr_concept: TVxEHR):
+        assert set(tvx_ehr_concept.subjects.keys()) == set(tvx_ehr_concept.dataset.tables.static.index)
+        if tvx_ehr_concept.config.interventions:
+            assert all(adm.interventions is not None for patient in tvx_ehr_concept.subjects.values() for adm in
+                       patient.admissions)
+        else:
+            assert all(adm.interventions is None for patient in tvx_ehr_concept.subjects.values() for adm in
+                       patient.admissions)
+        if tvx_ehr_concept.config.observables:
+            assert all(adm.observables is not None for patient in tvx_ehr_concept.subjects.values() for adm in
+                       patient.admissions)
+        else:
+            assert all(
+                adm.observables is None for patient in tvx_ehr_concept.subjects.values() for adm in patient.admissions)
+
+        for subject_id, sorted_admission_ids in tvx_ehr_concept.subjects_sorted_admission_ids.items():
+            assert [adm.admission_id for adm in tvx_ehr_concept.subjects[subject_id].admissions] == sorted_admission_ids
+
+
+class TestInterventionSegmentation:
+    @pytest.fixture
+    def tvx_ehr_concept(self, large_ehr: TVxEHR):
+        large_ehr = eqx.tree_at(lambda x: x.config.interventions, large_ehr, True)
+        large_ehr = eqx.tree_at(lambda x: x.config.observables, large_ehr, True)
+        return large_ehr.execute_external_transformations([TVxConcepts()])
+
+    @pytest.fixture
+    def tvx_ehr_segmented(self, tvx_ehr_concept: TVxEHR) -> SegmentedTVxEHR:
+        return tvx_ehr_concept.execute_external_transformations([InterventionSegmentation()])
+
+    def test_segmentation(self, tvx_ehr_concept: TVxEHR, tvx_ehr_segmented: SegmentedTVxEHR):
+        first_patient = next(iter(tvx_ehr_concept.subjects.values()))
+        first_segmented_patient = next(iter(tvx_ehr_segmented.subjects.values()))
+        assert isinstance(first_patient, Patient)
+        assert isinstance(first_segmented_patient, SegmentedPatient)
+        assert isinstance(first_patient.admissions[0], Admission)
+        assert isinstance(first_segmented_patient.admissions[0], SegmentedAdmission)
+        assert isinstance(first_patient.admissions[0].observables, InpatientObservables)
+        assert isinstance(first_segmented_patient.admissions[0].observables, list)
+        assert isinstance(first_segmented_patient.admissions[0].observables[0], InpatientObservables)
+        assert isinstance(first_patient.admissions[0].interventions, InpatientInterventions)
+        assert isinstance(first_segmented_patient.admissions[0].interventions, SegmentedInpatientInterventions)
+
+
+class TestObsTimeBinning:
+    @pytest.fixture
+    def tvx_ehr_concept(self, large_ehr: TVxEHR):
+        large_ehr = eqx.tree_at(lambda x: x.config.interventions, large_ehr, False)
+        large_ehr = eqx.tree_at(lambda x: x.config.observables, large_ehr, True)
+        return large_ehr.execute_external_transformations([TVxConcepts()])
+
+    @pytest.fixture
+    def tvx_ehr_binned(self, tvx_ehr_concept: TVxEHR) -> TVxEHR:
+        return tvx_ehr_concept.execute_external_transformations([ObsTimeBinning()])
+
+    def test_binning(self, tvx_ehr_concept: TVxEHR, tvx_ehr_binned: TVxEHR):
+        assert sum(1 for _ in tvx_ehr_concept.iter_obs()) > sum(1 for _ in tvx_ehr_binned.iter_obs())
+
+
+class TestLeadExtraction:
+    @pytest.fixture
+    def tvx_ehr_concept(self, large_ehr: TVxEHR):
+        large_ehr = eqx.tree_at(lambda x: x.config.interventions, large_ehr, False)
+        large_ehr = eqx.tree_at(lambda x: x.config.observables, large_ehr, True)
+        obs_scheme = large_ehr.scheme.obs
+        lead_config = LeadingObservableExtractorConfig(leading_hours=[1.0, 2.0],
+                                                       scheme=obs_scheme.name,
+                                                       entry_neglect_window=0.0,
+                                                       recovery_window=0.0,
+                                                       minimum_acquisitions=0,
+                                                       observable_code=obs_scheme.index2code[BINARY_OBSERVATION_CODE_INDEX])
+        large_ehr = eqx.tree_at(lambda x: x.config.leading_observable, large_ehr, lead_config,
+                                is_leaf=lambda x: x is None)
+        return large_ehr.execute_external_transformations([TVxConcepts()])
+
+    @pytest.fixture
+    def tvx_ehr_lead(self, tvx_ehr_concept: TVxEHR) -> TVxEHR:
+
+        return tvx_ehr_concept.execute_external_transformations([LeadingObservableExtraction()])
+
+    def test_lead(self, tvx_ehr_concept: TVxEHR, tvx_ehr_lead: TVxEHR):
+        first_patient0 = next(iter(tvx_ehr_concept.subjects.values()))
+        first_patient1 = next(iter(tvx_ehr_lead.subjects.values()))
+        assert isinstance(first_patient0, Patient)
+        assert isinstance(first_patient1, Patient)
+        assert isinstance(first_patient0.admissions[0], Admission)
+        assert isinstance(first_patient1.admissions[0], Admission)
+        assert isinstance(first_patient0.admissions[0].observables, InpatientObservables)
+        assert isinstance(first_patient1.admissions[0].observables, InpatientObservables)
+        assert first_patient0.admissions[0].leading_observable is None
+        assert isinstance(first_patient1.admissions[0].leading_observable, InpatientObservables)
+
+        for subject_id, patient in tvx_ehr_lead.subjects.items():
+            for admission in patient.admissions:
+                assert admission.leading_observable is not None
+                assert len(admission.leading_observable) == len(admission.observables)
+                assert admission.leading_observable.value.shape[1] == len(
+                    tvx_ehr_lead.config.leading_observable.leading_hours)

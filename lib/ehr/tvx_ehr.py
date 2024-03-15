@@ -447,6 +447,7 @@ class TVxEHR(AbstractDatasetRepresentation):
     splits: Optional[_SplitsType] = None
     subjects: Optional[Dict[str, Patient]] = None
     patient_class: ClassVar[Type[Patient]] = Patient
+    report_class: ClassVar[Type[TVxReport]] = TVxReport
 
     @property
     def header(self) -> Dict[str, Any]:
@@ -956,6 +957,13 @@ class SegmentedTVxEHR(TVxEHR):
     subjects: Dict[str, SegmentedPatient]
     patient_class: ClassVar[Type[SegmentedPatient]] = SegmentedPatient
 
+    @classmethod
+    def _setup_pipeline(cls, config: Config) -> AbstractDatasetPipeline:
+        raise NotImplementedError("SegmentedPatient is a final representation. It cannot have a pipeline.")
+
+    def execute_pipeline(self) -> AbstractDatasetRepresentation:
+        raise NotImplementedError("SegmentedPatient is a final representation. It cannot have a pipeline.")
+
     def iter_obs(self, subject_ids=None) -> Iterable[InpatientObservables]:
         if subject_ids is None:
             subject_ids = self.subjects.keys()
@@ -970,6 +978,20 @@ class SegmentedTVxEHR(TVxEHR):
         for s in subject_ids:
             for adm in self.subjects[s].admissions:
                 yield adm.leading_observable
+
+    @staticmethod
+    def from_tvx_ehr(tvx_ehr: TVxEHR, maximum_padding: int = 100) -> SegmentedTVxEHR:
+        hosp_procedures_size = len(tvx_ehr.scheme.hosp_procedures) if tvx_ehr.scheme.hosp_procedures else None
+        icu_procedures_size = len(tvx_ehr.scheme.icu_procedures) if tvx_ehr.scheme.icu_procedures else None
+        icu_inputs_size = len(tvx_ehr.dataset.scheme.icu_inputs) if tvx_ehr.dataset.scheme.icu_inputs else None
+        subjects = {k: SegmentedPatient.from_patient(v, hosp_procedures_size=hosp_procedures_size,
+                                                     icu_procedures_size=icu_procedures_size,
+                                                     icu_inputs_size=icu_inputs_size,
+                                                     maximum_padding=maximum_padding) for k, v in
+                    tvx_ehr.subjects.items()}
+        return SegmentedTVxEHR(config=tvx_ehr.config, dataset=tvx_ehr.dataset,
+                               numerical_processors=tvx_ehr.numerical_processors,
+                               subjects=subjects, splits=tvx_ehr.splits, pipeline_report=tvx_ehr.pipeline_report)
 
 ## TODO:
 # [ ] Four modes of temporal EHR access:

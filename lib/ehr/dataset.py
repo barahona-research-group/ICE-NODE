@@ -435,6 +435,7 @@ class Report(Config):
 class AbstractDatasetRepresentation(Module):
     config: Config
     pipeline_report: pd.DataFrame = field(default_factory=pd.DataFrame)
+    report_class: ClassVar[Type[Report]] = Report
 
     @cached_property
     def pipeline(self) -> AbstractDatasetPipeline:
@@ -461,7 +462,7 @@ class AbstractDatasetRepresentation(Module):
                                          transformations: List[
                                              AbstractTransformation]) -> AbstractDatasetRepresentation:
         dataset = self
-        report = Report()
+        report = self.report_class()
         for t in transformations:
             dataset, report = t.apply(dataset, report)
         return dataset

@@ -1210,9 +1210,9 @@ class SegmentedAdmission(Admission):
         return observables.segment(t_sep)
 
     @staticmethod
-    def from_admission(admission: Admission, hosp_procedures_size: Optional[int] = None,
-                       icu_procedures_size: Optional[int] = None,
-                       icu_inputs_size: Optional[int] = None,
+    def from_admission(admission: Admission, hosp_procedures_size: Optional[int] ,
+                       icu_procedures_size: Optional[int],
+                       icu_inputs_size: Optional[int],
                        maximum_padding: int = 100) -> 'SegmentedAdmission':
         interventions = SegmentedAdmission._segment_interventions(admission.interventions, admission.interval_hours,
                                                                   hosp_procedures_size=hosp_procedures_size,
@@ -1633,3 +1633,14 @@ class SegmentedPatient(Patient):
 
     def extract_leading_observables(self, leading_observable_extractor: LeadingObservableExtractor) -> Patient:
         raise NotImplementedError("SegmentedPatient does not support leading observable extraction")
+
+    @staticmethod
+    def from_patient(patient: Patient, hosp_procedures_size: Optional[int],
+                     icu_procedures_size: Optional[int],
+                     icu_inputs_size: Optional[int],
+                     maximum_padding: int = 100) -> 'SegmentedPatient':
+        admissions = [SegmentedAdmission.from_admission(a, hosp_procedures_size=hosp_procedures_size,
+                                                        icu_procedures_size=icu_procedures_size,
+                                                        icu_inputs_size=icu_inputs_size,
+                                                        maximum_padding=maximum_padding) for a in patient.admissions]
+        return SegmentedPatient(subject_id=patient.subject_id, static_info=patient.static_info, admissions=admissions)

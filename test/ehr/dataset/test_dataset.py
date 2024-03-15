@@ -332,12 +332,14 @@ class TestDataset:
     def split_quantiles(self, request):
         return request.param
 
-    @pytest.fixture(scope=TEST_DATASET_SCOPE)
+    @pytest.fixture(scope=TEST_DATASET_SCOPE,
+                    params=[1, 11, 111, 1111, 11111])
     def subject_splits(self, indexed_dataset: NaiveDataset, subject_ids: List[str], balance: str,
-                       split_quantiles: List[float]):
+                       split_quantiles: List[float], request):
+        random_seed = request.param
         if len(subject_ids) == 0 or (len(indexed_dataset.tables.admissions) == 0 and 'admissions' in balance):
             pytest.skip("No admissions in dataset or no subjects.")
-        return indexed_dataset.random_splits(split_quantiles, balance=balance)
+        return indexed_dataset.random_splits(split_quantiles, balance=balance, random_seed=random_seed)
 
     def test_random_split(self, indexed_dataset: NaiveDataset, subject_ids: List[str],
                           subject_splits: List[List[str]],
