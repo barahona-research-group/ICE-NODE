@@ -607,7 +607,7 @@ class AbstractDatasetPipelineConfig(Config):
 
 
 class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
-    config: AbstractDatasetPipelineConfig = field(default_factory=AbstractDatasetPipelineConfig)
+    config: AbstractDatasetPipelineConfig = Config()
     transformations: List[AbstractTransformation] = field(kw_only=True)
     validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
     report_class: ClassVar[Type[Report]] = Report

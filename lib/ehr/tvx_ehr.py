@@ -327,6 +327,7 @@ class TVxEHRConfig(Config):
     time_binning: Optional[float] = None
     leading_observable: Optional[LeadingObservableExtractorConfig] = None
     interventions_segmentation: bool = False
+    admission_minimum_los: Optional[float] = None
 
 
 class TVxReportAttributes(ReportAttributes):

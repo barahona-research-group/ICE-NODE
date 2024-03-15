@@ -435,10 +435,13 @@ class TestObsTimeBinning:
 
     @pytest.fixture
     def tvx_ehr_binned(self, tvx_ehr_concept: TVxEHR) -> TVxEHR:
+        tvx_ehr_concept = eqx.tree_at(lambda x: x.config.time_binning, tvx_ehr_concept, 12.0,
+                                      is_leaf=lambda x: x is None)
         return tvx_ehr_concept.execute_external_transformations([ObsTimeBinning()])
 
     def test_binning(self, tvx_ehr_concept: TVxEHR, tvx_ehr_binned: TVxEHR):
-        assert sum(1 for _ in tvx_ehr_concept.iter_obs()) > sum(1 for _ in tvx_ehr_binned.iter_obs())
+        assert all((np.diff(o.time) == tvx_ehr_binned.config.time_binning).all() for o in tvx_ehr_binned.iter_obs() if len(o) > 1)
+
 
 
 class TestLeadExtraction:

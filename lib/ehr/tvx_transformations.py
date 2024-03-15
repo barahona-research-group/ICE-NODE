@@ -374,30 +374,26 @@ class ObsTimeBinning(AbstractTVxTransformation):
         obs_scheme = tv_ehr.scheme.obs
         tvx_concept_path = TVxReportAttributes.admission_attribute_prefix('observables',
                                                                           InpatientObservables)
-        original_obs = [admission.observables for subject in tv_ehr.subjects.values()
-                        for admission in subject.admissions]
-        tv_ehr = eqx.tree_at(lambda x: x.subjects, tv_ehr,
-                             {subject_id: subject.observables_time_binning(interval, obs_scheme)
-                              for subject_id, subject in tv_ehr.subjects.items()})
-        binned_obs = [admission.observables for subject in tv_ehr.subjects.values()
-                      for admission in subject.admissions]
+        tv_binned_ehr = eqx.tree_at(lambda x: x.subjects, tv_ehr,
+                                    {subject_id: subject.observables_time_binning(interval, obs_scheme)
+                                     for subject_id, subject in tv_ehr.subjects.items()})
 
         report = report.add(tvx_concept=tvx_concept_path,
                             value_type='concepts_count', operation='time_binning',
                             transformation=cls,
-                            before=len(original_obs),
-                            after=len(binned_obs))
+                            before=sum(1 for _ in tv_ehr.iter_obs()),
+                            after=sum(1 for _ in tv_binned_ehr.iter_obs()))
         report = report.add(tvx_concept=tvx_concept_path,
                             value_type='timestamps_count', operation='time_binning',
                             transformation=cls,
-                            before=sum(len(o) for o in original_obs),
-                            after=sum(len(o) for o in binned_obs))
+                            before=sum(len(o) for o in tv_ehr.iter_obs()),
+                            after=sum(len(o) for o in tv_binned_ehr.iter_obs()))
         report = report.add(tvx_concept=tvx_concept_path,
                             transformation=cls,
                             value_type='values_count', operation='time_binning',
-                            before=sum(o.count() for o in original_obs),
-                            after=sum(o.count() for o in binned_obs))
-        return tv_ehr, report
+                            before=sum(o.count() for o in tv_ehr.iter_obs()),
+                            after=sum(o.count() for o in tv_binned_ehr.iter_obs()))
+        return tv_binned_ehr, report
 
 
 class LeadingObservableExtraction(AbstractTVxTransformation):
@@ -721,3 +717,12 @@ class TVxConcepts(AbstractTVxTransformation):
                             value_type='count', operation='extract_subjects',
                             after=len(subjects))
         return tv_ehr, report
+
+
+class ExcludeShortAdmissions(AbstractTVxTransformation):
+    @classmethod
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
+        config = tv_ehr.config.admission_minimum_los
+        if config is None:
+            return cls.skip(tv_ehr, report)
+        raise NotImplementedError('TODO: implement this transformation')
