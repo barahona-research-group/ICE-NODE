@@ -744,10 +744,13 @@ def mimiciv_dataset_config(mimiciv_dataset_scheme_config, dataset_tables_config)
 
 
 @pytest.fixture
-def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
+def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables, unit_converter_table) -> MockMIMICIVDataset:
     ds = MockMIMICIVDataset(config=mimiciv_dataset_config)
-    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
-                       is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
+    with patch(__name__ + '.MockMIMICIVDatasetSchemeConfig.icu_inputs_uom_normalization_table',
+               return_value=unit_converter_table,
+               new_callable=PropertyMock):
+        return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                           is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
 
 
 @pytest.fixture

@@ -1,4 +1,3 @@
-from dataclasses import field
 from typing import List
 
 import equinox as eqx
@@ -6,10 +5,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lib.ehr.dataset import Report, Dataset, RatedInputTableConfig, DatasetSchemeConfig, DatasetConfig, \
-    AbstractDatasetPipeline
-from lib.ehr.transformations import ICUInputRateUnitConversion, SetIndex, FilterInvalidInputRatesSubjects
-from test.ehr.conftest import NaiveDataset, MockMIMICIVDataset
+from lib.ehr.dataset import Report, Dataset
+from lib.ehr.transformations import ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects
+from test.ehr.conftest import MockMIMICIVDataset
 
 
 class TestUnitConversionAndFilterInvalidInputRates:
@@ -59,7 +57,6 @@ class TestUnitConversionAndFilterInvalidInputRates:
             assert inputs_df[icu_input_derived_unit_normalization_factor].unique() == norm_factor
             assert inputs_df[icu_input_derived_normalized_amount].equals(
                 inputs_df[icu_input_amount_alias] * norm_factor)
-
 
     @pytest.fixture
     def nan_inputs_dataset(self, fixed_dataset: pd.DataFrame, admission_id_alias: str,
