@@ -416,10 +416,16 @@ class Report(Config):
         if len(report) == 0:
             report = (ReportAttributes(transformation='identity'),)
 
+        df = pd.DataFrame([x.as_dict() for x in report]).astype(str)
+        object_columns = [c for c in df.columns if df[c].dtype == 'object']
+        type_rows = df['value_type'] == 'dtype'
+        type_cols = ['after', 'before']
+        df.loc[:, object_columns] = df.loc[:, object_columns].fillna('-')
+        df.loc[type_rows, type_cols] = df.loc[type_rows, type_cols].map(lambda x: f'{x}_type')
         if previous_report is None:
-            return pd.DataFrame([x.as_dict() for x in report])
+            return df
         else:
-            return pd.concat([previous_report, pd.DataFrame([x.as_dict() for x in report])], ignore_index=True,
+            return pd.concat([previous_report, df], ignore_index=True,
                              axis=0, sort=False)
 
     @staticmethod
@@ -625,6 +631,7 @@ class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
                 dataset, report = t.apply(dataset, report)
                 report = report.add(transformation=type(t), operation='end')
                 pbar.update(1)
+
         return dataset, report.compile(dataset.pipeline_report)
 
 
@@ -655,10 +662,10 @@ class Dataset(AbstractDatasetRepresentation):
     config: DatasetConfig
     tables: DatasetTables
 
-    def __init__(self, config: DatasetConfig):
+    def __init__(self, config: DatasetConfig, tables: Optional[DatasetTables] = None):
         super().__init__(config=config)
         # TODO: offload table loading to the pipeline.
-        self.tables = self.load_tables(config, self.scheme)
+        self.tables = self.load_tables(config, self.scheme) if tables is None else tables
 
     @classmethod
     @abstractmethod
@@ -668,7 +675,7 @@ class Dataset(AbstractDatasetRepresentation):
     def equals(self, other: 'Dataset') -> bool:
         return self.equal_header(other) and self.tables.equals(other.tables)
 
-    def save(self, path: Union[str, Path], overwrite: bool = False):
+    def save(self, path: Union[str, Path], overwrite: bool = False, **kwargs):
         self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
         self.tables.save(h5_path, overwrite)
@@ -678,11 +685,12 @@ class Dataset(AbstractDatasetRepresentation):
 
     @classmethod
     def load(cls, path: Union[str, Path]):
-        config, _ = cls.load_config(path)
+        config, classname = cls.load_config(path)
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
         tables = DatasetTables.load(h5_path)
-        dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
-                              is_leaf=lambda x: x is None)
+        dataset = Module.import_module(config=config, classname=classname, tables=tables)
+        # dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
+        #                       is_leaf=lambda x: x is None)
         with pd.HDFStore(h5_path) as store:
             report = store['report'] if 'report' in store else pd.DataFrame()
             return eqx.tree_at(lambda x: x.pipeline_report, dataset, report)

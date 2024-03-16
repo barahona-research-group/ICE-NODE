@@ -1,6 +1,6 @@
 import random
-from dataclasses import field
 from typing import List
+from unittest.mock import patch, PropertyMock
 
 import equinox as eqx
 import numpy as np
@@ -669,23 +669,29 @@ def sample_admission_id(has_admissions_dataset: Dataset) -> str:
 
 
 class MockMIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
-    _icu_inputs_uom_normalization_table: pd.DataFrame = field(kw_only=True)
 
     @property
-    def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
-        return self._icu_inputs_uom_normalization_table
+    def icu_inputs_uom_normalization_table(self):
+        return 0
+
+
+MockMIMICIVDatasetSchemeConfig.register()
 
 
 class MockMIMICIVDataset(NaiveDataset):
+
     @staticmethod
     def icu_inputs_uom_normalization(icu_inputs_config: RatedInputTableConfig,
-                                     icu_inputs_uom_normalization_table: pd.DataFrame) -> pd.DataFrame:
+                                     icu_inputs_uom_normalization_table: pd.DataFrame):
         return icu_inputs_uom_normalization_table
 
     @classmethod
     def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
         return ValidatedDatasetPipeline(transformations=[SetIndex(), CastTimestamps(), ICUInputRateUnitConversion(),
                                                          SetAdmissionRelativeTimes()])
+
+
+MockMIMICIVDataset.register()
 
 
 @pytest.fixture
@@ -721,8 +727,7 @@ def mimiciv_dataset_scheme_config(ethnicity_scheme_name: str,
                                   icu_proc_scheme_name: str,
                                   icu_inputs_scheme_name: str,
                                   observation_scheme_name: str,
-                                  hosp_proc_scheme_name: str,
-                                  unit_converter_table) -> MockMIMICIVDatasetSchemeConfig:
+                                  hosp_proc_scheme_name: str) -> MockMIMICIVDatasetSchemeConfig:
     return MockMIMICIVDatasetSchemeConfig(
         ethnicity=ethnicity_scheme_name,
         gender=gender_scheme_name,
@@ -730,8 +735,7 @@ def mimiciv_dataset_scheme_config(ethnicity_scheme_name: str,
         icu_procedures=icu_proc_scheme_name,
         icu_inputs=icu_inputs_scheme_name,
         obs=observation_scheme_name,
-        hosp_procedures=hosp_proc_scheme_name,
-        _icu_inputs_uom_normalization_table=unit_converter_table)
+        hosp_procedures=hosp_proc_scheme_name)
 
 
 @pytest.fixture
@@ -747,16 +751,22 @@ def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables) -> MockMIMIC
 
 
 @pytest.fixture
-def mimiciv_dataset(mimiciv_dataset_config, dataset_tables) -> MockMIMICIVDataset:
+def mimiciv_dataset(mimiciv_dataset_config, dataset_tables, unit_converter_table) -> MockMIMICIVDataset:
     ds = MockMIMICIVDataset(config=mimiciv_dataset_config)
-    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
-                       is_leaf=lambda x: x is None).execute_pipeline()
+    with patch(__name__ + '.MockMIMICIVDatasetSchemeConfig.icu_inputs_uom_normalization_table',
+               return_value=unit_converter_table,
+               new_callable=PropertyMock):
+        yield eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+                          is_leaf=lambda x: x is None).execute_pipeline()
 
 
 class NaiveEHR(TVxEHR):
     @classmethod
     def _setup_pipeline(cls, config: DatasetConfig) -> AbstractDatasetPipeline:
         return AbstractTVxPipeline(transformations=[])
+
+
+NaiveEHR.register()
 
 
 @pytest.fixture

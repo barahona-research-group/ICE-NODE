@@ -13,7 +13,7 @@ from lib.ehr.transformations import SetIndex, CastTimestamps, \
 from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, TVxEHRSampleConfig, TVxEHRSplitsConfig, \
     DatasetNumericalProcessorsConfig, AbstractTVxPipeline
 from lib.ehr.tvx_transformations import SampleSubjects, ObsIQROutlierRemover, RandomSplits, ObsAdaptiveScaler, \
-    InputScaler, ObsTimeBinning, TVxConcepts, InterventionSegmentation
+    InputScaler, ObsTimeBinning, TVxConcepts, InterventionSegmentation, ExcludeShortAdmissions
 
 OBSERVABLE_AKI_TARGET_CODE: Final[str] = 'renal_aki.aki_binary'
 
@@ -104,7 +104,8 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
             seed: int = 0,
             extract_interventions: bool = True,
             extract_observables: bool = True,
-            segment_interventions: bool = True,
+            interventions_segmentation: bool = True,
+            admission_minimum_los: Optional[float] = 12.0,
             time_binning: Optional[float] = None,
             sample_n_subjects: Optional[int] = None,
             sample_offset: Optional[int] = None,
@@ -123,8 +124,9 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
             splits=splits,
             interventions=extract_interventions,
             observables=extract_observables,
-            interventions_segmentation=segment_interventions,
-            time_binning=time_binning)
+            interventions_segmentation=interventions_segmentation,
+            time_binning=time_binning,
+            admission_minimum_los=admission_minimum_los)
 
 
 class TVxAKIMIMICIVDataset(TVxEHR):
@@ -140,7 +142,7 @@ class TVxAKIMIMICIVDataset(TVxEHR):
             ObsAdaptiveScaler(),
             InputScaler(),
             TVxConcepts(),
-            # ExcludeShortAdmissions() # TODO: implement it first.
+            ExcludeShortAdmissions(),
             ObsTimeBinning(),
             LeadingObservableExtractorConfig(),
             InterventionSegmentation(),

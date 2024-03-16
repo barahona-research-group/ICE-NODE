@@ -331,6 +331,8 @@ class InputScaler(TrainableTransformation):
         return tv_ehr, report
 
 
+# TODO: add to the relations an explanation to be shown in the error messages.
+
 TVX_DEPENDS_RELATIONS: Final[Dict[Type[AbstractTransformation], Set[Type[AbstractTransformation]]]] = {
     RandomSplits: {SetIndex, CastTimestamps},
     TrainableTransformation: {RandomSplits, SetIndex},
@@ -391,8 +393,8 @@ class ObsTimeBinning(AbstractTVxTransformation):
         report = report.add(tvx_concept=tvx_concept_path,
                             transformation=cls,
                             value_type='values_count', operation='time_binning',
-                            before=sum(o.count() for o in tv_ehr.iter_obs()),
-                            after=sum(o.count() for o in tv_binned_ehr.iter_obs()))
+                            before=sum(o.count for o in tv_ehr.iter_obs()),
+                            after=sum(o.count for o in tv_binned_ehr.iter_obs()))
         return tv_binned_ehr, report
 
 
@@ -423,7 +425,7 @@ class LeadingObservableExtraction(AbstractTVxTransformation):
         report = report.add(tvx_concept=tvx_concept_path,
                             transformation=cls,
                             value_type='values_count', operation='LeadingObservableExtractor',
-                            after=sum(lo.count() for lo in tv_ehr.iter_lead_obs()))
+                            after=sum(lo.count for lo in tv_ehr.iter_lead_obs()))
         report = report.add(
             transformation=cls,
             tvx_concept=tvx_concept_path,
@@ -675,7 +677,7 @@ class TVxConcepts(AbstractTVxTransformation):
                                                                                        InpatientObservables),
                             transformation=cls,
                             table='obs', value_type='values_count', operation='extract_observables',
-                            after=sum(o.count() for o in inpatient_observables.values()))
+                            after=sum(o.count for o in inpatient_observables.values()))
 
         return inpatient_observables | empty_obs_dict, report
 
@@ -722,7 +724,29 @@ class TVxConcepts(AbstractTVxTransformation):
 class ExcludeShortAdmissions(AbstractTVxTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
-        config = tv_ehr.config.admission_minimum_los
-        if config is None:
+        admission_minimum_los = tv_ehr.config.admission_minimum_los
+        if admission_minimum_los is None:
             return cls.skip(tv_ehr, report)
-        raise NotImplementedError('TODO: implement this transformation')
+        filtered_subjects = {subject_id: subject.filter_short_stays(admission_minimum_los)
+                             for subject_id, subject in tv_ehr.subjects.items()}
+
+        report = report.add(tvx_concept=TVxReportAttributes.admissions_prefix(),
+                            transformation=cls,
+                            value_type='count', operation=f'filter_short_stays({admission_minimum_los})',
+                            before=sum(len(s.admissions) for s in tv_ehr.subjects.values()),
+                            after=sum(len(s.admissions) for s in filtered_subjects.values()))
+
+        tv_ehr_filtered = eqx.tree_at(lambda x: x.subjects, tv_ehr,
+                                      {subject_id: subject for subject_id, subject in filtered_subjects.items() if
+                                       len(subject.admissions) > 0})
+        report = report.add(tvx_concept=TVxReportAttributes.subjects_prefix(),
+                            transformation=cls,
+                            value_type='count', operation=f'filter_short_stays({admission_minimum_los})',
+                            before=len(tv_ehr.subject_ids),
+                            after=len(tv_ehr_filtered.subject_ids))
+
+        return tv_ehr_filtered, report
+
+# TODO: add handy report functions to capture all statistics
+#  (they need to be cached properties for EHR, Patient, Admission, etc to avoid recomputation).
+#  and only record the differences in the report.

@@ -77,6 +77,7 @@ class InpatientObservables(Data):
         """
         return self.time.shape[0]
 
+    @cached_property
     def count(self) -> int:
         """
         Returns the number of non-missing values in the 'value' attribute.
@@ -390,7 +391,7 @@ class LeadingObservableExtractorConfig(Config):
         assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
         return scheme
 
-    @property
+    @cached_property
     def type_hint(self) -> NumericalTypeHint:
         """
         Returns the type hint for the observable.
@@ -829,7 +830,7 @@ class InpatientInterventions(Data):
                 ii[k] = None
         return InpatientInterventions(**ii)
 
-    @property
+    @cached_property
     def timestamps(self) -> List[float]:
         timestamps = []
         for k in self.__dict__.keys():
@@ -1121,7 +1122,7 @@ class Admission(Data):
                          leading_observable=leading_observable,
                          interventions=interventions)
 
-    @property
+    @cached_property
     def interval_hours(self) -> float:
         """
         Calculates the interval in hours between the admission start and end dates.
@@ -1131,7 +1132,7 @@ class Admission(Data):
         """
         return (self.admission_dates[1] - self.admission_dates[0]).total_seconds() / 3600
 
-    @property
+    @cached_property
     def interval_days(self) -> float:
         """
         Calculates the interval in days based on the interval in hours.
@@ -1210,7 +1211,7 @@ class SegmentedAdmission(Admission):
         return observables.segment(t_sep)
 
     @staticmethod
-    def from_admission(admission: Admission, hosp_procedures_size: Optional[int] ,
+    def from_admission(admission: Admission, hosp_procedures_size: Optional[int],
                        icu_procedures_size: Optional[int],
                        icu_inputs_size: Optional[int],
                        maximum_padding: int = 100) -> 'SegmentedAdmission':
@@ -1511,7 +1512,7 @@ class Patient(Data):
     def __post_init__(self):
         self.admissions = list(sorted(self.admissions, key=lambda x: x.admission_dates[0]))
 
-    @property
+    @cached_property
     def d2d_interval_days(self):
         """
         The interval in days between the first and last discharge dates.
@@ -1522,6 +1523,16 @@ class Patient(Data):
         d1 = self.admissions[0].admission_dates[1]
         d2 = self.admissions[-1].admission_dates[1]
         return (d2 - d1).total_seconds() / 3600 / 24
+
+    def filter_short_stays(self, min_hours: float) -> Patient:
+        """
+        Filter out admissions that are shorter than a specified duration.
+
+        Args:
+            min_hours (float): the minimum duration in hours.
+        """
+        admissions = [a for a in self.admissions if a.interval_hours >= min_hours]
+        return Patient(subject_id=self.subject_id, static_info=self.static_info, admissions=admissions)
 
     def outcome_frequency_vec(self):
         """

@@ -12,7 +12,8 @@ from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSa
     DatasetNumericalProcessorsConfig, ScalersConfig, OutlierRemoversConfig, IQROutlierRemoverConfig, \
     DatasetNumericalProcessors, SegmentedTVxEHR
 from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler, \
-    ObsIQROutlierRemover, TVxConcepts, InterventionSegmentation, ObsTimeBinning, LeadingObservableExtraction
+    ObsIQROutlierRemover, TVxConcepts, InterventionSegmentation, ObsTimeBinning, LeadingObservableExtraction, \
+    ExcludeShortAdmissions
 from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX
 
 
@@ -34,6 +35,13 @@ def large_ehr(multi_subjects_ehr: TVxEHR):
         pytest.skip("No admissions table found in dataset. The sampling will result on empty dataset.")
 
     return multi_subjects_ehr
+
+
+def test_serialization_multi_subjects(multi_subjects_ehr: TVxEHR, tmpdir: str):
+    path = f'{tmpdir}/multi_subjects_ehr'
+    multi_subjects_ehr.save(path)
+    loaded_ehr = TVxEHR.load(path)
+    assert multi_subjects_ehr.equals(loaded_ehr)
 
 
 class TestSampleSubjects:
@@ -440,8 +448,8 @@ class TestObsTimeBinning:
         return tvx_ehr_concept.execute_external_transformations([ObsTimeBinning()])
 
     def test_binning(self, tvx_ehr_concept: TVxEHR, tvx_ehr_binned: TVxEHR):
-        assert all((np.diff(o.time) == tvx_ehr_binned.config.time_binning).all() for o in tvx_ehr_binned.iter_obs() if len(o) > 1)
-
+        assert all((np.diff(o.time) == tvx_ehr_binned.config.time_binning).all() for o in tvx_ehr_binned.iter_obs() if
+                   len(o) > 1)
 
 
 class TestLeadExtraction:
@@ -455,7 +463,8 @@ class TestLeadExtraction:
                                                        entry_neglect_window=0.0,
                                                        recovery_window=0.0,
                                                        minimum_acquisitions=0,
-                                                       observable_code=obs_scheme.index2code[BINARY_OBSERVATION_CODE_INDEX])
+                                                       observable_code=obs_scheme.index2code[
+                                                           BINARY_OBSERVATION_CODE_INDEX])
         large_ehr = eqx.tree_at(lambda x: x.config.leading_observable, large_ehr, lead_config,
                                 is_leaf=lambda x: x is None)
         return large_ehr.execute_external_transformations([TVxConcepts()])
@@ -483,3 +492,23 @@ class TestLeadExtraction:
                 assert len(admission.leading_observable) == len(admission.observables)
                 assert admission.leading_observable.value.shape[1] == len(
                     tvx_ehr_lead.config.leading_observable.leading_hours)
+
+
+class TestExcludeShortAdmissions:
+    @pytest.fixture
+    def tvx_ehr_concept(self, large_ehr: TVxEHR):
+        large_ehr = eqx.tree_at(lambda x: x.config.interventions, large_ehr, False)
+        large_ehr = eqx.tree_at(lambda x: x.config.observables, large_ehr, False)
+        large_ehr = eqx.tree_at(lambda x: x.config.admission_minimum_los, large_ehr, 72.0,
+                                is_leaf=lambda x: x is None)
+        return large_ehr.execute_external_transformations([TVxConcepts()])
+
+    @pytest.fixture
+    def tvx_ehr_filtered(self, tvx_ehr_concept: TVxEHR) -> TVxEHR:
+        return tvx_ehr_concept.execute_external_transformations([ExcludeShortAdmissions()])
+
+    def test_filter(self, tvx_ehr_concept: TVxEHR, tvx_ehr_filtered: TVxEHR):
+        assert sum(len(s.admissions) for s in tvx_ehr_concept.subjects.values()) > sum(
+            len(s.admissions) for s in tvx_ehr_filtered.subjects.values())
+        assert all(adm.interval_hours >= tvx_ehr_concept.config.admission_minimum_los for s in
+                   tvx_ehr_filtered.subjects.values() for adm in s.admissions)
