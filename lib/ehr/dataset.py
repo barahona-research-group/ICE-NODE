@@ -22,25 +22,42 @@ SECONDS_TO_HOURS_SCALER: Final[float] = 1 / 3600.0  # convert seconds to hours
 
 
 class TableConfig(Config):
+
+    @staticmethod
+    def _alias_dict(data) -> Dict[str, str]:
+        return {k: v for k, v in data.items() if k.endswith('_alias')}
+
     @property
     def alias_dict(self) -> Dict[str, str]:
-        return {k: v for k, v in self.as_dict().items() if k.endswith('_alias')}
+        return self._alias_dict(self.as_dict())
+
+    @staticmethod
+    def _alias_id_dict(data) -> Dict[str, str]:
+        return {k: v for k, v in data.items() if '_id_' in k}
 
     @property
     def alias_id_dict(self) -> Dict[str, str]:
-        return {k: v for k, v in self.alias_dict.items() if '_id_' in k}
+        return self._alias_id_dict(self.as_dict())
 
     @property
     def index(self) -> Optional[str]:
         return None
 
+    @staticmethod
+    def _time_cols(data) -> Tuple[str, ...]:
+        return tuple(v for k, v in data.items() if 'time' in k or 'date' in k)
+
     @property
     def time_cols(self) -> Tuple[str, ...]:
-        return tuple(v for k, v in self.alias_dict.items() if 'time' in k or 'date' in k)
+        return self._time_cols(self.alias_dict)
+
+    @staticmethod
+    def _coded_cols(data) -> Tuple[str, ...]:
+        return tuple(v for k, v in data.items() if 'code' in k)
 
     @property
     def coded_cols(self) -> Tuple[str, ...]:
-        return tuple(v for k, v in self.alias_dict.items() if 'code' in k)
+        return self._coded_cols(self.alias_dict)
 
 
 class AdmissionLinkedTableConfig(TableConfig):

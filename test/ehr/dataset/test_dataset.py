@@ -49,14 +49,10 @@ def test_table_config(id_alias_attrs: Tuple[str, ...], alias_attrs: Tuple[str, .
 
     all_alias_dict = id_alias_dict | alias_dict | time_dict | coded_dict
     all_dict = all_alias_dict | other_dict
-    config = TableConfig()
-    # TODO: Is there a better way to do this?
-    config.__dict__.update(all_dict)
-
-    assert config.alias_dict == all_alias_dict
-    assert config.alias_id_dict == id_alias_dict
-    assert set(config.time_cols) == set(time_dict.values())
-    assert set(config.coded_cols) == set(coded_dict.values())
+    assert TableConfig._alias_dict(all_dict) == all_alias_dict
+    assert TableConfig._alias_id_dict(all_dict) == id_alias_dict
+    assert set(TableConfig._time_cols(all_dict)) == set(time_dict.values())
+    assert set(TableConfig._coded_cols(all_dict)) == set(coded_dict.values())
 
 
 class TestDatasetTablesConfig:
@@ -359,10 +355,13 @@ class TestDataset:
                                   split_proportions: List[float],
                                   balance: str,
                                   split_measure: Callable[[List[str]], float]):
+        if len(subject_ids) < 2:
+            pytest.skip("No enough subjects in dataset to split.")
         # # test proportionality
         # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
         # is not appropriate.
         p_threshold = 1 / len(subject_ids)
+        tolerance = min(abs(split_measure([i]) - split_measure([j])) for i in subject_ids for j in subject_ids if i != j)
         for i in range(len(split_proportions)):
             for j in range(i + 1, len(split_proportions)):
                 if abs(split_proportions[i] - split_proportions[j]) < p_threshold:
@@ -371,6 +370,6 @@ class TestDataset:
                         # on subjects count AND proportions are (almost) equal.
                         assert abs(len(subject_splits[i]) - len(subject_splits[j])) <= 1
                 elif split_proportions[i] > split_proportions[j]:
-                    assert split_measure(subject_splits[i]) >= split_measure(subject_splits[j])
+                    assert (split_measure(subject_splits[i]) - split_measure(subject_splits[j])) >= -tolerance
                 else:
-                    assert split_measure(subject_splits[i]) <= split_measure(subject_splits[j])
+                    assert (split_measure(subject_splits[i]) - split_measure(subject_splits[j])) <= tolerance

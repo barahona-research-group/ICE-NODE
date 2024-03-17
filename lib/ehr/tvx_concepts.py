@@ -8,6 +8,7 @@ from datetime import date
 from functools import cached_property
 from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, Any, ClassVar)
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +19,42 @@ from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor, Numeric
 from ..base import Config, Data, Module
 
 Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
+
+
+def equal_attributes(a: Data, b: Data, attributes: Tuple[str]):
+    for k in attributes:
+        if type(getattr(a, k)) is not type(getattr(b, k)):
+            return False
+        if hasattr(a, 'dtype') and getattr(a, k).dtype != getattr(b, k).dtype:
+            return False
+    for k in attributes:
+        if getattr(a, k) is not None:
+            a_k = getattr(a, k)
+            b_k = getattr(b, k)
+            if hasattr(a_k, 'equals'):
+                if not a_k.equals(b_k):
+                    return False
+            elif isinstance(a_k, (list, tuple, set)):
+                if len(a_k) != len(b_k):
+                    return False
+                if any(not x.equals(y) for x, y in zip(a_k, b_k)):
+                    return False
+            elif isinstance(a_k, dict):
+                if len(a_k) != len(b_k):
+                    return False
+                for key in a_k:
+                    if not a_k[key].equals(b_k[key]):
+                        return False
+            elif isinstance(a_k, np.ndarray):
+                if not np.array_equal(a_k, b_k, equal_nan=True):
+                    return False
+            elif isinstance(a_k, jax.Array):
+                if not jnp.array_equal(a_k, b_k):
+                    return False
+            else:
+                if a_k != b_k:
+                    return False
+    return True
 
 
 class InpatientObservables(Data):
@@ -94,12 +131,7 @@ class InpatientObservables(Data):
         Returns:
             bool: whether the two InpatientObservables objects are equal.
         """
-        return (np.array_equal(self.time, other.time, equal_nan=True) and
-                np.array_equal(self.value, other.value, equal_nan=True) and
-                np.array_equal(self.mask, other.mask, equal_nan=True) and
-                self.time.dtype == other.time.dtype and
-                self.value.dtype == other.value.dtype and
-                self.mask.dtype == other.mask.dtype)
+        return equal_attributes(self, other, ('time', 'value', 'mask'))
 
     def to_dataframe(self) -> pd.DataFrame:
         """
@@ -360,6 +392,8 @@ class LeadingObservableExtractorConfig(Config):
             x <= y for x, y in zip(self.leading_hours[:-1], self.leading_hours[1:])
         ), f"leading_hours must be sorted"
         self.leading_hours = list(self.leading_hours)
+
+        assert isinstance(self.scheme, str), f"Expected scheme to be a string, got {type(self.scheme)}"
 
         assert self.type_hint in ('B', 'O'), (
             f"LeadingObservableExtractor only supports binary and ordinal observables, "
@@ -732,14 +766,7 @@ class InpatientInput(Data):
         Returns:
             bool: whether the two InpatientInput objects are equal.
         """
-        return (np.array_equal(self.code_index, other.code_index) and
-                np.array_equal(self.starttime, other.starttime) and
-                np.array_equal(self.endtime, other.endtime) and
-                np.array_equal(self.rate, other.rate) and
-                self.code_index.dtype == other.code_index.dtype and
-                self.starttime.dtype == other.starttime.dtype and
-                self.endtime.dtype == other.endtime.dtype and
-                self.rate.dtype == other.rate.dtype)
+        return equal_attributes(self, other, ('code_index', 'starttime', 'endtime', 'rate'))
 
     def __call__(self, t: float, input_size: int) -> Array:
         """
@@ -841,16 +868,7 @@ class InpatientInterventions(Data):
         return list(sorted(set(timestamps)))
 
     def equals(self, other: "InpatientInterventions") -> bool:
-        cond1 = (self.hosp_procedures is None and other.hosp_procedures is None) or (
-            self.hosp_procedures.equals(other.hosp_procedures)
-        )
-        cond2 = (self.icu_procedures is None and other.icu_procedures is None) or (
-            self.icu_procedures.equals(other.icu_procedures)
-        )
-        cond3 = (self.icu_inputs is None and other.icu_inputs is None) or (
-            self.icu_inputs.equals(other.icu_inputs)
-        )
-        return cond1 and cond2 and cond3
+        return equal_attributes(self, other, ('hosp_procedures', 'icu_procedures', 'icu_inputs'))
 
 
 class SegmentedInpatientInterventions(Data):
@@ -947,16 +965,7 @@ class SegmentedInpatientInterventions(Data):
         return SegmentedInpatientInterventions.from_dataframes(segmented_interventions)
 
     def equals(self, other: "SegmentedInpatientInterventions") -> bool:
-        cond1 = (self.hosp_procedures is None and other.hosp_procedures is None) or (
-            np.array_equal(self.hosp_procedures, other.hosp_procedures)
-        )
-        cond2 = (self.icu_procedures is None and other.icu_procedures is None) or (
-            np.array_equal(self.icu_procedures, other.icu_procedures)
-        )
-        cond3 = (self.icu_inputs is None and other.icu_inputs is None) or (
-            np.array_equal(self.icu_inputs, other.icu_inputs)
-        )
-        return cond1 and cond2 and cond3 and np.array_equal(self.time, other.time)
+        return equal_attributes(self, other, ('hosp_procedures', 'icu_procedures', 'icu_inputs'))
 
     @staticmethod
     def from_dataframes(dataframes: Dict[str, pd.DataFrame]) -> "SegmentedInpatientInterventions":
@@ -991,6 +1000,8 @@ class Admission(Data):
     observables: Optional[InpatientObservables]
     interventions: Optional[InpatientInterventions] = None
     leading_observable: Optional[InpatientObservables] = None
+
+    interventions_class: ClassVar[Type[InpatientInterventions]] = InpatientInterventions
 
     def extract_leading_observable(self, leading_observable_extractor: LeadingObservableExtractor) -> Admission:
         """
@@ -1058,7 +1069,7 @@ class Admission(Data):
     @classmethod
     def _hdf_deserialize_interventions(cls, store: pd.HDFStore, key: str) -> Optional[InpatientInterventions]:
         if key in store:
-            return InpatientInterventions.from_hdf(store, key)
+            return cls.interventions_class.from_hdf(store, key)
         return None
 
     def to_hdf(self, path: str, key: str) -> None:
@@ -1085,8 +1096,8 @@ class Admission(Data):
                                                     meta_prefix='lead_obs'))
         pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/admission_meta', format='table')
 
-    @staticmethod
-    def from_hdf_store(hdf_store: pd.HDFStore, key: str) -> 'Admission':
+    @classmethod
+    def from_hdf_store(cls, hdf_store: pd.HDFStore, key: str) -> 'Admission':
         """
         Load the admission data from an HDF5 file.
 
@@ -1106,21 +1117,21 @@ class Admission(Data):
         dx_codes_history = dx_codes_history_scheme.wrap_vector(hdf_store[f'{key}/dx_codes_history'][0].values)
         outcome = outcome_scheme.wrap_vector(hdf_store[f'{key}/outcome'][0].values)
 
-        observables = Admission._hdf_deserialize_observables(hdf_store, key=f'{key}/observables', meta=meta,
-                                                             meta_prefix='obs')
-        leading_observable = Admission._hdf_deserialize_observables(hdf_store,
-                                                                    key=f'{key}/leading_observable',
-                                                                    meta=meta, meta_prefix='lead_obs')
-        interventions = Admission._hdf_deserialize_interventions(hdf_store,
-                                                                 key=f'{key}/interventions')
-        return Admission(admission_id=meta['admission_id'],
-                         admission_dates=(meta['start'], meta['end']),
-                         dx_codes=dx_codes,
-                         dx_codes_history=dx_codes_history,
-                         outcome=outcome,
-                         observables=observables,
-                         leading_observable=leading_observable,
-                         interventions=interventions)
+        observables = cls._hdf_deserialize_observables(hdf_store, key=f'{key}/observables', meta=meta,
+                                                       meta_prefix='obs')
+        leading_observable = cls._hdf_deserialize_observables(hdf_store,
+                                                              key=f'{key}/leading_observable',
+                                                              meta=meta, meta_prefix='lead_obs')
+        interventions = cls._hdf_deserialize_interventions(hdf_store,
+                                                           key=f'{key}/interventions')
+        return cls(admission_id=meta['admission_id'],
+                   admission_dates=(meta['start'], meta['end']),
+                   dx_codes=dx_codes,
+                   dx_codes_history=dx_codes_history,
+                   outcome=outcome,
+                   observables=observables,
+                   leading_observable=leading_observable,
+                   interventions=interventions)
 
     @cached_property
     def interval_hours(self) -> float:
@@ -1166,23 +1177,19 @@ class Admission(Data):
         Returns:
             bool: whether the two Admission objects are equal.
         """
-        for k in ('dx_codes', 'dx_codes_history', 'outcome', 'observables', 'interventions', 'leading_observable'):
-            attr = getattr(self, k)
-            other_attr = getattr(other, k)
-            if attr is None and other_attr is None:
-                continue
-            elif attr is None or other_attr is None:
-                return False
-            elif not attr.equals(other_attr):
-                return False
-        return (self.admission_id == other.admission_id and
-                self.admission_dates == other.admission_dates)
+        if (self.admission_id != other.admission_id or
+                self.admission_dates != other.admission_dates):
+            return False
+        return equal_attributes(self, other,
+                                ('dx_codes', 'dx_codes_history', 'outcome', 'observables', 'interventions',
+                                 'leading_observable'))
 
 
 class SegmentedAdmission(Admission):
     observables: Optional[List[InpatientObservables]] = None
     interventions: Optional[SegmentedInpatientInterventions] = None
     leading_observable: Optional[List[InpatientObservables]] = None
+    interventions_class: ClassVar[Type[InpatientInterventions]] = SegmentedInpatientInterventions
 
     @staticmethod
     def _segment_interventions(interventions: Optional[InpatientInterventions],
@@ -1230,6 +1237,44 @@ class SegmentedAdmission(Admission):
                                   observables=observables,
                                   interventions=interventions,
                                   leading_observable=leading_observable)
+
+    def to_hdf(self, path: str, key: str) -> None:
+        """
+        Save the admission data to an HDF5 file.
+
+        Args:
+            path (str): the path to the HDF5 file.
+            key (str): the key to use for the admission data.
+        """
+        zipped_obs = self
+        if self.observables is not None:
+            zipped_obs = eqx.tree_at(lambda x: x.observables, zipped_obs, InpatientObservables.concat(self.observables))
+        if self.leading_observable is not None:
+            zipped_obs = eqx.tree_at(lambda x: x.leading_observable, zipped_obs,
+                                     InpatientObservables.concat(self.leading_observable))
+        Admission.to_hdf(zipped_obs, path, key)
+
+    @classmethod
+    def from_hdf_store(cls, hdf_store: pd.HDFStore, key: str) -> 'Admission':
+        """
+        Load the admission data from an HDF5 file.
+
+        Args:
+            hdf_store (pd.HDFStore): the HDF5 store.
+            key (str): the key to use for the admission data.
+        Returns:
+            Admission: the admission data.
+        """
+        zipped_admission = super().from_hdf_store(hdf_store, key)
+        if zipped_admission.observables is not None:
+            zipped_admission = eqx.tree_at(lambda x: x.observables, zipped_admission,
+                                           cls._segment_observables(zipped_admission.observables,
+                                                                    zipped_admission.interventions))
+        if zipped_admission.leading_observable is not None:
+            zipped_admission = eqx.tree_at(lambda x: x.leading_observable, zipped_admission,
+                                           cls._segment_observables(zipped_admission.leading_observable,
+                                                                    zipped_admission.interventions))
+        return zipped_admission
 
 
 class DemographicVectorConfig(Config):
@@ -1425,7 +1470,7 @@ class StaticInfo(Data):
         Returns:
             bool: whether the two StaticInfo objects are equal.
         """
-        return self.demographic_vector_config == other.demographic_vector_config and \
+        return self.demographic_vector_config.equals(other.demographic_vector_config) and \
             self.gender == other.gender and self.ethnicity == other.ethnicity and \
             self.date_of_birth == other.date_of_birth
 
@@ -1604,6 +1649,7 @@ class Patient(Data):
             bool: whether the two Patient objects are equal.
         """
         return (self.subject_id == other.subject_id and
+                len(self.admissions) == len(other.admissions) and
                 self.static_info.equals(other.static_info) and
                 all(a.equals(b) for a, b in zip(self.admissions, other.admissions)))
 

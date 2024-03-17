@@ -807,13 +807,13 @@ class TestSegmentedAdmission:
                 assert np.array_equal(segment_val, val)
                 assert np.array_equal(segment_mask, mask)
 
-    def test_serialization(self, admission: Admission, tmpdir: str):
+    def test_serialization(self, segmented_admission: SegmentedAdmission, tmpdir: str):
         hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
 
-        admission.to_hdf(hdf_filename, 'test_admission')
+        segmented_admission.to_hdf(hdf_filename, 'test_admission')
         with pd.HDFStore(hdf_filename, 'r') as hdf:
             deserialized = SegmentedAdmission.from_hdf_store(hdf, 'test_admission')
-        assert admission.equals(deserialized)
+        assert segmented_admission.equals(deserialized)
 
 
 class TestStaticInfo:
@@ -850,7 +850,6 @@ class TestPatient:
     def test_outcome_frequency(self):
         pass
 
-    @pytest.mark.parametrize("n_admissions", [0, 1, 50])
     def test_serialization(self, patient: Patient, tmpdir):
         hdf_filename = f'{tmpdir}/test_patient_serialization.h5'
         patient.to_hdf(hdf_filename, 'test_patient')

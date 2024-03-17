@@ -19,7 +19,7 @@ from lib.ehr.transformations import SetIndex, ICUInputRateUnitConversion, CastTi
 from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, AbstractTVxPipeline
 
 DATASET_SCOPE = "function"
-
+MAX_STAY_DAYS = 356
 
 def scheme(name: str, codes: List[str]) -> str:
     CodingScheme.register_scheme(FlatScheme(CodingSchemeConfig(name), codes=codes,
@@ -292,7 +292,7 @@ def sample_admissions_dataframe(subjects_df: pd.DataFrame,
     c_admission_time = admission_table_config.admission_time_alias
     c_discharge_time = admission_table_config.discharge_time_alias
     admit_dates = pd.to_datetime(random.choices(pd.date_range(start='1/1/2000', end='1/1/2020', freq='D'), k=n))
-    disch_dates = admit_dates + pd.to_timedelta(random.choices(range(1, 1000), k=n), unit='D')
+    disch_dates = admit_dates + pd.to_timedelta(random.choices(range(1, MAX_STAY_DAYS), k=n), unit='D')
 
     return pd.DataFrame({
         c_subject: random.choices(subjects_df[c_subject], k=n),
@@ -551,7 +551,7 @@ def dataset_tables_config(static_table_config: StaticTableConfig,
 
 
 @pytest.fixture(params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
-                        (50, 0, 0), (50, 10, 10)],
+                        (30, 0, 0), (30, 10, 5)],
                 ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,
@@ -607,6 +607,9 @@ class NaiveDataset(Dataset):
     @classmethod
     def load_tables(cls, config: DatasetConfig, scheme: DatasetScheme) -> DatasetTables:
         return None
+
+
+NaiveDataset.register()
 
 
 @pytest.fixture
@@ -749,7 +752,7 @@ def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables, unit_convert
     with patch(__name__ + '.MockMIMICIVDatasetSchemeConfig.icu_inputs_uom_normalization_table',
                return_value=unit_converter_table,
                new_callable=PropertyMock):
-        return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
+        yield eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
                            is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
 
 

@@ -528,12 +528,9 @@ class TVxEHR(AbstractDatasetRepresentation):
     def load_splits(path: Path | str, key: str) -> Optional[_SplitsType]:
         if Path(path).is_file():
             with pd.HDFStore(path, mode='r') as store:
-                splits = []
-                for k in sorted(store.keys()):
-                    if key in k:
-                        splits.append(tuple(store[k].values))
-                if len(splits) > 0:
-                    return tuple(splits)
+                split_keys = list(sorted(k for k in store.keys() if key in k))
+                if len(split_keys) > 0:
+                    return tuple(tuple(store[k].values) for k in split_keys)
         return None
 
     def _save_subjects_ids(self, path: Path, key: str):
@@ -613,7 +610,7 @@ class TVxEHR(AbstractDatasetRepresentation):
             report = store['report'] if 'report' in store else pd.DataFrame()
         return TVxEHR.import_module(config=config,
                                     classname=classname,
-                                    splits=cls.load_splits(h5_path, 'tvx'),
+                                    splits=cls.load_splits(h5_path, 'splits'),
                                     numerical_processors=numerical_processors,
                                     pipeline_report=report,
                                     dataset=Dataset.load(dataset_path or cls.dataset_path_prefix(path)),

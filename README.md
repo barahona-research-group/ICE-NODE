@@ -3,12 +3,17 @@
 ## Roadmap
 
 - [ ] Pipeline validators.
+- [ ] Integrate consort diagramming in the pipeline.
 - [ ] `lib.ehr.tvx*` test.
 - [ ] `lib.ehr.coding_scheme.CodeMap` test.
 - [ ] `lib.ehr.*` documentation / document edge cases tested.
 - [ ] `lib.ehr` custom exceptions / adapt tests.
 - [ ] FHIR resources adaptation.
 - [ ] Support for SNOMED-CT.
+- [ ] CLI for running pipelines.
+- [ ] GUI for configuring the dataset and the tvx_ehr.
+  - Pipeline 10 + 10 steps.
+  - Selection of dataset CodingScheme space.
 
 
 ##### Coverage

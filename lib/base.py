@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from abc import ABCMeta
 from typing import Dict, Any, ClassVar, Union, Type, Callable
@@ -90,7 +91,7 @@ class Config(eqx.Module):
 
     @staticmethod
     def as_normal_dict(x: 'Config') -> Dict[str, Any]:
-        return {k: v for k, v in x.__dict__.items() if not k.startswith("_")}
+        return {field.name: getattr(x, field.name) for field in dataclasses.fields(x) if not field.name.startswith("_")}
 
     @staticmethod
     def as_typed_dict(x: 'Config') -> Dict[str, Any]:

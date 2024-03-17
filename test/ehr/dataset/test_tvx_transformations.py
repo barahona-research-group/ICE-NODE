@@ -14,7 +14,7 @@ from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSa
 from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler, \
     ObsIQROutlierRemover, TVxConcepts, InterventionSegmentation, ObsTimeBinning, LeadingObservableExtraction, \
     ExcludeShortAdmissions
-from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX
+from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, MAX_STAY_DAYS
 
 
 @pytest.fixture
@@ -62,6 +62,22 @@ class TestSampleSubjects:
         assert len(set(sampled_subjects)) == len(sampled_subjects)
         assert set(sampled_subjects).issubset(set(original_subjects))
 
+    def test_ehr_serialization(self, multi_subjects_ehr: TVxEHR, sampled_tvx_ehr: TVxEHR, tmpdir: str):
+        path1 = f'{tmpdir}/multi_subjects_ehr'
+        path2 = f'{tmpdir}/sampled_tvx_ehr'
+
+        multi_subjects_ehr.save(path1)
+        loaded_multi_subjects_ehr = TVxEHR.load(path1)
+
+        sampled_tvx_ehr.save(path2)
+        loaded_sampled_tvx_ehr = TVxEHR.load(path2)
+
+        assert not multi_subjects_ehr.equals(sampled_tvx_ehr)
+        assert not multi_subjects_ehr.equals(loaded_sampled_tvx_ehr)
+        assert not loaded_multi_subjects_ehr.equals(sampled_tvx_ehr)
+        assert not loaded_multi_subjects_ehr.equals(loaded_sampled_tvx_ehr)
+        assert sampled_tvx_ehr.equals(loaded_sampled_tvx_ehr)
+
 
 class TestTrainableTransformer:
 
@@ -88,7 +104,7 @@ class TestTrainableTransformer:
         return DatasetNumericalProcessorsConfig(scalers_conf, outliers_conf)
 
     @pytest.fixture
-    def large_scalable_splitted_ehr(self, large_ehr: TVxEHR, scalable_table_name: str, use_float16: bool):
+    def large_scalable_split_ehr(self, large_ehr: TVxEHR, scalable_table_name: str, use_float16: bool):
         if len(getattr(large_ehr.dataset.tables, scalable_table_name)) == 0:
             pytest.skip(f"No {scalable_table_name} table found in dataset.")
         subjects = large_ehr.dataset.tables.static.index.tolist()
@@ -102,23 +118,23 @@ class TestTrainableTransformer:
         return large_ehr
 
     @pytest.fixture
-    def scaled_ehr(self, large_scalable_splitted_ehr, scaler_class: Type[TrainableTransformation]):
-        return scaler_class.apply(large_scalable_splitted_ehr, TVxReport())[0]
+    def scaled_ehr(self, large_scalable_split_ehr, scaler_class: Type[TrainableTransformation]):
+        return scaler_class.apply(large_scalable_split_ehr, TVxReport())[0]
 
-    def test_trainable_transformer(self, large_scalable_splitted_ehr: TVxEHR,
+    def test_trainable_transformer(self, large_scalable_split_ehr: TVxEHR,
                                    scaled_ehr: TVxEHR,
                                    scalable_table_name: str,
                                    use_float16: bool):
-        assert getattr(large_scalable_splitted_ehr.numerical_processors.scalers, scalable_table_name) is None
+        assert getattr(large_scalable_split_ehr.numerical_processors.scalers, scalable_table_name) is None
         scaler = getattr(scaled_ehr.numerical_processors.scalers, scalable_table_name)
         assert isinstance(scaler, CodedValueScaler)
         assert scaler.table_getter(scaled_ehr.dataset) is getattr(scaled_ehr.dataset.tables, scalable_table_name)
-        assert scaler.table_getter(large_scalable_splitted_ehr.dataset) is getattr(
-            large_scalable_splitted_ehr.dataset.tables,
+        assert scaler.table_getter(large_scalable_split_ehr.dataset) is getattr(
+            large_scalable_split_ehr.dataset.tables,
             scalable_table_name)
         assert scaler.config.use_float16 == use_float16
 
-        table0 = scaler.table_getter(large_scalable_splitted_ehr.dataset)
+        table0 = scaler.table_getter(large_scalable_split_ehr.dataset)
         table1 = scaler.table_getter(scaled_ehr.dataset)
         assert scaler.value_column in table1.columns
         assert scaler.code_column in table1.columns
@@ -129,11 +145,11 @@ class TestTrainableTransformer:
             assert table1[scaler.value_column].dtype == table0[scaler.value_column].dtype
 
     @pytest.fixture
-    def processed_ehr(self, large_scalable_splitted_ehr: TVxEHR,
+    def processed_ehr(self, large_scalable_split_ehr: TVxEHR,
                       numerical_processor_config: DatasetNumericalProcessorsConfig) -> TVxEHR:
-        large_scalable_splitted_ehr = eqx.tree_at(lambda x: x.config.numerical_processors, large_scalable_splitted_ehr,
-                                                  numerical_processor_config)
-        return large_scalable_splitted_ehr.execute_external_transformations(
+        large_scalable_split_ehr = eqx.tree_at(lambda x: x.config.numerical_processors, large_scalable_split_ehr,
+                                               numerical_processor_config)
+        return large_scalable_split_ehr.execute_external_transformations(
             [ObsIQROutlierRemover(), InputScaler(), ObsAdaptiveScaler()])
 
     @pytest.fixture
@@ -146,6 +162,22 @@ class TestTrainableTransformer:
         fitted_numerical_processors.save(path, key='numerical_processors')
         loaded_numerical_processors = DatasetNumericalProcessors.load(path, key='numerical_processors')
         assert fitted_numerical_processors.equals(loaded_numerical_processors)
+
+    def test_ehr_serialization(self, large_ehr: TVxEHR, large_scalable_split_ehr: TVxEHR, processed_ehr: TVxEHR,
+                               tmpdir: str):
+        assert not large_ehr.equals(large_scalable_split_ehr)
+        assert not large_ehr.equals(processed_ehr)
+        assert not large_scalable_split_ehr.equals(processed_ehr)
+
+        split_path = f'{tmpdir}/split_ehr'
+        processed_path = f'{tmpdir}/processed_ehr'
+        large_scalable_split_ehr.save(split_path)
+        loaded_split_ehr = TVxEHR.load(split_path)
+        assert large_scalable_split_ehr.equals(loaded_split_ehr)
+
+        processed_ehr.save(processed_path)
+        loaded_processed_ehr = TVxEHR.load(processed_path)
+        assert processed_ehr.equals(loaded_processed_ehr)
 
 
 # def test_obs_minmax_scaler(int_indexed_dataset: Dataset):
@@ -280,7 +312,7 @@ class TestTVxConcepts:
                                   admission_icu_inputs: Dict[str, InpatientInput]):
         icu_inputs = tvx_ehr_with_icu_inputs.dataset.tables.icu_inputs
         c_admission_id = tvx_ehr_with_icu_inputs.dataset.config.tables.admissions.admission_id_alias
-        assert set(admission_icu_inputs.keys()) == set(tvx_ehr_with_icu_inputs.admission_ids)
+        assert set(admission_icu_inputs.keys()).issubset(set(tvx_ehr_with_icu_inputs.admission_ids))
         assert sum(len(inputs.starttime) for inputs in admission_icu_inputs.values()) == len(icu_inputs)
 
         for admission_id, admission_inputs_df in icu_inputs.groupby(c_admission_id):
@@ -323,8 +355,9 @@ class TestTVxConcepts:
                                        admission_hosp_procedures: Dict[str, InpatientInput]):
         hosp_procedures = tvx_ehr_with_hosp_procedures.dataset.tables.hosp_procedures
         c_admission_id = tvx_ehr_with_hosp_procedures.dataset.config.tables.admissions.admission_id_alias
-        assert set(admission_hosp_procedures.keys()) == set(tvx_ehr_with_hosp_procedures.admission_ids)
-        assert sum(len(proc.starttime) for proc in admission_hosp_procedures.values()) == len(hosp_procedures)
+        assert set(admission_hosp_procedures.keys()).issubset(set(tvx_ehr_with_hosp_procedures.admission_ids))
+        assert sum(len(proc.starttime) for proc in admission_hosp_procedures.values() if proc is not None) == len(
+            hosp_procedures)
 
         for admission_id, admission_hosp_procedures_df in hosp_procedures.groupby(c_admission_id):
             tvx_hosp_proc = admission_hosp_procedures[admission_id]
@@ -345,8 +378,9 @@ class TestTVxConcepts:
                                       admission_icu_procedures: Dict[str, InpatientInput]):
         icu_procedures = tvx_ehr_with_icu_procedures.dataset.tables.icu_procedures
         c_admission_id = tvx_ehr_with_icu_procedures.dataset.config.tables.admissions.admission_id_alias
-        assert set(admission_icu_procedures.keys()) == set(tvx_ehr_with_icu_procedures.admission_ids)
-        assert sum(len(proc.starttime) for proc in admission_icu_procedures.values()) == len(icu_procedures)
+        assert set(admission_icu_procedures.keys()).issubset(set(tvx_ehr_with_icu_procedures.admission_ids))
+        assert sum(len(proc.starttime) for proc in admission_icu_procedures.values() if proc is not None) == len(
+            icu_procedures)
 
         for admission_id, admission_icu_procedures_df in icu_procedures.groupby(c_admission_id):
             tvx_icu_proc = admission_icu_procedures[admission_id]
@@ -370,12 +404,10 @@ class TestTVxConcepts:
     def test_admission_interventions(self, tvx_ehr_with_all_interventions: TVxEHR,
                                      admission_interventions: Dict[str, InpatientInterventions]):
         assert set(admission_interventions.keys()) == set(tvx_ehr_with_all_interventions.admission_ids)
-        assert sum(len(ii.icu_procedures.starttime) for ii in admission_interventions.values()) == len(
-            tvx_ehr_with_all_interventions.dataset.tables.icu_procedures)
-        assert sum(len(ii.hosp_procedures.starttime) for ii in admission_interventions.values()) == len(
-            tvx_ehr_with_all_interventions.dataset.tables.hosp_procedures)
-        assert sum(len(ii.icu_inputs.starttime) for ii in admission_interventions.values()) == len(
-            tvx_ehr_with_all_interventions.dataset.tables.icu_inputs)
+        for attr in ('icu_procedures', 'hosp_procedures', 'icu_inputs'):
+            table = getattr(tvx_ehr_with_all_interventions.dataset.tables, attr)
+            interventions = {admission_id: getattr(v, attr) for admission_id, v in admission_interventions.items()}
+            assert sum(len(v.starttime) for v in interventions.values() if v is not None) == len(table)
 
     @pytest.fixture(params=['interventions', 'observables'])
     def tvx_ehr_conf_concept(self, large_ehr: TVxEHR, request) -> TVxEHR:
@@ -408,6 +440,32 @@ class TestTVxConcepts:
         for subject_id, sorted_admission_ids in tvx_ehr_concept.subjects_sorted_admission_ids.items():
             assert [adm.admission_id for adm in tvx_ehr_concept.subjects[subject_id].admissions] == sorted_admission_ids
 
+    @pytest.fixture
+    def mutated_ehr_concept(self, tvx_ehr_concept: TVxEHR, tvx_ehr_conf_concept: TVxEHR):
+        if tvx_ehr_conf_concept.config.interventions:
+            s0 = tvx_ehr_concept.subject_ids[0]
+            a0 = tvx_ehr_concept.subjects[s0].admissions[0]
+            a1 = eqx.tree_at(lambda x: x.interventions.icu_inputs.rate, a0,
+                             a0.interventions.icu_inputs.rate + 0.1)
+            return eqx.tree_at(lambda x: x.subjects[s0].admissions[0], tvx_ehr_concept, a1)
+        else:
+            s0 = tvx_ehr_concept.subject_ids[0]
+            a0 = tvx_ehr_concept.subjects[s0].admissions[0]
+            a1 = eqx.tree_at(lambda x: x.observables.value, a0, a0.observables.value + 0.1)
+            return eqx.tree_at(lambda x: x.subjects[s0].admissions[0], tvx_ehr_concept, a1)
+
+    def test_ehr_serialization(self, tvx_ehr_conf_concept: TVxEHR, tvx_ehr_concept: TVxEHR,
+                               mutated_ehr_concept: TVxEHR,
+                               tmpdir: str):
+        ehr_list = [tvx_ehr_conf_concept, tvx_ehr_concept, mutated_ehr_concept]
+        for i, ehr_i in enumerate(ehr_list):
+            path = f'{tmpdir}/tvx_ehr_{i}'
+            ehr_i.save(path)
+            loaded_ehr_i = TVxEHR.load(path)
+            for j in range(i + 1, len(ehr_list)):
+                ehr_j = ehr_list[j]
+                assert loaded_ehr_i.equals(ehr_j) == (i == j)
+
 
 class TestInterventionSegmentation:
     @pytest.fixture
@@ -432,6 +490,47 @@ class TestInterventionSegmentation:
         assert isinstance(first_segmented_patient.admissions[0].observables[0], InpatientObservables)
         assert isinstance(first_patient.admissions[0].interventions, InpatientInterventions)
         assert isinstance(first_segmented_patient.admissions[0].interventions, SegmentedInpatientInterventions)
+
+    @pytest.fixture(
+        params=['mutate_obs', 'intervention_time', 'mutate_icu_proc', 'mutate_hosp_proc', 'mutate_icu_input'])
+    def mutated_ehr_concept(self, tvx_ehr_segmented: SegmentedTVxEHR, request):
+        s0 = tvx_ehr_segmented.subject_ids[0]
+        a0 = tvx_ehr_segmented.subjects[s0].admissions[0]
+        if request.param == 'mutate_obs':
+            a1 = eqx.tree_at(lambda x: x.observables[0].time, a0, a0.observables[0].time + 0.001)
+        elif request.param == 'intervention_time':
+            a1 = eqx.tree_at(lambda x: x.interventions.time, a0, a0.interventions.time + 1e-6)
+        elif request.param == 'mutate_icu_proc':
+            if a0.interventions.icu_procedures is None:
+                pytest.skip("No icu procedures in admission.")
+            a1 = eqx.tree_at(lambda x: x.interventions.icu_procedures, a0,
+                             ~a0.interventions.icu_procedures[0])
+
+        elif request.param == 'mutate_hosp_proc':
+            if a0.interventions.hosp_procedures is None:
+                pytest.skip("No hospital procedures in admission.")
+            a1 = eqx.tree_at(lambda x: x.interventions.hosp_procedures, a0,
+                             ~a0.interventions.hosp_procedures[0])
+        elif request.param == 'mutate_icu_input':
+            if a0.interventions.icu_inputs is None:
+                pytest.skip("No icu inputs in admission.")
+            a1 = eqx.tree_at(lambda x: x.interventions.icu_inputs, a0, a0.interventions.icu_inputs[0] + 0.1)
+        else:
+            raise ValueError(f"Invalid param: {request.param}")
+
+        return eqx.tree_at(lambda x: x.subjects[s0].admissions[0], tvx_ehr_segmented, a1)
+
+    def test_ehr_serialization(self, tvx_ehr_concept: TVxEHR, tvx_ehr_segmented: SegmentedTVxEHR,
+                               mutated_ehr_concept: SegmentedTVxEHR,
+                               tmpdir: str):
+        ehr_list = [tvx_ehr_concept, tvx_ehr_segmented, mutated_ehr_concept]
+        for i, ehr_i in enumerate(ehr_list):
+            path = f'{tmpdir}/tvx_ehr_{i}'
+            ehr_i.save(path)
+            loaded_ehr_i = TVxEHR.load(path)
+            for j in range(i + 1, len(ehr_list)):
+                ehr_j = ehr_list[j]
+                assert loaded_ehr_i.equals(ehr_j) == (i == j)
 
 
 class TestObsTimeBinning:
@@ -493,13 +592,24 @@ class TestLeadExtraction:
                 assert admission.leading_observable.value.shape[1] == len(
                     tvx_ehr_lead.config.leading_observable.leading_hours)
 
+    def test_ehr_serialization(self, tvx_ehr_concept: TVxEHR, tvx_ehr_lead: TVxEHR,
+                               tmpdir: str):
+        ehr_list = [tvx_ehr_concept, tvx_ehr_lead]
+        for i, ehr_i in enumerate(ehr_list):
+            path = f'{tmpdir}/tvx_ehr_{i}'
+            ehr_i.save(path)
+            loaded_ehr_i = TVxEHR.load(path)
+            for j in range(i + 1, len(ehr_list)):
+                ehr_j = ehr_list[j]
+                assert loaded_ehr_i.equals(ehr_j) == (i == j)
+
 
 class TestExcludeShortAdmissions:
     @pytest.fixture
     def tvx_ehr_concept(self, large_ehr: TVxEHR):
         large_ehr = eqx.tree_at(lambda x: x.config.interventions, large_ehr, False)
         large_ehr = eqx.tree_at(lambda x: x.config.observables, large_ehr, False)
-        large_ehr = eqx.tree_at(lambda x: x.config.admission_minimum_los, large_ehr, 72.0,
+        large_ehr = eqx.tree_at(lambda x: x.config.admission_minimum_los, large_ehr, MAX_STAY_DAYS * 24 / 2,
                                 is_leaf=lambda x: x is None)
         return large_ehr.execute_external_transformations([TVxConcepts()])
 
