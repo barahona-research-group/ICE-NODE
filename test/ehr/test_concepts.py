@@ -44,7 +44,7 @@ def demographic_vector_config() -> DemographicVectorConfig:
 
 
 def _static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
-    return StaticInfo(demographic_vector_config=demographic_vector_config, ethnicity=ethnicity, gender=gender,
+    return StaticInfo(demographic_vector_config=demographic_vector_config(), ethnicity=ethnicity, gender=gender,
                       date_of_birth=date_of_birth())
 
 
@@ -245,13 +245,13 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
     return admissions
 
 
-@pytest.fixture
-def patient(n_admissions, static_info: StaticInfo,
+@pytest.fixture(params=[0, 1, 50])
+def patient(request, static_info: StaticInfo,
             dx_scheme: CodingScheme,
             outcome_extractor: OutcomeExtractor, obs_scheme: CodingScheme,
             icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
             hosp_proc_scheme: CodingScheme) -> List[Patient]:
-    admissions = _admissions(n_admissions=n_admissions, dx_scheme=dx_scheme,
+    admissions = _admissions(n_admissions=request.param, dx_scheme=dx_scheme,
                              outcome_extractor_=outcome_extractor, obs_scheme=obs_scheme,
                              icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
                              hosp_proc_scheme=hosp_proc_scheme)

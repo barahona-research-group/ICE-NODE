@@ -1609,7 +1609,7 @@ class Patient(Data):
 
     @classmethod
     def _admissions_from_hdf(cls, hdf_store: pd.HDFStore, key: str) -> List[Admission]:
-        if f'{key}/admission_ids' in hdf_store.keys():
+        if f'{key}/admission_ids' in hdf_store:
             admission_ids_df = hdf_store[f'{key}/admission_ids']
             if 'admission_id' in admission_ids_df:
                 admission_ids = admission_ids_df['admission_id'].values
