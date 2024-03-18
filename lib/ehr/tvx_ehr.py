@@ -115,11 +115,12 @@ class CodedValueProcessor(Module):
     def save_series(self, path: Path, key: str):
         for k, v in self.series_dict.items():
             v.to_hdf(path, f'{key}/{k}', format='table')
+        pd.DataFrame(list(self.series_dict.keys()), columns=['series']).to_hdf(path, f'{key}_keys', format='table')
 
     @staticmethod
-    def load_series(path: Path, key: str):
-        with pd.HDFStore(path, mode='r') as store:
-            return {k.split('/')[-1]: store[k] for k in store.keys() if key in k}
+    def load_series(store: pd.HDFStore, key: str):
+        keys = store[f'{key}_keys'].series.to_list()
+        return {k: store[f'{key}/{k}'] for k in keys}
 
     def save_config(self, path: Path, key: str):
         config = self.config.to_dict()
@@ -128,21 +129,20 @@ class CodedValueProcessor(Module):
         pd.DataFrame(self.processing_target, index=[0]).to_hdf(path, f'{key}/target', format='table')
 
     @staticmethod
-    def load_config(path: Path, key: str) -> Tuple[CodedValueProcessorConfig, str, Dict[str, str]]:
-        with pd.HDFStore(path, mode='r') as store:
-            config_data = store[f"{key}/config"].loc[0].to_dict()
-            classname = config_data.pop('classname')
-            target = store[f"{key}/target"].loc[0].to_dict()
-            return CodedValueProcessorConfig.from_dict(config_data), classname, target
+    def load_config(store: pd.HDFStore, key: str) -> Tuple[CodedValueProcessorConfig, str, Dict[str, str]]:
+        config_data = store[f"{key}/config"].loc[0].to_dict()
+        classname = config_data.pop('classname')
+        target = store[f"{key}/target"].loc[0].to_dict()
+        return CodedValueProcessorConfig.from_dict(config_data), classname, target
 
     def save(self, path: Path, key: str):
         self.save_series(path, f'{key}/series')
         self.save_config(path, f'{key}/config')
 
     @staticmethod
-    def load(path: Path, key: str) -> CodedValueProcessor:
-        config, classname, target = CodedValueProcessor.load_config(path, f'{key}/config')
-        series = CodedValueProcessor.load_series(path, f'{key}/series')
+    def load(store: pd.HDFStore, key: str) -> CodedValueProcessor:
+        config, classname, target = CodedValueProcessor.load_config(store, f'{key}/config')
+        series = CodedValueProcessor.load_series(store, f'{key}/series')
         return Module.import_module(config=config, classname=classname, **series, **target)
 
     def equals(self, other: CodedValueProcessor):
@@ -228,12 +228,12 @@ class DatasetNumericalProcessors(eqx.Module):
             with pd.HDFStore(path, mode='r') as store:
                 if f'{key}/outlier_removers' in store:
                     if f'{key}/outlier_removers/obs' in store:
-                        outlier_removers['obs'] = CodedValueProcessor.load(path, f'{key}/outlier_removers/obs')
+                        outlier_removers['obs'] = CodedValueProcessor.load(store, f'{key}/outlier_removers/obs')
                 if f'{key}/scalers' in store:
                     if f'{key}/scalers/obs' in store:
-                        scalers['obs'] = CodedValueScaler.load(path, f'{key}/scalers/obs')
+                        scalers['obs'] = CodedValueScaler.load(store, f'{key}/scalers/obs')
                     if f'{key}/scalers/icu_inputs' in store:
-                        scalers['icu_inputs'] = CodedValueScaler.load(path, f'{key}/scalers/icu_inputs')
+                        scalers['icu_inputs'] = CodedValueScaler.load(store, f'{key}/scalers/icu_inputs')
         return DatasetNumericalProcessors(outlier_removers=OutlierRemovers(**outlier_removers),
                                           scalers=Scalers(**scalers))
 
@@ -519,56 +519,39 @@ class TVxEHR(AbstractDatasetRepresentation):
         """Get the number of subjects."""
         return len(self.subjects) if self.subjects is not None else 0
 
-    def save_splits(self, path: Path | str, key: str):
+    def save_splits(self, store: pd.HDFStore, key: str):
         if self.splits is not None:
-            for i, split in enumerate(self.splits):
-                pd.Series(split).to_hdf(path, f'{key}/split_{i:05d}', format='table')
+            split_names = [f'split_{i:05d}' for i in range(len(self.splits))]
+            pd.DataFrame(split_names, columns=['split']).to_hdf(store, f'{key}/split_names', format='table')
+            for name, split in enumerate(self.splits):
+                pd.Series(split).to_hdf(store, f'{key}/{name}', format='table')
 
     @staticmethod
-    def load_splits(path: Path | str, key: str) -> Optional[_SplitsType]:
-        if Path(path).is_file():
-            with pd.HDFStore(path, mode='r') as store:
-                split_keys = list(sorted(k for k in store.keys() if key in k))
-                if len(split_keys) > 0:
-                    return tuple(tuple(store[k].values) for k in split_keys)
-        return None
+    def load_splits(store: pd.HDFStore) -> _SplitsType:
+        split_names = store[f'split_names'].split.to_list()
+        return tuple(tuple(store[f'{k}'].values) for k in split_names)
 
-    def _save_subjects_ids(self, path: Path, key: str):
+    def _save_subjects_ids(self, store: pd.HDFStore, key: str):
         if self.subjects is not None:
-            pd.Series(list(self.subjects.keys())).to_hdf(path, f'{key}/subject_ids', format='table')
 
-    @staticmethod
-    def load_subjects_ids(path: Path, key: str) -> Optional[List[str]]:
-        if Path(path).is_file():
-            with pd.HDFStore(path, mode='r') as store:
-                if f'{key}/subject_ids' in store:
-                    return store[f'{key}/subject_ids'].values.tolist()
-        return []
 
-    def save_subjects(self, path: Path | str, key: str):
-        self._save_subjects_ids(path, key)
+
+    def save_subjects(self, store: pd.HDFStore, key: str):
         if self.subjects is not None:
+            pd.Series(list(self.subjects.keys())).to_hdf(store, f'{key}/subject_ids', format='table')
             for subject_id, subject in self.subjects.items():
-                subject.to_hdf(path, f'{key}/{subject_id}')
-
+                subject.to_hdf(store, f'{key}/{subject_id}')
     @classmethod
-    def load_subjects(cls, path: Path | str, key: str, demographic_vector_config: DemographicVectorConfig) -> Optional[
+    def load_subjects(cls, store: pd.HDFStore, demographic_vector_config: DemographicVectorConfig) -> Optional[
         Dict[str, Patient]]:
-        if Path(path).is_file():
-            with pd.HDFStore(path, mode='r') as store:
-                subject_ids = TVxEHR.load_subjects_ids(path, key)
-                if len(subject_ids) > 0:
-                    _load = cls.patient_class.from_hdf_store
-                    _conf = demographic_vector_config
-                    return {subject_id: _load(store, f'{key}/{subject_id}', _conf) for subject_id in subject_ids}
+        if 'subject_ids' in store:
+            subject_ids = store['subject_ids'].values.tolist()
+            _load = cls.patient_class.from_hdf_store
+            _conf = demographic_vector_config
+            return {subject_id: _load(store[subject_id], _conf) for subject_id in subject_ids}
         return None
 
-    @staticmethod
-    def dataset_path_prefix(path: Path | str) -> str:
-        return f"{path}_dataset"
-
-    def save(self, path: Union[str, Path], overwrite: bool = False,
-             dataset_path: Optional[Union[str, Path]] = None):
+    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
         """Save the Patients object to disk.
 
         Args:
@@ -579,15 +562,18 @@ class TVxEHR(AbstractDatasetRepresentation):
                 dataset_path_prefix (same directory with different .h5 file name).
                 If a string or Path, the dataset representation will be saved in the given path.
         """
-        self.save_config(path, overwrite)
-        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        self.pipeline_report.to_hdf(h5_path,
-                                    key='report',
-                                    format='table')
-        self.save_splits(h5_path, 'splits')
-        self.numerical_processors.save(h5_path, 'numerical_processors')
-        self.save_subjects(h5_path, 'tvx')
-        self.dataset.save(dataset_path or self.dataset_path_prefix(path), overwrite)
+        if not isinstance(path, pd.HDFStore):
+            with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:
+                self.save(store, key=key, overwrite=overwrite)
+        self.dataset.save(store, key=f'{key}/dataset' , overwrite=overwrite)
+        self.save_config(path, key='tvx_ehr', overwrite=overwrite)
+        with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:  # tables and pipeline report goes here.
+            self.pipeline_report.to_hdf(store,
+                                        key='report',
+                                        format='table')
+            self.save_splits(store, 'splits')
+            self.numerical_processors.save(store, 'numerical_processors')
+            self.save_subjects(store, 'tvx')
 
     @classmethod
     def load(cls, path: Union[str, Path],
@@ -602,19 +588,19 @@ class TVxEHR(AbstractDatasetRepresentation):
         Returns:
             TVxEHR: loaded Patients object.
         """
+        dataset = Dataset.load(dataset_path or cls.dataset_path_prefix(path))
         config, classname = cls.load_config(path)
         tvx_class = cls.module_class(classname)
         h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
         numerical_processors = DatasetNumericalProcessors.load(h5_path, 'numerical_processors')
         with pd.HDFStore(h5_path) as store:
-            report = store['report'] if 'report' in store else pd.DataFrame()
-        return TVxEHR.import_module(config=config,
-                                    classname=classname,
-                                    splits=cls.load_splits(h5_path, 'splits'),
-                                    numerical_processors=numerical_processors,
-                                    pipeline_report=report,
-                                    dataset=Dataset.load(dataset_path or cls.dataset_path_prefix(path)),
-                                    subjects=tvx_class.load_subjects(h5_path, 'tvx', config.demographic))
+            return TVxEHR.import_module(config=config,
+                                        classname=classname,
+                                        splits=cls.load_splits(store['splits']),
+                                        numerical_processors=numerical_processors,
+                                        pipeline_report=store['report'] if 'report' in store else pd.DataFrame(),
+                                        dataset=dataset,
+                                        subjects=tvx_class.load_subjects(h5_path, 'tvx', config.demographic))
 
     def device_batch(self, subject_ids: Optional[List[str]] = None):
         """Load subjects and move them to the device. If subject_ids is None, load all subjects.

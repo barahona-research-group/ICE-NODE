@@ -4,6 +4,7 @@
 
 - [ ] Pipeline validators.
 - [ ] Integrate consort diagramming in the pipeline.
+- [ ] Work with the pytable library directly instead of the pandas library.
 - [ ] `lib.ehr.tvx*` test.
 - [ ] `lib.ehr.coding_scheme.CodeMap` test.
 - [ ] `lib.ehr.*` documentation / document edge cases tested.

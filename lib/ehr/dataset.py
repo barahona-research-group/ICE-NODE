@@ -275,34 +275,29 @@ class DatasetTables(Data):
             df.index.name = index_name
         return df
 
-    def save(self, path: Union[str, Path], overwrite: bool):
-        if Path(path).exists():
-            if overwrite:
-                Path(path).unlink()
-            else:
-                raise RuntimeError(f'File {path} already exists.')
-
+    def save(self, store: pd.HDFStore, key: str, overwrite: bool):
         for name, df in self.tables_dict.items():
-            filepath = Path(path)
-
             # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
             # https://github.com/PyTables/PyTables/issues/592
             # So we keep the column names, dtypes, index name, index dtype, in a metadata object.
             if df.empty:
-                self.table_meta(df).to_hdf(filepath, key=f'{name}_meta', format='table')
+                self.table_meta(df).to_hdf(store, key=f'{key}/empty_table_meta/{name}', format='table')
             else:
-                df.to_hdf(filepath, key=f'table_{name}', format='table')
+                df.to_hdf(store, key=f'{key}/table_data/{name}', format='table')
 
     @staticmethod
-    def load(path: Union[str, Path]) -> DatasetTables:
-        with pd.HDFStore(path, mode='r') as store:
-            tables = {k.split('/')[-1].replace('table_', ''): store[k] for k in store.keys() if 'table_' in k}
-            meta = {k.split('/')[1].split('_meta')[0]: store[k] for k in store.keys() if '_meta' in k}
-            for table_name, meta_df in meta.items():
-                assert table_name not in tables, f'Table {table_name} is both in the tables and meta dict.'
-                tables[table_name] = DatasetTables.empty_table(meta_df)
-
-            return DatasetTables(**tables)
+    def load(store: pd.HDFStore) -> DatasetTables:
+        tables_node = store.get_node('/table_data')
+        empty_meta_node = store.get_node('/empty_table_meta')
+        tables = {}
+        if tables_node is not None:
+            for k in tables_node._v_children.keys():
+                tables[k] = store[k]
+        if empty_meta_node is not None:
+            for k in empty_meta_node._v_children.keys():
+                meta = store[k]
+                tables[k] = DatasetTables.empty_table(meta)
+        return DatasetTables(**tables)
 
     def equals(self, other: DatasetTables) -> bool:
         return all(
@@ -495,8 +490,7 @@ class AbstractDatasetRepresentation(Module):
         pass
 
     @abstractmethod
-    def save(self, path: Union[str, Path], overwrite: bool = False,
-             **child_representation_kwargs):
+    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
         pass
 
     @classmethod
@@ -506,24 +500,29 @@ class AbstractDatasetRepresentation(Module):
         pass
 
     @staticmethod
-    def load_config(path: Union[str, Path]) -> Tuple[Config, str]:
+    def load_config(path: Union[str, Path], key: str) -> Tuple[Config, str]:
         json_path = str(Path(path).with_suffix('.json'))  # config goes here.
-        data = load_config(json_path)
+        data = load_config(json_path)[key]
         classname = data.pop('classname')
         return Config.from_dict(data), classname
 
-    def save_config(self, path: Union[str, Path], overwrite: bool = False):
+    def save_config(self, path: Union[str, Path], key: str, overwrite: bool = False):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         json_path = path.with_suffix('.json')  # config goes here.
         if json_path.exists():
-            if overwrite:
-                json_path.unlink()
-            else:
-                raise RuntimeError(f'File {json_path} already exists.')
-        data = self.config.to_dict()
-        data['classname'] = type(self).__name__
-        write_config(data, str(json_path))
+            config = load_config(str(json_path))
+            if key in config:
+                if overwrite:
+                    del config[key]
+                else:
+                    raise RuntimeError(f'File {json_path} already exists with key {key}.')
+        else:
+            config = {}
+
+        config[key] = self.config.to_dict()
+        config[key]['classname'] = type(self).__name__
+        write_config(config, str(json_path))
 
     @property
     def header(self) -> Dict[str, Any]:
@@ -692,12 +691,15 @@ class Dataset(AbstractDatasetRepresentation):
     def equals(self, other: 'Dataset') -> bool:
         return self.equal_header(other) and self.tables.equals(other.tables)
 
-    def save(self, path: Union[str, Path], overwrite: bool = False, **kwargs):
-        self.save_config(path, overwrite)  # It creates the parent directory if it does not exist.
-        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        self.tables.save(h5_path, overwrite)
-        self.pipeline_report.to_hdf(h5_path,
-                                    key='report',
+    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
+        if not isinstance(path, pd.HDFStore):
+            with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:
+                self.save(store, key=key, overwrite=overwrite)
+        self.save_config(path, key='dataset',
+                         overwrite=overwrite)  # It creates the parent directory if it does not exist.
+        self.tables.save(store, key=f'{key}/tables', overwrite=overwrite)
+        self.pipeline_report.to_hdf(store,
+                                    key=f'{key}/report',
                                     format='table')
 
     @classmethod

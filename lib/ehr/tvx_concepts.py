@@ -21,16 +21,27 @@ from ..base import Config, Data, Module
 Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
 
 
+def equal_arrays(a: Array, b: Array):
+    _np = np if isinstance(a, np.ndarray) else jnp
+    is_nan = _np.isnan(a) & _np.isnan(b)
+    return _np.array_equal(a[~is_nan], b[~is_nan], equal_nan=False)
+
+
 def equal_attributes(a: Data, b: Data, attributes: Tuple[str]):
     for k in attributes:
-        if type(getattr(a, k)) is not type(getattr(b, k)):
+        a_k = getattr(a, k)
+        b_k = getattr(b, k)
+        if type(a_k) is not type(b_k):
             return False
-        if hasattr(a, 'dtype') and getattr(a, k).dtype != getattr(b, k).dtype:
+        if hasattr(a_k, 'dtype') and a_k.dtype != b_k.dtype:
+            return False
+        if hasattr(a_k, 'shape') and a_k.shape != b_k.shape:
             return False
     for k in attributes:
-        if getattr(a, k) is not None:
-            a_k = getattr(a, k)
-            b_k = getattr(b, k)
+        a_k = getattr(a, k)
+        b_k = getattr(b, k)
+
+        if a_k is not None:
             if hasattr(a_k, 'equals'):
                 if not a_k.equals(b_k):
                     return False
@@ -45,11 +56,8 @@ def equal_attributes(a: Data, b: Data, attributes: Tuple[str]):
                 for key in a_k:
                     if not a_k[key].equals(b_k[key]):
                         return False
-            elif isinstance(a_k, np.ndarray):
-                if not np.array_equal(a_k, b_k, equal_nan=True):
-                    return False
-            elif isinstance(a_k, jax.Array):
-                if not jnp.array_equal(a_k, b_k):
+            elif isinstance(a_k, (np.ndarray, jnp.ndarray)):
+                if not equal_arrays(a_k, b_k):
                     return False
             else:
                 if a_k != b_k:
@@ -965,7 +973,7 @@ class SegmentedInpatientInterventions(Data):
         return SegmentedInpatientInterventions.from_dataframes(segmented_interventions)
 
     def equals(self, other: "SegmentedInpatientInterventions") -> bool:
-        return equal_attributes(self, other, ('hosp_procedures', 'icu_procedures', 'icu_inputs'))
+        return equal_attributes(self, other, ('time', 'hosp_procedures', 'icu_procedures', 'icu_inputs'))
 
     @staticmethod
     def from_dataframes(dataframes: Dict[str, pd.DataFrame]) -> "SegmentedInpatientInterventions":
@@ -1408,7 +1416,7 @@ class StaticInfo(Data):
             meta['date_of_birth'] = self.date_of_birth
         return df, meta
 
-    def to_hdf(self, path: str, key: str) -> None:
+    def to_hdf(self, store: str, key: str) -> None:
         """
         Save the static information to an HDF5 file.
 
@@ -1418,8 +1426,9 @@ class StaticInfo(Data):
         """
         df, meta = self.to_dataframes()
         for k, v in df.items():
-            v.to_hdf(path, key=f'{key}/{k}', format='table')
-        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/meta', format='table')
+            v.to_hdf(store, key=f'{key}/{k}', format='table')
+        pd.DataFrame(list(df.keys())).to_hdf(store, key=f'{key}_keys', format='table')
+        pd.DataFrame(meta, index=[0]).to_hdf(store, key=f'{key}_meta', format='table')
 
     @staticmethod
     def _data_from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> Dict[str, Any]:
@@ -1456,8 +1465,9 @@ class StaticInfo(Data):
         Returns:
             StaticInfo: the static information.
         """
-        dataframes = {k.split('/')[-1]: store[k] for k in store.keys() if key in k and k != f'{key}/meta'}
-        meta = store[f'{key}/meta'].iloc[0].to_dict()
+        meta = store[f'{key}_meta'].iloc[0].to_dict()
+        keys = store[f'{key}_keys'][0].values
+        dataframes = {k: store[f'{key}/{k}'] for k in keys}
         return StaticInfo.from_dataframes(dataframes, meta, demographic_vector_config)
 
     def equals(self, other: 'StaticInfo') -> bool:
@@ -1588,7 +1598,7 @@ class Patient(Data):
         """
         return sum(a.outcome.vec for a in self.admissions)
 
-    def to_hdf(self, path: str, key: str) -> None:
+    def to_hdf(self, store: pd.HDFStore, key: str) -> None:
         """
         Save the patient data to an HDF5 file.
 
@@ -1597,8 +1607,8 @@ class Patient(Data):
             key (str): the key to use for the patient data.
         """
         meta = {'subject_id': self.subject_id}
-        self.static_info.to_hdf(path, key=f'{key}/static_info')
-        self._admissions_to_hdf(path, f'{key}/admissions')
+        self.static_info.to_hdf(store, key=f'{key}/static_info')
+        self._admissions_to_hdf(store, f'{key}/admissions')
         pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/meta', format='table')
 
     def _admissions_to_hdf(self, path: str, key: str) -> None:
@@ -1701,3 +1711,7 @@ class SegmentedPatient(Patient):
                                                         icu_inputs_size=icu_inputs_size,
                                                         maximum_padding=maximum_padding) for a in patient.admissions]
         return SegmentedPatient(subject_id=patient.subject_id, static_info=patient.static_info, admissions=admissions)
+
+
+# TODO: work with pytable directly: https://www.pytables.org/usersguide/libref/homogenous_storage.html#the-vlarray-class
+#  https://www.pytables.org/usersguide/tutorials.html

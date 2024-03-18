@@ -604,7 +604,8 @@ class TestLeadingObservableExtractor:
         for iw, w in enumerate(lead_extractor.config.leading_hours):
             for i in range(len(t)):
                 delta_t = t[i:] - t[i]
-                xi = np.where((delta_t <= w) & (m[i:]), x[i:], np.nan)
+                indexer = (delta_t <= w) & m[i:]
+                xi = np.where(indexer, x[i:], np.nan)
                 yi = lead.value[i, iw]
                 # if all are nan, then the lead is nan.
                 if np.isnan(xi).all():

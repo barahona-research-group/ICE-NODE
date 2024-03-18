@@ -497,7 +497,8 @@ class TestInterventionSegmentation:
         s0 = tvx_ehr_segmented.subject_ids[0]
         a0 = tvx_ehr_segmented.subjects[s0].admissions[0]
         if request.param == 'mutate_obs':
-            a1 = eqx.tree_at(lambda x: x.observables[0].time, a0, a0.observables[0].time + 0.001)
+            index = [i for i, o in enumerate(a0.observables) if len(o) > 0][0]
+            a1 = eqx.tree_at(lambda x: x.observables[index].time, a0, a0.observables[index].time + 0.001)
         elif request.param == 'intervention_time':
             a1 = eqx.tree_at(lambda x: x.interventions.time, a0, a0.interventions.time + 1e-6)
         elif request.param == 'mutate_icu_proc':
