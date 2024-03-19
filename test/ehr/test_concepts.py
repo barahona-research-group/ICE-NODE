@@ -8,6 +8,7 @@ import numpy as np
 import numpy.random as nrand
 import pandas as pd
 import pytest
+import tables as tb
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
@@ -258,6 +259,18 @@ def patient(request, static_info: StaticInfo,
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)
 
 
+@pytest.fixture
+def hf5_writer_file(tmpdir) -> tb.File:
+    h5f = tb.open_file(tmpdir.join('test.h5'), 'w')
+    yield h5f
+    h5f.close()
+
+
+@pytest.fixture
+def hf5_group(hf5_writer_file: tb.File) -> tb.Group:
+    return hf5_writer_file.create_group('/', 'test')
+
+
 class TestInpatientObservables:
 
     def test_empty(self, obs_scheme: str):
@@ -332,10 +345,9 @@ class TestInpatientObservables:
                          mask)
         assert not inpatient_observables.equals(c3)
 
-    def test_dataframe_serialization(self, inpatient_observables: InpatientObservables):
-        df = inpatient_observables.to_dataframe()
-        assert len(df) == len(inpatient_observables)
-        assert inpatient_observables.equals(InpatientObservables.from_dataframe(df))
+    def test_hf5_group_serialization(self, inpatient_observables: InpatientObservables, hf5_group: tb.Group):
+        inpatient_observables.to_hdf_group(hf5_group)
+        assert inpatient_observables.equals(InpatientObservables.from_hdf_group(hf5_group))
 
     def test_as_dataframe(self):
         pass

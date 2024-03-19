@@ -6,63 +6,16 @@ import functools
 import statistics
 from datetime import date
 from functools import cached_property
-from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, Any, ClassVar)
+from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, ClassVar)
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .coding_scheme import (CodesVector, CodingScheme, OutcomeExtractor, NumericalTypeHint, NumericScheme)
-from ..base import Config, Data, Module
-
-Array = Union[npt.NDArray[Union[np.float64, np.float32, bool, int]], jax.Array]
-
-
-def equal_arrays(a: Array, b: Array):
-    _np = np if isinstance(a, np.ndarray) else jnp
-    is_nan = _np.isnan(a) & _np.isnan(b)
-    return _np.array_equal(a[~is_nan], b[~is_nan], equal_nan=False)
-
-
-def equal_attributes(a: Data, b: Data, attributes: Tuple[str]):
-    for k in attributes:
-        a_k = getattr(a, k)
-        b_k = getattr(b, k)
-        if type(a_k) is not type(b_k):
-            return False
-        if hasattr(a_k, 'dtype') and a_k.dtype != b_k.dtype:
-            return False
-        if hasattr(a_k, 'shape') and a_k.shape != b_k.shape:
-            return False
-    for k in attributes:
-        a_k = getattr(a, k)
-        b_k = getattr(b, k)
-
-        if a_k is not None:
-            if hasattr(a_k, 'equals'):
-                if not a_k.equals(b_k):
-                    return False
-            elif isinstance(a_k, (list, tuple, set)):
-                if len(a_k) != len(b_k):
-                    return False
-                if any(not x.equals(y) for x, y in zip(a_k, b_k)):
-                    return False
-            elif isinstance(a_k, dict):
-                if len(a_k) != len(b_k):
-                    return False
-                for key in a_k:
-                    if not a_k[key].equals(b_k[key]):
-                        return False
-            elif isinstance(a_k, (np.ndarray, jnp.ndarray)):
-                if not equal_arrays(a_k, b_k):
-                    return False
-            else:
-                if a_k != b_k:
-                    return False
-    return True
+from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme)
+from ..base import Config, Data, Module, Array
 
 
 class InpatientObservables(Data):
@@ -128,66 +81,6 @@ class InpatientObservables(Data):
         Returns the number of non-missing values in the 'value' attribute.
         """
         return np.sum(self.mask)
-
-    def equals(self, other: InpatientObservables) -> bool:
-        """
-        Compares two InpatientObservables objects for equality.
-
-        Args:
-            other (InpatientObservables): the other InpatientObservables object to compare.
-
-        Returns:
-            bool: whether the two InpatientObservables objects are equal.
-        """
-        return equal_attributes(self, other, ('time', 'value', 'mask'))
-
-    def to_dataframe(self) -> pd.DataFrame:
-        """
-        Converts the observables to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the time and observable values.
-        """
-        time = {'time': self.time}
-        value = {f'val_{i}': self.value[:, i] for i in range(self.value.shape[1])}
-        mask = {f'mask_{i}': self.mask[:, i] for i in range(self.mask.shape[1])}
-        return pd.DataFrame({**time, **value, **mask})
-
-    def to_hdf(self, path: str, key: str, meta_prefix: str = '') -> Dict[str, str]:
-        df = self.to_dataframe()
-        if len(df) == 0:
-            return {f'{meta_prefix}_time_dtype': str(self.time.dtype),
-                    f'{meta_prefix}_value_dtype': str(self.value.dtype),
-                    f'{meta_prefix}_mask_dtype': str(self.mask.dtype),
-                    f'{meta_prefix}_dim': self.value.shape[1]}
-        df.to_hdf(path, key=key, format='table')
-        return {}
-
-    @staticmethod
-    def empty_from_meta(meta: Dict[str, str], meta_prefix: str = '') -> Optional[InpatientObservables]:
-        if not any(k.startswith(meta_prefix) for k in meta.keys()):
-            return None
-        return InpatientObservables.empty(size=int(meta[f'{meta_prefix}_dim']),
-                                          time_dtype=meta[f'{meta_prefix}_time_dtype'],
-                                          value_dtype=meta[f'{meta_prefix}_value_dtype'],
-                                          mask_dtype=meta[f'{meta_prefix}_mask_dtype'])
-
-    @staticmethod
-    def from_dataframe(df: pd.DataFrame) -> InpatientObservables:
-        """
-        Converts a pandas DataFrame to an InpatientObservables object.
-
-        Args:
-            df (pd.DataFrame): the pandas DataFrame to convert.
-
-        Returns:
-            InpatientObservables: the resulting InpatientObservables object.
-        """
-        time = df['time'].values
-        p = (len(df.columns) - 1) // 2
-        value = df[[f'val_{i}' for i in range(p)]].values
-        mask = df[[f'mask_{i}' for i in range(p)]].values
-        return InpatientObservables(time, value, mask)
 
     def as_dataframe(self,
                      scheme: CodingScheme,
@@ -737,45 +630,6 @@ class InpatientInput(Data):
         if self.rate is None:
             self.rate = np.ones(len(self.code_index), dtype=bool)
 
-    def to_dataframe(self):
-        """
-        Converts the input data to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the input data.
-        """
-        return pd.DataFrame({
-            'code_index': self.code_index,
-            'rate': self.rate,
-            'starttime': self.starttime,
-            'endtime': self.endtime
-        })
-
-    @staticmethod
-    def from_dataframe(df: pd.DataFrame) -> "InpatientInput":
-        """
-        Converts a pandas DataFrame to an InpatientInput object.
-
-        Args:
-            df (pd.DataFrame): the pandas DataFrame to convert.
-
-        Returns:
-            InpatientInput: the resulting InpatientInput object.
-        """
-        return InpatientInput(df['code_index'].values, df['starttime'].values, df['endtime'].values, df['rate'].values)
-
-    def equals(self, other: "InpatientInput") -> bool:
-        """
-        Compares two InpatientInput objects for equality.
-
-        Args:
-            other (InpatientInput): the other InpatientInput object to compare.
-
-        Returns:
-            bool: whether the two InpatientInput objects are equal.
-        """
-        return equal_attributes(self, other, ('code_index', 'starttime', 'endtime', 'rate'))
-
     def __call__(self, t: float, input_size: int) -> Array:
         """
         Returns the vectorized input at time t.
@@ -817,53 +671,12 @@ class InpatientInput(Data):
                  rate=zvec.astype(rate_dtype))
         return ii
 
-    def to_hdf(self, path: str, key: str, meta_prefix: str = '') -> Dict[str, str]:
-        df = self.to_dataframe()
-        if len(df) == 0:
-            return {f'{meta_prefix}_code_index_dtype': str(self.code_index.dtype),
-                    f'{meta_prefix}_rate_dtype': str(self.rate.dtype),
-                    f'{meta_prefix}_starttime_dtype': str(self.starttime.dtype),
-                    f'{meta_prefix}_endtime_dtype': str(self.endtime.dtype)}
-        df.to_hdf(path, key=key, format='table')
-        return {}
-
-    @staticmethod
-    def empty_from_meta(meta: Dict[str, str], meta_prefix: str = '') -> Optional[InpatientInput]:
-        if not any(k.startswith(meta_prefix) for k in meta.keys()):
-            return None
-        return InpatientInput.empty(code_index_dtype=meta[f'{meta_prefix}_code_index_dtype'],
-                                    starttime_dtype=meta[f'{meta_prefix}_starttime_dtype'],
-                                    endtime_dtype=meta[f'{meta_prefix}_endtime_dtype'],
-                                    rate_dtype=meta[f'{meta_prefix}_rate_dtype'])
-
 
 class InpatientInterventions(Data):
     # TODO: Add docstring.
-    hosp_procedures: Optional[InpatientInput]
-    icu_procedures: Optional[InpatientInput]
-    icu_inputs: Optional[InpatientInput]
-
-    def to_hdf(self, path: str, key: str) -> None:
-        meta = {}
-        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
-            ii = getattr(self, k)
-            if ii is None:
-                continue
-            meta.update(ii.to_hdf(path, key=f'{key}/{k}', meta_prefix=f'{k}'))
-        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/meta', format='table')
-
-    @staticmethod
-    def from_hdf(store: pd.HDFStore, key: str) -> InpatientInterventions:
-        ii = {}
-        meta = store[f'{key}/meta'].iloc[0].to_dict() if f'{key}/meta' in store else {}
-        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs'):
-            if f'{key}/{k}' in store:
-                ii[k] = InpatientInput.from_dataframe(store[f'{key}/{k}'])
-            elif any(kk.startswith(k) for kk in meta):
-                ii[k] = InpatientInput.empty_from_meta(meta, meta_prefix=f'{k}')
-            else:
-                ii[k] = None
-        return InpatientInterventions(**ii)
+    hosp_procedures: Optional[InpatientInput] = None
+    icu_procedures: Optional[InpatientInput] = None
+    icu_inputs: Optional[InpatientInput] = None
 
     @cached_property
     def timestamps(self) -> List[float]:
@@ -875,15 +688,12 @@ class InpatientInterventions(Data):
                 timestamps.extend(ii.endtime)
         return list(sorted(set(timestamps)))
 
-    def equals(self, other: "InpatientInterventions") -> bool:
-        return equal_attributes(self, other, ('hosp_procedures', 'icu_procedures', 'icu_inputs'))
-
 
 class SegmentedInpatientInterventions(Data):
     time: Array
-    hosp_procedures: Optional[Array]
-    icu_procedures: Optional[Array]
-    icu_inputs: Optional[Array]
+    hosp_procedures: Optional[Array] = None
+    icu_procedures: Optional[Array] = None
+    icu_inputs: Optional[Array] = None
 
     @classmethod
     def from_interventions(cls, inpatient_interventions: InpatientInterventions, terminal_time: float,
@@ -951,40 +761,19 @@ class SegmentedInpatientInterventions(Data):
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
 
-    def to_dataframes(self) -> Dict[str, pd.DataFrame]:
-        df1 = pd.DataFrame(self.hosp_procedures) if self.hosp_procedures is not None else None
-        df2 = pd.DataFrame(self.icu_procedures) if self.icu_procedures is not None else None
-        df3 = pd.DataFrame(self.icu_inputs) if self.icu_inputs is not None else None
-        return {'hosp_procedures': df1, 'icu_procedures': df2, 'icu_inputs': df3,
-                'time': pd.DataFrame(self.time)}
 
-    def to_hdf(self, path: str, key: str) -> None:
-        dataframes = self.to_dataframes()
-        for k, v in dataframes.items():
-            if v is not None:
-                v.to_hdf(path, key=f'{key}/{k}', format='table')
+class AdmissionDates(Data):
+    admission: date
+    discharge: date
 
-    @staticmethod
-    def from_hdf(store: pd.HDFStore, key: str) -> "SegmentedInpatientInterventions":
-        segmented_interventions = {}
-        for k in ('hosp_procedures', 'icu_procedures', 'icu_inputs', 'time'):
-            if f'{key}/{k}' in store:
-                segmented_interventions[k] = store[f'{key}/{k}']
-        return SegmentedInpatientInterventions.from_dataframes(segmented_interventions)
+    def __getitem__(self, item):
+        if item == 0:
+            return self.admission
+        elif item == 1:
+            return self.discharge
 
-    def equals(self, other: "SegmentedInpatientInterventions") -> bool:
-        return equal_attributes(self, other, ('time', 'hosp_procedures', 'icu_procedures', 'icu_inputs'))
-
-    @staticmethod
-    def from_dataframes(dataframes: Dict[str, pd.DataFrame]) -> "SegmentedInpatientInterventions":
-        df1 = dataframes.get('hosp_procedures')
-        df2 = dataframes.get('icu_procedures')
-        df3 = dataframes.get('icu_inputs')
-        time = dataframes['time']
-        hosp_procedures = df1.values if df1 is not None else None
-        icu_procedures = df2.values if df2 is not None else None
-        icu_inputs = df3.values if df3 is not None else None
-        return SegmentedInpatientInterventions(time.values.flatten(), hosp_procedures, icu_procedures, icu_inputs)
+    def __len__(self):
+        return 2
 
 
 class Admission(Data):
@@ -1001,15 +790,18 @@ class Admission(Data):
         leading_observable: timeseries clinical leading observable (of interest). 
     """
     admission_id: str  # Unique ID for each admission
-    admission_dates: Tuple[date, date]
+    admission_dates: AdmissionDates
     dx_codes: CodesVector
     dx_codes_history: CodesVector
     outcome: CodesVector
-    observables: Optional[InpatientObservables]
+    observables: Optional[InpatientObservables] = None
     interventions: Optional[InpatientInterventions] = None
     leading_observable: Optional[InpatientObservables] = None
 
     interventions_class: ClassVar[Type[InpatientInterventions]] = InpatientInterventions
+
+    def __len__(self):
+        return 1
 
     def extract_leading_observable(self, leading_observable_extractor: LeadingObservableExtractor) -> Admission:
         """
@@ -1053,94 +845,6 @@ class Admission(Data):
                          leading_observable=self.leading_observable,
                          interventions=self.interventions)
 
-    @classmethod
-    def _hdf_serialize_observables(cls, observables: Optional[InpatientObservables], path: str, key: str,
-                                   meta_prefix: str = '') -> Dict[str, Any]:
-        if observables is not None:
-            return observables.to_hdf(path, key=key, meta_prefix=meta_prefix)
-        return {}
-
-    @classmethod
-    def _hdf_deserialize_observables(cls, store: pd.HDFStore, key: str,
-                                     meta: Dict[str, Any],
-                                     meta_prefix: str = '') -> Optional[InpatientObservables]:
-        if key in store:
-            return InpatientObservables.from_dataframe(store[key])
-        else:
-            return InpatientObservables.empty_from_meta(meta=meta, meta_prefix=meta_prefix)
-
-    @classmethod
-    def _hdf_serialize_interventions(cls, interventions: Optional[InpatientInterventions], path: str, key: str) -> None:
-        if interventions is not None:
-            interventions.to_hdf(path, key=key)
-
-    @classmethod
-    def _hdf_deserialize_interventions(cls, store: pd.HDFStore, key: str) -> Optional[InpatientInterventions]:
-        if key in store:
-            return cls.interventions_class.from_hdf(store, key)
-        return None
-
-    def to_hdf(self, path: str, key: str) -> None:
-        """
-        Save the admission data to an HDF5 file.
-
-        Args:
-            path (str): the path to the HDF5 file.
-            key (str): the key to use for the admission data.
-        """
-        meta = {'start': self.admission_dates[0],
-                'end': self.admission_dates[1],
-                'admission_id': self.admission_id,
-                'dx_codes_scheme': self.dx_codes.scheme,
-                'dx_codes_history_scheme': self.dx_codes_history.scheme,
-                'outcome_scheme': self.outcome.scheme}
-        pd.DataFrame(self.dx_codes.vec).to_hdf(path, key=f'{key}/dx_codes', format='table')
-        pd.DataFrame(self.dx_codes_history.vec).to_hdf(path, key=f'{key}/dx_codes_history', format='table')
-        pd.DataFrame(self.outcome.vec).to_hdf(path, key=f'{key}/outcome', format='table')
-        self._hdf_serialize_interventions(self.interventions, path=path, key=f'{key}/interventions')
-        meta.update(self._hdf_serialize_observables(self.observables, path=path, key=f'{key}/observables',
-                                                    meta_prefix='obs'))
-        meta.update(self._hdf_serialize_observables(self.leading_observable, path=path, key=f'{key}/leading_observable',
-                                                    meta_prefix='lead_obs'))
-        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/admission_meta', format='table')
-
-    @classmethod
-    def from_hdf_store(cls, hdf_store: pd.HDFStore, key: str) -> 'Admission':
-        """
-        Load the admission data from an HDF5 file.
-
-        Args:
-            hdf_store (pd.HDFStore): the HDF5 store.
-            key (str): the key to use for the admission data.
-        Returns:
-            Admission: the admission data.
-        """
-        meta = hdf_store[f'{key}/admission_meta'].iloc[0].to_dict()
-
-        dx_codes_scheme = CodingScheme.from_name(meta['dx_codes_scheme'])
-        dx_codes_history_scheme = CodingScheme.from_name(meta['dx_codes_history_scheme'])
-        outcome_scheme = OutcomeExtractor.from_name(meta['outcome_scheme'])
-
-        dx_codes = dx_codes_scheme.wrap_vector(hdf_store[f'{key}/dx_codes'][0].values)
-        dx_codes_history = dx_codes_history_scheme.wrap_vector(hdf_store[f'{key}/dx_codes_history'][0].values)
-        outcome = outcome_scheme.wrap_vector(hdf_store[f'{key}/outcome'][0].values)
-
-        observables = cls._hdf_deserialize_observables(hdf_store, key=f'{key}/observables', meta=meta,
-                                                       meta_prefix='obs')
-        leading_observable = cls._hdf_deserialize_observables(hdf_store,
-                                                              key=f'{key}/leading_observable',
-                                                              meta=meta, meta_prefix='lead_obs')
-        interventions = cls._hdf_deserialize_interventions(hdf_store,
-                                                           key=f'{key}/interventions')
-        return cls(admission_id=meta['admission_id'],
-                   admission_dates=(meta['start'], meta['end']),
-                   dx_codes=dx_codes,
-                   dx_codes_history=dx_codes_history,
-                   outcome=outcome,
-                   observables=observables,
-                   leading_observable=leading_observable,
-                   interventions=interventions)
-
     @cached_property
     def interval_hours(self) -> float:
         """
@@ -1174,23 +878,6 @@ class Admission(Data):
         d1 = (self.admission_dates[0] - date).total_seconds() / 3600 / 24
         d2 = (self.admission_dates[1] - date).total_seconds() / 3600 / 24
         return d1, d2
-
-    def equals(self, other: 'Admission') -> bool:
-        """
-        Compares two Admission objects for equality.
-
-        Args:
-            other (Admission): the other Admission object to compare.
-
-        Returns:
-            bool: whether the two Admission objects are equal.
-        """
-        if (self.admission_id != other.admission_id or
-                self.admission_dates != other.admission_dates):
-            return False
-        return equal_attributes(self, other,
-                                ('dx_codes', 'dx_codes_history', 'outcome', 'observables', 'interventions',
-                                 'leading_observable'))
 
 
 class SegmentedAdmission(Admission):
@@ -1246,44 +933,6 @@ class SegmentedAdmission(Admission):
                                   interventions=interventions,
                                   leading_observable=leading_observable)
 
-    def to_hdf(self, path: str, key: str) -> None:
-        """
-        Save the admission data to an HDF5 file.
-
-        Args:
-            path (str): the path to the HDF5 file.
-            key (str): the key to use for the admission data.
-        """
-        zipped_obs = self
-        if self.observables is not None:
-            zipped_obs = eqx.tree_at(lambda x: x.observables, zipped_obs, InpatientObservables.concat(self.observables))
-        if self.leading_observable is not None:
-            zipped_obs = eqx.tree_at(lambda x: x.leading_observable, zipped_obs,
-                                     InpatientObservables.concat(self.leading_observable))
-        Admission.to_hdf(zipped_obs, path, key)
-
-    @classmethod
-    def from_hdf_store(cls, hdf_store: pd.HDFStore, key: str) -> 'Admission':
-        """
-        Load the admission data from an HDF5 file.
-
-        Args:
-            hdf_store (pd.HDFStore): the HDF5 store.
-            key (str): the key to use for the admission data.
-        Returns:
-            Admission: the admission data.
-        """
-        zipped_admission = super().from_hdf_store(hdf_store, key)
-        if zipped_admission.observables is not None:
-            zipped_admission = eqx.tree_at(lambda x: x.observables, zipped_admission,
-                                           cls._segment_observables(zipped_admission.observables,
-                                                                    zipped_admission.interventions))
-        if zipped_admission.leading_observable is not None:
-            zipped_admission = eqx.tree_at(lambda x: x.leading_observable, zipped_admission,
-                                           cls._segment_observables(zipped_admission.leading_observable,
-                                                                    zipped_admission.interventions))
-        return zipped_admission
-
 
 class DemographicVectorConfig(Config):
     """
@@ -1324,28 +973,24 @@ class StaticInfo(Data):
         _concat: concatenates the age and vector.
 
     """
-
-    demographic_vector_config: DemographicVectorConfig
     gender: Optional[CodesVector] = None
     ethnicity: Optional[CodesVector] = None
     date_of_birth: Optional[date] = None
 
-    @property
-    def constant_attrs_list(self) -> List[Array]:
+    def constant_attrs_list(self, demographic_vector_config: DemographicVectorConfig) -> List[Array]:
         attrs_vec = []
-        if self.demographic_vector_config.gender:
+        if demographic_vector_config.gender:
             assert self.gender is not None and len(
                 self.gender) > 0, "Gender is not extracted from the dataset"
             attrs_vec.append(self.gender.vec)
-        if self.demographic_vector_config.ethnicity:
+        if demographic_vector_config.ethnicity:
             assert self.ethnicity is not None, \
                 "Ethnicity is not extracted from the dataset"
             attrs_vec.append(self.ethnicity.vec)
         return attrs_vec
 
-    @cached_property
-    def constant_vec(self):
-        attrs_vec = self.constant_attrs_list
+    def constant_vec(self, demographic_vector_config: DemographicVectorConfig) -> Array:
+        attrs_vec = self.constant_attrs_list(demographic_vector_config)
         if any(isinstance(a, jax.Array) for a in attrs_vec):
             _np = jnp
         else:
@@ -1368,7 +1013,9 @@ class StaticInfo(Data):
         """
         return (current_date - self.date_of_birth).days / 365.25
 
-    def demographic_vector(self, current_date: date) -> Array:
+    def demographic_vector(self,
+                           demographic_vector_config: DemographicVectorConfig,
+                           static_vector: jnp.ndarray, current_date: date) -> Array:
         """
         Returns the demographic vector based on the current date.
 
@@ -1378,9 +1025,9 @@ class StaticInfo(Data):
         Returns:
             Array: the demographic vector.
         """
-        if self.demographic_vector_config.age:
-            return self._concat(self.age(current_date), self.constant_vec)
-        return self.constant_vec
+        if demographic_vector_config.age:
+            return self._concat(self.age(current_date), static_vector)
+        return static_vector
 
     @staticmethod
     def _concat(age, vec):
@@ -1396,94 +1043,6 @@ class StaticInfo(Data):
         """
         return jnp.hstack((age, vec), dtype=jnp.float16)
 
-    def to_dataframes(self) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
-        """
-        Converts the static information to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the static information.
-        """
-        df = {}
-        meta = {}
-        if self.gender is not None:
-            df['gender'] = pd.DataFrame(self.gender.vec)
-            meta.update({'gender_scheme': self.gender.scheme})
-
-        if self.ethnicity is not None:
-            df['ethnicity'] = pd.DataFrame(self.ethnicity.vec)
-            meta.update({'ethnicity_scheme': self.ethnicity.scheme})
-        if self.date_of_birth is not None:
-            meta['date_of_birth'] = self.date_of_birth
-        return df, meta
-
-    def to_hdf(self, store: str, key: str) -> None:
-        """
-        Save the static information to an HDF5 file.
-
-        Args:
-            path (str): the path to the HDF5 file.
-            key (str): the key to use for the static information.
-        """
-        df, meta = self.to_dataframes()
-        for k, v in df.items():
-            v.to_hdf(store, key=f'{key}/{k}', format='table')
-        pd.DataFrame(list(df.keys())).to_hdf(store, key=f'{key}_keys', format='table')
-        pd.DataFrame(meta, index=[0]).to_hdf(store, key=f'{key}_meta', format='table')
-
-    @staticmethod
-    def _data_from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> Dict[str, Any]:
-        data = {}
-        if 'gender' in dataframes:
-            scheme = CodingScheme.from_name(meta['gender_scheme'])
-            data['gender'] = scheme.wrap_vector(vec=dataframes['gender'][0].values)
-        if 'ethnicity' in dataframes:
-            scheme = CodingScheme.from_name(meta['ethnicity_scheme'])
-            data['ethnicity'] = scheme.wrap_vector(vec=dataframes['ethnicity'][0].values)
-        if 'date_of_birth' in meta:
-            data['date_of_birth'] = meta['date_of_birth']
-        return data
-
-    @staticmethod
-    def from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str],
-                        demographic_vector_config: DemographicVectorConfig) -> 'StaticInfo':
-        """
-        Converts a pandas DataFrame to a StaticInfo object.
-        """
-        return StaticInfo(demographic_vector_config=demographic_vector_config,
-                          **StaticInfo._data_from_dataframes(dataframes, meta))
-
-    @staticmethod
-    def from_hdf(store: pd.HDFStore, key: str, demographic_vector_config: DemographicVectorConfig) -> 'StaticInfo':
-        """
-        Load the static information from an HDF5 file.
-
-        Args:
-            store (pd.HDFStore): the HDF5 store.
-            key (str): the key to use for the static information.
-            demographic_vector_config (DemographicVectorConfig): the demographic vector configuration.
-
-        Returns:
-            StaticInfo: the static information.
-        """
-        meta = store[f'{key}_meta'].iloc[0].to_dict()
-        keys = store[f'{key}_keys'][0].values
-        dataframes = {k: store[f'{key}/{k}'] for k in keys}
-        return StaticInfo.from_dataframes(dataframes, meta, demographic_vector_config)
-
-    def equals(self, other: 'StaticInfo') -> bool:
-        """
-        Compares two StaticInfo objects for equality.
-
-        Args:
-            other (StaticInfo): the other StaticInfo object to compare.
-
-        Returns:
-            bool: whether the two StaticInfo objects are equal.
-        """
-        return self.demographic_vector_config.equals(other.demographic_vector_config) and \
-            self.gender == other.gender and self.ethnicity == other.ethnicity and \
-            self.date_of_birth == other.date_of_birth
-
 
 class CPRDStaticInfo(StaticInfo):
     """
@@ -1494,49 +1053,14 @@ class CPRDStaticInfo(StaticInfo):
     """
 
     imd: Optional[CodesVector] = None
-    demographic_vector_config: CPRDDemographicVectorConfig
 
-    @property
-    def constant_attrs_list(self) -> List[Array]:
-        attrs_vec = super().constant_attrs_list
-        if self.demographic_vector_config.imd:
+    def constant_attrs_list(self, demographic_vector_config: DemographicVectorConfig) -> List[Array]:
+        attrs_vec = super().constant_attrs_list(demographic_vector_config)
+        if demographic_vector_config.imd:
             assert self.imd is not None, \
                 "IMD is not extracted from the dataset"
             attrs_vec.append(self.imd.vec)
         return attrs_vec
-
-    def to_dataframes(self) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
-        """
-        Converts the static information to a pandas DataFrame.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the static information.
-        """
-        df, meta = super().to_dataframes()
-        if self.imd is not None:
-            df['imd'] = pd.DataFrame(self.imd.vec)
-            meta.update({'imd': self.imd.scheme})
-        return df, meta
-
-    @staticmethod
-    def _data_from_dataframes(dataframes: Dict[str, pd.DataFrame], meta: Dict[str, str]) -> Dict[str, Any]:
-        data = super()._data_from_dataframes(dataframes, meta)
-        if 'imd' in dataframes:
-            scheme = CodingScheme.from_name(meta['imd_scheme'])
-            data['imd'] = scheme.wrap_vector(vec=dataframes['imd'][0].values)
-        return data
-
-    def equals(self, other: 'CPRDStaticInfo') -> bool:
-        """
-        Compares two CPRDStaticInfo objects for equality.
-
-        Args:
-            other (CPRDStaticInfo): the other CPRDStaticInfo object to compare.
-
-        Returns:
-            bool: whether the two CPRDStaticInfo objects are equal.
-        """
-        return super().equals(other) and self.imd == other.imd
 
 
 class Patient(Data):
@@ -1598,71 +1122,6 @@ class Patient(Data):
         """
         return sum(a.outcome.vec for a in self.admissions)
 
-    def to_hdf(self, store: pd.HDFStore, key: str) -> None:
-        """
-        Save the patient data to an HDF5 file.
-
-        Args:
-            path (str): the path to the HDF5 file.
-            key (str): the key to use for the patient data.
-        """
-        meta = {'subject_id': self.subject_id}
-        self.static_info.to_hdf(store, key=f'{key}/static_info')
-        self._admissions_to_hdf(store, f'{key}/admissions')
-        pd.DataFrame(meta, index=[0]).to_hdf(path, key=f'{key}/meta', format='table')
-
-    def _admissions_to_hdf(self, path: str, key: str) -> None:
-        for adm in self.admissions:
-            adm.to_hdf(path, f'{key}/admissions/{adm.admission_id}')
-        admission_ids = [adm.admission_id for adm in self.admissions]
-        pd.DataFrame({'admission_id': admission_ids}).to_hdf(path, key=f'{key}/admission_ids', format='table')
-
-    @classmethod
-    def _admissions_from_hdf(cls, hdf_store: pd.HDFStore, key: str) -> List[Admission]:
-        if f'{key}/admission_ids' in hdf_store:
-            admission_ids_df = hdf_store[f'{key}/admission_ids']
-            if 'admission_id' in admission_ids_df:
-                admission_ids = admission_ids_df['admission_id'].values
-                return [cls.admission_cls.from_hdf_store(hdf_store, f'{key}/admissions/{admission_id}') for
-                        admission_id in admission_ids]
-        return []
-
-    @classmethod
-    def from_hdf_store(cls, hdf_store: pd.HDFStore, key: str,
-                       demographic_vector_config: DemographicVectorConfig) -> 'Patient':
-        """
-        Load the patient data from an HDF5 file.
-
-        Args:
-            hdf_store (pd.HDFStore): the HDF5 store.
-            key (str): the key to use for the patient data.
-            demographic_vector_config (DemographicVectorConfig): the demographic vector configuration.
-
-        Returns:
-            Patient: the patient data.
-        """
-        static_info = StaticInfo.from_hdf(hdf_store,
-                                          key=f'{key}/static_info',
-                                          demographic_vector_config=demographic_vector_config)
-        admissions = cls._admissions_from_hdf(hdf_store, f'{key}/admissions')
-        subject_id = hdf_store[f'{key}/meta'].loc[0].to_dict()['subject_id']
-        return cls(subject_id=subject_id, static_info=static_info, admissions=admissions)
-
-    def equals(self, other: 'Patient') -> bool:
-        """
-        Compares two Patient objects for equality.
-
-        Args:
-            other (Patient): the other Patient object to compare.
-
-        Returns:
-            bool: whether the two Patient objects are equal.
-        """
-        return (self.subject_id == other.subject_id and
-                len(self.admissions) == len(other.admissions) and
-                self.static_info.equals(other.static_info) and
-                all(a.equals(b) for a, b in zip(self.admissions, other.admissions)))
-
     def __eq__(self, other):
         return self.equals(other)
 
@@ -1711,7 +1170,6 @@ class SegmentedPatient(Patient):
                                                         icu_inputs_size=icu_inputs_size,
                                                         maximum_padding=maximum_padding) for a in patient.admissions]
         return SegmentedPatient(subject_id=patient.subject_id, static_info=patient.static_info, admissions=admissions)
-
 
 # TODO: work with pytable directly: https://www.pytables.org/usersguide/libref/homogenous_storage.html#the-vlarray-class
 #  https://www.pytables.org/usersguide/tutorials.html

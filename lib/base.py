@@ -1,12 +1,16 @@
 import dataclasses
 import json
-from abc import ABCMeta
-from typing import Dict, Any, ClassVar, Union, Type, Callable
+from abc import ABCMeta, abstractmethod
+from datetime import datetime
+from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, List
 
+# TODO: update to Python 3.11, then use typing.Self
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+import tables as tb
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -123,7 +127,7 @@ class Config(eqx.Module):
     def from_dict(cls, config: Dict[str, Any]) -> "Config":
         def _map_dict_to_config(x):
             if cls._is_typed_dict(x):
-                config_class = cls._class_registry[x.pop("_type")]
+                config_class = cls.config_class(x.pop("_type"))
                 config_kwargs = {k: _map_dict_to_config(v) for k, v in x.items()}
                 return config_class(**config_kwargs)
             elif isinstance(x, dict):
@@ -137,9 +141,13 @@ class Config(eqx.Module):
 
         return _map_dict_to_config(config)
 
+    @staticmethod
+    def config_class(label: str):
+        return Config._class_registry[label]
+
     @classmethod
     def register(cls):
-        cls._class_registry[cls.__name__] = cls
+        Config._class_registry[cls.__name__] = cls
 
     def path_update(self, path, value):
         nesting = path.split(".")
@@ -191,7 +199,7 @@ class Module(eqx.Module, metaclass=ABCMeta):
 
     @classmethod
     def register(cls):
-        cls._class_registry[cls.__name__] = cls
+        Module._class_registry[cls.__name__] = cls
 
     @classmethod
     def external_argnames(cls):
@@ -200,9 +208,9 @@ class Module(eqx.Module, metaclass=ABCMeta):
     def export_config(self):
         return self.config.to_dict()
 
-    @classmethod
-    def module_class(cls, label: str):
-        return cls._class_registry[label]
+    @staticmethod
+    def module_class(label: str):
+        return Module._class_registry[label]
 
     @classmethod
     def import_module(cls,
@@ -236,6 +244,16 @@ class Module(eqx.Module, metaclass=ABCMeta):
         return conf
 
 
+Array = Union[np.ndarray, jnp.ndarray, jax.Array]
+DataField = Union['Data', Array]
+
+
+def equal_arrays(a: Array, b: Array):
+    _np = np if isinstance(a, np.ndarray) else jnp
+    is_nan = _np.isnan(a) & _np.isnan(b)
+    return _np.array_equal(a[~is_nan], b[~is_nan], equal_nan=False)
+
+
 class Data(eqx.Module):
     """
     Data class that inherits from eqx.Module.
@@ -246,6 +264,15 @@ class Data(eqx.Module):
 
         to_device() - Copy arrays in module to device.
     """
+    _class_registry: ClassVar[Dict[str, Type["Data"]]] = {}
+
+    @classmethod
+    def register(cls):
+        Data._class_registry[cls.__name__] = cls
+
+    @staticmethod
+    def data_class(label: str):
+        return Data._class_registry[label]
 
     def to_cpu(self):
         arrs, others = eqx.partition(self, eqx.is_array)
@@ -256,6 +283,175 @@ class Data(eqx.Module):
         arrs, others = eqx.partition(self, eqx.is_array)
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         return eqx.combine(arrs, others)
+
+    @abstractmethod
+    def __len__(self) -> int:
+        pass
+
+    @property
+    def fields(self) -> Tuple[str, ...]:
+        return tuple(k.name for k in dataclasses.fields(self))
+
+    @property
+    def str_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), str))
+
+    @property
+    def array_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), Array))
+
+    @property
+    def data_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), Data))
+
+    @property
+    def date_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), datetime))
+
+    @property
+    def iterable_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), (list, tuple)))
+
+    @staticmethod
+    def _store_array_to_hdf(group: tb.Group, name: str, array: Array) -> None:
+        if len(array) == 0:
+            group._v_file.create_array(group, name, obj=array)
+        else:
+            group._v_file.create_carray(group, name, obj=array)
+
+    @staticmethod
+    def _store_date_to_hdf(group: tb.Group, name: str, date: datetime) -> None:
+        group._v_file.create_array(group, name, obj=date.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
+
+    @staticmethod
+    def _load_date_from_hdf(group: tb.Group, name: str) -> datetime:
+        return datetime.strptime(group._f_get_child(name).read().decode('utf-8'), '%Y-%m-%d %H:%M:%S')
+
+    def to_hdf_group(self, group: tb.Group) -> None:
+        h5file = group._v_file
+
+        group._v_file.create_array(group, 'classname', obj=self.__class__.__name__.encode('utf-8'))
+
+        for attr in self.str_attributes:
+            group._v_file.create_array(group, attr, obj=getattr(self, attr).encode('utf-8'))
+        for attr in self.date_attributes:
+            self._store_date_to_hdf(group, f'_x_timestamp_{attr}', obj=getattr(self, attr))
+        for attr in self.array_attributes:
+            self._store_array_to_hdf(group, attr, getattr(self, attr))
+        for attr in self.data_attributes:
+            attr_group = h5file.create_group(group, attr)
+            getattr(self, attr).to_hdf_group(attr_group)
+
+        for attr in self.iterable_attributes:
+            iterable = getattr(self, attr)
+            if isinstance(iterable, list):
+                group_name = f'_x_list_{attr}'
+            elif isinstance(iterable, tuple):
+                group_name = f'_x_tuple_{attr}'
+            else:
+                raise TypeError(f"Unsupported type {type(iterable)} for attribute {attr}")
+
+            attr_group = h5file.create_group(group, group_name)
+            for i, item in enumerate(iterable):
+                if isinstance(item, Array):
+                    self._store_array_to_hdf(attr_group, str(i), item)
+                elif isinstance(item, Data):
+                    item.to_hdf_group(h5file.create_group(attr_group, str(i)))
+                else:
+                    raise TypeError(f"Unsupported type {type(item)} for attribute {attr}")
+
+    @staticmethod
+    def deserialize_iterable(group: tb.Group, iterable_class: Type[list] | Type[tuple]) -> List[DataField] | \
+                                                                                           Tuple[DataField, ...]:
+        sequence = [str(i) for i in range(group._v_nchildren)]
+        leaves = {k: group._f_get_child(k).read() for k in group._v_leaves}
+        leaves = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in leaves.items()}
+        groups = {k: group._f_get_child(k) for k in group._v_groups}
+        items = []
+        for i in sequence:
+            if i in leaves:
+                items.append(leaves[i])
+            elif i in groups:
+                items.append(Data.from_hdf_group(groups[i]))
+        return iterable_class(items)
+
+    @staticmethod
+    def from_hdf_group(group: tb.Group) -> 'Data':
+        classname = group._f_get_child('classname').read().decode('utf-8')
+        cls = Data.data_class(classname)
+        data = {k: group._f_get_child(k).read() for k in group._v_leaves if not k.startswith('_x_timestamp_')}
+        data = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
+        data |= {k.split('_x_timestamp_')[1]: Data._load_date_from_hdf(group, k) for k in group._v_leaves if
+                 k.startswith('_x_timestamp_')}
+
+        groups = {k: group._f_get_child(k) for k in group._v_groups}
+        if len(groups) > 0:
+            list_groups = {k.split('_x_list_')[1]: g for k, g in groups.items() if k.startswith('_x_list_')}
+            tuple_groups = {k.split('_x_tuple_')[1]: g for k, g in groups.items() if k.startswith('_x_tuple_')}
+            data_attrs = set(k for k in groups.keys() if not k.startswith(('_x_list_', '_x_tuple_')))
+            data |= {k: Data.from_hdf_group(g) for k, g in groups.items() if k in data_attrs}
+            data |= {k: Data.deserialize_iterable(g, list) for k, g in list_groups.items()}
+            data |= {k: Data.deserialize_iterable(g, tuple) for k, g in tuple_groups.items()}
+        return cls(**data)
+
+    @staticmethod
+    def equal_attributes(a: 'Data', b: 'Data', attributes: Tuple[str, ...]) -> bool:
+        if len(a) != len(b):
+            return False
+
+        for k in attributes:
+            a_k = getattr(a, k)
+            b_k = getattr(b, k)
+            if type(a_k) is not type(b_k):
+                return False
+            if isinstance(a_k, Array):
+                return a_k.shape == b_k.shape and a_k.dtype == b_k.dtype
+        for k in attributes:
+            a_k = getattr(a, k)
+            b_k = getattr(b, k)
+
+            if a_k is not None:
+                if hasattr(a_k, 'equals'):
+                    if not a_k.equals(b_k):
+                        return False
+                elif isinstance(a_k, (list, tuple)):
+                    if len(a_k) != len(b_k):
+                        return False
+                    if any(not x.equals(y) for x, y in zip(a_k, b_k)):
+                        return False
+                elif isinstance(a_k, Array):
+                    if not equal_arrays(a_k, b_k):
+                        return False
+                elif isinstance(a_k, datetime):
+                    if a_k != b_k:
+                        return False
+                else:
+                    raise TypeError(f"Unsupported type {type(a_k)} for attribute {k}")
+        return True
+
+    @property
+    def comparable_attribute_names(self) -> Tuple[str, ...]:
+        """
+        Returns the names of all attributes that can be compared for equality. Sorted by type considering
+        the lighter comparisons first.
+        """
+        return self.date_attributes + self.str_attributes + self.array_attributes + self.data_attributes
+
+    def equals(self, other: 'Data') -> bool:
+        """
+        Compares two Data objects for equality.
+
+        Args:
+            other (Data): the other Data object to compare.
+
+        Returns:
+            bool: whether the two Data objects are equal.
+        """
+        attribute_names = self.comparable_attribute_names
+
+        return type(self) == type(
+            other) and attribute_names == other.comparable_attribute_names and self.equal_attributes(self, other,
+                                                                                                     attribute_names)
 
 
 Config.register()

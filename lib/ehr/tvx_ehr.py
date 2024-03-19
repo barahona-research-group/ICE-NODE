@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
 from dataclasses import field
-from datetime import date
 from functools import cached_property
 from pathlib import Path
 from typing import List, Optional, Dict, Union, Tuple, Type, ClassVar, Iterable, Any
@@ -19,7 +18,8 @@ from .dataset import Dataset, DatasetScheme, DatasetSchemeConfig, ReportAttribut
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
-                           LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput)
+                           LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput,
+                           AdmissionDates)
 from ..base import Config, Data, Module, FlatConfig
 from ..utils import tqdm_constructor
 
@@ -509,11 +509,11 @@ class TVxEHR(AbstractDatasetRepresentation):
         return sum(self.subjects_sorted_admission_ids.values(), [])
 
     @cached_property
-    def admission_dates(self) -> Dict[str, Tuple[date, date]]:
+    def admission_dates(self) -> Dict[str, AdmissionDates]:
         admissions = self.dataset.tables.admissions
         c_admittime = self.dataset.config.tables.admissions.admission_time_alias
         c_dischtime = self.dataset.config.tables.admissions.discharge_time_alias
-        return dict(zip(admissions.index, zip(admissions[c_admittime], admissions[c_dischtime])))
+        return dict(zip(admissions.index, AdmissionDates(admissions[c_admittime], admissions[c_dischtime])))
 
     def __len__(self):
         """Get the number of subjects."""
@@ -531,16 +531,15 @@ class TVxEHR(AbstractDatasetRepresentation):
         split_names = store[f'split_names'].split.to_list()
         return tuple(tuple(store[f'{k}'].values) for k in split_names)
 
-    def _save_subjects_ids(self, store: pd.HDFStore, key: str):
-        if self.subjects is not None:
-
-
+    # def _save_subjects_ids(self, store: pd.HDFStore, key: str):
+    #     if self.subjects is not None:
 
     def save_subjects(self, store: pd.HDFStore, key: str):
         if self.subjects is not None:
             pd.Series(list(self.subjects.keys())).to_hdf(store, f'{key}/subject_ids', format='table')
             for subject_id, subject in self.subjects.items():
                 subject.to_hdf(store, f'{key}/{subject_id}')
+
     @classmethod
     def load_subjects(cls, store: pd.HDFStore, demographic_vector_config: DemographicVectorConfig) -> Optional[
         Dict[str, Patient]]:
@@ -565,7 +564,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         if not isinstance(path, pd.HDFStore):
             with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:
                 self.save(store, key=key, overwrite=overwrite)
-        self.dataset.save(store, key=f'{key}/dataset' , overwrite=overwrite)
+        self.dataset.save(store, key=f'{key}/dataset', overwrite=overwrite)
         self.save_config(path, key='tvx_ehr', overwrite=overwrite)
         with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:  # tables and pipeline report goes here.
             self.pipeline_report.to_hdf(store,
