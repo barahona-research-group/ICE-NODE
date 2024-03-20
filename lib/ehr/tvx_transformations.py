@@ -465,8 +465,7 @@ class TVxConcepts(AbstractTVxTransformation):
 
         static_info = {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
                                               ethnicity=ethnicity.get(subject_id),
-                                              gender=gender.get(subject_id),
-                                              demographic_vector_config=config) for subject_id in static.index}
+                                              gender=gender.get(subject_id)) for subject_id in static.index}
         report = report.add(tvx_concept=TVxReportAttributes.static_info_prefix(),
                             transformation=cls,
                             column=None, value_type='count', operation='extract_static_info',

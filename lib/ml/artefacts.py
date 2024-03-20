@@ -12,13 +12,13 @@ import numpy as np
 from jax import numpy as jnp, tree_util as jtu
 
 from lib import Config
-from lib.base import Data
+from lib.base import VxData
 from lib.ehr import Admission, CodesVector, InpatientObservables
 from lib.ehr.tvx_ehr import outcome_first_occurrence
 from lib.utils import tree_hasnan, tqdm_constructor
 
 
-class AdmissionPrediction(Data):
+class AdmissionPrediction(VxData):
     """
     Represents predictions associated with an admission in a healthcare system.
 

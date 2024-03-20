@@ -16,7 +16,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from ..base import Config, Module, Data
+from ..base import Config, Module, VxData
 from ..utils import load_config
 
 NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, Categorical
@@ -26,7 +26,7 @@ def resources_dir(*subdir) -> str:
     return os.path.join(os.path.dirname(__file__), "resources", *subdir)
 
 
-class CodesVector(Data):
+class CodesVector(VxData):
     """
     Represents a multi-hot vector encoding of codes using a specific coding scheme.
 

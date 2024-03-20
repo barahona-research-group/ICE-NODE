@@ -10,7 +10,7 @@ from bokeh.plotting import figure
 from bokeh.models import Span
 from bokeh.palettes import tol
 
-from .base import Data, Module
+from .base import VxData, Module
 from .ehr import (Admission, InpatientObservables,
                   InpatientInterventions, DemographicVectorConfig,
                   LeadingObservableConfig, TVxEHR, PatientTrajectory,
@@ -19,7 +19,7 @@ from .ml.artefacts import AdmissionPrediction, Predictions, TrajectoryConfig
 from .ml import InpatientModel
 
 
-class IntervalInterventions(Data):
+class IntervalInterventions(VxData):
     t0: float
     t1: float
     input_list: List[Tuple[str, float]]
@@ -55,7 +55,7 @@ class IntervalInterventions(Data):
         return listified
 
 
-class AdmissionVisualisables(Data):
+class AdmissionVisualisables(VxData):
 
     # The processed dataset has scaled observables and leading observables.
     obs: Dict[str, InpatientObservables]

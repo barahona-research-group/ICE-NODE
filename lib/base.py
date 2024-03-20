@@ -245,7 +245,6 @@ class Module(eqx.Module, metaclass=ABCMeta):
 
 
 Array = Union[np.ndarray, jnp.ndarray, jax.Array]
-DataField = Union['Data', Array]
 
 
 def equal_arrays(a: Array, b: Array):
@@ -254,9 +253,9 @@ def equal_arrays(a: Array, b: Array):
     return _np.array_equal(a[~is_nan], b[~is_nan], equal_nan=False)
 
 
-class Data(eqx.Module):
+class VxData(eqx.Module):
     """
-    Data class that inherits from eqx.Module.
+    VxData class represents vectorized data object, which inherits from eqx.Module.
 
     Methods:
 
@@ -264,15 +263,22 @@ class Data(eqx.Module):
 
         to_device() - Copy arrays in module to device.
     """
-    _class_registry: ClassVar[Dict[str, Type["Data"]]] = {}
+    _class_registry: ClassVar[Dict[str, Type["VxData"]]] = {}
+
+    def __post_init__(self):
+        unsupported_field_types = {f: type(getattr(self, f)) for f in self.fields if
+                                   not isinstance(getattr(self, f), DataField)}
+        unsupported_items_str = ', '.join(map(lambda p: f"{p[0]} ({p[1]})", unsupported_field_types.items()))
+        assert len(unsupported_field_types) == 0, \
+            f"VxData object contains unsupported type(s): {unsupported_items_str}."
 
     @classmethod
     def register(cls):
-        Data._class_registry[cls.__name__] = cls
+        VxData._class_registry[cls.__name__] = cls
 
     @staticmethod
     def data_class(label: str):
-        return Data._class_registry[label]
+        return VxData._class_registry[label]
 
     def to_cpu(self):
         arrs, others = eqx.partition(self, eqx.is_array)
@@ -290,7 +296,7 @@ class Data(eqx.Module):
 
     @property
     def fields(self) -> Tuple[str, ...]:
-        return tuple(k.name for k in dataclasses.fields(self))
+        return tuple(k.name for k in dataclasses.fields(self) if getattr(self, k.name) is not None)
 
     @property
     def str_attributes(self) -> Tuple[str, ...]:
@@ -302,7 +308,7 @@ class Data(eqx.Module):
 
     @property
     def data_attributes(self) -> Tuple[str, ...]:
-        return tuple(k for k in self.fields if isinstance(getattr(self, k), Data))
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), VxData))
 
     @property
     def date_attributes(self) -> Tuple[str, ...]:
@@ -355,14 +361,13 @@ class Data(eqx.Module):
             for i, item in enumerate(iterable):
                 if isinstance(item, Array):
                     self._store_array_to_hdf(attr_group, str(i), item)
-                elif isinstance(item, Data):
+                elif isinstance(item, VxData):
                     item.to_hdf_group(h5file.create_group(attr_group, str(i)))
                 else:
                     raise TypeError(f"Unsupported type {type(item)} for attribute {attr}")
 
     @staticmethod
-    def deserialize_iterable(group: tb.Group, iterable_class: Type[list] | Type[tuple]) -> List[DataField] | \
-                                                                                           Tuple[DataField, ...]:
+    def deserialize_iterable(group: tb.Group, iterable_class: Type['IterableField']) -> 'IterableField':
         sequence = [str(i) for i in range(group._v_nchildren)]
         leaves = {k: group._f_get_child(k).read() for k in group._v_leaves}
         leaves = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in leaves.items()}
@@ -372,16 +377,17 @@ class Data(eqx.Module):
             if i in leaves:
                 items.append(leaves[i])
             elif i in groups:
-                items.append(Data.from_hdf_group(groups[i]))
+                items.append(VxData.from_hdf_group(groups[i]))
         return iterable_class(items)
 
     @staticmethod
-    def from_hdf_group(group: tb.Group) -> 'Data':
+    def from_hdf_group(group: tb.Group) -> 'VxData':
         classname = group._f_get_child('classname').read().decode('utf-8')
-        cls = Data.data_class(classname)
-        data = {k: group._f_get_child(k).read() for k in group._v_leaves if not k.startswith('_x_timestamp_')}
+        cls = VxData.data_class(classname)
+        data = {k: group._f_get_child(k).read() for k in group._v_leaves if
+                not k.startswith('_x_timestamp_') and not k == 'classname'}
         data = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
-        data |= {k.split('_x_timestamp_')[1]: Data._load_date_from_hdf(group, k) for k in group._v_leaves if
+        data |= {k.split('_x_timestamp_')[1]: VxData._load_date_from_hdf(group, k) for k in group._v_leaves if
                  k.startswith('_x_timestamp_')}
 
         groups = {k: group._f_get_child(k) for k in group._v_groups}
@@ -389,13 +395,13 @@ class Data(eqx.Module):
             list_groups = {k.split('_x_list_')[1]: g for k, g in groups.items() if k.startswith('_x_list_')}
             tuple_groups = {k.split('_x_tuple_')[1]: g for k, g in groups.items() if k.startswith('_x_tuple_')}
             data_attrs = set(k for k in groups.keys() if not k.startswith(('_x_list_', '_x_tuple_')))
-            data |= {k: Data.from_hdf_group(g) for k, g in groups.items() if k in data_attrs}
-            data |= {k: Data.deserialize_iterable(g, list) for k, g in list_groups.items()}
-            data |= {k: Data.deserialize_iterable(g, tuple) for k, g in tuple_groups.items()}
+            data |= {k: VxData.from_hdf_group(g) for k, g in groups.items() if k in data_attrs}
+            data |= {k: VxData.deserialize_iterable(g, list) for k, g in list_groups.items()}
+            data |= {k: VxData.deserialize_iterable(g, tuple) for k, g in tuple_groups.items()}
         return cls(**data)
 
     @staticmethod
-    def equal_attributes(a: 'Data', b: 'Data', attributes: Tuple[str, ...]) -> bool:
+    def equal_attributes(a: 'VxData', b: 'VxData', attributes: Tuple[str, ...]) -> bool:
         if len(a) != len(b):
             return False
 
@@ -437,12 +443,12 @@ class Data(eqx.Module):
         """
         return self.date_attributes + self.str_attributes + self.array_attributes + self.data_attributes
 
-    def equals(self, other: 'Data') -> bool:
+    def equals(self, other: 'VxData') -> bool:
         """
         Compares two Data objects for equality.
 
         Args:
-            other (Data): the other Data object to compare.
+            other (VxData): the other Data object to compare.
 
         Returns:
             bool: whether the two Data objects are equal.
@@ -453,6 +459,10 @@ class Data(eqx.Module):
             other) and attribute_names == other.comparable_attribute_names and self.equal_attributes(self, other,
                                                                                                      attribute_names)
 
+
+DataItem = Union[VxData, Array]
+IterableField = Union[List[DataItem], Tuple[DataItem, ...]]
+DataField = Union[DataItem, datetime, str, IterableField]
 
 Config.register()
 Module.register()

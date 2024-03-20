@@ -9,7 +9,7 @@ import numpy as np
 
 from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
                    InpatientInput, InpatientInterventions, DemographicVectorConfig, CodingScheme)
-from ..base import Config, Data
+from ..base import Config, VxData
 
 
 class MaskedAggregator(eqx.Module):
@@ -234,7 +234,7 @@ class AggregateRepresentation(eqx.Module):
             [agg(x) for x, agg in zip(splitted, self.aggregators)])
 
 
-class EmbeddedAdmission(Data):
+class EmbeddedAdmission(VxData):
     pass
 
 
@@ -463,7 +463,7 @@ class DeepMindPatientEmbeddingConfig(Config):
     sequence: int = 50
 
 
-class DeepMindEmbeddedAdmission(Data):
+class DeepMindEmbeddedAdmission(VxData):
     dx0: jnp.ndarray
     demo: jnp.ndarray
     sequence: jnp.ndarray

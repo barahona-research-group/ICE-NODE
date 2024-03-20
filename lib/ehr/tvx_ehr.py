@@ -20,7 +20,7 @@ from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput,
                            AdmissionDates)
-from ..base import Config, Data, Module, FlatConfig
+from ..base import Config, VxData, Module, FlatConfig
 from ..utils import tqdm_constructor
 
 
@@ -334,7 +334,7 @@ class TVxReportAttributes(ReportAttributes):
     tvx_concept: str = None
 
     @staticmethod
-    def _t(object_or_type: Union[Type, Data]) -> str:
+    def _t(object_or_type: Union[Type, VxData]) -> str:
         return object_or_type.__name__ if isinstance(object_or_type, type) else object_or_type.__class__.__name__
 
     @classmethod
@@ -513,7 +513,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         admissions = self.dataset.tables.admissions
         c_admittime = self.dataset.config.tables.admissions.admission_time_alias
         c_dischtime = self.dataset.config.tables.admissions.discharge_time_alias
-        return dict(zip(admissions.index, AdmissionDates(admissions[c_admittime], admissions[c_dischtime])))
+        return admissions.apply(lambda x: AdmissionDates(x[c_admittime], x[c_dischtime]), axis=1).to_dict()
 
     def __len__(self):
         """Get the number of subjects."""
@@ -541,13 +541,12 @@ class TVxEHR(AbstractDatasetRepresentation):
                 subject.to_hdf(store, f'{key}/{subject_id}')
 
     @classmethod
-    def load_subjects(cls, store: pd.HDFStore, demographic_vector_config: DemographicVectorConfig) -> Optional[
+    def load_subjects(cls, store: pd.HDFStore) -> Optional[
         Dict[str, Patient]]:
         if 'subject_ids' in store:
             subject_ids = store['subject_ids'].values.tolist()
             _load = cls.patient_class.from_hdf_store
-            _conf = demographic_vector_config
-            return {subject_id: _load(store[subject_id], _conf) for subject_id in subject_ids}
+            return {subject_id: _load(store[subject_id]) for subject_id in subject_ids}
         return None
 
     def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
@@ -599,7 +598,7 @@ class TVxEHR(AbstractDatasetRepresentation):
                                         numerical_processors=numerical_processors,
                                         pipeline_report=store['report'] if 'report' in store else pd.DataFrame(),
                                         dataset=dataset,
-                                        subjects=tvx_class.load_subjects(h5_path, 'tvx', config.demographic))
+                                        subjects=tvx_class.load_subjects(h5_path, 'tvx'))
 
     def device_batch(self, subject_ids: Optional[List[str]] = None):
         """Load subjects and move them to the device. If subject_ids is None, load all subjects.

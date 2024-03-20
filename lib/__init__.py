@@ -1,6 +1,6 @@
 import inspect
 
-from .base import Config, Module, Data
+from .base import Config, Module, VxData
 from .ehr import tvx_concepts, dataset, coding_scheme, transformations, tvx_transformations, tvx_ehr
 from .ehr.example_datasets import mimic3, cprd, mimiciv, mimiciv_aki
 from .metric import stat
@@ -23,5 +23,5 @@ modules = [
 ]
 for m in modules:
     for name, _class in inspect.getmembers(m, inspect.isclass):
-        if issubclass(_class, (Config, Module, Data)):
+        if issubclass(_class, (Config, Module, VxData)):
             _class.register()

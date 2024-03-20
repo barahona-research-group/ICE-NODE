@@ -15,10 +15,10 @@ import numpy.typing as npt
 import pandas as pd
 
 from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme)
-from ..base import Config, Data, Module, Array
+from ..base import Config, VxData, Module, Array
 
 
-class InpatientObservables(Data):
+class InpatientObservables(VxData):
     """
     Vectorized representation of inpatient observables.
 
@@ -50,6 +50,7 @@ class InpatientObservables(Data):
         assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, " \
                                                     f"got {self.value.shape}"
         assert self.time.ndim == 1, f"Expected time to be 1D, got {self.time.ndim}"
+        super().__post_init__()
 
     @staticmethod
     def empty(size: int,
@@ -610,7 +611,7 @@ class LeadingObservableExtractor(Module):
         return InpatientObservables(time, value, mask=~np.isnan(value))
 
 
-class InpatientInput(Data):
+class InpatientInput(VxData):
     """
     Represents inpatient input data.
 
@@ -629,6 +630,10 @@ class InpatientInput(Data):
     def __post_init__(self):
         if self.rate is None:
             self.rate = np.ones(len(self.code_index), dtype=bool)
+        super().__post_init__()
+
+    def __len__(self):
+        return len(self.code_index)
 
     def __call__(self, t: float, input_size: int) -> Array:
         """
@@ -672,11 +677,14 @@ class InpatientInput(Data):
         return ii
 
 
-class InpatientInterventions(Data):
+class InpatientInterventions(VxData):
     # TODO: Add docstring.
     hosp_procedures: Optional[InpatientInput] = None
     icu_procedures: Optional[InpatientInput] = None
     icu_inputs: Optional[InpatientInput] = None
+
+    def __len__(self):
+        return sum(1 for o in [self.hosp_procedures, self.icu_procedures, self.icu_inputs] if o is not None)
 
     @cached_property
     def timestamps(self) -> List[float]:
@@ -689,11 +697,14 @@ class InpatientInterventions(Data):
         return list(sorted(set(timestamps)))
 
 
-class SegmentedInpatientInterventions(Data):
+class SegmentedInpatientInterventions(VxData):
     time: Array
     hosp_procedures: Optional[Array] = None
     icu_procedures: Optional[Array] = None
     icu_inputs: Optional[Array] = None
+
+    def __len__(self):
+        return sum(1 for o in [self.hosp_procedures, self.icu_procedures, self.icu_inputs] if o is not None)
 
     @classmethod
     def from_interventions(cls, inpatient_interventions: InpatientInterventions, terminal_time: float,
@@ -762,7 +773,7 @@ class SegmentedInpatientInterventions(Data):
         return np.vstack([out, pad])
 
 
-class AdmissionDates(Data):
+class AdmissionDates(VxData):
     admission: date
     discharge: date
 
@@ -776,7 +787,7 @@ class AdmissionDates(Data):
         return 2
 
 
-class Admission(Data):
+class Admission(VxData):
     """Admission data class representing a hospital admission.
     
     Attributes:
@@ -955,7 +966,7 @@ class CPRDDemographicVectorConfig(DemographicVectorConfig):
     imd: bool = True
 
 
-class StaticInfo(Data):
+class StaticInfo(VxData):
     """
     Represents static information about a patient.
 
@@ -967,7 +978,6 @@ class StaticInfo(Data):
         constant_vec (Optional[Array]): constant vector representing the static information.
 
     Methods:
-        __post_init__: initializes the constant vector based on the available attributes.
         age: calculates the age of the patient based on the current date.
         demographic_vector: returns the demographic vector based on the current date.
         _concat: concatenates the age and vector.
@@ -1063,7 +1073,7 @@ class CPRDStaticInfo(StaticInfo):
         return attrs_vec
 
 
-class Patient(Data):
+class Patient(VxData):
     """
     Represents a patient with demographic information and a clinical history 
     of admissions.
@@ -1090,6 +1100,7 @@ class Patient(Data):
 
     def __post_init__(self):
         self.admissions = list(sorted(self.admissions, key=lambda x: x.admission_dates[0]))
+        super().__post_init__()
 
     @cached_property
     def d2d_interval_days(self):

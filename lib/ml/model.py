@@ -14,7 +14,7 @@ from ..ehr import (TVxEHR, Patient, DemographicVectorConfig, DatasetScheme,
                    Admission,
                    InpatientInput, InpatientObservables)
 from .artefacts import AdmissionPrediction, Predictions, TrajectoryConfig
-from ..base import Config, Module, Data
+from ..base import Config, Module, VxData
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
                          EmbeddedAdmission)
@@ -32,7 +32,7 @@ class ModelRegularisation(Config):
     L_l2: float = 0.0
 
 
-class Precomputes(Data):
+class Precomputes(VxData):
     pass
 
 

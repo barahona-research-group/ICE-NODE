@@ -644,11 +644,12 @@ class TestInpatientInput:
 
     @pytest.mark.parametrize("n", [0, 1, 100, 501])
     @pytest.mark.parametrize("p", [1, 100, 501])
-    def test_dataframe_serialization(self, n: int, p: int):
+    def test_hf5_group_serialization(self, n: int, p: int, hf5_group: tb.Group):
         input = inpatient_binary_input(n, p)
-        df = input.to_dataframe()
-        assert len(df) == n
-        assert input.equals(InpatientInput.from_dataframe(df))
+        input.to_hdf_group(hf5_group)
+        loaded_input = InpatientInput.from_hdf_group(hf5_group)
+        assert len(input) == len(loaded_input)
+        assert input.equals(loaded_input)
 
     def test_empty(self):
         pass
@@ -656,12 +657,9 @@ class TestInpatientInput:
 
 class TestInpatientInterventions:
 
-    def test_hdf_serialization(self, inpatient_interventions: InpatientInterventions, tmpdir):
-        hdf_filename = f'{tmpdir}/test_inpatient_interventions_serialization.h5'
-        inpatient_interventions.to_hdf(hdf_filename, key='test_inpatient_interventions')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            assert inpatient_interventions.equals(
-                InpatientInterventions.from_hdf(hdf, key='test_inpatient_interventions'))
+    def test_hf5_group_serialization(self, inpatient_interventions: InpatientInterventions, hf5_group: tb.Group):
+        inpatient_interventions.to_hdf_group(hf5_group)
+        assert inpatient_interventions.equals(InpatientInterventions.from_hdf_group(hf5_group))
 
     def test_timestamps(self, inpatient_interventions: InpatientInterventions):
         timestamps = inpatient_interventions.timestamps
@@ -736,27 +734,17 @@ class TestSegmentedInpatientInterventions:
         for i, t in enumerate(inpatient_intervention.starttime):
             assert np.array_equal(inpatient_intervention(t, len(scheme)), seg[i])
 
-    def test_dataframe_serialization(self, segmented_inpatient_interventions: SegmentedInpatientInterventions):
-        dfs = segmented_inpatient_interventions.to_dataframes()
-        assert segmented_inpatient_interventions.equals(SegmentedInpatientInterventions.from_dataframes(dfs))
-
-    def test_hdf_serialization(self, segmented_inpatient_interventions, tmpdir):
-        hdf_filename = f'{tmpdir}/test_segmented_inpatient_interventions_serialization.h5'
-        segmented_inpatient_interventions.to_hdf(hdf_filename, key='test_segmented_inpatient_interventions')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            assert segmented_inpatient_interventions.equals(
-                SegmentedInpatientInterventions.from_hdf(hdf, key='test_segmented_inpatient_interventions'))
+    def test_hf5_group_serialization(self, segmented_inpatient_interventions: SegmentedInpatientInterventions,
+                                     hf5_group: tb.Group):
+        segmented_inpatient_interventions.to_hdf_group(hf5_group)
+        assert segmented_inpatient_interventions.equals(SegmentedInpatientInterventions.from_hdf_group(hf5_group))
 
 
 class TestAdmission:
 
-    def test_serialization(self, admission: Admission, tmpdir: str):
-        hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
-
-        admission.to_hdf(hdf_filename, 'test_admission')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            deserialized = Admission.from_hdf_store(hdf, 'test_admission')
-        assert admission.equals(deserialized)
+    def test_hf5_group_serialization(self, admission: Admission, hf5_group: tb.Group):
+        admission.to_hdf_group(hf5_group)
+        assert admission.equals(Admission.from_hdf_group(hf5_group))
 
     def test_interval_hours(self):
         pass
@@ -820,13 +808,9 @@ class TestSegmentedAdmission:
                 assert np.array_equal(segment_val, val)
                 assert np.array_equal(segment_mask, mask)
 
-    def test_serialization(self, segmented_admission: SegmentedAdmission, tmpdir: str):
-        hdf_filename = f'{tmpdir}/test_admissions_serialization.h5'
-
-        segmented_admission.to_hdf(hdf_filename, 'test_admission')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            deserialized = SegmentedAdmission.from_hdf_store(hdf, 'test_admission')
-        assert segmented_admission.equals(deserialized)
+    def test_hf5_group_serialization(self, segmented_admission: SegmentedAdmission, hf5_group: tb.Group):
+        segmented_admission.to_hdf_group(hf5_group)
+        assert segmented_admission.equals(SegmentedAdmission.from_hdf_group(hf5_group))
 
 
 class TestStaticInfo:
@@ -837,13 +821,9 @@ class TestStaticInfo:
                                                               demographic_vector_config=static_info.demographic_vector_config)
         assert static_info.equals(static_info_deserialized)
 
-    def test_hdf_serialization(self, static_info: StaticInfo, tmpdir):
-        hdf_filename = f'{tmpdir}/test_static_info_serialization.h5'
-        static_info.to_hdf(hdf_filename, 'test_static_info')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            deserialized = StaticInfo.from_hdf(hdf, 'test_static_info',
-                                               demographic_vector_config=static_info.demographic_vector_config)
-        assert static_info.equals(deserialized)
+    def test_hf5_group_serialization(self, static_info: StaticInfo, hf5_group: tb.Group):
+        static_info.to_hdf_group(hf5_group)
+        assert static_info.equals(StaticInfo.from_hdf_group(hf5_group))
 
     def test_constant_attributes(self):
         pass
@@ -863,10 +843,6 @@ class TestPatient:
     def test_outcome_frequency(self):
         pass
 
-    def test_serialization(self, patient: Patient, tmpdir):
-        hdf_filename = f'{tmpdir}/test_patient_serialization.h5'
-        patient.to_hdf(hdf_filename, 'test_patient')
-        with pd.HDFStore(hdf_filename, 'r') as hdf:
-            demo_config = patient.static_info.demographic_vector_config
-            deserialized = Patient.from_hdf_store(hdf, 'test_patient', demographic_vector_config=demo_config)
-        assert patient.equals(deserialized)
+    def test_hf5_group_serialization(self, patient: Patient, hf5_group: tb.Group):
+        patient.to_hdf_group(hf5_group)
+        assert patient.equals(Patient.from_hdf_group(hf5_group))

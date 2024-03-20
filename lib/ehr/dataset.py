@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint)
-from ..base import Config, Module, Data
+from ..base import Config, Module, VxData
 from ..utils import write_config, load_config, tqdm_constructor
 
 SECONDS_TO_HOURS_SCALER: Final[float] = 1 / 3600.0  # convert seconds to hours
@@ -226,7 +226,7 @@ class DatasetTablesConfig(Config):
         return temporal and admission_linked
 
 
-class DatasetTables(Data):
+class DatasetTables(VxData):
     static: pd.DataFrame
     admissions: pd.DataFrame
     dx_discharge: Optional[pd.DataFrame] = None
