@@ -987,6 +987,9 @@ class StaticInfo(VxData):
     ethnicity: Optional[CodesVector] = None
     date_of_birth: Optional[date] = None
 
+    def __len__(self):
+        return 1
+
     def constant_attrs_list(self, demographic_vector_config: DemographicVectorConfig) -> List[Array]:
         attrs_vec = []
         if demographic_vector_config.gender:
@@ -1101,6 +1104,9 @@ class Patient(VxData):
     def __post_init__(self):
         self.admissions = list(sorted(self.admissions, key=lambda x: x.admission_dates[0]))
         super().__post_init__()
+
+    def __len__(self):
+        return len(self.admissions)
 
     @cached_property
     def d2d_interval_days(self):

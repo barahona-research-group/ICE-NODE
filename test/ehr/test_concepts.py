@@ -14,7 +14,8 @@ from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
 from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
 from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                                   InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
-                                  SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient)
+                                  SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient, AdmissionDates,
+                                  SegmentedPatient)
 from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
     NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 
@@ -45,7 +46,7 @@ def demographic_vector_config() -> DemographicVectorConfig:
 
 
 def _static_info(ethnicity: CodesVector, gender: CodesVector) -> StaticInfo:
-    return StaticInfo(demographic_vector_config=demographic_vector_config(), ethnicity=ethnicity, gender=gender,
+    return StaticInfo(ethnicity=ethnicity, gender=gender,
                       date_of_birth=date_of_birth())
 
 
@@ -195,7 +196,7 @@ def _admission(admission_id: str, admission_date: pd.Timestamp,
                interventions: InpatientInterventions, leading_observable: InpatientObservables):
     discharge_date = pd.to_datetime(admission_date + pd.to_timedelta(LENGTH_OF_STAY, unit='H'))
 
-    return Admission(admission_id=admission_id, admission_dates=(admission_date, discharge_date),
+    return Admission(admission_id=admission_id, admission_dates=AdmissionDates(admission_date, discharge_date),
                      dx_codes=dx_codes,
                      dx_codes_history=dx_codes_history, outcome=outcome, observables=observables,
                      interventions=interventions, leading_observable=leading_observable)
@@ -220,6 +221,13 @@ def segmented_admission(admission: Admission, icu_inputs_scheme: CodingScheme, i
                                              icu_inputs_size=len(icu_inputs_scheme),
                                              icu_procedures_size=len(icu_proc_scheme),
                                              hosp_procedures_size=len(hosp_proc_scheme))
+@pytest.fixture
+def segmented_patient(patient: Patient, icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
+                      hosp_proc_scheme: CodingScheme) -> SegmentedPatient:
+    return SegmentedPatient.from_patient(patient=patient, maximum_padding=1,
+                                        icu_inputs_size=len(icu_inputs_scheme),
+                                        icu_procedures_size=len(icu_proc_scheme),
+                                        hosp_procedures_size=len(hosp_proc_scheme))
 
 
 def _admissions(n_admissions, dx_scheme: CodingScheme,
@@ -815,12 +823,6 @@ class TestSegmentedAdmission:
 
 class TestStaticInfo:
 
-    def test_dataframe_serialization(self, static_info: StaticInfo):
-        dfs, meta = static_info.to_dataframes()
-        static_info_deserialized = StaticInfo.from_dataframes(dfs, meta,
-                                                              demographic_vector_config=static_info.demographic_vector_config)
-        assert static_info.equals(static_info_deserialized)
-
     def test_hf5_group_serialization(self, static_info: StaticInfo, hf5_group: tb.Group):
         static_info.to_hdf_group(hf5_group)
         assert static_info.equals(StaticInfo.from_hdf_group(hf5_group))
@@ -846,3 +848,16 @@ class TestPatient:
     def test_hf5_group_serialization(self, patient: Patient, hf5_group: tb.Group):
         patient.to_hdf_group(hf5_group)
         assert patient.equals(Patient.from_hdf_group(hf5_group))
+
+
+class TestSegmentedPatient:
+
+    def test_d2d_interval_days(self):
+        pass
+
+    def test_outcome_frequency(self):
+        pass
+
+    def test_hf5_group_serialization(self, segmented_patient: SegmentedPatient, hf5_group: tb.Group):
+        segmented_patient.to_hdf_group(hf5_group)
+        assert segmented_patient.equals(Patient.from_hdf_group(hf5_group))

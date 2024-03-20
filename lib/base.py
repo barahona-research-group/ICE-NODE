@@ -1,7 +1,6 @@
 import dataclasses
 import json
 from abc import ABCMeta, abstractmethod
-from datetime import datetime
 from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, List
 
 # TODO: update to Python 3.11, then use typing.Self
@@ -10,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+import pandas as pd
 import tables as tb
 
 
@@ -266,9 +266,15 @@ class VxData(eqx.Module):
     _class_registry: ClassVar[Dict[str, Type["VxData"]]] = {}
 
     def __post_init__(self):
-        unsupported_field_types = {f: type(getattr(self, f)) for f in self.fields if
-                                   not isinstance(getattr(self, f), DataField)}
-        unsupported_items_str = ', '.join(map(lambda p: f"{p[0]} ({p[1]})", unsupported_field_types.items()))
+        unsupported_field_types = set()
+        for f in self.fields:
+            obj = type(getattr(self, f))
+            if isinstance(getattr(self, f), IterableField):
+                if not all(isinstance(i, DataItem) for i in getattr(self, f)):
+                    unsupported_field_types.add((f'{f}[i]', obj))
+            elif not isinstance(getattr(self, f), DataField):
+                unsupported_field_types.add((f, obj))
+        unsupported_items_str = ', '.join(map(lambda p: f"{p[0]} ({p[1]})", unsupported_field_types))
         assert len(unsupported_field_types) == 0, \
             f"VxData object contains unsupported type(s): {unsupported_items_str}."
 
@@ -311,8 +317,8 @@ class VxData(eqx.Module):
         return tuple(k for k in self.fields if isinstance(getattr(self, k), VxData))
 
     @property
-    def date_attributes(self) -> Tuple[str, ...]:
-        return tuple(k for k in self.fields if isinstance(getattr(self, k), datetime))
+    def timestamp_attributes(self) -> Tuple[str, ...]:
+        return tuple(k for k in self.fields if isinstance(getattr(self, k), pd.Timestamp))
 
     @property
     def iterable_attributes(self) -> Tuple[str, ...]:
@@ -326,12 +332,12 @@ class VxData(eqx.Module):
             group._v_file.create_carray(group, name, obj=array)
 
     @staticmethod
-    def _store_date_to_hdf(group: tb.Group, name: str, date: datetime) -> None:
-        group._v_file.create_array(group, name, obj=date.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
+    def _store_timestamp_to_hdf(group: tb.Group, name: str, date: pd.Timestamp) -> None:
+        group._v_file.create_array(group, name, obj=date.value)
 
     @staticmethod
-    def _load_date_from_hdf(group: tb.Group, name: str) -> datetime:
-        return datetime.strptime(group._f_get_child(name).read().decode('utf-8'), '%Y-%m-%d %H:%M:%S')
+    def _load_timestamp_from_hdf(group: tb.Group, name: str) -> pd.Timestamp:
+        return pd.Timestamp(group._f_get_child(name).read())
 
     def to_hdf_group(self, group: tb.Group) -> None:
         h5file = group._v_file
@@ -340,8 +346,8 @@ class VxData(eqx.Module):
 
         for attr in self.str_attributes:
             group._v_file.create_array(group, attr, obj=getattr(self, attr).encode('utf-8'))
-        for attr in self.date_attributes:
-            self._store_date_to_hdf(group, f'_x_timestamp_{attr}', obj=getattr(self, attr))
+        for attr in self.timestamp_attributes:
+            self._store_timestamp_to_hdf(group, f'_x_timestamp_{attr}', getattr(self, attr))
         for attr in self.array_attributes:
             self._store_array_to_hdf(group, attr, getattr(self, attr))
         for attr in self.data_attributes:
@@ -387,7 +393,7 @@ class VxData(eqx.Module):
         data = {k: group._f_get_child(k).read() for k in group._v_leaves if
                 not k.startswith('_x_timestamp_') and not k == 'classname'}
         data = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
-        data |= {k.split('_x_timestamp_')[1]: VxData._load_date_from_hdf(group, k) for k in group._v_leaves if
+        data |= {k.split('_x_timestamp_')[1]: VxData._load_timestamp_from_hdf(group, k) for k in group._v_leaves if
                  k.startswith('_x_timestamp_')}
 
         groups = {k: group._f_get_child(k) for k in group._v_groups}
@@ -402,9 +408,11 @@ class VxData(eqx.Module):
 
     @staticmethod
     def equal_attributes(a: 'VxData', b: 'VxData', attributes: Tuple[str, ...]) -> bool:
+        # Light checks first.
         if len(a) != len(b):
             return False
 
+        # Some more light checks first.
         for k in attributes:
             a_k = getattr(a, k)
             b_k = getattr(b, k)
@@ -412,6 +420,8 @@ class VxData(eqx.Module):
                 return False
             if isinstance(a_k, Array):
                 return a_k.shape == b_k.shape and a_k.dtype == b_k.dtype
+
+        # Now the heavy checks.
         for k in attributes:
             a_k = getattr(a, k)
             b_k = getattr(b, k)
@@ -428,7 +438,7 @@ class VxData(eqx.Module):
                 elif isinstance(a_k, Array):
                     if not equal_arrays(a_k, b_k):
                         return False
-                elif isinstance(a_k, datetime):
+                elif isinstance(a_k, (pd.Timestamp, str)):
                     if a_k != b_k:
                         return False
                 else:
@@ -441,7 +451,7 @@ class VxData(eqx.Module):
         Returns the names of all attributes that can be compared for equality. Sorted by type considering
         the lighter comparisons first.
         """
-        return self.date_attributes + self.str_attributes + self.array_attributes + self.data_attributes
+        return self.timestamp_attributes + self.str_attributes + self.array_attributes + self.data_attributes
 
     def equals(self, other: 'VxData') -> bool:
         """
@@ -461,8 +471,8 @@ class VxData(eqx.Module):
 
 
 DataItem = Union[VxData, Array]
-IterableField = Union[List[DataItem], Tuple[DataItem, ...]]
-DataField = Union[DataItem, datetime, str, IterableField]
+IterableField = Union[list, tuple]
+DataField = Union[DataItem, pd.Timestamp, str, IterableField]
 
 Config.register()
 Module.register()
