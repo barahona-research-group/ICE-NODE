@@ -6,6 +6,7 @@ import equinox as eqx
 import numpy as np
 import pandas as pd
 import pytest
+import tables as tb
 
 from lib.ehr import CodingScheme, FlatScheme, \
     CodingSchemeConfig, OutcomeExtractor, TVxEHR, TVxEHRConfig, DemographicVectorConfig
@@ -20,6 +21,7 @@ from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, AbstractTVxPipeline
 
 DATASET_SCOPE = "function"
 MAX_STAY_DAYS = 356
+
 
 def scheme(name: str, codes: List[str]) -> str:
     CodingScheme.register_scheme(FlatScheme(CodingSchemeConfig(name), codes=codes,
@@ -753,7 +755,7 @@ def mimiciv_dataset_no_conv(mimiciv_dataset_config, dataset_tables, unit_convert
                return_value=unit_converter_table,
                new_callable=PropertyMock):
         yield eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
-                           is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
+                          is_leaf=lambda x: x is None).execute_external_transformations([SetIndex(), CastTimestamps()])
 
 
 @pytest.fixture
@@ -783,3 +785,25 @@ def tvx_ehr_config(tvx_ehr_scheme_config: TVxEHRSchemeConfig) -> TVxEHRConfig:
 @pytest.fixture
 def tvx_ehr(mimiciv_dataset: MockMIMICIVDataset, tvx_ehr_config: TVxEHRConfig) -> TVxEHR:
     return NaiveEHR(dataset=mimiciv_dataset, config=tvx_ehr_config)
+
+
+@pytest.fixture
+def hf5_writer_file(tmpdir) -> tb.File:
+    with tb.open_file(tmpdir.join('test.h5'), 'w') as h5f:
+        yield h5f
+
+
+@pytest.fixture
+def hf5_group(hf5_writer_file: tb.File) -> tb.Group:
+    return hf5_writer_file.create_group('/', 'test')
+
+
+@pytest.fixture
+def hf5_reader_file(tmpdir) -> tb.File:
+    with tb.open_file(tmpdir.join('test.h5'), 'r') as h5f:
+        yield h5f
+
+
+@pytest.fixture
+def hf5_write_group(hf5_writer_file: tb.File) -> tb.Group:
+    return hf5_writer_file.create_group('/', 'test')

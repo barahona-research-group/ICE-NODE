@@ -269,16 +269,6 @@ def patient(request, static_info: StaticInfo,
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)
 
 
-@pytest.fixture
-def hf5_writer_file(tmpdir) -> tb.File:
-    h5f = tb.open_file(tmpdir.join('test.h5'), 'w')
-    yield h5f
-    h5f.close()
-
-
-@pytest.fixture
-def hf5_group(hf5_writer_file: tb.File) -> tb.Group:
-    return hf5_writer_file.create_group('/', 'test')
 
 
 class TestInpatientObservables:
@@ -328,7 +318,7 @@ class TestInpatientObservables:
                                  mask=np.array([[True, False, True], [False, True, False]],
                                                dtype=mask_invalid_dtype))
 
-    def test_fixture_sorted(self, inpatient_observables: InpatientObservables):
+    def test_time_sorted(self, inpatient_observables: InpatientObservables):
         assert np.all(np.diff(inpatient_observables.time) >= 0)
 
     def test_len(self, inpatient_observables: InpatientObservables):
@@ -337,7 +327,7 @@ class TestInpatientObservables:
     def test_equal(self, inpatient_observables: InpatientObservables):
         assert inpatient_observables.equals(deepcopy(inpatient_observables))
         if len(inpatient_observables) == 0:
-            return
+            pytest.skip("No observations to test")
         time = inpatient_observables.time.copy()
         time[-1] = time[-1] + 1
         c1 = eqx.tree_at(lambda x: x.time, inpatient_observables,

@@ -1,7 +1,7 @@
 import dataclasses
 import json
-from abc import ABCMeta, abstractmethod
-from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, List
+from abc import ABCMeta
+from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple
 
 # TODO: update to Python 3.11, then use typing.Self
 import equinox as eqx
@@ -296,9 +296,8 @@ class VxData(eqx.Module):
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         return eqx.combine(arrs, others)
 
-    @abstractmethod
     def __len__(self) -> int:
-        pass
+        raise NotImplementedError
 
     @property
     def fields(self) -> Tuple[str, ...]:
@@ -337,7 +336,7 @@ class VxData(eqx.Module):
 
     @staticmethod
     def _load_timestamp_from_hdf(group: tb.Group, name: str) -> pd.Timestamp:
-        return pd.Timestamp(group._f_get_child(name).read())
+        return pd.Timestamp(group[name].read())
 
     def to_hdf_group(self, group: tb.Group) -> None:
         h5file = group._v_file
@@ -375,9 +374,9 @@ class VxData(eqx.Module):
     @staticmethod
     def deserialize_iterable(group: tb.Group, iterable_class: Type['IterableField']) -> 'IterableField':
         sequence = [str(i) for i in range(group._v_nchildren)]
-        leaves = {k: group._f_get_child(k).read() for k in group._v_leaves}
+        leaves = {k: group[k].read() for k in group._v_leaves}
         leaves = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in leaves.items()}
-        groups = {k: group._f_get_child(k) for k in group._v_groups}
+        groups = {k: group[k] for k in group._v_groups}
         items = []
         for i in sequence:
             if i in leaves:
@@ -388,15 +387,15 @@ class VxData(eqx.Module):
 
     @staticmethod
     def from_hdf_group(group: tb.Group) -> 'VxData':
-        classname = group._f_get_child('classname').read().decode('utf-8')
+        classname = group['classname'].read().decode('utf-8')
         cls = VxData.data_class(classname)
-        data = {k: group._f_get_child(k).read() for k in group._v_leaves if
+        data = {k: group[k].read() for k in group._v_leaves if
                 not k.startswith('_x_timestamp_') and not k == 'classname'}
         data = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
         data |= {k.split('_x_timestamp_')[1]: VxData._load_timestamp_from_hdf(group, k) for k in group._v_leaves if
                  k.startswith('_x_timestamp_')}
 
-        groups = {k: group._f_get_child(k) for k in group._v_groups}
+        groups = {k: group[k] for k in group._v_groups}
         if len(groups) > 0:
             list_groups = {k.split('_x_list_')[1]: g for k, g in groups.items() if k.startswith('_x_list_')}
             tuple_groups = {k.split('_x_tuple_')[1]: g for k, g in groups.items() if k.startswith('_x_tuple_')}
@@ -418,8 +417,8 @@ class VxData(eqx.Module):
             b_k = getattr(b, k)
             if type(a_k) is not type(b_k):
                 return False
-            if isinstance(a_k, Array):
-                return a_k.shape == b_k.shape and a_k.dtype == b_k.dtype
+            if isinstance(a_k, Array) and (a_k.shape != b_k.shape or a_k.dtype != b_k.dtype):
+                return False
 
         # Now the heavy checks.
         for k in attributes:
@@ -451,7 +450,8 @@ class VxData(eqx.Module):
         Returns the names of all attributes that can be compared for equality. Sorted by type considering
         the lighter comparisons first.
         """
-        return self.timestamp_attributes + self.str_attributes + self.array_attributes + self.data_attributes
+        return self.timestamp_attributes + self.str_attributes + \
+            self.array_attributes + self.data_attributes + self.iterable_attributes
 
     def equals(self, other: 'VxData') -> bool:
         """

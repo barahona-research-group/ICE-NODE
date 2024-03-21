@@ -107,43 +107,51 @@ class CodedValueProcessor(Module):
 
     @property
     def series_dict(self) -> Dict[str, pd.Series]:
-        return {k: v for k, v in self.__dict__.items() if isinstance(v, pd.Series)}
+        return {k: v for k, v in self.__dict__.items() if isinstance(v, pd.Series) and len(v) > 0}
 
     @property
     def processing_target(self) -> Dict[str, str]:
         return {'table_name': self.table_name, 'code_column': self.code_column, 'value_column': self.value_column}
 
-    def save_series(self, path: Path, key: str):
+    def save_series(self, store: tbl.Group):
+        h5file = store._v_file
         for k, v in self.series_dict.items():
-            v.to_hdf(path, f'{key}/{k}', format='table')
-        pd.DataFrame(list(self.series_dict.keys()), columns=['series']).to_hdf(path, f'{key}_keys', format='table')
+            v.to_hdf(h5file.filename, h5file.create_group(store, k)._v_pathname, format='table')
 
     @staticmethod
-    def load_series(store: pd.HDFStore, key: str):
-        keys = store[f'{key}_keys'].series.to_list()
-        return {k: store[f'{key}/{k}'] for k in keys}
+    def load_series(store: tbl.Group):
+        h5filepath = store._v_file.filename
+        return {k: pd.read_hdf(h5filepath, key=getattr(store, k)._v_pathname) for k in store._v_groups}
 
-    def save_config(self, path: Path, key: str):
+    def save_config(self, store: tbl.Group):
         config = self.config.to_dict()
+        h5file = store._v_file
+
         config['classname'] = self.__class__.__name__
-        pd.DataFrame(config, index=[0]).to_hdf(path, f'{key}/config', format='table')
-        pd.DataFrame(self.processing_target, index=[0]).to_hdf(path, f'{key}/target', format='table')
+        pd.DataFrame(config, index=[0]).to_hdf(h5file.filename, h5file.create_group(store, 'config')._v_pathname,
+                                               format='table')
+        pd.DataFrame(self.processing_target, index=[0]).to_hdf(h5file.filename,
+                                                               h5file.create_group(store, 'target')._v_pathname,
+                                                               format='table')
 
     @staticmethod
-    def load_config(store: pd.HDFStore, key: str) -> Tuple[CodedValueProcessorConfig, str, Dict[str, str]]:
-        config_data = store[f"{key}/config"].loc[0].to_dict()
+    def load_config(store: tbl.Group) -> Tuple[CodedValueProcessorConfig, str, Dict[str, str]]:
+        config_data = pd.read_hdf(store._v_file.filename,
+                                  key=getattr(store, "config")._v_pathname).loc[0].to_dict()
         classname = config_data.pop('classname')
-        target = store[f"{key}/target"].loc[0].to_dict()
+        target = pd.read_hdf(store._v_file.filename,
+                             key=getattr(store, "target")._v_pathname).loc[0].to_dict()
         return CodedValueProcessorConfig.from_dict(config_data), classname, target
 
-    def save(self, path: Path, key: str):
-        self.save_series(path, f'{key}/series')
-        self.save_config(path, f'{key}/config')
+    def save(self, store: tbl.Group):
+        h5file = store._v_file
+        self.save_series(h5file.create_group(store, 'series'))
+        self.save_config(h5file.create_group(store, 'config'))
 
     @staticmethod
-    def load(store: pd.HDFStore, key: str) -> CodedValueProcessor:
-        config, classname, target = CodedValueProcessor.load_config(store, f'{key}/config')
-        series = CodedValueProcessor.load_series(store, f'{key}/series')
+    def load(store: tbl.Group) -> CodedValueProcessor:
+        config, classname, target = CodedValueProcessor.load_config(getattr(store, 'config'))
+        series = CodedValueProcessor.load_series(getattr(store, 'series'))
         return Module.import_module(config=config, classname=classname, **series, **target)
 
     def equals(self, other: CodedValueProcessor):
@@ -211,30 +219,22 @@ class DatasetNumericalProcessors(eqx.Module):
     outlier_removers: OutlierRemovers = OutlierRemovers()
     scalers: Scalers = Scalers()
 
-    def save(self, path: Path | str, key: str):
+    def save(self, store: tbl.Group):
+        h5file = store._v_file
+        outliers = h5file.create_group(store, 'outlier_removers')
+        scalers = h5file.create_group(store, 'scalers')
         if self.outlier_removers.obs is not None:
-            self.outlier_removers.obs.save(path, f'{key}/outlier_removers/obs')
+            self.outlier_removers.obs.save(h5file.create_group(outliers, 'obs'))
 
-        if self.scalers.obs is not None:
-            self.scalers.obs.save(path, f'{key}/scalers/obs')
-
-        if self.scalers.icu_inputs is not None:
-            self.scalers.icu_inputs.save(path, f'{key}/scalers/icu_inputs')
+        for k in ['obs', 'icu_inputs']:
+            if getattr(self.scalers, k) is not None:
+                getattr(self.scalers, k).save(h5file.create_group(scalers, k))
 
     @staticmethod
-    def load(path: Path | str, key: str) -> DatasetNumericalProcessors:
-        scalers = {}
-        outlier_removers = {}
-        if Path(path).is_file():
-            with pd.HDFStore(path, mode='r') as store:
-                if f'{key}/outlier_removers' in store:
-                    if f'{key}/outlier_removers/obs' in store:
-                        outlier_removers['obs'] = CodedValueProcessor.load(store, f'{key}/outlier_removers/obs')
-                if f'{key}/scalers' in store:
-                    if f'{key}/scalers/obs' in store:
-                        scalers['obs'] = CodedValueScaler.load(store, f'{key}/scalers/obs')
-                    if f'{key}/scalers/icu_inputs' in store:
-                        scalers['icu_inputs'] = CodedValueScaler.load(store, f'{key}/scalers/icu_inputs')
+    def load(store: tbl.Group) -> DatasetNumericalProcessors:
+        outlier_removers = {k: CodedValueProcessor.load(v) for k, v in
+                            store.outlier_removers._v_groups.items()}
+        scalers = {k: CodedValueScaler.load(v) for k, v in getattr(store, 'scalers')._v_groups.items()}
         return DatasetNumericalProcessors(outlier_removers=OutlierRemovers(**outlier_removers),
                                           scalers=Scalers(**scalers))
 
@@ -521,19 +521,22 @@ class TVxEHR(AbstractDatasetRepresentation):
         return len(self.subjects) if self.subjects is not None else 0
 
     def save_splits(self, group: tbl.Group):
-        if self.splits is not None:
-            h5file = group._v_file
-            for i, split in enumerate(self.splits):
-                h5file.create_array(group, str(i), split)
+        h5file = group._v_file
+        for i, split in enumerate(self.splits):
+            pd.Series(split).to_hdf(h5file.filename, h5file.create_group(group, str(i))._v_pathname, format='table')
+            # h5file.create_array(group, str(i), np.array(split))
 
     @staticmethod
     def load_splits(group: tbl.Group) -> _SplitsType:
-        return tuple(tuple(group._f_get_child(k).read().tolist()) for k in group._v_groups)
+        h5file = group._v_file
+        return tuple(tuple(pd.read_hdf(h5file.filename, group._f_get_child(str(i))._v_pathname)) for i in
+                     range(group._v_nchildren))
 
     def save_subjects(self, group: tbl.Group):
         if self.subjects is not None:
+            h5file = group._v_file
             for subject_id, subject in self.subjects.items():
-                subject.to_hdf_group(group._v_file.create_group(subject_id))
+                subject.to_hdf_group(h5file.create_group(group, subject_id))
 
     @classmethod
     def load_subjects(cls, group: tbl.Group) -> Optional[Dict[str, Patient]]:
@@ -557,17 +560,16 @@ class TVxEHR(AbstractDatasetRepresentation):
         h5file = store._v_file
         self.dataset.save(h5file.create_group(store, 'dataset'), overwrite=overwrite)
         self.save_config(Path(h5file.filename), key='tvx_ehr', overwrite=overwrite)
-
-        self.pipeline_report.to_hdf(h5file,
-                                    key='report',
-                                    format='table')
-        self.save_splits(h5file.create_group(store, 'splits'))
+        if self.splits is not None:
+            self.save_splits(h5file.create_group(store, 'splits'))
         self.numerical_processors.save(h5file.create_group(store, 'numerical_processors'))
         self.save_subjects(h5file.create_group(store, 'tvx'))
+        if len(self.pipeline_report) > 0:
+            report_key = h5file.create_group(store, 'report')._v_pathname
+            self.pipeline_report.to_hdf(h5file.filename, key=report_key, format='table')
 
     @classmethod
-    def load(cls, path: Union[str, Path],
-             dataset_path: Optional[Union[str, Path]] = None) -> TVxEHR:
+    def load(cls, store: Union[str, Path, tbl.Group]) -> TVxEHR:
         """Load the Patients object from disk.
 
         Args:
@@ -578,19 +580,26 @@ class TVxEHR(AbstractDatasetRepresentation):
         Returns:
             TVxEHR: loaded Patients object.
         """
-        dataset = Dataset.load(dataset_path or cls.dataset_path_prefix(path))
-        config, classname = cls.load_config(path)
+        if not isinstance(store, tbl.Group):
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'r') as store:
+                return cls.load(store.root)
+        h5file = store._v_file
+
+        dataset = Dataset.load(store.dataset)
+        config, classname = cls.load_config(Path(h5file.filename), key='tvx_ehr')
         tvx_class = cls.module_class(classname)
-        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        numerical_processors = DatasetNumericalProcessors.load(h5_path, 'numerical_processors')
-        with pd.HDFStore(h5_path) as store:
-            return TVxEHR.import_module(config=config,
-                                        classname=classname,
-                                        splits=cls.load_splits(store['splits']),
-                                        numerical_processors=numerical_processors,
-                                        pipeline_report=store['report'] if 'report' in store else pd.DataFrame(),
-                                        dataset=dataset,
-                                        subjects=tvx_class.load_subjects(h5_path, 'tvx'))
+        numerical_processors = DatasetNumericalProcessors.load(store.numerical_processors)
+        if 'report' in store:
+            pipeline_report = pd.read_hdf(h5file.filename, key=store.report._v_pathname, mode='r')
+        else:
+            pipeline_report = pd.DataFrame()
+        return TVxEHR.import_module(config=config,
+                                    classname=classname,
+                                    splits=cls.load_splits(store.splits) if hasattr(store, 'splits') else None,
+                                    numerical_processors=numerical_processors,
+                                    pipeline_report=pipeline_report,
+                                    dataset=dataset,
+                                    subjects=tvx_class.load_subjects(store.tvx))
 
     def device_batch(self, subject_ids: Optional[List[str]] = None):
         """Load subjects and move them to the device. If subject_ids is None, load all subjects.

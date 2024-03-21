@@ -13,9 +13,10 @@ from typing import Dict, Optional, Union, Tuple, List, ClassVar, Type, Set, Lite
 import equinox as eqx
 import numpy as np
 import pandas as pd
+import tables as tbl
 
 from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint)
-from ..base import Config, Module, VxData
+from ..base import Config, Module
 from ..utils import write_config, load_config, tqdm_constructor
 
 SECONDS_TO_HOURS_SCALER: Final[float] = 1 / 3600.0  # convert seconds to hours
@@ -226,7 +227,9 @@ class DatasetTablesConfig(Config):
         return temporal and admission_linked
 
 
-class DatasetTables(VxData):
+class DatasetTables(Module):
+    config: Config = field(init=False, default=Config())
+
     static: pd.DataFrame
     admissions: pd.DataFrame
     dx_discharge: Optional[pd.DataFrame] = None
@@ -275,29 +278,30 @@ class DatasetTables(VxData):
             df.index.name = index_name
         return df
 
-    def save(self, store: pd.HDFStore, key: str, overwrite: bool):
+    def save(self, store: tbl.Group):
+        h5file = store._v_file
         for name, df in self.tables_dict.items():
             # Empty dataframes are not saved normally, https://github.com/pandas-dev/pandas/issues/13016,
             # https://github.com/PyTables/PyTables/issues/592
             # So we keep the column names, dtypes, index name, index dtype, in a metadata object.
             if df.empty:
-                self.table_meta(df).to_hdf(store, key=f'{key}/empty_table_meta/{name}', format='table')
+                key = h5file.create_group(store, f'_x_meta_{name}')._v_pathname
+                self.table_meta(df).to_hdf(h5file.filename, key=key, format='table')
             else:
-                df.to_hdf(store, key=f'{key}/table_data/{name}', format='table')
+                key = h5file.create_group(store, name)._v_pathname
+                df.to_hdf(h5file.filename, key=key, format='table')
 
     @staticmethod
-    def load(store: pd.HDFStore) -> DatasetTables:
-        tables_node = store.get_node('/table_data')
-        empty_meta_node = store.get_node('/empty_table_meta')
-        tables = {}
-        if tables_node is not None:
-            for k in tables_node._v_children.keys():
-                tables[k] = store[k]
-        if empty_meta_node is not None:
-            for k in empty_meta_node._v_children.keys():
-                meta = store[k]
-                tables[k] = DatasetTables.empty_table(meta)
-        return DatasetTables(**tables)
+    def load(store: tbl.Group) -> DatasetTables:
+        tables_node = {k: v._v_pathname for k, v in store._v_children.items() if not k.startswith('_x_meta_')}
+        empty_node = {k.split('_x_meta_')[1]: v._v_pathname for k, v in store._v_children.items() if
+                      k.startswith('_x_meta_')}
+
+        h5file = store._v_file
+        tables = {k: pd.read_hdf(h5file.filename, key=v) for k, v in tables_node.items()}
+        empty_tables = {k: DatasetTables.empty_table(pd.read_hdf(h5file.filename, key=v)) for k, v in
+                        empty_node.items()}
+        return DatasetTables(**(tables | empty_tables))
 
     def equals(self, other: DatasetTables) -> bool:
         return all(
@@ -490,13 +494,12 @@ class AbstractDatasetRepresentation(Module):
         pass
 
     @abstractmethod
-    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
         pass
 
     @classmethod
     @abstractmethod
-    def load(cls, path: Union[str, Path],
-             **child_representation_kwargs) -> AbstractDatasetRepresentation:
+    def load(cls, store: Union[str, Path, tbl.Group]) -> AbstractDatasetRepresentation:
         pass
 
     @staticmethod
@@ -691,28 +694,32 @@ class Dataset(AbstractDatasetRepresentation):
     def equals(self, other: 'Dataset') -> bool:
         return self.equal_header(other) and self.tables.equals(other.tables)
 
-    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
-        if not isinstance(path, pd.HDFStore):
-            with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:
-                self.save(store, key=key, overwrite=overwrite)
-        self.save_config(path, key='dataset',
-                         overwrite=overwrite)  # It creates the parent directory if it does not exist.
-        self.tables.save(store, key=f'{key}/tables', overwrite=overwrite)
-        self.pipeline_report.to_hdf(store,
-                                    key=f'{key}/report',
-                                    format='table')
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
+        if not isinstance(store, tbl.Group):
+            self.save_config(store, key='dataset', overwrite=overwrite)
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'w') as store:
+                return self.save(store.root, overwrite=overwrite)
+        else:
+            self.save_config(store._v_file.filename, key='dataset', overwrite=True)
+
+        h5file = store._v_file
+        self.tables.save(h5file.create_group(store, 'tables'))
+        if len(self.pipeline_report) > 0:
+            report_key = h5file.create_group(store, 'report')._v_pathname
+            self.pipeline_report.to_hdf(h5file.filename, key=report_key, format='table')
 
     @classmethod
-    def load(cls, path: Union[str, Path]):
-        config, classname = cls.load_config(path)
-        h5_path = str(Path(path).with_suffix('.h5'))  # tables and pipeline report goes here.
-        tables = DatasetTables.load(h5_path)
-        dataset = Module.import_module(config=config, classname=classname, tables=tables)
-        # dataset = eqx.tree_at(lambda x: x.tables, cls(config=config), tables,
-        #                       is_leaf=lambda x: x is None)
-        with pd.HDFStore(h5_path) as store:
-            report = store['report'] if 'report' in store else pd.DataFrame()
-            return eqx.tree_at(lambda x: x.pipeline_report, dataset, report)
+    def load(cls, store: Union[str, Path, tbl.Group]):
+        if not isinstance(store, tbl.Group):
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'r') as store:
+                return cls.load(store.root)
+        h5file = store._v_file
+        config, classname = cls.load_config(Path(h5file.filename), key='dataset')
+        dataset = Module.import_module(config=config, classname=classname, tables=DatasetTables.load(store.tables))
+        if hasattr(store, 'report'):
+            pipeline_report = pd.read_hdf(h5file.filename, key=store.report._v_pathname, mode='r')
+            dataset = eqx.tree_at(lambda x: x.pipeline_report, dataset, pipeline_report)
+        return dataset
 
     @cached_property
     def scheme(self) -> DatasetScheme:
@@ -721,10 +728,6 @@ class Dataset(AbstractDatasetRepresentation):
     @classmethod
     def load_dataset_scheme(cls, config: DatasetConfig) -> DatasetScheme:
         return DatasetScheme(config=config.scheme)
-
-    @cached_property
-    def supported_target_scheme_options(self):
-        return self.scheme.supported_target_scheme_options
 
     @cached_property
     def subject_ids(self):

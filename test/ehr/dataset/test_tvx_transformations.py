@@ -1,5 +1,5 @@
 from typing import Type, List, Dict
-
+import tables as tb
 import equinox as eqx
 import numpy as np
 import pytest
@@ -7,7 +7,7 @@ import pytest
 from lib.ehr import Dataset, CodesVector, InpatientInput, InpatientObservables, DemographicVectorConfig, StaticInfo, \
     InpatientInterventions
 from lib.ehr.tvx_concepts import SegmentedPatient, Patient, SegmentedAdmission, Admission, \
-    SegmentedInpatientInterventions, LeadingObservableExtractorConfig
+    SegmentedInpatientInterventions, LeadingObservableExtractorConfig, SegmentedInpatientObservables
 from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSampleConfig, ScalerConfig, \
     DatasetNumericalProcessorsConfig, ScalersConfig, OutlierRemoversConfig, IQROutlierRemoverConfig, \
     DatasetNumericalProcessors, SegmentedTVxEHR
@@ -159,8 +159,11 @@ class TestTrainableTransformer:
     def test_numerical_processors_serialization(self, fitted_numerical_processors: DatasetNumericalProcessors,
                                                 tmpdir: str):
         path = f'{tmpdir}/numerical_processors.h5'
-        fitted_numerical_processors.save(path, key='numerical_processors')
-        loaded_numerical_processors = DatasetNumericalProcessors.load(path, key='numerical_processors')
+        with tb.open_file(path, 'w') as f:
+            fitted_numerical_processors.save(f.create_group('/', 'numerical_processors'))
+
+        with tb.open_file(path, 'r') as f:
+            loaded_numerical_processors = DatasetNumericalProcessors.load(f.root.numerical_processors)
         assert fitted_numerical_processors.equals(loaded_numerical_processors)
 
     def test_ehr_serialization(self, large_ehr: TVxEHR, large_scalable_split_ehr: TVxEHR, processed_ehr: TVxEHR,
@@ -486,7 +489,7 @@ class TestInterventionSegmentation:
         assert isinstance(first_patient.admissions[0], Admission)
         assert isinstance(first_segmented_patient.admissions[0], SegmentedAdmission)
         assert isinstance(first_patient.admissions[0].observables, InpatientObservables)
-        assert isinstance(first_segmented_patient.admissions[0].observables, list)
+        assert isinstance(first_segmented_patient.admissions[0].observables, SegmentedInpatientObservables)
         assert isinstance(first_segmented_patient.admissions[0].observables[0], InpatientObservables)
         assert isinstance(first_patient.admissions[0].interventions, InpatientInterventions)
         assert isinstance(first_segmented_patient.admissions[0].interventions, SegmentedInpatientInterventions)
@@ -497,25 +500,24 @@ class TestInterventionSegmentation:
         s0 = tvx_ehr_segmented.subject_ids[0]
         a0 = tvx_ehr_segmented.subjects[s0].admissions[0]
         if request.param == 'mutate_obs':
-            index = [i for i, o in enumerate(a0.observables) if len(o) > 0][0]
-            a1 = eqx.tree_at(lambda x: x.observables[index].time, a0, a0.observables[index].time + 0.001)
+            a1 = eqx.tree_at(lambda x: x.observables.time, a0, a0.observables.time + 0.001)
         elif request.param == 'intervention_time':
             a1 = eqx.tree_at(lambda x: x.interventions.time, a0, a0.interventions.time + 1e-6)
         elif request.param == 'mutate_icu_proc':
             if a0.interventions.icu_procedures is None:
                 pytest.skip("No icu procedures in admission.")
             a1 = eqx.tree_at(lambda x: x.interventions.icu_procedures, a0,
-                             ~a0.interventions.icu_procedures[0])
+                             ~a0.interventions.icu_procedures)
 
         elif request.param == 'mutate_hosp_proc':
             if a0.interventions.hosp_procedures is None:
                 pytest.skip("No hospital procedures in admission.")
             a1 = eqx.tree_at(lambda x: x.interventions.hosp_procedures, a0,
-                             ~a0.interventions.hosp_procedures[0])
+                             ~a0.interventions.hosp_procedures)
         elif request.param == 'mutate_icu_input':
             if a0.interventions.icu_inputs is None:
                 pytest.skip("No icu inputs in admission.")
-            a1 = eqx.tree_at(lambda x: x.interventions.icu_inputs, a0, a0.interventions.icu_inputs[0] + 0.1)
+            a1 = eqx.tree_at(lambda x: x.interventions.icu_inputs, a0, a0.interventions.icu_inputs + 0.1)
         else:
             raise ValueError(f"Invalid param: {request.param}")
 
