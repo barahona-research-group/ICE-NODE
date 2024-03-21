@@ -342,10 +342,10 @@ class VxData(eqx.Module):
     def to_hdf_group(self, group: tb.Group) -> None:
         h5file = group._v_file
 
-        group._v_file.create_array(group, 'classname', obj=self.__class__.__name__.encode('utf-8'))
+        h5file.create_array(group, 'classname', obj=self.__class__.__name__.encode('utf-8'))
 
         for attr in self.str_attributes:
-            group._v_file.create_array(group, attr, obj=getattr(self, attr).encode('utf-8'))
+            h5file.create_array(group, attr, obj=getattr(self, attr).encode('utf-8'))
         for attr in self.timestamp_attributes:
             self._store_timestamp_to_hdf(group, f'_x_timestamp_{attr}', getattr(self, attr))
         for attr in self.array_attributes:

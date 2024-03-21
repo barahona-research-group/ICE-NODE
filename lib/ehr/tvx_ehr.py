@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import pandas as pd
+import tables as tbl
 
 from . import OutcomeExtractor
 from .coding_scheme import FileBasedOutcomeExtractor, CodesVector
@@ -519,35 +520,25 @@ class TVxEHR(AbstractDatasetRepresentation):
         """Get the number of subjects."""
         return len(self.subjects) if self.subjects is not None else 0
 
-    def save_splits(self, store: pd.HDFStore, key: str):
+    def save_splits(self, group: tbl.Group):
         if self.splits is not None:
-            split_names = [f'split_{i:05d}' for i in range(len(self.splits))]
-            pd.DataFrame(split_names, columns=['split']).to_hdf(store, f'{key}/split_names', format='table')
-            for name, split in enumerate(self.splits):
-                pd.Series(split).to_hdf(store, f'{key}/{name}', format='table')
+            h5file = group._v_file
+            for i, split in enumerate(self.splits):
+                h5file.create_array(group, str(i), split)
 
     @staticmethod
-    def load_splits(store: pd.HDFStore) -> _SplitsType:
-        split_names = store[f'split_names'].split.to_list()
-        return tuple(tuple(store[f'{k}'].values) for k in split_names)
+    def load_splits(group: tbl.Group) -> _SplitsType:
+        return tuple(tuple(group._f_get_child(k).read().tolist()) for k in group._v_groups)
 
-    # def _save_subjects_ids(self, store: pd.HDFStore, key: str):
-    #     if self.subjects is not None:
-
-    def save_subjects(self, store: pd.HDFStore, key: str):
+    def save_subjects(self, group: tbl.Group):
         if self.subjects is not None:
-            pd.Series(list(self.subjects.keys())).to_hdf(store, f'{key}/subject_ids', format='table')
             for subject_id, subject in self.subjects.items():
-                subject.to_hdf(store, f'{key}/{subject_id}')
+                subject.to_hdf_group(group._v_file.create_group(subject_id))
 
     @classmethod
-    def load_subjects(cls, store: pd.HDFStore) -> Optional[
-        Dict[str, Patient]]:
-        if 'subject_ids' in store:
-            subject_ids = store['subject_ids'].values.tolist()
-            _load = cls.patient_class.from_hdf_store
-            return {subject_id: _load(store[subject_id]) for subject_id in subject_ids}
-        return None
+    def load_subjects(cls, group: tbl.Group) -> Optional[Dict[str, Patient]]:
+        patients = {k: cls.patient_class.from_hdf_group(group._f_get_child(k)) for k in group._v_groups}
+        return None if len(patients) == 0 else patients
 
     def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
         """Save the Patients object to disk.

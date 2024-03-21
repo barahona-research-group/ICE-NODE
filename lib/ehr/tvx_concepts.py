@@ -143,31 +143,8 @@ class InpatientObservables(VxData):
                                              mask=_np.ones_like(value_i, dtype=bool))
         return dic
 
-    def segment(self, t_sep: Array) -> List[InpatientObservables]:
-        """
-        Splits the InpatientObservables object into multiple segments based on the given time points.
-
-        Args:
-            t_sep (Array): array of time points used to split the InpatientObservables object.
-
-        Returns:
-            List[InpatientObservables]: list of segmented InpatientObservables objects.
-        """
-        if len(t_sep) == 0:
-            return [self]
-
-        split = np.searchsorted(self.time, t_sep)
-        time = np.split(self.time, split)
-        value = np.vsplit(self.value, split)
-        mask = np.vsplit(self.mask, split)
-
-        return [
-            InpatientObservables(t, v, m)
-            for t, v, m in zip(time, value, mask)
-        ]
-
     @staticmethod
-    def concat(observables: Union[InpatientObservables, List[InpatientObservables]]) -> InpatientObservables:
+    def concat(observables: List[InpatientObservables]) -> InpatientObservables:
         """
         Concatenates a list of InpatientObservables into a single InpatientObservables object.
 
@@ -177,9 +154,6 @@ class InpatientObservables(VxData):
         Returns:
             InpatientObservables: the concatenated InpatientObservables object.
         """
-        if isinstance(observables, InpatientObservables):
-            return observables
-
         if len(observables) == 0:
             return InpatientObservables.empty(0)
         if isinstance(observables[0].time, jax.Array):
@@ -265,6 +239,62 @@ class InpatientObservables(VxData):
         masks = np.vstack(masks)
         values = np.where(masks, values, 0.0)
         return InpatientObservables(time=new_time[1:], value=values, mask=masks)
+
+
+class SegmentedInpatientObservables(InpatientObservables):
+    indexed_split: Array
+
+    # The reason for storing the index split arrays without concretely splitting the observables is to avoid
+    # unnecessary computation when the observables are not accessed, inefficient hardly compressed storage of
+    # sharded arrays with the accompanied overhead with each sharded item.
+
+    @classmethod
+    def from_observables(cls, observables: InpatientObservables, time_split: Array) -> SegmentedInpatientObservables:
+        return cls(time=observables.time, value=observables.value, mask=observables.mask,
+                   indexed_split=cls.indexed_split_array(observables.time, time_split))
+
+    @staticmethod
+    def indexed_split_array(time: Array, time_split: Array) -> Array:
+        """
+        Generate split indices from the time splits, which will be used to temporally split the InpatientObservables
+            arrays.
+
+        Args:
+            time (Array): array of time points of the InpatientObservables object.
+            time_split (Array): array of time points used to split the InpatientObservables object.
+
+        Returns:
+            Array: array of indices used to split the InpatientObservables object.
+        """
+        return np.searchsorted(time, time_split)
+
+    @cached_property
+    def _segments(self) -> List[InpatientObservables]:
+        """
+        Splits the InpatientObservables object into multiple segments based on the given time points.
+
+        Args:
+            t_sep (Array): array of time points used to split the InpatientObservables object.
+
+        Returns:
+            List[InpatientObservables]: list of segmented InpatientObservables objects.
+        """
+        if len(self.indexed_split) == 0:
+            return [self]
+        time = np.split(self.time, self.indexed_split)
+        value = np.vsplit(self.value, self.indexed_split)
+        mask = np.vsplit(self.mask, self.indexed_split)
+
+        return [
+            InpatientObservables(t, v, m)
+            for t, v, m in zip(time, value, mask)
+        ]
+
+    def __getitem__(self, item: int) -> InpatientObservables:
+        return self._segments[item]
+
+    def __iter__(self):
+        return iter(self._segments)
 
 
 class LeadingObservableExtractorConfig(Config):
@@ -892,9 +922,9 @@ class Admission(VxData):
 
 
 class SegmentedAdmission(Admission):
-    observables: Optional[List[InpatientObservables]] = None
+    observables: Optional[SegmentedInpatientObservables] = None
     interventions: Optional[SegmentedInpatientInterventions] = None
-    leading_observable: Optional[List[InpatientObservables]] = None
+    leading_observable: Optional[SegmentedInpatientObservables] = None
     interventions_class: ClassVar[Type[InpatientInterventions]] = SegmentedInpatientInterventions
 
     @staticmethod
@@ -914,14 +944,14 @@ class SegmentedAdmission(Admission):
     @staticmethod
     def _segment_observables(observables: Optional[InpatientObservables],
                              interventions: Optional[SegmentedInpatientInterventions]) -> Optional[
-        List[InpatientObservables]]:
+        SegmentedInpatientObservables]:
         if observables is None:
             return None
         if interventions is None:
-            return [observables]
+            return SegmentedInpatientObservables.from_observables(observables, np.array([]))
         time = interventions.time
         t_sep = time[~np.isnan(time)][1:-1]
-        return observables.segment(t_sep)
+        return SegmentedInpatientObservables.from_observables(observables, t_sep)
 
     @staticmethod
     def from_admission(admission: Admission, hosp_procedures_size: Optional[int],
@@ -1187,6 +1217,3 @@ class SegmentedPatient(Patient):
                                                         icu_inputs_size=icu_inputs_size,
                                                         maximum_padding=maximum_padding) for a in patient.admissions]
         return SegmentedPatient(subject_id=patient.subject_id, static_info=patient.static_info, admissions=admissions)
-
-# TODO: work with pytable directly: https://www.pytables.org/usersguide/libref/homogenous_storage.html#the-vlarray-class
-#  https://www.pytables.org/usersguide/tutorials.html

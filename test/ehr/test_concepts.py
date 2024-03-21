@@ -15,7 +15,7 @@ from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
 from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                                   InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                                   SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient, AdmissionDates,
-                                  SegmentedPatient)
+                                  SegmentedPatient, SegmentedInpatientObservables)
 from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
     NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 
@@ -221,13 +221,15 @@ def segmented_admission(admission: Admission, icu_inputs_scheme: CodingScheme, i
                                              icu_inputs_size=len(icu_inputs_scheme),
                                              icu_procedures_size=len(icu_proc_scheme),
                                              hosp_procedures_size=len(hosp_proc_scheme))
+
+
 @pytest.fixture
 def segmented_patient(patient: Patient, icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
                       hosp_proc_scheme: CodingScheme) -> SegmentedPatient:
     return SegmentedPatient.from_patient(patient=patient, maximum_padding=1,
-                                        icu_inputs_size=len(icu_inputs_scheme),
-                                        icu_procedures_size=len(icu_proc_scheme),
-                                        hosp_procedures_size=len(hosp_proc_scheme))
+                                         icu_inputs_size=len(icu_inputs_scheme),
+                                         icu_procedures_size=len(icu_proc_scheme),
+                                         hosp_procedures_size=len(hosp_proc_scheme))
 
 
 def _admissions(n_admissions, dx_scheme: CodingScheme,
@@ -353,19 +355,23 @@ class TestInpatientObservables:
                          mask)
         assert not inpatient_observables.equals(c3)
 
-    def test_hf5_group_serialization(self, inpatient_observables: InpatientObservables, hf5_group: tb.Group):
-        inpatient_observables.to_hdf_group(hf5_group)
-        assert inpatient_observables.equals(InpatientObservables.from_hdf_group(hf5_group))
-
     def test_as_dataframe(self):
         pass
 
     def test_groupby_code(self):
         pass
 
-    @pytest.mark.parametrize("sep", [np.array([5.0]), np.array([0.5, 2.0]), np.array([1.0, 3.0, 5.0])])
-    def test_segmentation_concat(self, inpatient_observables: InpatientObservables, sep: np.array):
-        seg = inpatient_observables.segment(sep)
+    @pytest.fixture(params=[np.array([5.0]), np.array([0.5, 2.0]), np.array([1.0, 3.0, 5.0])])
+    def sep(self, request):
+        return request.param
+
+    @pytest.fixture
+    def segmented_inpatient_observables(self, inpatient_observables: InpatientObservables, sep):
+        return SegmentedInpatientObservables.from_observables(inpatient_observables, sep)
+
+    def test_segmentation_concat(self, inpatient_observables: InpatientObservables,
+                                 segmented_inpatient_observables: SegmentedInpatientObservables, sep: np.array):
+        seg = segmented_inpatient_observables._segments
         assert len(seg) == len(sep) + 1
         assert sum(len(s) for s in seg) == len(inpatient_observables)
         assert sum(s.time.size + s.value.size + s.mask.size for s in seg) == (inpatient_observables.time.size +
@@ -374,6 +380,15 @@ class TestInpatientObservables:
         assert inpatient_observables.equals(InpatientObservables.concat(seg))
         assert all(seg[i].time.max() <= sep[i] for i in range(len(sep)) if len(seg[i]) > 0)
         assert all(seg[i + 1].time.min() >= sep[i] for i in range(len(sep)) if len(seg[i + 1]) > 0)
+
+    def test_hf5_group_serialization(self, inpatient_observables: InpatientObservables, hf5_group: tb.Group):
+        inpatient_observables.to_hdf_group(hf5_group)
+        assert inpatient_observables.equals(InpatientObservables.from_hdf_group(hf5_group))
+
+    def test_hd5_group_serialization_segmented(self, segmented_inpatient_observables: SegmentedInpatientObservables,
+                                               hf5_group: tb.Group):
+        segmented_inpatient_observables.to_hdf_group(hf5_group)
+        assert segmented_inpatient_observables.equals(SegmentedInpatientObservables.from_hdf_group(hf5_group))
 
     @pytest.mark.parametrize("ntype", ['N', 'B', 'C', 'O'])
     def test_type_aggregator(self, ntype: NumericalTypeHint):
@@ -773,9 +788,9 @@ class TestSegmentedAdmission:
         assert segmented_admission.dx_codes_history == admission.dx_codes_history
         assert segmented_admission.outcome == admission.outcome
         if admission.observables is not None:
-            assert InpatientObservables.concat(segmented_admission.observables).equals(admission.observables)
+            assert InpatientObservables.concat(segmented_admission.observables._segments).equals(admission.observables)
         if admission.leading_observable is not None:
-            assert InpatientObservables.concat(segmented_admission.leading_observable).equals(
+            assert InpatientObservables.concat(segmented_admission.leading_observable._segments).equals(
                 admission.leading_observable)
         if admission.interventions is None:
             return
