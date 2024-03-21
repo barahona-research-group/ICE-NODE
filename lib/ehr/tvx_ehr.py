@@ -540,7 +540,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         patients = {k: cls.patient_class.from_hdf_group(group._f_get_child(k)) for k in group._v_groups}
         return None if len(patients) == 0 else patients
 
-    def save(self, path: Union[str, Path, pd.HDFStore], key: Optional[str] = '/', overwrite: bool = False):
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
         """Save the Patients object to disk.
 
         Args:
@@ -551,18 +551,19 @@ class TVxEHR(AbstractDatasetRepresentation):
                 dataset_path_prefix (same directory with different .h5 file name).
                 If a string or Path, the dataset representation will be saved in the given path.
         """
-        if not isinstance(path, pd.HDFStore):
-            with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:
-                self.save(store, key=key, overwrite=overwrite)
-        self.dataset.save(store, key=f'{key}/dataset', overwrite=overwrite)
-        self.save_config(path, key='tvx_ehr', overwrite=overwrite)
-        with pd.HDFStore(str(Path(path).with_suffix('.h5'))) as store:  # tables and pipeline report goes here.
-            self.pipeline_report.to_hdf(store,
-                                        key='report',
-                                        format='table')
-            self.save_splits(store, 'splits')
-            self.numerical_processors.save(store, 'numerical_processors')
-            self.save_subjects(store, 'tvx')
+        if not isinstance(store, tbl.Group):
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'w') as store:
+                return self.save(store.root, overwrite=overwrite)
+        h5file = store._v_file
+        self.dataset.save(h5file.create_group(store, 'dataset'), overwrite=overwrite)
+        self.save_config(Path(h5file.filename), key='tvx_ehr', overwrite=overwrite)
+
+        self.pipeline_report.to_hdf(h5file,
+                                    key='report',
+                                    format='table')
+        self.save_splits(h5file.create_group(store, 'splits'))
+        self.numerical_processors.save(h5file.create_group(store, 'numerical_processors'))
+        self.save_subjects(h5file.create_group(store, 'tvx'))
 
     @classmethod
     def load(cls, path: Union[str, Path],
