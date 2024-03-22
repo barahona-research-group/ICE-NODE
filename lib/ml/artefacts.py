@@ -1,72 +1,47 @@
 from __future__ import annotations
 
 import logging
-import pickle
-from copy import deepcopy
+from dataclasses import field
+from functools import cached_property
 from pathlib import Path
-
-from typing import Optional, List, Dict, Union
+from typing import Optional, Union, Tuple, Callable, Any, Iterable
 
 import equinox as eqx
 import numpy as np
-from jax import numpy as jnp, tree_util as jtu
+import tables as tbl
+from jax import numpy as jnp
 
 from lib import Config
 from lib.base import VxData
 from lib.ehr import Admission, CodesVector, InpatientObservables
 from lib.ehr.tvx_ehr import outcome_first_occurrence
-from lib.utils import tree_hasnan, tqdm_constructor
+from lib.utils import tree_hasnan
+
+
+class PatientAdmissionTrajectory(VxData):
+    observables: Optional[InpatientObservables] = None
+    leading_observable: Optional[InpatientObservables] = None
+
+
+class ModelBehaviouralMetrics(VxData):
+    pass
 
 
 class AdmissionPrediction(VxData):
-    """
-    Represents predictions associated with an admission in a healthcare system.
-
-    Attributes:
-        admission (Admission): the admission information.
-        outcome (Optional[CodesVector]): the *predicted* outcome.
-        observables (Optional[List[InpatientObservables]]): the list of *predicted* inpatient observables/measurements.
-        leading_observable (Optional[List[InpatientObservables]]): the list of *predicted* time-leading inpatient observables/measurements.
-        trajectory (Optional[PatientTrajectory]): the patient *predicted* trajectory, which is recorded based on TrajectoryConfig configuration.
-        associative_regularisation (Optional[Dict[str, jnp.ndarray]]): the associative regularisation data through the inference.
-        auxiliary_loss (Optional[Dict[str, jnp.ndarray]]): some auxiliary loss information.
-        other (Optional[Dict[str, jnp.ndarray]]): other additional data.
-
-    Methods:
-        has_nans(): checks if any of the attributes contain NaN values.
-        defragment_observables(): in case each of `observables` and `leading_observable` are sharded over lists, combine them into one object for each.
-    """
-
-    admission: Admission
+    subject_id: str
+    admission: Admission # ground_truth
+    observables: Optional[InpatientObservables] = None
+    leading_observable: Optional[InpatientObservables] = None
     outcome: Optional[CodesVector] = None
-    observables: Optional[List[InpatientObservables]] = None
-    leading_observable: Optional[List[InpatientObservables]] = None
-    trajectory: Optional[PatientTrajectory] = None
-    associative_regularisation: Optional[Dict[str, jnp.ndarray]] = None
-    auxiliary_loss: Optional[Dict[str, jnp.ndarray]] = None
-    other: Optional[Dict[str, jnp.ndarray]] = None
+    trajectory: PatientAdmissionTrajectory = field(default_factory=PatientAdmissionTrajectory)
+    model_behavioural_metrics: ModelBehaviouralMetrics
 
     def has_nans(self):
-        return tree_hasnan((self.outcome, self.observables, self.other,
-                            self.leading_observable))
-
-    def defragment_observables(self):
-        updated = self
-        updated = eqx.tree_at(lambda x: x.observables, updated,
-                              InpatientObservables.concat(updated.observables))
-        updated = eqx.tree_at(
-            lambda x: x.leading_observable, updated,
-            InpatientObservables.concat(updated.leading_observable))
-        updated = eqx.tree_at(
-            lambda x: x.admission.observables, updated,
-            InpatientObservables.concat(updated.admission.observables))
-        updated = eqx.tree_at(
-            lambda x: x.admission.leading_observable, updated,
-            InpatientObservables.concat(updated.admission.leading_observable))
-        return updated
+        return tree_hasnan((self.observables, self.leading_observable, self.outcome))
 
 
-class Predictions(dict):
+class AdmissionPredictionCollection(VxData):
+    predictions: Tuple[AdmissionPrediction, ...] = field(default_factory=tuple)
     """
     A dictionary-like class for storing and manipulating prediction data.
 
@@ -78,7 +53,6 @@ class Predictions(dict):
         save: save the predictions to a file.
         load: load predictions from a file.
         add: add a prediction to the collection.
-        defragment_observables: defragment the sharded observables in each admission prediction.
         subject_ids: get a list of subject IDs in the predictions.
         get_predictions: get a list of predictions for the specified subject IDs.
         associative_regularisation: calculate the associative regularization term.
@@ -110,12 +84,11 @@ class Predictions(dict):
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path = path.with_suffix('.pickle')
-        with open(path, 'wb') as file:
-            pickle.dump(self, file)
+        with tbl.open_file(str(path.with_suffix('.h5')), 'w') as store:
+            return self.to_hdf_group(store.root)
 
     @staticmethod
-    def load(path: Union[str, Path]) -> jtu.pytree:
+    def load(path: Union[str, Path]) -> AdmissionPredictionCollection:
         """
         Load predictions from a file.
 
@@ -125,117 +98,23 @@ class Predictions(dict):
         Returns:
             The loaded predictions.
         """
-        path = Path(path)
-        with open(path.with_suffix('.pickle'), 'rb') as file:
-            return pickle.load(file)
+        with tbl.open_file(str(Path(path).with_suffix('.h5')), 'r') as store:
+            return AdmissionPredictionCollection.from_hdf_group(store.root)
 
-    def add(self, subject_id: str, prediction: AdmissionPrediction) -> None:
-        """
-        Add an admission prediction to the collection.
+    def add(self, *args, **kwargs) -> AdmissionPredictionCollection:
+        return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (AdmissionPrediction(*args, **kwargs),))
 
-        Args:
-            subject_id: the ID of the subject.
-            prediction: the prediction to be added.
+    def __iter__(self):
+        return iter(self.predictions)
 
-        Returns:
-            None
-        """
-        if subject_id not in self:
-            self[subject_id] = {}
+    def __len__(self):
+        return len(self.predictions)
 
-        self[subject_id][prediction.admission.admission_id] = prediction
+    def aggregate(self, operand: Callable[[AdmissionPrediction], Any],
+                  aggregation: Callable[[Iterable[Any]], Any]) -> Any:
+        return aggregation([operand(p) for p in self])
 
-    def defragment_observables(self):
-        """
-        Defragment the sharded observables in each admission prediction.
-
-        Returns:
-            the defragmented predictions (a copy of the original predictions).
-        """
-        preds = deepcopy(self)
-        for sid in preds.keys():
-            for aid in preds[sid].keys():
-                assert isinstance(preds[sid][aid].observables, list), \
-                    'Observables must be a list'
-                assert isinstance(preds[sid][aid].leading_observable, list), \
-                    'Leading observables must be a list'
-                preds[sid][aid] = self[sid][aid].defragment_observables()
-
-        return preds
-
-    def _defragment_observables(self):
-        """
-        Internal method for defragmenting observables.
-
-        Returns:
-            None
-        """
-        for sid in tqdm_constructor(self.keys()):
-            for aid in self[sid].keys():
-                self[sid][aid] = self[sid][aid].defragment_observables()
-
-    @property
-    def subject_ids(self):
-        """
-        Get a list of subject IDs in the predictions.
-
-        Returns:
-            a list of subject IDs.
-        """
-        return sorted(self.keys())
-
-    def get_predictions(self, subject_ids: Optional[List[str]] = None):
-        """
-        Get a list of predictions for the specified subject IDs.
-
-        Args:
-            subject_ids: the list of subject IDs. If None, all subject IDs will be used.
-
-        Returns:
-            A list of predictions.
-        """
-        if subject_ids is None:
-            subject_ids = self.keys()
-        return sum((list(self[sid].values()) for sid in subject_ids), [])
-
-    def associative_regularisation(self, regularisation: Config):
-        """
-        Calculate the associative regularization term.
-
-        Args:
-            regularisation: the regularization configuration.
-
-        Returns:
-            The associative regularization term.
-        """
-        preds = self.get_predictions()
-        reg = []
-        for p in preds:
-            if p.associative_regularisation is not None:
-                for k, term in p.associative_regularisation.items():
-                    reg.append(term * regularisation.get(k))
-        return sum(reg)
-
-    def get_patient_trajectories(self, subject_ids: Optional[List[str]] = None):
-        """
-        Get the trajectories of patients in the predictions.
-
-        Args:
-            subject_ids: the list of subject IDs. If None, all subject IDs will be used.
-
-        Returns:
-            A dictionary mapping subject IDs to patient trajectories.
-        """
-        if subject_ids is None:
-            subject_ids = sorted(self.keys())
-
-        trajectories = {}
-        for sid in subject_ids:
-            adm_ids = sorted(self[sid].keys())
-            trajectories[sid] = PatientTrajectory.concat(
-                [self[sid][aid].trajectory for aid in adm_ids])
-        return trajectories
-
+    @cached_property
     def average_interval_hours(self):
         """
         Calculate the average interval hours of the predictions.
@@ -243,11 +122,9 @@ class Predictions(dict):
         Returns:
             The average interval hours.
         """
-        preds = self.get_predictions()
-        adms = [r.admission for r in preds]
-        return np.mean([a.interval_hours for a in adms])
+        return self.aggregate(lambda p: p.admission.interval_hours, lambda l: np.mean(np.array(l)))
 
-    def filter_nans(self):
+    def filter_nans(self) -> AdmissionPredictionCollection:
         """
         Filter out predictions with NaN values.
 
@@ -257,51 +134,27 @@ class Predictions(dict):
         if len(self) == 0:
             return self
 
-        cleaned = Predictions()
+        cleaned = tuple()
         nan_detected = False
-        for sid, spreds in self.items():
-            for aid, apred in spreds.items():
-                if not apred.has_nans():
-                    cleaned.add(sid, apred)
-                else:
-                    nan_detected = True
-                    logging.warning('Skipping prediction with NaNs: '
-                                    f'subject_id={sid}, admission_id={aid} '
-                                    'interval_hours= '
-                                    f'{apred.admission.interval_hours}. '
-                                    'Note: long intervals is a likely '
-                                    'reason to destabilise the model')
+        for p in self:
+            if not p.has_nans():
+                cleaned += (p,)
+            else:
+                nan_detected = True
+                logging.warning('Skipping prediction with NaNs: '
+                                f'subject_id={p.subject_id}, admission_id={p.admission.admission_id} '
+                                f'interval_hours= {p.admission.interval_hours}. '
+                                'Note: long intervals is a likely reason to destabilise the model')
+        clean_predictions = AdmissionPredictionCollection(cleaned)
         if nan_detected:
-            logging.warning(f'Average interval_hours: '
-                            f'{cleaned.average_interval_hours()}')
+            logging.warning(f'Average interval_hours: {clean_predictions.average_interval_hours}')
 
         if len(cleaned) == 0 and len(self) > 0:
             logging.warning('No predictions left after NaN filtering')
             raise ValueError('No predictions left after NaN filtering')
 
-        return cleaned
+        return clean_predictions
 
-    @property
-    def has_dx_predictions(self):
-        """
-        Check if the predictions have diagnosis predictions.
-
-        Returns:
-            True if all predictions have diagnosis predictions, False otherwise.
-        """
-        preds = self.get_predictions()
-        return all([p.outcome is not None for p in preds])
-
-    @property
-    def has_auxiliary_loss(self):
-        """
-        Check if the predictions have auxiliary loss.
-
-        Returns:
-            True if all predictions have auxiliary loss, False otherwise.
-        """
-        preds = self.get_predictions()
-        return all([p.auxiliary_loss is not None for p in preds])
 
     def prediction_dx_loss(self, dx_loss):
         """

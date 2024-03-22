@@ -4,8 +4,9 @@
 
 - [ ] Pipeline validators.
 - [ ] Integrate consort diagramming in the pipeline.
-- [ ] Work with the pytable library directly instead of the pandas library.
-- [ ] `lib.ehr.tvx*` test.
+- [x] Work with the pytable library directly instead of the pandas library.
+- [ ] Implement packed representations for the tvx_ehr to improve the compressibility of the data.
+- [x] `lib.ehr.tvx*` test.
 - [ ] `lib.ehr.coding_scheme.CodeMap` test.
 - [ ] `lib.ehr.*` documentation / document edge cases tested.
 - [ ] `lib.ehr` custom exceptions / adapt tests.
