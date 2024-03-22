@@ -4,7 +4,7 @@ import logging
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Optional, Union, Tuple, Callable, Any, Iterable
+from typing import Optional, Union, Tuple, Callable, Any, Iterable, Literal
 
 import equinox as eqx
 import numpy as np
@@ -12,9 +12,8 @@ import tables as tbl
 from jax import numpy as jnp
 
 from lib import Config
-from lib.base import VxData
+from lib.base import VxData, VxDataItem, Array, Module
 from lib.ehr import Admission, CodesVector, InpatientObservables
-from lib.ehr.tvx_ehr import outcome_first_occurrence
 from lib.utils import tree_hasnan
 
 
@@ -27,9 +26,16 @@ class ModelBehaviouralMetrics(VxData):
     pass
 
 
+class TrajectoryConfig(Config):
+    sampling_rate: float = 0.5  # 0.5 means every 30 minutes.
+
+
+PredictionAttribute = Literal['outcome', 'observables', 'leading_observable']
+
+
 class AdmissionPrediction(VxData):
     subject_id: str
-    admission: Admission # ground_truth
+    admission: Admission  # ground_truth
     observables: Optional[InpatientObservables] = None
     leading_observable: Optional[InpatientObservables] = None
     outcome: Optional[CodesVector] = None
@@ -40,37 +46,53 @@ class AdmissionPrediction(VxData):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))
 
 
+# Loss aggregation types.
+# 1. 'concat': concatenate the predictions, pass to the loss function, receive then return a scalar.
+# 2. 'mean': accumulate the loss for each prediction, return an averaging scalar.
+
+class LossWrapperConfig(Config):
+    aggregation: Literal['concat', 'mean'] = 'mean'
+
+    def __post_init__(self):
+        if self.aggregation not in ['concat', 'mean']:
+            raise ValueError('Invalid aggregation type')
+
+
+class LossWrapper(Module):
+    config: LossWrapperConfig
+    loss_fn: Callable[[VxDataItem, VxDataItem], Array]
+    concatenate: Optional[Callable[[Iterable[VxDataItem]], Array]] = None
+
+    def __post_init__(self):
+        if self.config.aggregation == 'concat' and self.concatenate is None:
+            raise ValueError('concatenation function must be provided for aggregation type "concat"')
+
+    @staticmethod
+    def codes_concat_wrapper(loss_fn: Callable[[Array, Array], Array]) -> LossWrapper:
+        return LossWrapper(LossWrapperConfig('concat'), loss_fn, lambda l: jnp.hstack([v.vec for v in l]))
+
+    @staticmethod
+    def observables_mean_wrapper(loss_fn: Callable[[Array, Array, Array], Array]) -> LossWrapper:
+        def obs_loss(obs_true: InpatientObservables, obs_pred: InpatientObservables) -> Array:
+            return loss_fn(obs_true.value, obs_pred.value, obs_true.mask)
+
+        return LossWrapper(LossWrapperConfig('mean'), obs_loss, None)
+
+    def __call__(self, ground_truth: Iterable[VxDataItem], predictions: Iterable[VxDataItem]) -> Array:
+        if self.config.aggregation == 'concat':
+            loss = self.loss_fn(self.concatenate(ground_truth), self.concatenate(predictions))
+        else:
+            losses = jnp.array([self.loss_fn(gt, pred) for gt, pred in zip(ground_truth, predictions)])
+            loss = jnp.nanmean(losses)
+
+        if jnp.isnan(loss):
+            logging.warning('NaN obs loss detected')
+
+        return jnp.where(jnp.isnan(loss), 0., loss)
+
+
 class AdmissionPredictionCollection(VxData):
     predictions: Tuple[AdmissionPrediction, ...] = field(default_factory=tuple)
-    """
-    A dictionary-like class for storing and manipulating prediction data.
-
-    This class extends the built-in `dict` class and provides additional methods
-    for saving, loading, filtering, and analyzing prediction data.
-
-
-    Methods:
-        save: save the predictions to a file.
-        load: load predictions from a file.
-        add: add a prediction to the collection.
-        subject_ids: get a list of subject IDs in the predictions.
-        get_predictions: get a list of predictions for the specified subject IDs.
-        associative_regularisation: calculate the associative regularization term.
-        get_patient_trajectories: get the trajectories of patients in the predictions.
-        average_interval_hours: calculate the average interval hours of the predictions.
-        filter_nans: filter out admission predictions with NaN values.
-        has_dx_predictions: check if the predictions have diagnosis predictions.
-        has_auxiliary_loss: check if the predictions have auxiliary loss.
-        prediction_dx_loss: calculate the diagnosis loss (the predicted outcome) of the predictions.
-        predicted_observables_list: get a list of *predicted* observables.
-        predicted_leading_observables_list: get a list of *predicted* leading observables.
-        observables_list: get a list of *ground-truth* observables in the predictions.
-        leading_observables_list: get a list of *ground-truth* leading observables in the predictions.
-        prediction_obs_loss: calculate the observation loss of the predictions.
-        prediction_lead_loss: calculate the leading observation loss of the predictions.
-        prediction_lead_data: get the data for leading observation loss calculation.
-        outcome_first_occurrence_masks: get the masks for the first occurrence of outcomes.
-    """
 
     def save(self, path: Union[str, Path]):
         """
@@ -104,8 +126,15 @@ class AdmissionPredictionCollection(VxData):
     def add(self, *args, **kwargs) -> AdmissionPredictionCollection:
         return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (AdmissionPrediction(*args, **kwargs),))
 
-    def __iter__(self):
+    def __iter__(self) -> Iterable[AdmissionPrediction]:
         return iter(self.predictions)
+
+    def iter_attr(self, attr: str) -> Iterable[Tuple[VxDataItem, VxDataItem]]:
+        return ((getattr(p.admission, attr), getattr(p, attr)) for p in self)
+
+    def list_attr(self, attr: str) -> Tuple[Tuple[VxDataItem, ...], Tuple[VxDataItem, ...]]:
+        ground_truth, predictions = tuple(zip(*self.iter_attr(attr)))
+        return ground_truth, predictions
 
     def __len__(self):
         return len(self.predictions)
@@ -155,242 +184,16 @@ class AdmissionPredictionCollection(VxData):
 
         return clean_predictions
 
-
-    def prediction_dx_loss(self, dx_loss):
+    def apply_loss(self, attribute: PredictionAttribute, loss: LossWrapper) -> Array:
         """
-        Calculate the diagnosis loss of the predictions.
+        Calculate the loss of the predictions.
 
         Args:
-            dx_loss: the diagnosis loss function.
+            attribute: the attribute to calculate the loss for.
+            loss: the loss function.
 
         Returns:
-            The diagnosis loss.
+            The loss.
         """
-        if not self.has_dx_predictions:
-            return 0.
-
-        preds = self.get_predictions()
-        adms = [r.admission for r in preds]
-        l_outcome = [a.outcome.vec for a in adms]
-        l_pred = [p.outcome.vec for p in preds]
-        l_mask = [jnp.ones_like(a.outcome.vec, dtype=bool) for a in adms]
-        loss_v = jnp.array(list(map(dx_loss, l_outcome, l_pred, l_mask)))
-        loss_v = jnp.nanmean(loss_v)
-        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
-
-    @property
-    def predicted_observables_list(self):
-        """
-        Get a list of *predicted* observables.
-
-        Returns:
-            A list of *predicted* observables.
-        """
-        preds = self.get_predictions()
-        obs_l = []
-
-        for sid in sorted(self.keys()):
-            for aid in sorted(self[sid].keys()):
-                obs = self[sid][aid].observables
-                if isinstance(obs, list):
-                    obs_l.extend(obs)
-                else:
-                    obs_l.append(obs)
-
-        return obs_l
-
-    @property
-    def predicted_leading_observables_list(self):
-        """
-        Get a list of *predicted* leading observables.
-
-        Returns:
-            A list of *predicted* leading observables.
-        """
-        preds = self.get_predictions()
-        obs_l = []
-
-        for sid in sorted(self.keys()):
-            for aid in sorted(self[sid].keys()):
-                obs = self[sid][aid].leading_observable
-                if isinstance(obs, list):
-                    obs_l.extend(obs)
-                else:
-                    obs_l.append(obs)
-
-        return obs_l
-
-    @property
-    def observables_list(self):
-        """
-        Get a list of *ground-truth* observables in the predictions.
-
-        Returns:
-            A list of *ground-truth*  observables.
-        """
-        preds = self.get_predictions()
-        obs_l = []
-
-        for sid in sorted(self.keys()):
-            for aid in sorted(self[sid].keys()):
-                obs = self[sid][aid].admission.observables
-                if isinstance(obs, list):
-                    obs_l.extend(obs)
-                else:
-                    obs_l.append(obs)
-
-        return obs_l
-
-    @property
-    def leading_observables_list(self):
-        """
-        Get a list of *ground-truth* leading observables in the predictions.
-
-        Returns:
-            A list of *ground-truth* leading observables.
-        """
-        preds = self.get_predictions()
-        obs_l = []
-
-        for sid in sorted(self.keys()):
-            for aid in sorted(self[sid].keys()):
-                obs = self[sid][aid].admission.leading_observable
-                if isinstance(obs, list):
-                    obs_l.extend(obs)
-                else:
-                    obs_l.append(obs)
-
-        return obs_l
-
-    def prediction_obs_loss(self, obs_loss):
-        """
-        Calculate the observation loss of the predictions.
-
-        Args:
-            obs_loss: the observation loss function.
-
-        Returns:
-            The observation loss.
-        """
-        l_true = [obs.value for obs in self.observables_list]
-        l_mask = [obs.mask for obs in self.observables_list]
-        l_pred = [obs.value for obs in self.predicted_observables_list]
-
-        true = jnp.vstack(l_true)
-        mask = jnp.vstack(l_mask)
-        pred = jnp.vstack(l_pred)
-        loss_v = obs_loss(true, pred, mask)
-        if jnp.isnan(loss_v):
-            logging.warning('NaN obs loss detected')
-        return jnp.where(jnp.isnan(loss_v), 0., loss_v)
-
-    def prediction_lead_loss(self, lead_loss):
-        """
-        Calculate the leading observation loss of the predictions.
-
-        Args:
-            lead_loss: the leading observation loss function.
-
-        Returns:
-            The leading observation loss.
-        """
-        loss_v = []
-        weight_v = []
-        for pred in self.get_predictions():
-            adm = pred.admission
-            if isinstance(pred.leading_observable, list):
-                pred_l = pred.leading_observable
-            else:
-                pred_l = [pred.leading_observable]
-
-            if isinstance(adm.leading_observable, list):
-                adm_l = adm.leading_observable
-            else:
-                adm_l = [adm.leading_observable]
-
-            assert len(pred_l) == len(adm_l)
-
-            for pred_lo, adm_lo in zip(pred_l, adm_l):
-                for i in range(len(adm_lo.time)):
-                    y = adm_lo.value[i]
-                    y_hat = pred_lo.value[i]
-                    mask = adm_lo.mask[i]
-                    loss_v.append(lead_loss(y, y_hat, mask))
-                    weight_v.append(mask.sum())
-
-        loss_v = jnp.array(loss_v)
-        weight_v = jnp.array(weight_v)
-        weight_v = jnp.where(jnp.isnan(loss_v), 0.0, weight_v)
-        if weight_v.sum() == 0:
-            return 0.
-
-        weight_v = weight_v / weight_v.sum()
-        return jnp.nansum(loss_v * weight_v)
-
-    def prediction_lead_data(self, obs_index):
-        """
-        Get the data for leading observation loss calculation.
-
-        Args:
-            obs_index: the coding scheme index of the particular observation in leading_observable.
-
-        Returns:
-            The data for leading observation loss calculation.
-        """
-        preds = self.get_predictions()
-
-        y = []
-        y_hat = []
-        mask = []
-
-        obs = []
-        obs_mask = []
-        for pred in preds:
-            adm = pred.admission
-            if isinstance(pred.leading_observable, list):
-                pred_leading_observable = pred.leading_observable
-            else:
-                pred_leading_observable = [pred.leading_observable]
-
-            if isinstance(adm.leading_observable, list):
-                adm_leading_observable = adm.leading_observable
-            else:
-                adm_leading_observable = [adm.leading_observable]
-
-            if isinstance(adm.observables, list):
-                adm_observables = adm.observables
-            else:
-                adm_observables = [adm.observables]
-
-            for pred_lo, adm_lo, adm_obs in zip(pred_leading_observable,
-                                                adm_leading_observable,
-                                                adm_observables):
-                for i in range(len(adm_lo.time)):
-                    mask.append(adm_lo.mask[i])
-                    y.append(adm_lo.value[i])
-                    y_hat.append(pred_lo.value[i])
-                    obs.append(adm_obs.value[i][obs_index])
-                    obs_mask.append(adm_obs.mask[i][obs_index])
-
-        y = jnp.vstack(y)
-        y_hat = jnp.vstack(y_hat)
-        mask = jnp.vstack(mask)
-        obs = jnp.vstack(obs)
-        obs_mask = jnp.vstack(obs_mask)
-        return {
-            'y': y,
-            'y_hat': y_hat,
-            'mask': mask,
-            'obs': obs,
-            'obs_mask': obs_mask,
-        }
-
-    def outcome_first_occurrence_masks(self, subject_id):
-        preds = self[subject_id]
-        adms = [preds[aid].admission for aid in sorted(preds.keys())]
-        first_occ_adm_id = outcome_first_occurrence(adms)
-        return [first_occ_adm_id == a.admission_id for a in adms]
-
-
-class TrajectoryConfig(Config):
-    sampling_rate: float = 0.5  # 0.5 means every 30 minutes.
+        ground_truth, predictions = self.list_attr(attribute)
+        return loss(ground_truth, predictions)

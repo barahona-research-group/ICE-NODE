@@ -269,10 +269,10 @@ class VxData(eqx.Module):
         unsupported_field_types = set()
         for f in self.fields:
             obj = type(getattr(self, f))
-            if isinstance(getattr(self, f), IterableField):
-                if not all(isinstance(i, DataItem) for i in getattr(self, f)):
+            if isinstance(getattr(self, f), VxDataIterableField):
+                if not all(isinstance(i, VxDataItem) for i in getattr(self, f)):
                     unsupported_field_types.add((f'{f}[i]', obj))
-            elif not isinstance(getattr(self, f), DataField):
+            elif not isinstance(getattr(self, f), VxDataField):
                 unsupported_field_types.add((f, obj))
         unsupported_items_str = ', '.join(map(lambda p: f"{p[0]} ({p[1]})", unsupported_field_types))
         assert len(unsupported_field_types) == 0, \
@@ -372,7 +372,7 @@ class VxData(eqx.Module):
                     raise TypeError(f"Unsupported type {type(item)} for attribute {attr}")
 
     @staticmethod
-    def deserialize_iterable(group: tb.Group, iterable_class: Type['IterableField']) -> 'IterableField':
+    def deserialize_iterable(group: tb.Group, iterable_class: Type['VxDataIterableField']) -> 'VxDataIterableField':
         sequence = [str(i) for i in range(group._v_nchildren)]
         leaves = {k: group[k].read() for k in group._v_leaves}
         leaves = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in leaves.items()}
@@ -470,9 +470,9 @@ class VxData(eqx.Module):
                                                                                                      attribute_names)
 
 
-DataItem = Union[VxData, Array]
-IterableField = Union[list, tuple]
-DataField = Union[DataItem, pd.Timestamp, str, IterableField]
+VxDataItem = Union[VxData, Array]
+VxDataIterableField = Union[list, tuple]
+VxDataField = Union[VxDataItem, pd.Timestamp, str, VxDataIterableField]
 
 Config.register()
 Module.register()
