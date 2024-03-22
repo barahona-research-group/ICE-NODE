@@ -1,4 +1,4 @@
-from .coding_scheme import (CodingScheme, OutcomeExtractor, CodingSchemeConfig, FlatScheme, HierarchicalScheme,
+from .coding_scheme import (CodingScheme, OutcomeExtractor, CodingSchemeConfig, CodingScheme, HierarchicalScheme,
                             OutcomeExtractorConfig, resources_dir)
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions,

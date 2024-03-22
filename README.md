@@ -6,6 +6,7 @@
 - [ ] Integrate consort diagramming in the pipeline.
 - [x] Work with the pytable library directly instead of the pandas library.
 - [ ] Implement packed representations for the tvx_ehr to improve the compressibility of the data.
+- [ ] Implement a scheme manager object to handle schemes and codemaps, instead of using global variables.
 - [x] `lib.ehr.tvx*` test.
 - [ ] `lib.ehr.coding_scheme.CodeMap` test.
 - [ ] `lib.ehr.*` documentation / document edge cases tested.

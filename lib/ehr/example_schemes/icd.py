@@ -8,7 +8,7 @@ from typing import Set, Dict, List, Union, Any, ClassVar, Type, Tuple, Final
 
 import pandas as pd
 
-from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme, HierarchicalScheme,
+from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, CodingScheme, HierarchicalScheme,
                                    CodeMapConfig, CodeMap, resources_dir, FileBasedOutcomeExtractor)
 
 
@@ -72,9 +72,9 @@ class ICDScheme(CodingScheme):
         raise NotImplementedError
 
 
-class ICDFlatScheme(ICDScheme, FlatScheme):
+class ICDFlatScheme(ICDScheme, CodingScheme):
     def __init__(self, *args, **kwargs):
-        FlatScheme.__init__(self, *args, **kwargs)
+        CodingScheme.__init__(self, *args, **kwargs)
 
 
 class ICDHierarchicalScheme(ICDScheme, HierarchicalScheme):
@@ -677,7 +677,7 @@ class PrFlatCCSMapOps(FlatCCSMapOps):
     SCHEME_FILE = '$prref 2015.csv.gz'
 
 
-class FlatCCSScheme(FlatScheme):
+class FlatCCSScheme(CodingScheme):
     ops: ClassVar[Type[FlatCCSMapOps]] = FlatCCSMapOps
     ICD9_SCHEME_NAME: str = None
     SCHEME_NAME: str = None

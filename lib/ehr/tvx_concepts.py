@@ -327,13 +327,13 @@ class LeadingObservableExtractorConfig(Config):
 
         assert isinstance(self.scheme, str), f"Expected scheme to be a string, got {type(self.scheme)}"
 
-        assert self.type_hint in ('B', 'O'), (
-            f"LeadingObservableExtractor only supports binary and ordinal observables, "
-            f"got {self.type_hint}. Categorical and Numeric types "
-            "would require custom aggregation function specific to the observation of interest,"
-            "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
-            "relevant to use max/min aggregation over numeric observables. Create a feature request "
-            "if you need this feature.")
+        # assert self.type_hint in ('B', 'O'), (
+        #     f"LeadingObservableExtractor only supports binary and ordinal observables, "
+        #     f"got {self.type_hint}. Categorical and Numeric types "
+        #     "would require custom aggregation function specific to the observation of interest,"
+        #     "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
+        #     "relevant to use max/min aggregation over numeric observables. Create a feature request "
+        #     "if you need this feature.")
 
     @cached_property
     def code_index(self) -> int:

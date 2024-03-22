@@ -4,7 +4,7 @@ from typing import Set, Dict, List
 
 import pandas as pd
 
-from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, FlatScheme,
+from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, CodingScheme,
                                    CodeMap, CodeMapConfig, resources_dir,
                                    SchemeWithMissing, Ethnicity, FileBasedOutcomeExtractor)
 
@@ -16,7 +16,7 @@ ETH5_DESC_CNAME = 'eth5_desc'
 ETH_SCHEME_FILE = 'cprd_eth.csv'
 
 
-class DxLTC212FlatCodes(FlatScheme):
+class DxLTC212FlatCodes(CodingScheme):
     _medcodes: Dict[str, Set[str]]
     _system: Dict[str, str]
 
@@ -78,7 +78,7 @@ class DxLTC212FlatCodes(FlatScheme):
                    medcodes=medcodes)
 
 
-class DxLTC9809FlatMedcodes(FlatScheme):
+class DxLTC9809FlatMedcodes(CodingScheme):
     _diseases: Dict[str, List[str]]
     _systems: Dict[str, List[str]]
     _diseases_desc: Dict[str, str]
@@ -196,7 +196,7 @@ def register_cprd_imd():
 
 def register_medcode_mapping(medcode_scheme: str,
                              disease_num_scheme: str):
-    medcode = FlatScheme.from_name(medcode_scheme)
+    medcode = CodingScheme.from_name(medcode_scheme)
     CodeMap.register_map(medcode_scheme, disease_num_scheme,
                          CodeMap(CodeMapConfig(medcode_scheme, disease_num_scheme), data=medcode.diseases))
 

@@ -12,7 +12,7 @@ import equinox as eqx
 from ..utils import model_params_scaler
 from ..ehr import (Patient, DemographicVectorConfig,
                    DatasetScheme, CodesVector)
-from .artefacts import AdmissionPrediction, Predictions
+from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)

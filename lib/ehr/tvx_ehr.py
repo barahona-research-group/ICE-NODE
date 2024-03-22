@@ -4,7 +4,7 @@ from abc import ABCMeta, abstractmethod
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional, Dict, Union, Tuple, Type, ClassVar, Iterable, Any
+from typing import List, Optional, Dict, Union, Tuple, Type, ClassVar, Iterable, Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -543,7 +543,8 @@ class TVxEHR(AbstractDatasetRepresentation):
         patients = {k: cls.patient_class.from_hdf_group(group._f_get_child(k)) for k in group._v_groups}
         return None if len(patients) == 0 else patients
 
-    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False,
+             complib: Literal['blosc', 'zlib', 'lzo', 'bzip2'] = 'blosc', complevel: int = 9):
         """Save the Patients object to disk.
 
         Args:
@@ -551,7 +552,9 @@ class TVxEHR(AbstractDatasetRepresentation):
             overwrite (bool, optional): whether to overwrite existing files. Defaults to False.
         """
         if not isinstance(store, tbl.Group):
-            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'w') as store:
+            filters = tbl.Filters(complib=complib, complevel=complevel)
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), mode='w', filters=filters,
+                               max_numexpr_threads=None, max_blosc_threads=None) as store:
                 return self.save(store.root, overwrite=overwrite)
         h5file = store._v_file
         self.dataset.save(h5file.create_group(store, 'dataset'), overwrite=overwrite)

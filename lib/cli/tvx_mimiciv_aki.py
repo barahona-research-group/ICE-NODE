@@ -34,6 +34,6 @@ if __name__ == '__main__':
                 key, value = override_item.split('=')
                 config[k] = config[k].path_update(key, value)
 
-    dataset = AKIMIMICIVDataset(config=config['dataset'])
-    tvx = TVxAKIMIMICIVDataset(config=config['tvx_ehr'], dataset=dataset)
+    dataset = AKIMIMICIVDataset(config=config['dataset']).execute_pipeline()
+    tvx = TVxAKIMIMICIVDataset(config=config['tvx_ehr'], dataset=dataset).execute_pipeline()
     tvx.save(translate_path(args.tvx_path), overwrite=True)

@@ -10,11 +10,15 @@ from abc import abstractmethod, ABCMeta
 from collections import defaultdict, OrderedDict
 from functools import cached_property
 from threading import Lock
-from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple, Any, Literal
+from types import MappingProxyType
+from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Callable, Tuple, Any, Literal, ItemsView, Iterator, \
+    Iterable
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import tables as tb
+import tables as tbl
 
 from ..base import Config, Module, VxData
 from ..utils import load_config
@@ -24,6 +28,78 @@ NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, C
 
 def resources_dir(*subdir) -> str:
     return os.path.join(os.path.dirname(__file__), "resources", *subdir)
+
+
+class FrozenDict11(VxData):
+    data: MappingProxyType[str, Union[str, int]]
+
+    @staticmethod
+    def from_dict(d: Dict[str, str]) -> "FrozenDict11":
+        return FrozenDict11(MappingProxyType(d))
+
+    def __getitem__(self, key: str) -> Union[str, int]:
+        return self.data[key]
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.data)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.data
+
+    def get(self, key: str, default: str = None) -> Union[str, int]:
+        return self.data.get(key, default)
+
+    def items(self) -> ItemsView[str, Union[str, int]]:
+        return self.data.items()
+
+    def keys(self) -> Iterable[str]:
+        return self.data.keys()
+
+    def values(self) -> Iterable[Union[str, int]]:
+        return self.data.values()
+
+    def to_dataframe(self):
+        return pd.DataFrame(self.data.items(), columns=['key', 'value'])
+
+    @staticmethod
+    def from_dataframe(df: pd.DataFrame) -> "FrozenDict11":
+        return FrozenDict11.from_dict(df.set_index('key')['value'].to_dict())
+
+    def to_hdf_group(self, group: tbl.Group):
+        df = self.to_dataframe()
+        df.to_hdf(group._v_file.filename, key=group._v_pathname)
+
+    @classmethod
+    def _from_hdf_group(cls, group: tb.Group) -> 'VxData':
+        df = pd.read_hdf(group._v_file.filename, key=group._v_pathname)
+        return cls.from_dataframe(df)
+
+
+class FrozenDict1N(FrozenDict11):
+    data: MappingProxyType[str, Set[str]]
+
+    @staticmethod
+    def from_dict(d: Dict[str, Set[str]]) -> "FrozenDict1N":
+        return FrozenDict1N(MappingProxyType(d))
+
+    def __getitem__(self, key: str) -> Set[str]:
+        return self.data[key]
+
+    def items(self) -> ItemsView[str, Set[str]]:
+        return self.data.items()
+
+    def get(self, key: str, default: Set[str] = None) -> Set[str]:
+        return self.data.get(key, default)
+
+    def to_dataframe(self):
+        return pd.DataFrame([(k, item) for k, v in self.data.items() for item in v], columns=['key', 'value'])
+
+    @staticmethod
+    def from_dataframe(df: pd.DataFrame) -> "FrozenDict1N":
+        return FrozenDict1N.from_dict(df.set_index('key')['value'].groupby('key').apply(set).to_dict())
 
 
 class CodesVector(VxData):
@@ -106,35 +182,47 @@ class CodesVector(VxData):
         return CodesVector(self.vec | other.vec, self.scheme)
 
 
-class CodingSchemeConfig(Config):
-    """The identifier name of the coding scheme."""
+class CodingScheme(VxData):
     name: str
+    codes: Tuple[str, ...]
+    desc: FrozenDict11
 
-
-class CodingScheme(Module):
-    """
-    CodingScheme defines the base class and utilities for working with medical
-    coding schemes. It handles lazy loading of schemes, mapping between schemes,
-    converting codesets to vector representations, and searching codes by regex.
-
-    Key attributes and methods:
-
-    - codes, index, desc: Access the codes, indexes, and descriptions
-    - name: Get the scheme name
-    - index2code, index2desc: Reverse mappings
-    - search_regex: Search codes by a regex query
-    - mapper_to: Get mapper between schemes
-    - codeset2vec: Convert a codeset to a vector representation
-    - as_dataframe: View scheme as a Pandas DataFrame
-    """
-
-    config: CodingSchemeConfig
     # Possible Schemes, Lazy-loaded schemes.
     _load_schemes: ClassVar[Dict[str, Callable]] = {}
     _schemes: ClassVar[Dict[str, Union["CodingScheme", Any]]] = {}
-
     # vector representation class
     vector_cls: ClassVar[Type[CodesVector]] = CodesVector
+
+    def __post_init__(self):
+        self._check_uniqueness()
+        self._check_types()
+        self._check_sizes()
+        self._check_index_integrity()
+
+        # Check types.
+        assert isinstance(self.name, str), "Scheme name must be a string."
+        assert isinstance(self.codes, tuple), "Scheme codes must be a tuple."
+        assert isinstance(self.desc, FrozenDict11), "Scheme description must be a FrozenDict11."
+
+        assert tuple(sorted(self.codes)) == self.codes, "Scheme codes must be sorted."
+
+        # Check for uniqueness of codes.
+        assert len(self.codes) == len(set(self.codes)), f"{self}: Codes should be unique."
+
+        # Check sizes.
+        assert len(self.codes) == len(self.desc), f"{self}: Codes and descriptions should have the same size."
+
+    def _check_types(self):
+        for collection in [self.codes, self.desc]:
+            assert all(
+                isinstance(c, str) for c in collection
+            ), f"{self}: All name types should be str."
+
+        assert all(
+            isinstance(desc, str)
+            for desc in self.desc.values()
+
+        ), f"{self}: All desc types should be str."
 
     @staticmethod
     def from_name(name: str) -> CodingScheme:
@@ -195,16 +283,15 @@ class CodingScheme(Module):
 
     def register_target_scheme(self,
                                target_name: Optional[str], map_table: pd.DataFrame,
-                               c_code: str, c_target_code: str, c_target_desc: str) -> "FlatScheme":
+                               c_code: str, c_target_code: str, c_target_desc: str) -> "CodingScheme":
         """
         Register a target scheme and its mapping.
         # TODO: test me.
         """
-        target_scheme_conf = CodingSchemeConfig(target_name)
-        target_codes = sorted(map_table[c_target_code].drop_duplicates().astype(str).tolist())
+        target_codes = tuple(sorted(map_table[c_target_code].drop_duplicates().astype(str).tolist()))
         # drop=False in case c_target_code == c_target_desc.
         target_desc = map_table.set_index(c_target_code, drop=False)[c_target_desc].to_dict()
-        target_scheme = FlatScheme(target_scheme_conf, codes=target_codes, desc=target_desc)
+        target_scheme = CodingScheme(name=target_name, codes=target_codes, desc=target_desc)
         self.register_scheme(target_scheme)
 
         map_table = map_table[[c_code, c_target_code]].astype(str)
@@ -217,7 +304,7 @@ class CodingScheme(Module):
     def register_scheme_from_selection(name: str,
                                        supported_space: pd.DataFrame,
                                        code_selection: Optional[pd.DataFrame],
-                                       c_code: str, c_desc: str) -> FlatScheme:
+                                       c_code: str, c_desc: str) -> CodingScheme:
         # TODO: test this method.
         if code_selection is None:
             code_selection = supported_space[c_code].drop_duplicates().astype(str).tolist()
@@ -229,10 +316,10 @@ class CodingScheme(Module):
         # drop=False in case c_target_code == c_target_desc.
         desc = supported_space.set_index(c_code, drop=False)[c_desc].to_dict()
         desc = {k: v for k, v in desc.items() if k in code_selection}
-        scheme = FlatScheme(config=CodingSchemeConfig(name),
-                            codes=sorted(code_selection),
-                            desc=desc)
-        FlatScheme.register_scheme(scheme)
+        scheme = CodingScheme(name=name,
+                              codes=tuple(sorted(code_selection)),
+                              desc=desc)
+        CodingScheme.register_scheme(scheme)
         return scheme
 
     @staticmethod
@@ -242,41 +329,17 @@ class CodingScheme(Module):
         """
         return set(CodingScheme._schemes.keys()) | set(CodingScheme._load_schemes.keys())
 
-    @property
-    @abstractmethod
-    def codes(self) -> List[str]:
-        pass
-
-    @property
-    @abstractmethod
+    @cached_property
     def index(self) -> Dict[str, int]:
-        pass
+        return {code: idx for idx, code in enumerate(self.codes)}
 
-    @property
-    @abstractmethod
-    def desc(self) -> Dict[str, str]:
-        pass
-
-    @property
-    def name(self) -> str:
-        return self.config.name
-
-    @property
-    @abstractmethod
+    @cached_property
     def index2code(self) -> Dict[int, str]:
-        pass
+        return {idx: code for code, idx in self.index.items()}
 
-    @property
-    @abstractmethod
+    @cached_property
     def index2desc(self) -> Dict[int, str]:
-        pass
-
-    def equals(self, other: "CodingScheme") -> bool:
-        """
-        Check if the current scheme is equal to another scheme.
-        """
-        return ((self.name == other.name) and (self.codes == other.codes) and (self.index == other.index) and (
-                self.desc == other.desc))
+        return {self.index[code]: _desc for code, _desc in self.desc.items()}
 
     def __eq__(self, other):
         """
@@ -363,7 +426,7 @@ class CodingScheme(Module):
     def supported_targets(self):
         return tuple(t for s, t in set(CodeMap._load_maps.keys()) | set(CodeMap._maps.keys()) if s == self.name)
 
-    def as_dataframe(self):
+    def as_dataframe(self) -> pd.DataFrame:
         """
         Returns the scheme as a Pandas DataFrame.
         The DataFrame contains the following columns:
@@ -381,130 +444,20 @@ class CodingScheme(Module):
         )
 
 
-class FlatScheme(CodingScheme):
-    """FlatScheme is a subclass of CodingScheme that represents a flat coding scheme.
-
-    It contains the following attributes to represent the coding scheme:
-
-    - config: The CodingSchemeConfig for this scheme
-    - _codes: List of code strings
-    - _index: Dict mapping codes to integer indices
-    - _desc: Dict mapping codes to descriptions
-    - _index2code: Reverse mapping of _index
-    - _index2desc: Reverse mapping of _desc
-
-    The __init__ method constructs the scheme from the provided components after validating the types.
-
-    Additional methods:
-
-    - codes: Property exposing _codes
-    - index: Property exposing _index
-    - desc: Property exposing _desc
-    - index2code: Property exposing _index2code
-    - index2desc: Property exposing _index2desc
-
-    Subclasses would inherit from FlatScheme to represent specific flat coding scheme implementations.
-    """
-
-    config: CodingSchemeConfig
-    _codes: List[str]
-    _index: Dict[str, int]
-    _desc: Dict[str, str]
-    _index2code: Dict[int, str]
-    _index2desc: Dict[int, str]
-
-    def __init__(
-            self,
-            config: CodingSchemeConfig,
-            codes: List[str],
-            desc: Dict[str, str],
-    ):
-        super().__init__(config=config)
-
-        logging.debug(f"Constructing {config.name} ({type(self)}) scheme")
-
-        self._codes = list(codes)
-        self._index = dict(zip(self._codes, range(len(codes))))
-        self._desc = desc
-
-        self._index2code = {idx: code for code, idx in self._index.items()}
-        self._index2desc = {self._index[code]: _desc for code, _desc in desc.items()}
-
-        self._check_uniqueness()
-        self._check_types()
-        self._check_sizes()
-        self._check_index_integrity()
-
-    def _check_uniqueness(self):
-        assert len(self.codes) == len(set(self.codes)), f"{self}: Codes should be unique."
-
-    def _check_types(self):
-        assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
-        assert isinstance(self.codes, list), f"{self}: codes should be a list."
-        assert isinstance(self.index, dict), f"{self}: index should be a dict."
-        assert isinstance(self.desc, dict), f"{self}: desc should be a dict."
-        for collection in [self.codes, self.index, self.desc]:
-            assert all(
-                isinstance(c, str) for c in collection
-            ), f"{self}: All name types should be str."
-
-        assert all(
-            isinstance(idx, int)
-            for idx in self.index.values()
-        ), f"{self}: All index types should be int."
-
-        assert all(
-            isinstance(desc, str)
-            for desc in self.desc.values()
-
-        ), f"{self}: All desc types should be str."
-
-    def _check_sizes(self):
-        for collection in [self.codes, self.index, self.desc, self.index2code, self.index2desc]:
-            assert len(collection) == len(self.codes)
-
-    def _check_index_integrity(self):
-        for code, idx in self.index.items():
-            assert code == self.codes[idx], f"{self}: Index of {code} is not consistent with its position in the list."
-
-    @property
-    def codes(self):
-        return self._codes
-
-    @property
-    def index(self):
-        return self._index
-
-    @property
-    def desc(self):
-        return self._desc
-
-    @property
-    def index2code(self):
-        return self._index2code
-
-    @property
-    def index2desc(self):
-        return self._index2desc
-
-
-class NumericScheme(FlatScheme):
+class NumericScheme(CodingScheme):
     """
     NumericScheme is a subclass of FlatScheme that represents a numerical coding scheme.
     Additional to `FlatScheme` attributes, it contains the following attributes to represent the coding scheme:
     - type_hint: Dict mapping codes to their type hint (B: binary, N: numerical, O: ordinal, C: categorical)
     """
 
-    type_hint: Dict[str, NumericalTypeHint]
+    type_hint: Optional[Dict[str, NumericalTypeHint]] = None
     default_type_hint: Literal['N', 'C', 'B', 'O'] = 'N'
 
-    def __init__(self, type_hint: Optional[Dict[str, NumericalTypeHint]],
-                 default_type_hint: NumericalTypeHint = 'N',
-                 *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if type_hint is None:
-            type_hint = {code: default_type_hint for code in self.codes}
-        self.type_hint = type_hint
+    def __post_init__(self):
+        super().__post_init__()
+        if self.type_hint is None:
+            self.type_hint = {code: self.default_type_hint for code in self.codes}
         assert set(self.codes) == set(self.type_hint.keys()), \
             f"The set of codes ({self.codes}) does not match the set of type hints ({self.type_hint.keys()})."
         assert set(self.type_hint.values()) <= {'B', 'N', 'O', 'C'}, \
@@ -537,7 +490,7 @@ class CodesVectorWithMissing(CodesVector):
             return {self.scheme_object.missing_code}
 
 
-class SchemeWithMissing(FlatScheme):
+class SchemeWithMissing(CodingScheme):
     """
     A coding scheme that represents categorical schemes and supports missing/unkown values.
 
@@ -549,27 +502,22 @@ class SchemeWithMissing(FlatScheme):
         _missing_code (str): the code that represents a missing value in the coding scheme.
     """
 
-    _missing_code: str
+    missing_code: str
     vector_cls: ClassVar[Type[CodesVectorWithMissing]] = CodesVectorWithMissing
 
-    def __init__(self, config: CodingSchemeConfig,
-                 codes: List[str], desc: Dict[str, str], missing_code: str):
-        self._missing_code = missing_code
-        super().__init__(config, codes, desc)
-        assert missing_code not in codes, f"{self}: Missing code should not be in the list of codes."
-        self._codes = codes + [missing_code]
-        self._desc = desc.copy()
-        self._desc[self._missing_code] = "Missing"
-        self._index[self._missing_code] = -1
-
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.missing_code not in self.codes, f"{self}: Missing code should not be in the list of codes."
+        self.codes = self.codes + (self.missing_code,)
+        self.desc = FrozenDict11.from_dict({k: v for k, v in self.desc.items()} | {self.missing_code: "Missing"})
         self._check_index_integrity()
 
     def __len__(self) -> int:
         return len(self.codes) - 1
 
-    @property
-    def missing_code(self):
-        return self._missing_code
+    @cached_property
+    def index(self) -> Dict[str, int]:
+        return {code: idx for idx, code in enumerate(self.codes)} | {self.missing_code: -1}
 
     def _check_index_integrity(self):
         for code, idx in self.index.items():
@@ -579,73 +527,25 @@ class SchemeWithMissing(FlatScheme):
                 code), f"{self}: Index of {code} is not consistent with its position in the list."
 
 
-class HierarchicalScheme(FlatScheme):
+class HierarchicalScheme(CodingScheme):
     """
     A class representing a hierarchical coding scheme.
 
     This class extends the functionality of the FlatScheme class and provides
     additional methods for working with hierarchical coding schemes.
-
-    Attributes:
-        dag_index (Dict[str, int]): A dictionary mapping codes to their indices in the hierarchy.
-        dag_codes (List[str]): A list of codes in the hierarchy.
-        dag_desc (Dict[str, str]): A dictionary mapping codes to their descriptions in the hierarchy.
-        code2dag (Dict[str, str]): A dictionary mapping codes to their corresponding codes in the hierarchy.
-        dag2code (Dict[str, str]): A dictionary mapping codes in the hierarchy to their corresponding codes.
     """
+    ch2pt: FrozenDict1N
 
-    _dag_codes: List[str]
-    _dag_index: Dict[str, int]
-    _dag_desc: Dict[str, str]
-    _code2dag: Dict[str, str]
-    _dag2code: Dict[str, str]
-    _pt2ch: Dict[str, Set[str]]
-    _ch2pt: Dict[str, Set[str]]
+    dag_codes: Optional[Tuple[str, ...]] = None
+    dag_desc: Optional[FrozenDict11] = None
+    code2dag: Optional[FrozenDict11] = None
 
-    def __init__(self,
-                 config: CodingSchemeConfig,
-                 codes: Optional[List[str]] = None,
-                 desc: Optional[Dict[str, str]] = None,
-                 dag_codes: Optional[List[str]] = None,
-                 dag_desc: Optional[Dict[str, str]] = None,
-                 code2dag: Optional[Dict[str, str]] = None,
-                 pt2ch: Optional[Dict[str, Set[str]]] = None,
-                 ch2pt: Optional[Dict[str, Set[str]]] = None):
-        """
-        Initializes a HierarchicalScheme object.
+    def __post_init__(self):
+        super().__post_init__()
 
-        Args:
-            config (CodingSchemeConfig): the configuration for the coding scheme.
-            codes (Optional[List[str]]): a list of codes in the flattened version of the scheme. Defaults to None.
-            desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the flattened version of the scheme. Defaults to None.
-            dag_codes (Optional[List[str]]): a list of codes in the hierarchical scheme. Defaults to None.
-            dag_desc (Optional[Dict[str, str]]): a dictionary mapping codes to their descriptions in the hierarchical scheme. Defaults to None.
-            code2dag (Optional[Dict[str, str]]): a dictionary mapping codes in the flat scheme to their corresponding codes in the hierarchical scheme. Defaults to None.
-            pt2ch (Optional[Dict[str, Set[str]]]): a dictionary mapping parent codes to their child codes in the hierarchical scheme. Defaults to None.
-            ch2pt (Optional[Dict[str, Set[str]]]): a dictionary mapping child codes to their parent codes in the hierarchical scheme. Defaults to None.
-        """
-
-        self._dag_codes = dag_codes or codes
-        self._dag_index = {c: i for i, c in enumerate(self._dag_codes)}
-        self._dag_desc = dag_desc or desc
-        self._code2dag = code2dag or {c: c for c in codes}
-        self._dag2code = {d: c for c, d in self._code2dag.items()}
-
-        assert pt2ch or ch2pt, (
-            "Should provide ch2pt or pt2ch connection dictionary")
-        self._pt2ch = pt2ch or self.reverse_connection(ch2pt)
-        self._ch2pt = ch2pt or self.reverse_connection(pt2ch)
-
-        super().__init__(config=config, codes=codes, desc=desc)
-
-    def equals(self, other: "HierarchicalScheme") -> bool:
-        return (super().equals(other) and (self._dag_codes == other._dag_codes) and (
-                self._dag_index == other._dag_index)
-                and (self._dag_desc == other._dag_desc)
-                and (self._code2dag == other._code2dag)
-                and (self._dag2code == other._dag2code)
-                and (self._pt2ch == other._pt2ch)
-                and (self._ch2pt == other._ch2pt))
+        self.dag_codes = self.dag_codes or self.codes
+        self.dag_desc = self.dag_desc or self.desc
+        self.code2dag = self.code2dag or {c: c for c in self.codes}
 
     def _check_types(self):
         """
@@ -656,14 +556,9 @@ class HierarchicalScheme(FlatScheme):
         """
         super()._check_types()
 
-        assert isinstance(self.config, CodingSchemeConfig), f"{self}: config should be CodingSchemeConfig."
-
         assert isinstance(self.dag_codes, list), f"{self}: codes should be a list."
-        assert isinstance(self.dag_index, dict), f"{self}: index should be a dict."
         assert isinstance(self.dag_desc, dict), f"{self}: desc should be a dict."
         assert isinstance(self.code2dag, dict), f"{self}: code2dag should be a dict."
-        assert isinstance(self.dag2code, dict), f"{self}: dag2code should be a dict."
-        assert isinstance(self.pt2ch, dict), f"{self}: pt2ch should be a dict."
         assert isinstance(self.ch2pt, dict), f"{self}: ch2pt should be a dict."
 
         for collection in [self.dag_codes, self.dag_index, self.dag_desc]:
@@ -719,48 +614,25 @@ class HierarchicalScheme(FlatScheme):
 
         return ancestors_mat
 
-    @property
+        # self._pt2ch = pt2ch or
+
+    @cached_property
     def dag_index(self) -> Dict[str, int]:
         """
         Dict[str, int]: a dictionary mapping codes to their indices in the hierarchy.
         """
-        return self._dag_index
-
-    @property
-    def dag_codes(self) -> List[str]:
-        """
-        List[str]: a list of codes in the hierarchy.
-        """
-        return self._dag_codes
-
-    @property
-    def dag_desc(self) -> Dict[str, str]:
-        """
-        Dict[str, str]: a dictionary mapping codes to their descriptions in the hierarchy.
-        """
-        return self._dag_desc
-
-    @property
-    def code2dag(self) -> Dict[str, str]:
-        """
-        Dict[str, str]: a dictionary mapping codes to their corresponding codes in the hierarchy.
-        """
-        return self._code2dag
+        return {c: i for i, c in enumerate(self.dag_codes)}
 
     @property
     def dag2code(self) -> Dict[str, str]:
         """
         Dict[str, str]: a dictionary mapping codes in the hierarchy to their corresponding codes.
         """
-        return self._dag2code
+        return {d: c for c, d in self.code2dag.items()}
 
     @property
-    def pt2ch(self):
-        return self._pt2ch
-
-    @property
-    def ch2pt(self):
-        return self._ch2pt
+    def pt2ch(self) -> FrozenDict1N:
+        return self.reverse_connection(self.ch2pt)
 
     def __contains__(self, code: str) -> bool:
         """
@@ -775,7 +647,7 @@ class HierarchicalScheme(FlatScheme):
         return code in self.dag_codes or code in self.codes
 
     @staticmethod
-    def reverse_connection(connection: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+    def reverse_connection(connection: FrozenDict1N) -> FrozenDict1N:
         """
         Reverses a connection dictionary.
 
@@ -789,10 +661,10 @@ class HierarchicalScheme(FlatScheme):
         for node, conns in connection.items():
             for conn in conns:
                 rev_connection[conn].add(node)
-        return rev_connection
+        return FrozenDict1N.from_dict(rev_connection)
 
     @staticmethod
-    def _bfs_traversal(connection: Dict[str, Set[str]], code: str, include_itself: bool) -> List[str]:
+    def _bfs_traversal(connection: FrozenDict1N, code: str, include_itself: bool) -> List[str]:
         """
         Performs a breadth-first traversal of the hierarchy.
 
@@ -820,7 +692,7 @@ class HierarchicalScheme(FlatScheme):
         return list(result.keys())
 
     @staticmethod
-    def _dfs_traversal(connection: Dict[str, Set[str]], code: str, include_itself: bool) -> List[str]:
+    def _dfs_traversal(connection: FrozenDict1N, code: str, include_itself: bool) -> List[str]:
         """
         Performs a depth-first traversal of the hierarchy.
 
@@ -844,7 +716,7 @@ class HierarchicalScheme(FlatScheme):
         return list(result)
 
     @staticmethod
-    def _dfs_edges(connection: Dict[str, Set[str]], code: str) -> Set[Tuple[str, str]]:
+    def _dfs_edges(connection: FrozenDict1N, code: str) -> Set[Tuple[str, str]]:
         """
         Returns the edges of the hierarchy obtained through a depth-first traversal.
 
@@ -876,7 +748,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             List[str]: A list of ancestor codes.
         """
-        return self._bfs_traversal(self._ch2pt, code, include_itself)
+        return self._bfs_traversal(self.ch2pt, code, include_itself)
 
     def code_ancestors_dfs(self, code: str, include_itself: bool) -> List[str]:
         """
@@ -889,7 +761,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             List[str]: a list of ancestor codes.
         """
-        return self._dfs_traversal(self._ch2pt, code, include_itself)
+        return self._dfs_traversal(self.ch2pt, code, include_itself)
 
     def code_successors_bfs(self, code: str, include_itself: bool) -> List[str]:
         """
@@ -902,7 +774,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             List[str]: A list of successor codes.
         """
-        return self._bfs_traversal(self._pt2ch, code, include_itself)
+        return self._bfs_traversal(self.pt2ch, code, include_itself)
 
     def code_successors_dfs(self, code: str, include_itself: bool) -> List[str]:
         """
@@ -915,7 +787,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             List[str]: a list of successor codes.
         """
-        return self._dfs_traversal(self._pt2ch, code, include_itself)
+        return self._dfs_traversal(self.pt2ch, code, include_itself)
 
     def ancestors_edges_dfs(self, code: str) -> Set[Tuple[str, str]]:
         """
@@ -927,7 +799,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             Set[Tuple[str, str]]: a set of edges in the hierarchy.
         """
-        return self._dfs_edges(self._ch2pt, code)
+        return self._dfs_edges(self.ch2pt, code)
 
     def successors_edges_dfs(self, code: str) -> Set[Tuple[str, str]]:
         """
@@ -939,7 +811,7 @@ class HierarchicalScheme(FlatScheme):
         Returns:
             Set[Tuple[str, str]]: a set of edges in the hierarchy.
         """
-        return self._dfs_edges(self._pt2ch, code)
+        return self._dfs_edges(self.pt2ch, code)
 
     def least_common_ancestor(self, codes: List[str]) -> str:
         """
@@ -983,22 +855,22 @@ class HierarchicalScheme(FlatScheme):
             Set[str]: A set of codes that match the regex query, including their successor codes.
         """
         codes = filter(
-            lambda c: re.findall(query, self._desc[c], flags=regex_flags),
+            lambda c: re.findall(query, self.desc[c], flags=regex_flags),
             self.codes)
 
         dag_codes = filter(
-            lambda c: re.findall(query, self._dag_desc[c], flags=regex_flags),
+            lambda c: re.findall(query, self.dag_desc[c], flags=regex_flags),
             self.dag_codes)
 
-        all_codes = set(map(self._code2dag.get, codes)) | set(dag_codes)
+        all_codes = set(map(self.code2dag.get, codes)) | set(dag_codes)
 
         for c in list(all_codes):
-            all_codes.update(self.code_successors_dfs(c))
+            all_codes.update(self.code_successors_dfs(c, include_itself=False))
 
         return all_codes
 
 
-class Ethnicity(FlatScheme):
+class Ethnicity(CodingScheme):
     pass
 
 
@@ -1061,7 +933,8 @@ class CodeMap(Module):
         codeset2dagset(self, codeset: Set[str]): converts a codeset to a DAG set representation.
         codeset2dagvec(self, codeset: Set[str]): converts a codeset to a DAG vector representation.
     """
-    config: CodeMapConfig
+    source_scheme: str
+    target_scheme: str
     _data: Dict[str, Set[str]]
 
     _maps: ClassVar[Dict[Tuple[str, str], CodeMap]] = {}
@@ -1470,7 +1343,7 @@ class OutcomeExtractorConfig(CodingSchemeConfig):
     name: str
 
 
-class OutcomeExtractor(FlatScheme, metaclass=ABCMeta):
+class OutcomeExtractor(CodingScheme, metaclass=ABCMeta):
     config: OutcomeExtractorConfig
 
     _supported_outcomes: ClassVar[Dict[str, Set[str]]] = defaultdict(set)
@@ -1662,7 +1535,6 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         base_scheme = load_config(spec_file, relative_to=resources_dir('outcome_filters'))['code_scheme']
         OutcomeExtractor._supported_outcomes[base_scheme].add(name)
 
-
     @staticmethod
     def spec_from_json(json_file: str):
         """
@@ -1692,4 +1564,3 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
             return conf
         elif 'exclude_codes' in conf:
             return conf
-

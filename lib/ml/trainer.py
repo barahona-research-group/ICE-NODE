@@ -1,32 +1,32 @@
 from __future__ import annotations
-from typing import List, Any, Dict, Tuple, Union, Optional, Callable
-from datetime import datetime
 
-import os
-import re
-import random
 import contextlib
-from pathlib import Path
-import pickle
 import logging
+import os
+import pickle
+import random
+import re
 from abc import abstractmethod, ABCMeta
-import pandas as pd
-import numpy as np
-import jax.random as jrandom
+from datetime import datetime
+from pathlib import Path
+from typing import List, Any, Dict, Tuple, Union, Optional, Callable
+
+import equinox as eqx
 import jax.example_libraries.optimizers as jopt
 import jax.tree_util as jtu
-import equinox as eqx
-from blinker import signal
+import numpy as np
 import optuna
+import pandas as pd
+from blinker import signal
 
+from .artefacts import AdmissionsPrediction
+from .model import AbstractModel, ModelRegularisation
+from ..base import Config, Module
 from ..ehr import TVxEHR
-from .artefacts import Predictions
-from ..metric.stat import (MetricsCollection, Metric)
 from ..metric.loss import binary_loss, numeric_loss
+from ..metric.stat import (MetricsCollection, Metric)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
-from ..base import Config, Module
-from .model import AbstractModel, ModelRegularisation
 
 _opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
 
@@ -46,7 +46,7 @@ class StudyHalted(Exception):
 
 class TrainingHistory:
 
-    def __init__(self, metrics: Callable[[int, Predictions], pd.DataFrame]):
+    def __init__(self, metrics: Callable[[int, AdmissionsPrediction], pd.DataFrame]):
         self.metrics = metrics
         self._train_df = None
         self._val_df = None
@@ -76,7 +76,7 @@ class TrainingHistory:
         else:
             return pd.concat([df, row], axis=0)
 
-    def append_train_preds(self, step: int, res: Predictions,
+    def append_train_preds(self, step: int, res: AdmissionsPrediction,
                            elapsed_time: float, eval_time: float):
         row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
@@ -84,7 +84,7 @@ class TrainingHistory:
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
         self._train_df = self._concat(self._train_df, row_df)
 
-    def append_val_preds(self, step: int, res: Predictions,
+    def append_val_preds(self, step: int, res: AdmissionsPrediction,
                          elapsed_time: float, eval_time: float):
         row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
@@ -92,7 +92,7 @@ class TrainingHistory:
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
         self._val_df = self._concat(self._val_df, row_df)
 
-    def append_test_preds(self, step: int, res: Predictions,
+    def append_test_preds(self, step: int, res: AdmissionsPrediction,
                           elapsed_time: float, eval_time: float):
         row_df = self.metrics(step, res)
         row_df['timenow'] = datetime.now()
@@ -585,11 +585,11 @@ class TrainerReporting(Module):
     _metrics: MetricsCollection
 
     def __init__(
-        self,
-        config: ReportingConfig = ReportingConfig(),
-        metrics: Optional[List[Metric]] = None,
-        # optuna_trial: Optional[optuna.Trial] = None,
-        # optuna_objective: Optional[Callable] = None
+            self,
+            config: ReportingConfig = ReportingConfig(),
+            metrics: Optional[List[Metric]] = None,
+            # optuna_trial: Optional[optuna.Trial] = None,
+            # optuna_objective: Optional[Callable] = None
     ):
         super().__init__(config=config)
 
@@ -615,11 +615,10 @@ class TrainerReporting(Module):
         if config.model_stats:
             reporters.append(ModelStatsDiskWriter(output_dir))
 
-
-#         if optuna_trial is not None:
-#             assert optuna_objective is not None, ('optuna_objective must '
-#                                                   'be provided')
-#             reporters.append(OptunaReporter(optuna_trial, optuna_objective))
+        #         if optuna_trial is not None:
+        #             assert optuna_objective is not None, ('optuna_objective must '
+        #                                                   'be provided')
+        #             reporters.append(OptunaReporter(optuna_trial, optuna_objective))
 
         self._reporters = reporters
         self._metrics = MetricsCollection(metrics or [])
@@ -702,7 +701,7 @@ class Trainer(Module):
                                    leave_pbar=False,
                                    regularisation=self.reg_hyperparams)
 
-    def loss_term(self, model: AbstractModel, predictions: Predictions):
+    def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
         loss = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
         hps = self.reg_hyperparams.as_dict()
         if hps.get('L_l1', 0.0) != 0.0:
@@ -715,7 +714,7 @@ class Trainer(Module):
             loss += self.prediction_auxiliary_loss(predictions)
         return loss
 
-    def prediction_auxiliary_loss(self, predictions: Predictions):
+    def prediction_auxiliary_loss(self, predictions: AdmissionsPrediction):
         return predictions.associative_regularisation(self.reg_hyperparams)
 
     def loss(self, model: AbstractModel, patients: TVxEHR):
@@ -822,7 +821,7 @@ class Trainer(Module):
         if self.config.epochs > 0 and self.config.epochs < 1:
             epochs = 1
             train_ids = train_ids[:int(self.config.epochs * len(train_ids)) +
-                                  1]
+                                   1]
         else:
             epochs = self.config.epochs
 
@@ -973,7 +972,7 @@ class LassoNetTrainer(Trainer):
 
 class InTrainer(Trainer):
 
-    def loss_term(self, model: AbstractModel, predictions: Predictions):
+    def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
         loss = super().loss_term(model, predictions)
         obs_loss = predictions.prediction_obs_loss(obs_loss=self._obs_loss)
         lead_loss = predictions.prediction_lead_loss(lead_loss=self._lead_loss)
@@ -982,7 +981,7 @@ class InTrainer(Trainer):
 
 class InSKELKoopmanTrainer(InTrainer):
 
-    def prediction_auxiliary_loss(self, predictions: Predictions):
+    def prediction_auxiliary_loss(self, predictions: AdmissionsPrediction):
         preds = predictions.get_predictions()
         loss = sum((p.auxiliary_loss['L_rec'] for p in preds), [])
         alpha_rec = self.reg_hyperparams.L_rec

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 import tables as tb
 
-from lib.ehr import CodingScheme, FlatScheme, \
+from lib.ehr import CodingScheme, CodingScheme, \
     CodingSchemeConfig, OutcomeExtractor, TVxEHR, TVxEHRConfig, DemographicVectorConfig
 from lib.ehr.coding_scheme import ExcludingOutcomeExtractorConfig, ExcludingOutcomeExtractor, NumericScheme
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
@@ -24,8 +24,8 @@ MAX_STAY_DAYS = 356
 
 
 def scheme(name: str, codes: List[str]) -> str:
-    CodingScheme.register_scheme(FlatScheme(CodingSchemeConfig(name), codes=codes,
-                                            desc=dict(zip(codes, codes))))
+    CodingScheme.register_scheme(CodingScheme(CodingSchemeConfig(name), codes=codes,
+                                              desc=dict(zip(codes, codes))))
     return name
 
 
@@ -553,7 +553,7 @@ def dataset_tables_config(static_table_config: StaticTableConfig,
 
 
 @pytest.fixture(params=[(1, 0, 0), (1, 10, 0), (1, 10, 10),
-                        (30, 0, 0), (30, 10, 5)],
+                        (30, 0, 0), (10, 10, 50)],
                 ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,

@@ -494,7 +494,8 @@ class AbstractDatasetRepresentation(Module):
         pass
 
     @abstractmethod
-    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False,
+             complib: Literal['blosc', 'zlib', 'lzo', 'bzip2'] = 'blosc', complevel: int = 9):
         pass
 
     @classmethod
@@ -694,10 +695,12 @@ class Dataset(AbstractDatasetRepresentation):
     def equals(self, other: 'Dataset') -> bool:
         return self.equal_header(other) and self.tables.equals(other.tables)
 
-    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False):
+    def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False,
+             complib: Literal['blosc', 'zlib', 'lzo', 'bzip2'] = 'blosc', complevel: int = 9):
         if not isinstance(store, tbl.Group):
-            self.save_config(store, key='dataset', overwrite=overwrite)
-            with tbl.open_file(str(Path(store).with_suffix('.h5')), 'w') as store:
+            filters = tbl.Filters(complib=complib, complevel=complevel)
+            with tbl.open_file(str(Path(store).with_suffix('.h5')), mode='w', filters=filters,
+                               max_numexpr_threads=None, max_blosc_threads=None) as store:
                 return self.save(store.root, overwrite=overwrite)
         else:
             self.save_config(store._v_file.filename, key='dataset', overwrite=True)
@@ -715,7 +718,9 @@ class Dataset(AbstractDatasetRepresentation):
                 return cls.load(store.root)
         h5file = store._v_file
         config, classname = cls.load_config(Path(h5file.filename), key='dataset')
-        dataset = Module.import_module(config=config, classname=classname, tables=DatasetTables.load(store.tables))
+        dataset = Module.import_module(config=config,
+                                       classname=classname,
+                                       tables=DatasetTables.load(store.tables))
         if hasattr(store, 'report'):
             pipeline_report = pd.read_hdf(h5file.filename, key=store.report._v_pathname, mode='r')
             dataset = eqx.tree_at(lambda x: x.pipeline_report, dataset, pipeline_report)

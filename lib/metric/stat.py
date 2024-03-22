@@ -1,29 +1,26 @@
 """Performance metrics and loss functions."""
 
-from typing import Dict, Optional, List, Tuple, Any, Callable, Union
-from abc import abstractmethod, ABCMeta
-from dataclasses import field, dataclass
-import sys
-import inspect
+import warnings
+from abc import abstractmethod
 from collections import defaultdict
+from dataclasses import field, dataclass
 from datetime import datetime
+from typing import Dict, Optional, List, Tuple, Any, Callable, Union
 
-from tqdm import tqdm
-from absl import logging
-import pandas as pd
-import numpy as onp
-from scipy import stats
 import jax
 import jax.numpy as jnp
+import numpy as onp
+import pandas as pd
+from absl import logging
 from sklearn import metrics
-import warnings
+from tqdm import tqdm
 
-from ..ehr import (TVxEHR, InpatientObservables)
-from ..ml.artefacts import AdmissionPrediction, Predictions
-from ..base import Module, Config
 from .delong import FastDeLongTest
 from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
                    colwise_numeric_loss)
+from ..base import Module, Config
+from ..ehr import (TVxEHR, InpatientObservables)
+from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction
 
 
 def safe_nan_func(func, x, axis):
@@ -35,7 +32,7 @@ def safe_nan_func(func, x, axis):
 
 def nanaverage(A, weights, axis):
     return safe_nan_func(lambda x, axis: onp.nansum(x * weights, axis=axis) /
-                         ((~onp.isnan(x)) * weights).sum(axis=axis),
+                                         ((~onp.isnan(x)) * weights).sum(axis=axis),
                          A,
                          axis=axis)
 
@@ -97,7 +94,6 @@ def confusion_matrix_scores(cm: jnp.ndarray):
 
 
 def compute_auc(v_truth, v_preds):
-
     def _reject_auc(ground_truth):
         # Reject if all positives (1) or all negatives (0).
         n_pos = ground_truth.sum()
@@ -155,17 +151,17 @@ class Metric(Module):
         return tuple(map(self.column, self.fields()))
 
     @abstractmethod
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         pass
 
     def row(self, result: Dict[str, Any]) -> Tuple[float]:
         return tuple(map(result.get, self.fields()))
 
-    def to_dict(self, predictions: Predictions):
+    def to_dict(self, predictions: AdmissionsPrediction):
         result = self(predictions)
         return dict(zip(self.columns(), self.row(result)))
 
-    def to_df(self, index: int, predictions: Predictions):
+    def to_df(self, index: int, predictions: AdmissionsPrediction):
         timenow = datetime.now()
         data = self.to_dict(predictions)
         eval_time = (datetime.now() - timenow).total_seconds()
@@ -180,7 +176,7 @@ class Metric(Module):
     def from_df_functor(self, colname, direction):
 
         def from_df(df, index=-1):
-            if isinstance(df, Predictions):
+            if isinstance(df, AdmissionsPrediction):
                 df = self.to_df(index, df)
 
             if index == 'best':
@@ -208,7 +204,7 @@ class VisitsAUC(Metric):
     def dirs():
         return (1, 1)
 
-    def __call__(self, predictions: Predictions) -> Tuple[float]:
+    def __call__(self, predictions: AdmissionsPrediction) -> Tuple[float]:
         gtruth = []
         preds = []
         for patient_predictions in predictions.values():
@@ -220,13 +216,13 @@ class VisitsAUC(Metric):
         preds_vec = onp.hstack(preds)
         return {
             'macro_auc':
-            compute_auc(gtruth_vec, preds_vec),
+                compute_auc(gtruth_vec, preds_vec),
             'micro_auc':
-            nanmean(onp.array(list(map(
-                compute_auc,
-                gtruth,
-                preds,
-            ))))
+                nanmean(onp.array(list(map(
+                    compute_auc,
+                    gtruth,
+                    preds,
+                ))))
         }
 
 
@@ -266,12 +262,12 @@ class LossMetric(Metric):
         return self.dx_fields() + self.obs_fields() + self.lead_fields()
 
     def dirs(self):
-        return (0, ) * len(self)
+        return (0,) * len(self)
 
     def __len__(self):
         return len(self.fields())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         return {
             f'dx_{loss_key}': predictions.prediction_dx_loss(dx_loss=loss_f)
             for loss_key, loss_f in self._dx_loss.items()
@@ -280,7 +276,7 @@ class LossMetric(Metric):
             for loss_key, loss_f in self._obs_loss.items()
         } | {
             f'lead_{loss_key}':
-            predictions.prediction_lead_loss(lead_loss=loss_f)
+                predictions.prediction_lead_loss(lead_loss=loss_f)
             for loss_key, loss_f in self._lead_loss.items()
         }
 
@@ -362,7 +358,7 @@ class LeadingPredictionAccuracy(Metric):
         return prediction
 
     def _defragment_obs(self, x: Union[List[InpatientObservables],
-                                       InpatientObservables]):
+    InpatientObservables]):
         if isinstance(x, list):
             y = [xi.to_cpu() for xi in x]
             return InpatientObservables.concat(y)
@@ -444,7 +440,7 @@ class LeadingPredictionAccuracy(Metric):
         # criterion (4) - no recovery since last (current) occurrence.
         pos_ground_truth_df = ground_truth_df[ground_truth_df['value'] > 0]
         prediction_df = prediction_df[~prediction_df['time'].
-                                      isin(pos_ground_truth_df['time'])]
+        isin(pos_ground_truth_df['time'])]
 
         if len(prediction_df) == 0:
             return None
@@ -463,7 +459,7 @@ class LeadingPredictionAccuracy(Metric):
 
         return prediction_df
 
-    def _lead_dataframes(self, predictions: Predictions):
+    def _lead_dataframes(self, predictions: AdmissionsPrediction):
         dataframes = []
         for patient_predictions in predictions.values():
             for prediction in patient_predictions.values():
@@ -500,16 +496,16 @@ class LeadingPredictionAccuracy(Metric):
                (df['next_occurrence_time'] == onp.inf), 'class'] = 'negative'
         df.loc[(df['last_recovery_time'] == -onp.inf) &
                (df['next_occurrence_time'] != onp.inf),
-               'class'] = 'first_pre_emergence'
+        'class'] = 'first_pre_emergence'
         df.loc[(df['last_recovery_time'] != -onp.inf) &
                (df['last_recovery_time'] +
                 self.config.recovery_window < df['time']) &
                (df['next_occurrence_time'] != onp.inf),
-               'class'] = 'later_pre_emergence'
+        'class'] = 'later_pre_emergence'
         df.loc[(df['last_recovery_time'] != -onp.inf) &
                (df['last_recovery_time'] +
                 self.config.recovery_window >= df['time']),
-               'class'] = 'recovery_window'
+        'class'] = 'recovery_window'
         df.loc[(df['last_recovery_time'] != -onp.inf) &
                (df['last_recovery_time'] +
                 self.config.recovery_window < df['time']) &
@@ -536,7 +532,7 @@ class LeadingPredictionAccuracy(Metric):
                 fields.append(f'AUC_{c}_{t0}-{t1}')
         return fields
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         df = self._lead_dataframes(predictions)
         df = self._classify_timestamps(df)
         df_grouped = df.groupby('class')
@@ -556,11 +552,11 @@ class LeadingPredictionAccuracy(Metric):
 
         pre_emergence_df = {
             'first_pre_emergence':
-            df_first_pre_emergence,
+                df_first_pre_emergence,
             'later_pre_emergence':
-            df_later_pre_emergence,
+                df_later_pre_emergence,
             'pre_emergence':
-            pd.concat([df_first_pre_emergence, df_later_pre_emergence])
+                pd.concat([df_first_pre_emergence, df_later_pre_emergence])
         }
 
         neg_values = onp.concatenate(
@@ -653,19 +649,19 @@ class AKISegmentedAdmissionMetric(Metric):
 
             data.append({
                 'i1':
-                i1,
+                    i1,
                 'i2':
-                i2,
+                    i2,
                 'admission_id':
-                prediction.admission.admission_id,
+                    prediction.admission.admission_id,
                 'time':
-                time[i1:i2],
+                    time[i1:i2],
                 'next_interval_time':
-                time[i2] if i2 < len(time) else onp.nan,
+                    time[i2] if i2 < len(time) else onp.nan,
                 'aki_label':
-                aki_labels[i1],
+                    aki_labels[i1],
                 'aki_preds':
-                aki_preds[i1:i2]
+                    aki_preds[i1:i2]
             })
 
         return data
@@ -717,7 +713,7 @@ class AKISegmentedAdmissionMetric(Metric):
                 raise ValueError('Unexpected value in aki_vals')
         return segment_class
 
-    def _segment_classify_predictions(self, predictions: Predictions):
+    def _segment_classify_predictions(self, predictions: AdmissionsPrediction):
         """
         Segment admission intervals and classify the admissions into \
             'stable', 'AKI_all', 'AKI_emergence', 'AKI_recovery', or 'other'.
@@ -781,9 +777,9 @@ class AKISegmentedAdmissionMetric(Metric):
         return fields
 
     def dirs(self):
-        return (1, ) * len(self.fields())
+        return (1,) * len(self.fields())
 
-    def _apply(self, predictions: Predictions):
+    def _apply(self, predictions: AdmissionsPrediction):
         some_obs = list(next(iter(
             predictions.values())).values())[0].observables
         if not isinstance(some_obs, InpatientObservables):
@@ -860,7 +856,7 @@ class AKISegmentedAdmissionMetric(Metric):
 
         return res, segmented_AKI, segmented_AKI_byclass
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         res, segmented_AKI, segmented_AKI_byclass = self._apply(predictions)
         return res
 
@@ -950,8 +946,8 @@ class CodeLevelMetric(Metric):
         code_index = keys.get('code_index')
         code = keys.get('code')
         assert (code_index is None) != (
-            code
-            is None), "providing code and code_index are mutually exlusive"
+                code
+                is None), "providing code and code_index are mutually exlusive"
         code_index = self._code2index[code] if code is not None else code_index
         column = self.column(code_index, keys['field'])
         return self.from_df_functor(column, self.field_dir(keys['field']))
@@ -1007,7 +1003,7 @@ class CodeAUC(CodeLevelMetric):
     def dirs():
         return (1, 1)
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         ground_truth = []
         preds = []
 
@@ -1054,9 +1050,9 @@ class CodeLevelLossMetric(CodeLevelMetric):
         return list(map(lambda n: f'dx_{n}', sorted(self.config.loss)))
 
     def dirs(self):
-        return (0, ) * len(self.fields())
+        return (0,) * len(self.fields())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
             f'dx_{name}': predictions.prediction_dx_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
@@ -1082,9 +1078,9 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
         return list(map(lambda n: f'obs_{n}', sorted(self.config.loss)))
 
     def dirs(self):
-        return (0, ) * len(self.fields())
+        return (0,) * len(self.fields())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
             f'obs_{name}': predictions.prediction_obs_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
@@ -1110,9 +1106,9 @@ class LeadingObsLossMetric(ObsCodeLevelLossMetric):
         return list(map(lambda n: f'lead_{n}', sorted(self.config.loss)))
 
     def dirs(self):
-        return (0, ) * len(self.fields())
+        return (0,) * len(self.fields())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
             f'lead_{name}': predictions.prediction_lead_loss(loss_f)
             for name, loss_f in self._loss_functions.items()
@@ -1183,11 +1179,11 @@ class LeadingObsTrends(LeadingObsMetric):
         trend_hat = jnp.where(mask > 0, trend_hat, jnp.nan)
 
         mae = nanmean(onp.abs(trend - trend_hat), axis=0)
-        rms = onp.sqrt(nanmean((trend - trend_hat)**2, axis=0))
-        mse = nanmean((trend - trend_hat)**2, axis=0)
+        rms = onp.sqrt(nanmean((trend - trend_hat) ** 2, axis=0))
+        mse = nanmean((trend - trend_hat) ** 2, axis=0)
         return mae, rms, mse
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         obs_index = self.patients.config.leading_observable.index
         data = predictions.prediction_lead_data(obs_index)
         y = onp.array(data['y'])
@@ -1227,7 +1223,7 @@ class LeadingObsTrends(LeadingObsMetric):
 
 class UntilFirstCodeAUC(CodeAUC):
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         ground_truth = []
         preds = []
         masks = []
@@ -1262,7 +1258,6 @@ class UntilFirstCodeAUC(CodeAUC):
 
 
 class MetricLevelsConfig(Config):
-
     # Show estimates for each admission for each subject (extremely large
     # table)
     admission: bool = False
@@ -1288,11 +1283,11 @@ class AdmissionAUC(Metric):
 
     @staticmethod
     def fields():
-        return ('auc', )
+        return ('auc',)
 
     @staticmethod
     def dirs():
-        return (1, )
+        return (1,)
 
     @staticmethod
     def agg_fields():
@@ -1339,11 +1334,11 @@ class AdmissionAUC(Metric):
         return tuple(cols)
 
     @classmethod
-    def ordered_subjects(cls, predictions: Predictions):
+    def ordered_subjects(cls, predictions: AdmissionsPrediction):
         return sorted(predictions)
 
     @classmethod
-    def order(cls, predictions: Predictions):
+    def order(cls, predictions: AdmissionsPrediction):
         for subject_id in cls.ordered_subjects(predictions):
             subject_predictions = predictions[subject_id]
             for admission_id in sorted(subject_predictions):
@@ -1363,7 +1358,7 @@ class AdmissionAUC(Metric):
 
         return sum(tuple(cols), tuple())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         auc = {}
         for subject_id in sorted(predictions):
             subject_predictions = predictions[subject_id]
@@ -1406,7 +1401,7 @@ class AdmissionAUC(Metric):
             row.append(self.agg_row(result))
         return sum(tuple(row), tuple())
 
-    def to_dict(self, predictions: Predictions):
+    def to_dict(self, predictions: AdmissionsPrediction):
         order_gen = lambda: self.order(predictions)
         subject_order_gen = lambda: self.ordered_subjects(predictions)
         result = self(predictions)
@@ -1466,11 +1461,11 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
     @staticmethod
     def fields():
-        return ('acc', )
+        return ('acc',)
 
     @staticmethod
     def dirs():
-        return (1, )
+        return (1,)
 
     def column(self, group_index, k, field):
         return f'{self.classname()}.G{group_index}k{k}.{field}'
@@ -1484,7 +1479,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
     def columns(self):
         return tuple(self.column(gi, k, f) for gi, k, f in self.order())
 
-    def __call__(self, predictions: Predictions):
+    def __call__(self, predictions: AdmissionsPrediction):
         top_k_list = sorted(self.config.top_k_list)
 
         ground_truth = []
@@ -1558,9 +1553,8 @@ class MetricsCollection:
 
     def to_df(self,
               iteration: int,
-              predictions: Predictions,
+              predictions: AdmissionsPrediction,
               other_estimated_metrics: Dict[str, float] = None):
-
         dfs = [m.to_df(iteration, predictions) for m in self.metrics]
         return pd.concat(dfs, axis=1)
 
@@ -1580,9 +1574,9 @@ class DeLongTest(CodeLevelMetric):
     @staticmethod
     def fields():
         return {
-            'code': ('n_pos', ),
+            'code': ('n_pos',),
             'model': ('auc', 'auc_var'),
-            'pair': ('p_val', )
+            'pair': ('p_val',)
         }
 
     @staticmethod
@@ -1624,8 +1618,8 @@ class DeLongTest(CodeLevelMetric):
             as {'pairs': (model1, model2), ....}.
         """
         assert (code_index is None) != (
-            code
-            is None), "providing code and code_index are mutually exlusive"
+                code
+                is None), "providing code and code_index are mutually exlusive"
         code_index = self._code2index[code] if code is not None else code_index
 
         if field in self.fields()['model']:
@@ -1656,7 +1650,7 @@ class DeLongTest(CodeLevelMetric):
 
         def code_row():
             d = data['code']
-            return tuple(d[f][code_index] for (f, ) in order_gen['code']())
+            return tuple(d[f][code_index] for (f,) in order_gen['code']())
 
         def model_row():
             d = data['model']
@@ -1679,7 +1673,7 @@ class DeLongTest(CodeLevelMetric):
                     tuple()))
         return rows
 
-    def to_df(self, predictions: Dict[str, Predictions]):
+    def to_df(self, predictions: Dict[str, AdmissionsPrediction]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -1688,7 +1682,7 @@ class DeLongTest(CodeLevelMetric):
             df.loc[idx] = row
         return df
 
-    def to_dict(self, predictions: Dict[str, Predictions]):
+    def to_dict(self, predictions: Dict[str, AdmissionsPrediction]):
         clfs = sorted(predictions)
         cols = self.columns(clfs)
         data = self(predictions)
@@ -1723,12 +1717,12 @@ class DeLongTest(CodeLevelMetric):
         def code_order():
             fields = self.fields()['code']
             for field in fields:
-                yield (field, )
+                yield (field,)
 
         return {'pair': pair_order, 'code': code_order, 'model': model_order}
 
     @classmethod
-    def _extract_subjects(cls, predictions: Dict[str, Predictions]):
+    def _extract_subjects(cls, predictions: Dict[str, AdmissionsPrediction]):
         subject_sets = [preds.subject_ids for preds in predictions.values()]
         for s1, s2 in zip(subject_sets[:-1], subject_sets[1:]):
             assert set(s1) == set(s2), "Subjects mismatch across model outputs"
@@ -1776,7 +1770,7 @@ class DeLongTest(CodeLevelMetric):
 
         return tm0, mask, pred_mat
 
-    def __call__(self, predictions: Dict[str, Predictions]):
+    def __call__(self, predictions: Dict[str, AdmissionsPrediction]):
         """
         Evaluate the AUC scores for each diagnosis code for each classifier. \
             In addition, conduct a pairwise test on the difference of AUC \

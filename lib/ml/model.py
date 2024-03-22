@@ -13,7 +13,7 @@ from ..utils import tqdm_constructor, translate_path
 from ..ehr import (TVxEHR, Patient, DemographicVectorConfig, DatasetScheme,
                    Admission,
                    InpatientInput, InpatientObservables)
-from .artefacts import AdmissionPrediction, Predictions, TrajectoryConfig
+from .artefacts import AdmissionPrediction, AdmissionsPrediction, TrajectoryConfig
 from ..base import Config, Module, VxData
 
 from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
@@ -227,7 +227,7 @@ class InpatientModel(AbstractModel):
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
-    ) -> Predictions:
+    ) -> AdmissionsPrediction:
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {
@@ -244,7 +244,7 @@ class InpatientModel(AbstractModel):
                               bar_format=bar_format,
                               unit='longitudinal-days',
                               leave=leave_pbar) as pbar:
-            results = Predictions()
+            results = AdmissionsPrediction()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
                 pbar.set_description(
                     f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
@@ -252,7 +252,7 @@ class InpatientModel(AbstractModel):
                 embedded_admissions = inpatients_emb[subject_id]
                 for adm, adm_e in zip(inpatient.admissions,
                                       embedded_admissions):
-                    results.add(subject_id=subject_id,
+                    results = results.add(subject_id=subject_id,
                                 prediction=self(
                                     adm,
                                     adm_e,

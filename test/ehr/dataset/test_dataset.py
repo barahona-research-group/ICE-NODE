@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import tables as tb
 from lib.ehr import CodingScheme
-from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, FlatScheme
+from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, CodingScheme
 from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
     Dataset, AbstractDatasetPipeline
 from test.ehr.conftest import NaiveDataset
@@ -137,9 +137,9 @@ def dataset_scheme_targets(dataset_scheme_config, request) -> Dict[str, Tuple[st
                                        target_scheme=target_name,
                                        mapped_to_dag_space=False)
             map_data = {c: {c_target} for c, c_target in zip(source_scheme.codes, target_codes)}
-            CodingScheme.register_scheme(FlatScheme(config=CodingSchemeConfig(name=target_name),
-                                                    codes=target_codes,
-                                                    desc=target_desc))
+            CodingScheme.register_scheme(CodingScheme(config=CodingSchemeConfig(name=target_name),
+                                                      codes=target_codes,
+                                                      desc=target_desc))
             CodeMap.register_map(CodeMap(map_config, map_data))
             target_schemes.append(target_name)
         targets[space] = tuple(target_schemes)

@@ -385,10 +385,8 @@ class VxData(eqx.Module):
                 items.append(VxData.from_hdf_group(groups[i]))
         return iterable_class(items)
 
-    @staticmethod
-    def from_hdf_group(group: tb.Group) -> 'VxData':
-        classname = group['classname'].read().decode('utf-8')
-        cls = VxData.data_class(classname)
+    @classmethod
+    def _from_hdf_group(cls, group: tb.Group) -> 'VxData':
         data = {k: group[k].read() for k in group._v_leaves if
                 not k.startswith('_x_timestamp_') and not k == 'classname'}
         data = {k: v.decode('utf-8') if isinstance(v, bytes) else v for k, v in data.items()}
@@ -404,6 +402,11 @@ class VxData(eqx.Module):
             data |= {k: VxData.deserialize_iterable(g, list) for k, g in list_groups.items()}
             data |= {k: VxData.deserialize_iterable(g, tuple) for k, g in tuple_groups.items()}
         return cls(**data)
+
+    @staticmethod
+    def from_hdf_group(group: tb.Group) -> 'VxData':
+        classname = group['classname'].read().decode('utf-8')
+        return VxData.data_class(classname)._from_hdf_group(group)
 
     @staticmethod
     def equal_attributes(a: 'VxData', b: 'VxData', attributes: Tuple[str, ...]) -> bool:

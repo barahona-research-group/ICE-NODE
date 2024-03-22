@@ -40,7 +40,7 @@ class AdmissionPrediction(VxData):
     leading_observable: Optional[InpatientObservables] = None
     outcome: Optional[CodesVector] = None
     trajectory: PatientAdmissionTrajectory = field(default_factory=PatientAdmissionTrajectory)
-    model_behavioural_metrics: ModelBehaviouralMetrics
+    model_behavioural_metrics: ModelBehaviouralMetrics = field(default_factory=ModelBehaviouralMetrics)
 
     def has_nans(self):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))
@@ -91,7 +91,7 @@ class LossWrapper(Module):
         return jnp.where(jnp.isnan(loss), 0., loss)
 
 
-class AdmissionPredictionCollection(VxData):
+class AdmissionsPrediction(VxData):
     predictions: Tuple[AdmissionPrediction, ...] = field(default_factory=tuple)
 
     def save(self, path: Union[str, Path]):
@@ -110,7 +110,7 @@ class AdmissionPredictionCollection(VxData):
             return self.to_hdf_group(store.root)
 
     @staticmethod
-    def load(path: Union[str, Path]) -> AdmissionPredictionCollection:
+    def load(path: Union[str, Path]) -> AdmissionsPrediction:
         """
         Load predictions from a file.
 
@@ -121,9 +121,9 @@ class AdmissionPredictionCollection(VxData):
             The loaded predictions.
         """
         with tbl.open_file(str(Path(path).with_suffix('.h5')), 'r') as store:
-            return AdmissionPredictionCollection.from_hdf_group(store.root)
+            return AdmissionsPrediction.from_hdf_group(store.root)
 
-    def add(self, *args, **kwargs) -> AdmissionPredictionCollection:
+    def add(self, *args, **kwargs) -> AdmissionsPrediction:
         return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (AdmissionPrediction(*args, **kwargs),))
 
     def __iter__(self) -> Iterable[AdmissionPrediction]:
@@ -153,7 +153,7 @@ class AdmissionPredictionCollection(VxData):
         """
         return self.aggregate(lambda p: p.admission.interval_hours, lambda l: np.mean(np.array(l)))
 
-    def filter_nans(self) -> AdmissionPredictionCollection:
+    def filter_nans(self) -> AdmissionsPrediction:
         """
         Filter out predictions with NaN values.
 
@@ -174,7 +174,7 @@ class AdmissionPredictionCollection(VxData):
                                 f'subject_id={p.subject_id}, admission_id={p.admission.admission_id} '
                                 f'interval_hours= {p.admission.interval_hours}. '
                                 'Note: long intervals is a likely reason to destabilise the model')
-        clean_predictions = AdmissionPredictionCollection(cleaned)
+        clean_predictions = AdmissionsPrediction(cleaned)
         if nan_detected:
             logging.warning(f'Average interval_hours: {clean_predictions.average_interval_hours}')
 

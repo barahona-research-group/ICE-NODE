@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from lib.ehr import (CodingScheme, FlatScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
+from lib.ehr import (CodingScheme, CodingScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
 
 _DIR = os.path.dirname(__file__)
 
@@ -42,7 +42,7 @@ def primitive_flat_scheme_kwarg(request):
 
 @pytest.fixture(scope='class')
 def primitive_flat_scheme(primitive_flat_scheme_kwarg):
-    return FlatScheme(**primitive_flat_scheme_kwarg)
+    return CodingScheme(**primitive_flat_scheme_kwarg)
 
 
 def _clean_schemes():
@@ -70,19 +70,19 @@ class TestFlatScheme:
 
         If a KeyError is raised, it means that the scheme is not registered and the test passes.
         """
-        FlatScheme.register_scheme(primitive_flat_scheme)
-        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+        CodingScheme.register_scheme(primitive_flat_scheme)
+        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
         with pytest.raises(KeyError):
             # Unregistered scheme
-            FlatScheme.from_name('42')
+            CodingScheme.from_name('42')
 
     @pytest.mark.parametrize("codes", [('A', 'B', 'C', 'C'),
                                        ('A', 'B', 'C', 'B'),
                                        ('A', 'A', 'A', 'A')])
     def test_codes_uniqueness(self, codes):
         with pytest.raises(AssertionError) as excinfo:
-            FlatScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
+            CodingScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
         assert 'should be unique' in str(excinfo.value)
 
     def test_register_scheme(self, primitive_flat_scheme):
@@ -96,13 +96,13 @@ class TestFlatScheme:
            register a scheme that is already registered with the same name and content.
         """
         # First, test that the register_scheme method works.
-        FlatScheme.register_scheme(primitive_flat_scheme)
-        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+        CodingScheme.register_scheme(primitive_flat_scheme)
+        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
         # Second, test that the register_scheme method raises an error when
         # the scheme is already registered.
         with mock.patch('logging.warning') as mocker:
-            FlatScheme.register_scheme(primitive_flat_scheme)
+            CodingScheme.register_scheme(primitive_flat_scheme)
             mocker.assert_called_once()
 
     def test_scheme_equality(self, primitive_flat_scheme):
@@ -117,9 +117,9 @@ class TestFlatScheme:
 
         if len(primitive_flat_scheme) > 0:
             desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
-            mutated_scheme = FlatScheme(config=primitive_flat_scheme.config,
-                                        codes=primitive_flat_scheme.codes,
-                                        desc=desc_mutated)
+            mutated_scheme = CodingScheme(config=primitive_flat_scheme.config,
+                                          codes=primitive_flat_scheme.codes,
+                                          desc=desc_mutated)
             assert primitive_flat_scheme != mutated_scheme
 
     def test_register_scheme_loader(self, primitive_flat_scheme):
@@ -134,27 +134,27 @@ class TestFlatScheme:
         4. Asserts that attempting to register the same scheme again logs a warning.
         """
 
-        FlatScheme.register_scheme_loader(primitive_flat_scheme.config.name,
-                                          lambda: FlatScheme.register_scheme(primitive_flat_scheme))
-        assert FlatScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+        CodingScheme.register_scheme_loader(primitive_flat_scheme.config.name,
+                                            lambda: CodingScheme.register_scheme(primitive_flat_scheme))
+        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
 
         with mock.patch('logging.warning') as mocker:
-            FlatScheme.register_scheme_loader(primitive_flat_scheme.config.name,
-                                              lambda: FlatScheme.register_scheme(primitive_flat_scheme))
+            CodingScheme.register_scheme_loader(primitive_flat_scheme.config.name,
+                                                lambda: CodingScheme.register_scheme(primitive_flat_scheme))
             mocker.assert_called_once()
         with mock.patch('logging.warning') as mocker:
-            FlatScheme.register_scheme(primitive_flat_scheme)
+            CodingScheme.register_scheme(primitive_flat_scheme)
             mocker.assert_called_once()
 
         # If the scheme is registered with the same name but different content, an AssertionError should be raised.
         if len(primitive_flat_scheme) > 0:
             desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
-            mutated_scheme = FlatScheme(config=primitive_flat_scheme.config,
-                                        codes=primitive_flat_scheme.codes,
-                                        desc=desc_mutated)
+            mutated_scheme = CodingScheme(config=primitive_flat_scheme.config,
+                                          codes=primitive_flat_scheme.codes,
+                                          desc=desc_mutated)
 
             with pytest.raises(AssertionError):
-                FlatScheme.register_scheme(mutated_scheme)
+                CodingScheme.register_scheme(mutated_scheme)
 
     @pytest.mark.expensive_test
     @pytest.mark.usefixtures('clean_schemes')
@@ -166,7 +166,7 @@ class TestFlatScheme:
 
         for scheme_name in CodingScheme.available_schemes():
             scheme = CodingScheme.from_name(scheme_name)
-            assert isinstance(scheme, FlatScheme)
+            assert isinstance(scheme, CodingScheme)
             assert scheme.name == scheme_name
 
 
@@ -183,7 +183,7 @@ class TestFlatScheme:
         or KeyError to be raised.
         """
         with pytest.raises((AssertionError, KeyError)):
-            FlatScheme(config=config, codes=codes, desc=desc)
+            CodingScheme(config=config, codes=codes, desc=desc)
 
     @pytest.mark.parametrize("config, codes, desc", [
         (CodingSchemeConfig('problematic_desc'), ['1', '3'], {'1': 'one'}),
@@ -200,7 +200,7 @@ class TestFlatScheme:
         FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
         """
         with pytest.raises((AssertionError, KeyError)):
-            FlatScheme(config=config, codes=codes, desc=desc)
+            CodingScheme(config=config, codes=codes, desc=desc)
 
     def test_codes(self, primitive_flat_scheme_kwarg):
         """
@@ -214,9 +214,9 @@ class TestFlatScheme:
         This test ensures that the codes are properly initialized and can be retrieved correctly.
 
         """
-        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
-        FlatScheme.register_scheme(scheme)
-        assert FlatScheme.from_name(primitive_flat_scheme_kwarg['config'].name).codes == primitive_flat_scheme_kwarg[
+        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
+        CodingScheme.register_scheme(scheme)
+        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['config'].name).codes == primitive_flat_scheme_kwarg[
             'codes']
 
     def test_desc(self, primitive_flat_scheme_kwarg):
@@ -225,9 +225,9 @@ class TestFlatScheme:
 
         Same as the test_codes method, but for the description.
         """
-        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
-        FlatScheme.register_scheme(scheme)
-        assert FlatScheme.from_name(primitive_flat_scheme_kwarg['config'].name).desc == primitive_flat_scheme_kwarg[
+        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
+        CodingScheme.register_scheme(scheme)
+        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['config'].name).desc == primitive_flat_scheme_kwarg[
             'desc']
 
     def test_name(self, primitive_flat_scheme_kwarg):
@@ -235,8 +235,8 @@ class TestFlatScheme:
         Test case to verify if the name attribute of the FlatScheme instance
         matches the name attribute specified in the scheme configuration.
         """
-        scheme = FlatScheme(**primitive_flat_scheme_kwarg)
-        FlatScheme.register_scheme(scheme)
+        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
+        CodingScheme.register_scheme(scheme)
         assert scheme.name == primitive_flat_scheme_kwarg['config'].name
 
     def test_index2code(self, primitive_flat_scheme):
@@ -269,9 +269,9 @@ class TestFlatScheme:
 
         """
         # Arrange
-        scheme = FlatScheme(CodingSchemeConfig('simple_searchable'),
-                            codes=['1', '3'],
-                            desc={'1': 'one', '3': 'pancreatic cAnCeR'})
+        scheme = CodingScheme(CodingSchemeConfig('simple_searchable'),
+                              codes=['1', '3'],
+                              desc={'1': 'one', '3': 'pancreatic cAnCeR'})
         # Act & Assert
         assert scheme.search_regex('cancer') == {'3'}
         assert scheme.search_regex('one') == {'1'}
@@ -305,7 +305,7 @@ class TestFlatScheme:
         assert set(df.columns) == {'code', 'desc'}
         codes = df.code.tolist()
         desc = df.set_index('code')['desc'].to_dict()
-        assert primitive_flat_scheme == FlatScheme(config=primitive_flat_scheme.config, codes=codes, desc=desc)
+        assert primitive_flat_scheme == CodingScheme(config=primitive_flat_scheme.config, codes=codes, desc=desc)
 
 # class TestCommonCodingSchemes:
 #     def setUp(self):

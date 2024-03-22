@@ -14,7 +14,7 @@ import sqlalchemy
 from sqlalchemy import Engine
 
 from lib.base import Module, Config
-from lib.ehr.coding_scheme import (CodingSchemeConfig, FlatScheme, CodeMap, resources_dir, CodeMapConfig,
+from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, CodeMap, resources_dir, CodeMapConfig,
                                    NumericScheme)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
@@ -154,7 +154,7 @@ class ObservableMIMICScheme(NumericScheme):
                             columns=columns)
 
 
-class MixedICDScheme(FlatScheme):
+class MixedICDScheme(CodingScheme):
     # TODO: Document this class.
 
     _icd_schemes: Dict[str, ICDScheme]
@@ -292,7 +292,7 @@ class MixedICDScheme(FlatScheme):
         assert len(mapping) > 0, "No mapping between the Mixed ICD scheme and the target scheme was found."
         target_codes = sorted(mapping[c_target_code].drop_duplicates().tolist())
         target_desc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
-        FlatScheme.register(FlatScheme(CodingSchemeConfig(target_name), codes=target_codes, desc=target_desc))
+        CodingScheme(CodingSchemeConfig(target_name), codes=target_codes, desc=target_desc).register()
 
         mapping = mapping[[c_code, c_target_code]].astype(str)
         mapping = mapping[mapping[c_code].isin(self.codes) & mapping[c_target_code].isin(target_codes)]
@@ -305,7 +305,7 @@ class MixedICDScheme(FlatScheme):
                             columns=columns)
 
 
-class AggregatedICUInputsScheme(FlatScheme):
+class AggregatedICUInputsScheme(CodingScheme):
     aggregation: Dict[str, str]
 
     def __init__(self, config: CodingSchemeConfig, codes: List[str],
@@ -315,9 +315,9 @@ class AggregatedICUInputsScheme(FlatScheme):
         self.aggregation = aggregation
 
     @staticmethod
-    def register_aggregated_scheme(scheme: FlatScheme,
+    def register_aggregated_scheme(scheme: CodingScheme,
                                    dataset_scheme_config: MIMICIVDatasetSchemeConfig,
-                                   dataset_tables_config: MIMICIVSQLTablesConfig) -> FlatScheme:
+                                   dataset_tables_config: MIMICIVSQLTablesConfig) -> CodingScheme:
         """
         Register a target scheme and its mapping.
         """
@@ -483,7 +483,7 @@ class ObservablesSQLTable(SQLTable):
                                                 how='inner')
 
         scheme = ObservableMIMICScheme.from_selection(name, attributes_selection)
-        FlatScheme.register_scheme(scheme)
+        CodingScheme.register_scheme(scheme)
         return scheme
 
 
@@ -567,10 +567,10 @@ class CodedSQLTable(CategoricalSQLTable):
     config: CodedSQLTableConfig
 
     def register_scheme(self, name: str,
-                        engine: Engine, code_selection: Optional[pd.DataFrame]) -> FlatScheme:
-        return FlatScheme.register_scheme_from_selection(name=name, supported_space=self.space(engine),
-                                                         code_selection=code_selection, c_code=self.config.code_alias,
-                                                         c_desc=self.config.description_alias)
+                        engine: Engine, code_selection: Optional[pd.DataFrame]) -> CodingScheme:
+        return CodingScheme.register_scheme_from_selection(name=name, supported_space=self.space(engine),
+                                                           code_selection=code_selection, c_code=self.config.code_alias,
+                                                           c_desc=self.config.description_alias)
 
 
 class TimestampedMultiColumnSQLTable(SQLTable):
@@ -634,11 +634,11 @@ class StaticSQLTable(SQLTable):
     def register_gender_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
                                engine: Engine):
 
-        scheme = FlatScheme.register_scheme_from_selection(name=scheme_config.gender,
-                                                           supported_space=self.gender_space(engine),
-                                                           code_selection=scheme_config.gender_selection,
-                                                           c_code=self.config.gender_alias,
-                                                           c_desc=self.config.gender_alias)
+        scheme = CodingScheme.register_scheme_from_selection(name=scheme_config.gender,
+                                                             supported_space=self.gender_space(engine),
+                                                             code_selection=scheme_config.gender_selection,
+                                                             c_code=self.config.gender_alias,
+                                                             c_desc=self.config.gender_alias)
         if scheme_config.gender_map is not None:
             scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.gender),
                                           scheme_config.gender_map,
@@ -650,11 +650,11 @@ class StaticSQLTable(SQLTable):
     def register_ethnicity_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
                                   engine: Engine):
 
-        scheme = FlatScheme.register_scheme_from_selection(name=scheme_config.ethnicity,
-                                                           supported_space=self.ethnicity_space(engine),
-                                                           code_selection=scheme_config.ethnicity_selection,
-                                                           c_code=self.config.race_alias,
-                                                           c_desc=self.config.race_alias)
+        scheme = CodingScheme.register_scheme_from_selection(name=scheme_config.ethnicity,
+                                                             supported_space=self.ethnicity_space(engine),
+                                                             code_selection=scheme_config.ethnicity_selection,
+                                                             c_code=self.config.race_alias,
+                                                             c_desc=self.config.race_alias)
         if scheme_config.ethnicity_map is not None:
             scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.ethnicity),
                                           scheme_config.ethnicity_map,
@@ -700,8 +700,8 @@ class MIMICIVSQLTablesConfig(DatasetTablesConfig):
         else:
             credentials_env_list = [ENV_MIMICIV_USER, ENV_MIMICIV_PASSWORD, ENV_MIMICIV_HOST, ENV_MIMICIV_PORT,
                                     ENV_MIMICIV_DBNAME]
-            raise ValueError(f"Environment variables {ENV_MIMICIV_URL} or "
-                             f"{', '.join(credentials_env_list)} "
+            raise ValueError(f"Environment variables ({ENV_MIMICIV_URL}) or "
+                             f"({', '.join(credentials_env_list)}) "
                              f"are not set.")
 
     @staticmethod
@@ -835,13 +835,13 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
 
 
 class MIMICIVDatasetScheme(DatasetScheme):
-    ethnicity: FlatScheme
-    gender: FlatScheme
+    ethnicity: CodingScheme
+    gender: CodingScheme
     dx_discharge: MixedICDScheme
     obs: Optional[ObservableMIMICScheme] = None
-    icu_procedures: Optional[FlatScheme] = None
+    icu_procedures: Optional[CodingScheme] = None
     hosp_procedures: Optional[MixedICDScheme] = None
-    icu_inputs: Optional[FlatScheme] = None
+    icu_inputs: Optional[CodingScheme] = None
 
 
 class MIMICIVSQLConfig(DatasetConfig):
@@ -857,7 +857,7 @@ class MIMICIVSQLTablesInterface(Module):
     def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(self.config.url())
 
-    def register_gender_scheme(self, config: MIMICIVDatasetSchemeConfig) -> FlatScheme:
+    def register_gender_scheme(self, config: MIMICIVDatasetSchemeConfig) -> CodingScheme:
         """
         TODO: document me.
         """
@@ -1045,14 +1045,14 @@ class MIMICIVSQLTablesInterface(Module):
         table = ObservablesSQLTable(self.config.obs)
         return table(engine, obs_scheme)
 
-    def _extract_icu_procedures_table(self, engine: Engine, icu_procedure_scheme: FlatScheme) -> pd.DataFrame:
+    def _extract_icu_procedures_table(self, engine: Engine, icu_procedure_scheme: CodingScheme) -> pd.DataFrame:
         table = CodedSQLTable(self.config.icu_procedures)
         c_code = self.config.icu_procedures.code_alias
         dataframe = table(engine)
         dataframe = dataframe[dataframe[c_code].isin(icu_procedure_scheme.codes)]
         return dataframe.reset_index(drop=True)
 
-    def _extract_icu_inputs_table(self, engine: Engine, icu_input_scheme: FlatScheme) -> pd.DataFrame:
+    def _extract_icu_inputs_table(self, engine: Engine, icu_input_scheme: CodingScheme) -> pd.DataFrame:
         table = CodedSQLTable(self.config.icu_inputs)
         c_code = self.config.icu_inputs.code_alias
         dataframe = table(engine)
@@ -1291,7 +1291,7 @@ OBS_COMPONENTS = [
     WEIGHT_CONF,
     CBC_CONF,
     VITAL_CONF,
-    GCS_CONF,
+    # GCS_CONF,
     ICP_CONF,
     INFLAMMATION_CONF,
     COAGULATION_CONF,
