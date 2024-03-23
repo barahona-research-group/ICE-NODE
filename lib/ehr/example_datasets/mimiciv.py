@@ -14,8 +14,8 @@ import sqlalchemy
 from sqlalchemy import Engine
 
 from lib.base import Module, Config
-from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, CodeMap, resources_dir, CodeMapConfig,
-                                   NumericScheme)
+from lib.ehr.coding_scheme import (CodingScheme, CodeMap, resources_dir, NumericScheme,
+                                   CodingSchemesManager, FrozenDict11, FrozenDict1N)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
@@ -140,10 +140,10 @@ class ObservableMIMICScheme(NumericScheme):
             (CodingScheme.FlatScheme) A new scheme containing the variables in obs_variables.
         """
         # format codes to be of the form 'table_name.attribute'
-        codes = (obs_variables.index + '.' + obs_variables['attribute']).tolist()
-        desc = dict(zip(codes, codes))
-        type_hint = dict(zip(codes, obs_variables['type_hint'].tolist()))
-        return cls(config=CodingSchemeConfig(name),
+        codes = tuple(sorted(obs_variables.index + '.' + obs_variables['attribute'].tolist()))
+        desc = FrozenDict11.from_dict(dict(zip(codes, codes)))
+        type_hint = FrozenDict11.from_dict(dict(zip(codes, obs_variables['type_hint'].tolist())))
+        return cls(name=name,
                    codes=codes,
                    desc=desc,
                    type_hint=type_hint)
@@ -157,14 +157,18 @@ class ObservableMIMICScheme(NumericScheme):
 class MixedICDScheme(CodingScheme):
     # TODO: Document this class.
 
-    _icd_schemes: Dict[str, ICDScheme]
+    icd_version_schemes: FrozenDict11
     _sep: str = ':'
 
-    def __init__(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str],
-                 icd_schemes: Dict[str, ICDScheme], sep: str = ':'):
-        super().__init__(config, codes=codes, desc=desc)
-        self._icd_schemes = icd_schemes
+    def __init__(self, name: str, codes: List[str], desc: Dict[str, str],
+                 icd_version_schemes: FrozenDict11, sep: str = ':'):
+        super().__init__(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(desc))
+        self.icd_version_schemes = icd_version_schemes
         self._sep = sep
+
+    @cached_property
+    def icd_schemes(self) -> Dict[str, ICDScheme]:
+        return {k: self._manager.scheme[v] for k, v in self.icd_version_schemes.items()}
 
     @staticmethod
     def fix_dots(df: pd.DataFrame, c_icd_code: str, c_icd_version: str,
@@ -177,20 +181,20 @@ class MixedICDScheme(CodingScheme):
         return df
 
     @classmethod
-    def from_selection(cls, name: str, icd_version_selection: pd.DataFrame,
+    def from_selection(cls, manager: CodingSchemesManager, name: str, icd_version_selection: pd.DataFrame,
                        icd_version_alias: str, icd_code_alias: str, description_alias: str,
-                       icd_schemes: Dict[str, str], sep: str = ':') -> MixedICDScheme:
+                       icd_version_schemes: FrozenDict11, sep: str = ':') -> MixedICDScheme:
         # TODO: test this method.
         icd_version_selection = icd_version_selection.sort_values([icd_version_alias, icd_code_alias])
         icd_version_selection = icd_version_selection.drop_duplicates([icd_version_alias, icd_code_alias]).astype(str)
-        assert icd_version_selection[icd_version_alias].isin(icd_schemes).all(), \
-            f"Only {', '.join(map(lambda x: f'ICD-{x}', icd_schemes))} are expected."
+        assert icd_version_selection[icd_version_alias].isin(icd_version_schemes).all(), \
+            f"Only {', '.join(map(lambda x: f'ICD-{x}', icd_version_schemes))} are expected."
 
         # assert no duplicate (icd_code, icd_version)
         assert icd_version_selection.groupby([icd_version_alias, icd_code_alias]).size().max() == 1, \
             "Duplicate (icd_code, icd_version) pairs are not allowed."
 
-        icd_schemes_loaded: Dict[str, ICDScheme] = {k: ICDScheme.from_name(v) for k, v in icd_schemes.items()}
+        icd_schemes_loaded: Dict[str, ICDScheme] = {k: manager.scheme[v] for k, v in icd_version_schemes.items()}
 
         assert all(isinstance(s, ICDScheme) for s in icd_schemes_loaded.values()), \
             "Only ICD schemes are expected."
@@ -200,10 +204,10 @@ class MixedICDScheme(CodingScheme):
         df['code'] = (df[icd_version_alias] + sep + df[icd_code_alias]).tolist()
         desc = df.set_index('code')[description_alias].to_dict()
 
-        return MixedICDScheme(config=CodingSchemeConfig(name),
+        return MixedICDScheme(name=name,
                               codes=df['code'].tolist(),
                               desc=desc,
-                              icd_schemes=icd_schemes_loaded,
+                              icd_version_schemes=icd_version_schemes,
                               sep=sep)
 
     def mixedcode_format_table(self, table: pd.DataFrame, icd_code_alias: str,
@@ -214,10 +218,10 @@ class MixedICDScheme(CodingScheme):
         """
         assert icd_version_alias in table.columns, f"Column {icd_version_alias} not found."
         assert icd_code_alias in table.columns, f"Column {icd_code_alias} not found."
-        assert table[icd_version_alias].isin(self._icd_schemes).all(), \
-            f"Only ICD version {list(self._icd_schemes.keys())} are expected."
+        assert table[icd_version_alias].isin(self.icd_schemes).all(), \
+            f"Only ICD version {list(self.icd_schemes.keys())} are expected."
 
-        table = self.fix_dots(table, icd_code_alias, icd_version_alias, self._icd_schemes)
+        table = self.fix_dots(table, icd_code_alias, icd_version_alias, self.icd_schemes)
 
         # the version:icd_code format.
         table[code_alias] = table[icd_version_alias] + self._sep + table[icd_code_alias]
@@ -225,7 +229,7 @@ class MixedICDScheme(CodingScheme):
         # filter out codes that are not in the scheme.
         return table[table[code_alias].isin(self.codes)].reset_index(drop=True)
 
-    def generate_maps(self):
+    def register_standard_icd_maps(self, manager: CodingSchemesManager) -> CodingSchemesManager:
         """
         Register the mappings between the Mixed ICD scheme and the individual ICD scheme.
         For example, if the current `MixedICD` is mixing ICD-9 and ICD-10,
@@ -235,10 +239,10 @@ class MixedICDScheme(CodingScheme):
         """
 
         # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
-        mixed2pure_maps = {}
+        mixed2pure_maps: Dict[str, FrozenDict1N] = {}
         lost_codes = []
         dataframe = self.as_dataframe()
-        for pure_version, pure_scheme in self._icd_schemes.items():
+        for pure_version, pure_scheme in self.icd_schemes.items():
             # mixed2pure has the form {mixed_code: {icd}}.
             mixed2pure = defaultdict(set)
             for mixed_version, mixed_version_df in dataframe.groupby('icd_version'):
@@ -250,8 +254,8 @@ class MixedICDScheme(CodingScheme):
                 else:
                     # if mixed_version != pure_version, then retrieve
                     # the mapping between ICD-{mixed_version} and ICD-{pure_version}
-                    pure_map = CodeMap.get_mapper(self._icd_schemes[mixed_version].name,
-                                                  self._icd_schemes[pure_version].name)
+                    pure_map = manager.map[
+                        (self.icd_schemes[mixed_version].name, self.icd_schemes[pure_version].name)]
 
                     for icd, mixed_code in icd2mixed.items():
                         if icd in pure_map:
@@ -259,12 +263,12 @@ class MixedICDScheme(CodingScheme):
                         else:
                             lost_codes.append(mixed_code)
 
+            mixed2pure = FrozenDict1N.from_dict(mixed2pure)
             mixed2pure_maps[pure_version] = mixed2pure
         # register the mapping between the mixed and pure ICD schemes.
         for pure_version, mixed2pure in mixed2pure_maps.items():
-            pure_scheme = self._icd_schemes[pure_version]
-            conf = CodeMapConfig(source_scheme=self.name, target_scheme=pure_scheme.name)
-            CodeMap.register_map(CodeMap(conf, mixed2pure))
+            pure_scheme = self.icd_schemes[pure_version]
+            manager = manager.add_map(CodeMap(source_name=self.name, target_name=pure_scheme.name, data=mixed2pure))
 
         lost_df = dataframe[dataframe['code'].isin(lost_codes)]
         if len(lost_df) > 0:
@@ -272,16 +276,11 @@ class MixedICDScheme(CodingScheme):
                             "scheme and the individual ICD scheme.")
             logging.warning(lost_df.to_string().replace('\n', '\n\t'))
 
-    def register_maps_loaders(self):
-        """
-        Register the lazy-loading of mapping between the Mixed ICD scheme and the individual ICD scheme.
-        """
-        for pure_version, pure_scheme in self._icd_schemes.items():
-            CodeMap.register_map_loader(self.name, pure_scheme.name, self.generate_maps)
+        return manager
 
-    def register_map(self, target_name: str, mapping: pd.DataFrame,
+    def register_map(self, manager: CodingSchemesManager, target_name: str, mapping: pd.DataFrame,
                      c_code: str, c_icd_code: str, c_icd_version: str,
-                     c_target_code: str, c_target_desc: str) -> None:
+                     c_target_code: str, c_target_desc: str) -> CodingSchemesManager:
         """
         Register a mapping between the current Mixed ICD scheme and a target scheme.
         """
@@ -290,14 +289,14 @@ class MixedICDScheme(CodingScheme):
         mapping[c_code] = (mapping[c_icd_version] + self._sep + mapping[c_icd_code]).tolist()
         mapping = mapping[mapping[c_code].isin(self.codes)]
         assert len(mapping) > 0, "No mapping between the Mixed ICD scheme and the target scheme was found."
-        target_codes = sorted(mapping[c_target_code].drop_duplicates().tolist())
-        target_desc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
-        CodingScheme(CodingSchemeConfig(target_name), codes=target_codes, desc=target_desc).register()
+        target_codes = tuple(sorted(mapping[c_target_code].drop_duplicates().tolist()))
+        target_desc = FrozenDict11.from_dict(mapping.set_index(c_target_code)[c_target_desc].to_dict())
+        manager = manager.add_scheme(CodingScheme(name=target_name, codes=target_codes, desc=target_desc))
 
         mapping = mapping[[c_code, c_target_code]].astype(str)
         mapping = mapping[mapping[c_code].isin(self.codes) & mapping[c_target_code].isin(target_codes)]
-        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
-        CodeMap.register_map(CodeMap(CodeMapConfig(self.name, target_name), mapping))
+        mapping = FrozenDict1N.from_dict(mapping.groupby(c_code)[c_target_code].apply(set).to_dict())
+        return manager.add_map(CodeMap(source_name=self.name, target_name=target_name, data=mapping))
 
     def as_dataframe(self):
         columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
@@ -306,18 +305,13 @@ class MixedICDScheme(CodingScheme):
 
 
 class AggregatedICUInputsScheme(CodingScheme):
-    aggregation: Dict[str, str]
-
-    def __init__(self, config: CodingSchemeConfig, codes: List[str],
-                 desc: Dict[str, str],
-                 aggregation: Dict[str, str]):
-        super().__init__(config, codes=codes, desc=desc)
-        self.aggregation = aggregation
+    aggregation: FrozenDict11
 
     @staticmethod
-    def register_aggregated_scheme(scheme: CodingScheme,
+    def register_aggregated_scheme(manager: CodingSchemesManager,
+                                   scheme: CodingScheme,
                                    dataset_scheme_config: MIMICIVDatasetSchemeConfig,
-                                   dataset_tables_config: MIMICIVSQLTablesConfig) -> CodingScheme:
+                                   dataset_tables_config: MIMICIVSQLTablesConfig) -> CodingSchemesManager:
         """
         Register a target scheme and its mapping.
         """
@@ -327,20 +321,18 @@ class AggregatedICUInputsScheme(CodingScheme):
         c_target_desc = dataset_scheme_config.target_column_name(dataset_tables_config.icu_inputs.description_alias)
         c_target_aggregation = dataset_scheme_config.icu_inputs_aggregation_column
 
-        target_scheme_conf = CodingSchemeConfig(target_name)
         mapping = dataset_scheme_config.icu_inputs_map
-        target_codes = sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist())
-        target_desc = mapping.set_index(c_target_code)[c_target_desc].to_dict()
-        target_agg = mapping.set_index(c_target_code)[c_target_aggregation].to_dict()
-        target_scheme = AggregatedICUInputsScheme(target_scheme_conf, codes=target_codes, desc=target_desc,
+        target_codes = tuple(sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist()))
+        target_desc = FrozenDict11.from_dict(mapping.set_index(c_target_code)[c_target_desc].to_dict())
+        target_agg = FrozenDict11.from_dict(mapping.set_index(c_target_code)[c_target_aggregation].to_dict())
+        target_scheme = AggregatedICUInputsScheme(name=target_name, codes=target_codes, desc=target_desc,
                                                   aggregation=target_agg)
-        AggregatedICUInputsScheme.register_scheme(target_scheme)
+        manager = manager.add_scheme(target_scheme)
 
         mapping = mapping[[c_code, c_target_code]].astype(str)
         mapping = mapping[mapping[c_code].isin(scheme.codes) & mapping[c_target_code].isin(target_scheme.codes)]
-        mapping = mapping.groupby(c_code)[c_target_code].apply(set).to_dict()
-        CodeMap.register_map(CodeMap(CodeMapConfig(scheme.name, target_scheme.name), mapping))
-        return target_scheme
+        mapping = FrozenDict1N.from_dict(mapping.groupby(c_code)[c_target_code].apply(set).to_dict())
+        return manager.add_map(CodeMap(source_name=scheme.name, target_name=target_scheme.name, data=mapping))
 
 
 class AdmissionIntervalBasedMixedICDTableConfig(AdmissionMixedICDSQLTableConfig,
@@ -467,8 +459,9 @@ class ObservablesSQLTable(SQLTable):
         table_conf = next(t for t in self.config.components if t.name == table_name)
         return TimestampedMultiColumnSQLTable(config=table_conf)
 
-    def register_scheme(self, name: str,
-                        engine: Engine, attributes_selection: Optional[pd.DataFrame]) -> ObservableMIMICScheme:
+    def register_scheme(self, manager: CodingSchemesManager,
+                        name: str,
+                        engine: Engine, attributes_selection: Optional[pd.DataFrame]) -> CodingSchemesManager:
         supported_space = self.space(engine)
         if attributes_selection is None:
             attributes_selection = supported_space
@@ -482,9 +475,7 @@ class ObservablesSQLTable(SQLTable):
                                                 suffixes=(None, '_y'),
                                                 how='inner')
 
-        scheme = ObservableMIMICScheme.from_selection(name, attributes_selection)
-        CodingScheme.register_scheme(scheme)
-        return scheme
+        return manager.add_scheme(ObservableMIMICScheme.from_selection(name, attributes_selection))
 
 
 class MixedICDSQLTable(CategoricalSQLTable):
@@ -493,11 +484,12 @@ class MixedICDSQLTable(CategoricalSQLTable):
     config: AdmissionMixedICDSQLTableConfig
 
     @staticmethod
-    def _register_scheme(name: str,
-                         icd_schemes: Dict[str, str],
+    def _register_scheme(manager: CodingSchemesManager,
+                         name: str,
+                         icd_version_schemes: FrozenDict11,
                          supported_space: pd.DataFrame,
                          icd_version_selection: Optional[pd.DataFrame],
-                         c_version: str, c_code: str, c_desc: str) -> MixedICDScheme:
+                         c_version: str, c_code: str, c_desc: str) -> CodingSchemesManager:
         # TODO: test this method.
         if icd_version_selection is None:
             icd_version_selection = supported_space[[c_version, c_code, c_desc]].drop_duplicates()
@@ -516,37 +508,38 @@ class MixedICDSQLTable(CategoricalSQLTable):
 
                 assert len(unsupported_codes) == 0, f'Codes {unsupported_codes} are not supported for version {version}'
 
-        scheme = MixedICDScheme.from_selection(name, icd_version_selection,
-                                               icd_version_alias=c_version,
-                                               icd_code_alias=c_code,
-                                               description_alias=c_desc,
-                                               icd_schemes=icd_schemes)
-        MixedICDScheme.register_scheme(scheme)
-        scheme.register_maps_loaders()
+        manager = manager.add_scheme(MixedICDScheme.from_selection(manager, name, icd_version_selection,
+                                                                   icd_version_alias=c_version,
+                                                                   icd_code_alias=c_code,
+                                                                   description_alias=c_desc,
+                                                                   icd_version_schemes=icd_version_schemes))
+        scheme: MixedICDScheme = manager.scheme[name]
+        return scheme.register_standard_icd_maps(manager)
 
-        return scheme
-
-    def register_scheme(self, name: str,
+    def register_scheme(self, manager: CodingSchemesManager,
+                        name: str,
                         engine: Engine,
-                        icd_schemes: Dict[str, str],
+                        icd_version_schemes: FrozenDict11,
                         icd_version_selection: pd.DataFrame,
                         target_name: Optional[str],
                         c_target_code: Optional[str],
                         c_target_desc: Optional[str],
-                        mapping: Optional[pd.DataFrame]) -> MixedICDScheme:
+                        mapping: Optional[pd.DataFrame]) -> CodingSchemesManager:
         c_version = self.config.icd_version_alias
         c_code = self.config.icd_code_alias
         c_desc = self.config.description_alias
-        scheme = self._register_scheme(name=name, icd_schemes=icd_schemes,
-                                       supported_space=self.space(engine),
-                                       icd_version_selection=icd_version_selection,
-                                       c_version=c_version, c_code=c_code, c_desc=c_desc)
+        manager = self._register_scheme(manager=manager,
+                                        name=name, icd_version_schemes=icd_version_schemes,
+                                        supported_space=self.space(engine),
+                                        icd_version_selection=icd_version_selection,
+                                        c_version=c_version, c_code=c_code, c_desc=c_desc)
         if target_name is not None and mapping is not None:
-            scheme.register_map(target_name, mapping,
-                                c_code=c_code, c_icd_code=c_code, c_icd_version=c_version,
-                                c_target_code=c_target_code,
-                                c_target_desc=c_target_desc)
-        return scheme
+            mixed_icd_scheme: MixedICDScheme = manager.scheme[name]
+            manager = mixed_icd_scheme.register_map(manager=manager, target_name=target_name, mapping=mapping,
+                                                    c_code=c_code, c_icd_code=c_code, c_icd_version=c_version,
+                                                    c_target_code=c_target_code,
+                                                    c_target_desc=c_target_desc)
+        return manager
 
     def _coerce_version_to_str(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -566,11 +559,11 @@ class CodedSQLTable(CategoricalSQLTable):
 
     config: CodedSQLTableConfig
 
-    def register_scheme(self, name: str,
-                        engine: Engine, code_selection: Optional[pd.DataFrame]) -> CodingScheme:
-        return CodingScheme.register_scheme_from_selection(name=name, supported_space=self.space(engine),
-                                                           code_selection=code_selection, c_code=self.config.code_alias,
-                                                           c_desc=self.config.description_alias)
+    def register_scheme(self, manager: CodingSchemesManager, name: str,
+                        engine: Engine, code_selection: Optional[pd.DataFrame]) -> CodingSchemesManager:
+        return manager.register_scheme_from_selection(name=name, supported_space=self.space(engine),
+                                                      code_selection=code_selection, c_code=self.config.code_alias,
+                                                      c_desc=self.config.description_alias)
 
 
 class TimestampedMultiColumnSQLTable(SQLTable):
@@ -631,37 +624,43 @@ class StaticSQLTable(SQLTable):
         query = self.config.race_space_query.format(**self.config.alias_dict)
         return pd.read_sql(query, engine)
 
-    def register_gender_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
-                               engine: Engine):
+    def register_gender_scheme(self, manager: CodingSchemesManager,
+                               scheme_config: MIMICIVDatasetSchemeConfig,
+                               engine: Engine) -> CodingSchemesManager:
 
-        scheme = CodingScheme.register_scheme_from_selection(name=scheme_config.gender,
-                                                             supported_space=self.gender_space(engine),
-                                                             code_selection=scheme_config.gender_selection,
-                                                             c_code=self.config.gender_alias,
-                                                             c_desc=self.config.gender_alias)
+        manager = manager.register_scheme_from_selection(name=scheme_config.gender,
+                                                         supported_space=self.gender_space(engine),
+                                                         code_selection=scheme_config.gender_selection,
+                                                         c_code=self.config.gender_alias,
+                                                         c_desc=self.config.gender_alias)
         if scheme_config.gender_map is not None:
-            scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.gender),
-                                          scheme_config.gender_map,
-                                          c_code=self.config.gender_alias,
-                                          c_target_code=scheme_config.target_column_name(self.config.gender_alias),
-                                          c_target_desc=scheme_config.target_column_name(self.config.gender_alias))
-        return scheme
+            manager = manager.register_target_scheme(
+                scheme_config.gender,
+                scheme_config.propose_target_scheme_name(scheme_config.gender),
+                scheme_config.gender_map,
+                c_code=self.config.gender_alias,
+                c_target_code=scheme_config.target_column_name(self.config.gender_alias),
+                c_target_desc=scheme_config.target_column_name(self.config.gender_alias))
+        return manager
 
-    def register_ethnicity_scheme(self, scheme_config: MIMICIVDatasetSchemeConfig,
-                                  engine: Engine):
+    def register_ethnicity_scheme(self, manager: CodingSchemesManager, scheme_config: MIMICIVDatasetSchemeConfig,
+                                  engine: Engine) -> CodingSchemesManager:
 
-        scheme = CodingScheme.register_scheme_from_selection(name=scheme_config.ethnicity,
-                                                             supported_space=self.ethnicity_space(engine),
-                                                             code_selection=scheme_config.ethnicity_selection,
-                                                             c_code=self.config.race_alias,
-                                                             c_desc=self.config.race_alias)
+        manager = manager.register_scheme_from_selection(name=scheme_config.ethnicity,
+                                                         supported_space=self.ethnicity_space(engine),
+                                                         code_selection=scheme_config.ethnicity_selection,
+                                                         c_code=self.config.race_alias,
+                                                         c_desc=self.config.race_alias)
         if scheme_config.ethnicity_map is not None:
-            scheme.register_target_scheme(scheme_config.propose_target_scheme_name(scheme_config.ethnicity),
-                                          scheme_config.ethnicity_map,
-                                          c_code=self.config.race_alias,
-                                          c_target_code=scheme_config.target_column_name(self.config.race_alias),
-                                          c_target_desc=scheme_config.target_column_name(self.config.race_alias))
-        return scheme
+            manager = manager.register_target_scheme(scheme_config.ethnicity,
+                                                     scheme_config.propose_target_scheme_name(scheme_config.ethnicity),
+                                                     scheme_config.ethnicity_map,
+                                                     c_code=self.config.race_alias,
+                                                     c_target_code=scheme_config.target_column_name(
+                                                         self.config.race_alias),
+                                                     c_target_desc=scheme_config.target_column_name(
+                                                         self.config.race_alias))
+        return manager
 
 
 ENV_MIMICIV_HOST: Final[str] = 'MIMICIV_HOST'
@@ -709,7 +708,7 @@ class MIMICIVSQLTablesConfig(DatasetTablesConfig):
         return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}'
 
 
-class MIMICIVDatasetSchemeMapsFiles(Config):
+class DatasetSchemeMapsFiles(Config):
     gender: Optional[str] = 'gender.csv'
     ethnicity: Optional[str] = 'ethnicity.csv'
     icu_inputs: Optional[str] = 'icu_inputs.csv'
@@ -717,7 +716,7 @@ class MIMICIVDatasetSchemeMapsFiles(Config):
     hosp_procedures: Optional[str] = 'hosp_procedures.csv'
 
 
-class MIMICIVDatasetSchemeSelectionFiles(Config):
+class DatasetSchemeSelectionFiles(Config):
     gender: Optional[str] = 'gender.csv'
     ethnicity: Optional[str] = 'ethnicity.csv'
     icu_inputs: Optional[str] = 'icu_inputs.csv'
@@ -741,8 +740,8 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     resources_dir: str = 'mimiciv'
     selection_subdir: str = 'selection'
     map_subdir: str = 'map'
-    map_files: MIMICIVDatasetSchemeMapsFiles = MIMICIVDatasetSchemeMapsFiles()
-    selection_files: MIMICIVDatasetSchemeSelectionFiles = MIMICIVDatasetSchemeSelectionFiles()
+    map_files: DatasetSchemeMapsFiles = DatasetSchemeMapsFiles()
+    selection_files: DatasetSchemeSelectionFiles = DatasetSchemeSelectionFiles()
     icu_inputs_uom_normalization: Optional[Tuple[str]] = ("uom_normalization", "icu_inputs.csv")
     icu_inputs_aggregation_column: Optional[str] = 'aggregation'
 
@@ -834,19 +833,9 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
         return self.map_file(self.map_files.hosp_procedures)
 
 
-class MIMICIVDatasetScheme(DatasetScheme):
-    ethnicity: CodingScheme
-    gender: CodingScheme
-    dx_discharge: MixedICDScheme
-    obs: Optional[ObservableMIMICScheme] = None
-    icu_procedures: Optional[CodingScheme] = None
-    hosp_procedures: Optional[MixedICDScheme] = None
-    icu_inputs: Optional[CodingScheme] = None
-
-
 class MIMICIVSQLConfig(DatasetConfig):
     tables: MIMICIVSQLTablesConfig
-    scheme: MIMICIVDatasetSchemeConfig
+    scheme: DatasetSchemeConfig
 
 
 class MIMICIVSQLTablesInterface(Module):
@@ -857,21 +846,24 @@ class MIMICIVSQLTablesInterface(Module):
     def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(self.config.url())
 
-    def register_gender_scheme(self, config: MIMICIVDatasetSchemeConfig) -> CodingScheme:
+    def register_gender_scheme(self, manager: CodingSchemesManager,
+                               config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_gender_scheme(config, self.create_engine())
+        return table.register_gender_scheme(manager, config, self.create_engine())
 
-    def register_ethnicity_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_ethnicity_scheme(self, manager: CodingSchemesManager,
+                                  config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         TODO: document me.
         """
         table = StaticSQLTable(self.config.static)
-        return table.register_ethnicity_scheme(config, self.create_engine())
+        return table.register_ethnicity_scheme(manager, config, self.create_engine())
 
-    def register_obs_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_obs_scheme(self, manager: CodingSchemesManager,
+                            config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         From the given selection of observable variables `attributes_selection`, generate a new scheme
         that can be used to generate for vectorisation of the timestamped observations.
@@ -885,11 +877,12 @@ class MIMICIVSQLTablesInterface(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = ObservablesSQLTable(self.config.obs)
-        return table.register_scheme(config.obs,
+        return table.register_scheme(manager, config.obs,
                                      self.create_engine(),
                                      config.obs_selection)
 
-    def register_icu_inputs_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_icu_inputs_scheme(self, manager: CodingSchemesManager,
+                                   config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         From the given selection of ICU input items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU inputs. If `code_selection` is None,
@@ -907,12 +900,14 @@ class MIMICIVSQLTablesInterface(Module):
         mapping = config.icu_inputs_map
         c_aggregation = config.icu_inputs_aggregation_column
         table = CodedSQLTable(self.config.icu_inputs)
-        scheme = table.register_scheme(config.icu_inputs, self.create_engine(), code_selection)
+        manager = table.register_scheme(manager, config.icu_inputs, self.create_engine(), code_selection)
         if mapping is not None and c_aggregation is not None:
-            AggregatedICUInputsScheme.register_aggregated_scheme(scheme, config, self.config)
-        return scheme
+            manager = AggregatedICUInputsScheme.register_aggregated_scheme(manager, manager.scheme[config.icu_inputs],
+                                                                           config, self.config)
+        return manager
 
-    def register_icu_procedures_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_icu_procedures_scheme(self, manager: CodingSchemesManager,
+                                       config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         From the given selection of ICU procedure items `code_selection`, generate a new scheme
         that can be used to generate for vectorisation of the ICU procedures. If `code_selection` is None,
@@ -927,19 +922,21 @@ class MIMICIVSQLTablesInterface(Module):
         """
 
         table = CodedSQLTable(self.config.icu_procedures)
-        scheme = table.register_scheme(config.icu_procedures, self.create_engine(),
-                                       config.icu_procedures_selection)
+        manager = table.register_scheme(manager, config.icu_procedures, self.create_engine(),
+                                        config.icu_procedures_selection)
         mapping = config.icu_procedures_map
         if mapping is not None:
             c_target_code = config.target_column_name(self.config.icu_procedures.code_alias)
             c_target_desc = config.target_column_name(self.config.icu_procedures.description_alias)
-            scheme.register_target_scheme(config.propose_target_scheme_name(config.icu_procedures), mapping,
-                                          c_code=self.config.icu_procedures.code_alias,
-                                          c_target_code=c_target_code,
-                                          c_target_desc=c_target_desc)
-        return scheme
+            manager = manager.register_target_scheme(config.icu_procedures,
+                                                     config.propose_target_scheme_name(config.icu_procedures), mapping,
+                                                     c_code=self.config.icu_procedures.code_alias,
+                                                     c_target_code=c_target_code,
+                                                     c_target_desc=c_target_desc)
+        return manager
 
-    def register_hosp_procedures_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_hosp_procedures_scheme(self, manager: CodingSchemesManager,
+                                        config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         From the given selection of hospital procedure items `icd_version_selection`, generate a new scheme.
 
@@ -954,9 +951,11 @@ class MIMICIVSQLTablesInterface(Module):
         """
 
         table = MixedICDSQLTable(self.config.hosp_procedures)
-        return table.register_scheme(name=config.hosp_procedures,
+
+        icd_version_schemes = FrozenDict11.from_dict({'9': 'pr_icd9', '10': 'pr_flat_icd10'})
+        return table.register_scheme(manager, name=config.hosp_procedures,
                                      engine=self.create_engine(),
-                                     icd_schemes={'9': 'pr_icd9', '10': 'pr_flat_icd10'},
+                                     icd_version_schemes=icd_version_schemes,
                                      icd_version_selection=config.hosp_procedures_selection,
                                      target_name=config.propose_target_scheme_name(config.hosp_procedures),
                                      c_target_code=config.target_column_name(self.config.hosp_procedures.code_alias),
@@ -964,7 +963,8 @@ class MIMICIVSQLTablesInterface(Module):
                                          self.config.hosp_procedures.description_alias),
                                      mapping=config.hosp_procedures_map)
 
-    def register_dx_discharge_scheme(self, config: MIMICIVDatasetSchemeConfig):
+    def register_dx_discharge_scheme(self, manager: CodingSchemesManager,
+                                     config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         From the given selection of discharge diagnosis items `icd_version_selection`, generate a new scheme.
 
@@ -978,8 +978,9 @@ class MIMICIVSQLTablesInterface(Module):
             (CodingScheme.FlatScheme) A new scheme that is also registered in the current runtime.
         """
         table = MixedICDSQLTable(self.config.dx_discharge)
-        return table.register_scheme(config.dx_discharge, self.create_engine(),
-                                     {'9': 'dx_icd9', '10': 'dx_flat_icd10'},
+
+        return table.register_scheme(manager, config.dx_discharge, self.create_engine(),
+                                     FrozenDict11.from_dict({'9': 'dx_icd9', '10': 'dx_flat_icd10'}),
                                      config.dx_discharge_selection,
                                      target_name=None,
                                      c_target_code=None,
@@ -1068,23 +1069,23 @@ class MIMICIVSQLTablesInterface(Module):
         dataframe = table(engine)
         return procedure_icd_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version, c_code)
 
-    def dataset_scheme_from_selection(self, config: MIMICIVDatasetSchemeConfig) -> MIMICIVDatasetScheme:
+    def dataset_scheme_manager_from_selection(self, config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
         Create a dataset scheme from the given config.
         TODO: document me.
         Returns:
             (CodingScheme.DatasetScheme) A new scheme that is also registered in the current runtime.
         """
-        return MIMICIVDatasetScheme(config=config,
-                                    gender=self.register_gender_scheme(config),
-                                    ethnicity=self.register_ethnicity_scheme(config),
-                                    icu_inputs=self.register_icu_inputs_scheme(config),
-                                    icu_procedures=self.register_icu_procedures_scheme(config),
-                                    hosp_procedures=self.register_hosp_procedures_scheme(config),
-                                    dx_discharge=self.register_dx_discharge_scheme(config),
-                                    obs=self.register_obs_scheme(config))
+        return DatasetScheme(config=config,
+                             gender=self.register_gender_scheme(config),
+                             ethnicity=self.register_ethnicity_scheme(config),
+                             icu_inputs=self.register_icu_inputs_scheme(config),
+                             icu_procedures=self.register_icu_procedures_scheme(config),
+                             hosp_procedures=self.register_hosp_procedures_scheme(config),
+                             dx_discharge=self.register_dx_discharge_scheme(config),
+                             obs=self.register_obs_scheme(config))
 
-    def load_tables(self, dataset_scheme: MIMICIVDatasetScheme) -> DatasetTables:
+    def load_tables(self, dataset_scheme: DatasetScheme) -> DatasetTables:
         if dataset_scheme.hosp_procedures is not None:
             hosp_procedures = self._extract_hosp_procedures_table(self.create_engine(),
                                                                   dataset_scheme.hosp_procedures)
@@ -1125,7 +1126,7 @@ class MIMICIVDatasetPipelineConfig(AbstractDatasetPipelineConfig):
 class MIMICIVDatasetConfig(MIMICIVSQLConfig):
     tables: MIMICIVSQLTablesConfig = field(default_factory=MIMICIVSQLTablesConfig, kw_only=True)
     pipeline: MIMICIVDatasetPipelineConfig = MIMICIVDatasetPipelineConfig()
-    scheme: MIMICIVDatasetSchemeConfig = MIMICIVDatasetSchemeConfig()
+    scheme: DatasetSchemeConfig = DatasetSchemeConfig()
 
 
 class MIMICIVDataset(Dataset):
@@ -1154,12 +1155,12 @@ class MIMICIVDataset(Dataset):
         return df
 
     @classmethod
-    def load_dataset_scheme(cls, config: MIMICIVSQLConfig) -> MIMICIVDatasetScheme:
+    def load_scheme_manager(cls, config: DatasetConfig) -> CodingSchemesManager:
         sql = MIMICIVSQLTablesInterface(config.tables)
-        return sql.dataset_scheme_from_selection(config=config.scheme)
+        return sql.dataset_scheme_manager_from_selection(config=config.scheme)
 
     @classmethod
-    def load_tables(cls, config: MIMICIVSQLConfig, scheme: MIMICIVDatasetScheme) -> DatasetTables:
+    def load_tables(cls, config: MIMICIVSQLConfig, scheme: DatasetScheme) -> DatasetTables:
         sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.load_tables(scheme)
 

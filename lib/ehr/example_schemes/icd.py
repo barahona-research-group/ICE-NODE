@@ -8,8 +8,9 @@ from typing import Set, Dict, List, Union, Any, ClassVar, Type, Tuple, Final
 
 import pandas as pd
 
-from lib.ehr.coding_scheme import (CodingSchemeConfig, CodingScheme, CodingScheme, HierarchicalScheme,
-                                   CodeMapConfig, CodeMap, resources_dir, FileBasedOutcomeExtractor)
+from lib.ehr.coding_scheme import (CodingScheme, HierarchicalScheme,
+                                   CodeMap, resources_dir, FileBasedOutcomeExtractor, CodingSchemesManager,
+                                   FrozenDict11, FrozenDict1N)
 
 
 class ICDOps:
@@ -68,7 +69,7 @@ class ICDScheme(CodingScheme):
     ops: ClassVar[Type[ICDOps]] = ICDOps
 
     @classmethod
-    def create_scheme(cls):
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
         raise NotImplementedError
 
 
@@ -126,10 +127,10 @@ class ICDMapOps:
         return pd.DataFrame({'code': codes, 'status': status})
 
     @staticmethod
-    def register_mappings(source_scheme: str, target_scheme: str,
-                          conversion_filename: str):
-        source_scheme: ICDScheme = CodingScheme.from_name(source_scheme)
-        target_scheme: ICDScheme = CodingScheme.from_name(target_scheme)
+    def register_mappings(manager: CodingSchemesManager, source_scheme: str, target_scheme: str,
+                          conversion_filename: str) -> CodingSchemesManager:
+        source_scheme: ICDScheme = manager.scheme[source_scheme]
+        target_scheme: ICDScheme = manager.scheme[target_scheme]
         table, _ = ICDMapOps.load_conversion_table(source_scheme=source_scheme, target_scheme=target_scheme,
                                                    conversion_filename=conversion_filename)
         status_df = ICDMapOps.analyse_conversions(table)
@@ -139,10 +140,7 @@ class ICDMapOps:
             if mapping_status[code] == 'no_map':
                 continue
             data[code] = set(code_targets_table['target'])
-        config = CodeMapConfig(source_scheme=source_scheme.name,
-                               target_scheme=target_scheme.name,
-                               mapped_to_dag_space=False)
-        CodeMap.register_map(CodeMap(config=config, data=data))
+        return manager.add_map(CodeMap(source_name=source_scheme.name, arget_name=target_scheme.name, data=data))
 
 
 class DxICD10Ops(ICDOps):
@@ -209,7 +207,7 @@ class DxICD10Ops(ICDOps):
                 for dx in diags:
                     _traverse_diag_dfs(sec_name, dx)
 
-        icd_codes = sorted(c.split(':')[1] for c in desc if 'dx_discharge:' in c)
+        icd_codes = tuple(sorted(c.split(':')[1] for c in desc if 'dx_discharge:' in c))
         icd_desc = {c: desc[f'dx_discharge:{c}'] for c in icd_codes}
 
         if not hierarchical:
@@ -218,16 +216,15 @@ class DxICD10Ops(ICDOps):
                 'desc': icd_desc
             }
         icd2dag = {c: f'dx_discharge:{c}' for c in icd_codes}
-        dag_codes = [f'dx_discharge:{c}' for c in icd_codes] + sorted(
-            c for c in set(desc) - set(icd2dag.values()))
+        dag_codes = set(f'dx_discharge:{c}' for c in icd_codes) | set(c for c in set(desc) - set(icd2dag.values()))
 
         return {
             'codes': icd_codes,
-            'desc': icd_desc,
-            'code2dag': icd2dag,
-            'dag_codes': dag_codes,
-            'dag_desc': desc,
-            'pt2ch': dict(pt2ch)
+            'desc': FrozenDict11.from_dict(icd_desc),
+            'code2dag': FrozenDict11.from_dict(icd2dag),
+            'dag_codes': tuple(sorted(dag_codes)),
+            'dag_desc': FrozenDict11.from_dict(desc),
+            'ch2pt': HierarchicalScheme.reverse_connection(FrozenDict1N.from_dict(pt2ch))
         }
 
 
@@ -286,12 +283,12 @@ class PrICD10Ops(ICDOps):
         dag_desc.update({c: c for c in set(dag_codes) - set(dag_desc)})
 
         return {
-            'codes': codes,
-            'desc': desc,
-            'code2dag': code2dag,
-            'dag_codes': dag_codes,
-            'dag_desc': dag_desc,
-            'pt2ch': pt2ch
+            'codes': tuple(sorted(codes)),
+            'desc': FrozenDict11.from_dict(desc),
+            'code2dag': FrozenDict11.from_dict(code2dag),
+            'dag_codes': tuple(sorted(dag_codes)),
+            'dag_desc': FrozenDict11.from_dict(dag_desc),
+            'ch2pt': HierarchicalScheme.reverse_connection(FrozenDict1N.from_dict(pt2ch))
         }
 
 
@@ -357,11 +354,11 @@ class ICD9Ops(ICDOps):
         dag_desc = dict(zip(df['NODE_IDX'], df['LABEL']))
 
         return {
-            'codes': icd_codes,
-            'desc': icd_desc,
-            'code2dag': icd2dag,
-            'dag_codes': dag_codes,
-            'dag_desc': dag_desc
+            'codes': tuple(sorted(icd_codes)),
+            'desc': FrozenDict11.from_dict(icd_desc),
+            'code2dag': FrozenDict11.from_dict(icd2dag),
+            'dag_codes': tuple(sorted(dag_codes)),
+            'dag_desc': FrozenDict11.from_dict(dag_desc)
         }
 
 
@@ -400,48 +397,48 @@ class DxHierarchicalICD10(ICDHierarchicalScheme):
     ops: ClassVar[Type[DxICD10Ops]] = DxICD10Ops
 
     @classmethod
-    def create_scheme(cls):
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
-        config = CodingSchemeConfig(name='dx_icd10')
-        CodingScheme.register_scheme(
-            cls(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', True)))
+        return manager.add_scheme(
+            cls(name='dx_icd10', **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', True)))
 
 
 class DxFlatICD10(ICDFlatScheme):
     ops: ClassVar[Type[DxICD10Ops]] = DxICD10Ops
 
     @classmethod
-    def create_scheme(cls):
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
         # https://ftp.cdc.gov/pub/Health_Statistics/NCHS/Publications/ICD10CM/2023/
-        config = CodingSchemeConfig(name='dx_flat_icd10')
-        scheme = cls(config=config, **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', False))
-        CodingScheme.register_scheme(scheme)
+
+        return manager.add_scheme(
+            cls(name='dx_flat_icd10', **cls.ops.distill_icd10_xml('icd10cm_tabular_2023.xml.gz', False)))
 
 
 class PrHierarchicalICD10(ICDHierarchicalScheme):
     ops: ClassVar[Type[PrICD10Ops]] = PrICD10Ops
 
     @classmethod
-    def create_scheme(cls):
-        scheme = PrHierarchicalICD10(config=CodingSchemeConfig(name='pr_icd10'),
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
+        scheme = PrHierarchicalICD10(name='pr_icd10',
                                      **cls.ops.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', True))
-        CodingScheme.register_scheme(scheme)
+        return manager.add_scheme(scheme)
 
 
 class PrFlatICD10(ICDFlatScheme):
     ops: ClassVar[Type[PrICD10Ops]] = PrICD10Ops
 
     @classmethod
-    def create_scheme(cls):
-        CodingScheme.register_scheme(PrFlatICD10(CodingSchemeConfig(name='pr_flat_icd10'),
-                                                 **cls.ops.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', False)))
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
+        scheme = PrFlatICD10(name='pr_flat_icd10',
+                             **cls.ops.distill_icd10_xml('icd10pcs_codes_2023.txt.gz', False))
+        return manager.add_scheme(scheme)
 
 
 class DxHierarchicalICD9(ICDHierarchicalScheme):
     ops: ClassVar[Type[DxICD9Ops]] = DxICD9Ops
 
     @classmethod
-    def create_scheme(cls):
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
         df = pd.DataFrame(cls.ops.icd9_columns())
         pt2ch = cls.ops.parent_child_mappings(df)
 
@@ -453,15 +450,16 @@ class DxHierarchicalICD9(ICDHierarchicalScheme):
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
-        CodingScheme.register_scheme(DxHierarchicalICD9(config=CodingSchemeConfig(name='dx_icd9'),
-                                                        **cls.ops.generate_dictionaries(df), pt2ch=pt2ch))
+        scheme = DxHierarchicalICD9(name='dx_icd9',
+                                    **cls.ops.generate_dictionaries(df), pt2ch=pt2ch)
+        return manager.add_scheme(scheme)
 
 
 class PrHierarchicalICD9(ICDHierarchicalScheme):
     ops: ClassVar[Type[PrICD9Ops]] = PrICD9Ops
 
     @classmethod
-    def create_scheme(cls):
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
         df = pd.DataFrame(cls.ops.icd9_columns())
         pt2ch = cls.ops.parent_child_mappings(df)
 
@@ -473,8 +471,9 @@ class PrHierarchicalICD9(ICDHierarchicalScheme):
 
         # Filter out the procedure code from the df.
         df = df[df['NODE_IDX'].isin(nodes)]
-        CodingScheme.register_scheme(PrHierarchicalICD9(config=CodingSchemeConfig(name='pr_icd9'),
-                                                        **cls.ops.generate_dictionaries(df), pt2ch=pt2ch))
+        scheme = PrHierarchicalICD9(name='pr_icd9',
+                                    **cls.ops.generate_dictionaries(df), pt2ch=pt2ch)
+        return manager.add_scheme(scheme)
 
 
 class CCSMapOps:
@@ -503,20 +502,14 @@ class CCSMapOps:
         }
 
     @classmethod
-    def register_mappings(cls, ccs_scheme: str,
-                          icd9_scheme: str):
-        ccs_scheme: CodingScheme = CodingScheme.from_name(ccs_scheme)
-        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(icd9_scheme)
+    def register_mappings(cls, manager: CodingSchemesManager, ccs_scheme: str,
+                          icd9_scheme: str) -> CodingSchemesManager:
+        ccs_scheme: CodingScheme = manager.scheme[ccs_scheme]
+        icd9_scheme: ICDHierarchicalScheme = manager.scheme[icd9_scheme]
 
         res = cls.ccs_columns(icd9_scheme)
 
         # TODO: Check if the mapping is correct
-        icd92ccs_config = CodeMapConfig(icd9_scheme.name,
-                                        ccs_scheme.name,
-                                        t_dag_space=False)
-        ccs2icd9_config = CodeMapConfig(ccs_scheme.name,
-                                        icd9_scheme.name,
-                                        t_dag_space=False)
         icd92ccs = defaultdict(set)
         ccs2icd9 = defaultdict(set)
 
@@ -533,8 +526,11 @@ class CCSMapOps:
                 icd92ccs[icd_code].add(last_index)
                 ccs2icd9[last_index].add(icd_code)
 
-        CodeMap.register_map(CodeMap(icd92ccs_config, dict(icd92ccs)))
-        CodeMap.register_map(CodeMap(ccs2icd9_config, dict(ccs2icd9)))
+        manager = manager.add_map(CodeMap(source_name=icd9_scheme.name,
+                                          target_name=ccs_scheme.name, data=FrozenDict1N.from_dict(dict(icd92ccs))))
+        manager = manager.add_map(CodeMap(source_name=ccs_scheme.name,
+                                          target_name=icd9_scheme.name, data=FrozenDict1N.from_dict(dict(ccs2icd9))))
+        return manager
 
     @classmethod
     def parent_child_mappings(cls, df: pd.DataFrame) -> Dict[str, Set[str]]:
@@ -598,17 +594,17 @@ class CCSHierarchicalScheme(HierarchicalScheme):
     SCHEME_NAME: str = None
 
     @classmethod
-    def create_scheme(cls):
-        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.ICD9_SCHEME_NAME)
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
+        icd9_scheme: ICDHierarchicalScheme = manager.scheme[cls.ICD9_SCHEME_NAME]
         cols, _ = cls.ops.ccs_columns(icd9_scheme)
         df = pd.DataFrame(cols)
-        pt2ch = cls.ops.parent_child_mappings(df)
-        desc = cls.ops.desc_mappings(df)
-        codes = sorted(desc.keys())
-        CodingScheme.register_scheme(cls(CodingSchemeConfig(name=cls.SCHEME_NAME),
-                                         pt2ch=pt2ch,
-                                         codes=codes,
-                                         desc=desc))
+        ch2pt = HierarchicalScheme.reverse_connection(FrozenDict1N.from_dict(cls.ops.parent_child_mappings(df)))
+        desc = FrozenDict11.from_dict(cls.ops.desc_mappings(df))
+        codes = tuple(sorted(desc.keys()))
+        return manager.add_scheme(cls(name=cls.SCHEME_NAME,
+                                      pt2ch=ch2pt,
+                                      codes=codes,
+                                      desc=desc))
 
 
 class DxCCS(CCSHierarchicalScheme):
@@ -697,10 +693,12 @@ class DxFlatCCS(FlatCCSScheme):
     ICD9_SCHEME_NAME: str = 'dx_icd9'
     SCHEME_NAME: str = 'dx_flatccs'
 
+
 class PrFlatCCS(FlatCCSScheme):
     ops: ClassVar[Type[PrFlatCCSMapOps]] = PrFlatCCSMapOps
     ICD9_SCHEME_NAME: str = 'pr_icd9'
     SCHEME_NAME: str = 'pr_flatccs'
+
 
 def setup_scheme_loaders():
     CodingScheme.register_scheme_loader('dx_icd10', DxHierarchicalICD10.create_scheme)

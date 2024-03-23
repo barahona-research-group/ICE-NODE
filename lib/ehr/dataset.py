@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import tables as tbl
 
-from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint)
+from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint, CodingSchemesManager, SchemeManagerView)
 from ..base import Config, Module
 from ..utils import write_config, load_config, tqdm_constructor
 
@@ -343,11 +343,11 @@ class DatasetScheme(Module):
         supported_target_scheme_options(self): returns the supported target scheme options for each coding scheme.
     """
     config: DatasetSchemeConfig
+    scheme_manager: SchemeManagerView
 
-    @staticmethod
-    def _scheme(name: str) -> Optional[CodingScheme]:
+    def _scheme(self, name: str) -> Optional[CodingScheme]:
         try:
-            return CodingScheme.from_name(name)
+            return self.scheme_manager.scheme[name]
         except KeyError as e:
             return None
 
@@ -383,7 +383,7 @@ class DatasetScheme(Module):
     def scheme_dict(self):
         return {
             k: self._scheme(v)
-            for k, v in self.config.as_dict().items() if isinstance(self._scheme(v), CodingScheme)
+            for k, v in self.config.as_dict().items() if self._scheme(v) is not None
         }
 
 
@@ -681,11 +681,15 @@ class Dataset(AbstractDatasetRepresentation):
     """
     config: DatasetConfig
     tables: DatasetTables
+    scheme_manager: CodingSchemesManager
 
-    def __init__(self, config: DatasetConfig, tables: Optional[DatasetTables] = None):
+    def __init__(self, config: DatasetConfig, tables: Optional[DatasetTables] = None,
+                 scheme_manager: Optional[CodingSchemesManager] = None):
         super().__init__(config=config)
         # TODO: offload table loading to the pipeline.
+        self.scheme_manager = scheme_manager
         self.tables = self.load_tables(config, self.scheme) if tables is None else tables
+        self.scheme_manager = self.scheme.manager._manager
 
     @classmethod
     @abstractmethod
@@ -707,6 +711,8 @@ class Dataset(AbstractDatasetRepresentation):
 
         h5file = store._v_file
         self.tables.save(h5file.create_group(store, 'tables'))
+        self.scheme_manager.to_hdf_group(h5file.create_group(store, 'schemes'))
+
         if len(self.pipeline_report) > 0:
             report_key = h5file.create_group(store, 'report')._v_pathname
             self.pipeline_report.to_hdf(h5file.filename, key=report_key, format='table')
@@ -718,9 +724,11 @@ class Dataset(AbstractDatasetRepresentation):
                 return cls.load(store.root)
         h5file = store._v_file
         config, classname = cls.load_config(Path(h5file.filename), key='dataset')
+        scheme_manager = CodingSchemesManager.from_hdf_group(h5file.root.schemes)
         dataset = Module.import_module(config=config,
                                        classname=classname,
-                                       tables=DatasetTables.load(store.tables))
+                                       tables=DatasetTables.load(store.tables),
+                                       scheme_manager=scheme_manager)
         if hasattr(store, 'report'):
             pipeline_report = pd.read_hdf(h5file.filename, key=store.report._v_pathname, mode='r')
             dataset = eqx.tree_at(lambda x: x.pipeline_report, dataset, pipeline_report)
@@ -728,11 +736,14 @@ class Dataset(AbstractDatasetRepresentation):
 
     @cached_property
     def scheme(self) -> DatasetScheme:
-        return self.load_dataset_scheme(self.config)
+        scheme_manager = self.scheme_manager or self.load_scheme_manager(self.config)
+        return DatasetScheme(config=self.config.scheme,
+                             scheme_manager=scheme_manager.view())
 
+    @abstractmethod
     @classmethod
-    def load_dataset_scheme(cls, config: DatasetConfig) -> DatasetScheme:
-        return DatasetScheme(config=config.scheme)
+    def load_scheme_manager(cls, config: DatasetConfig) -> CodingSchemesManager:
+        pass
 
     @cached_property
     def subject_ids(self):
@@ -811,6 +822,6 @@ class Dataset(AbstractDatasetRepresentation):
 #  - [x] Assert functions to check the consistency of subject_id, admission_id in all tables.
 #  - [x] List the three main test cases for merge_overlapping_admissions.
 #  - [ ] Interface Structure: Controls (icu_inputs, icu_procedures, hosp_procedures), InitObs (dx_codes or dx_history), Obs (obs), Lead(lead(obs))
-#  - [ ] Move Predictions/AdmissionPredictions to lib.ml.
-#  - [ ] Plan a week of refactoring/testing/documentation/ship the lib.ehr separately.
+#  - [x] Move Predictions/AdmissionPredictions to lib.ml.
+#  - [x] Plan a week of refactoring/testing/documentation/ship the lib.ehr separately.
 #  - [ ] Publish Website for lib.ehr: decide on the lib name, decide on the website name.

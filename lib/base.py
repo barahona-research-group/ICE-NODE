@@ -253,6 +253,16 @@ def equal_arrays(a: Array, b: Array):
     return _np.array_equal(a[~is_nan], b[~is_nan], equal_nan=False)
 
 
+class VxDataView(eqx.Module):
+
+    def to_hdf_group(self, group: tb.Group) -> None:
+        raise NotImplementedError
+
+    @classmethod
+    def from_hdf_group(cls, group: tb.Group) -> "VxDataView":
+        raise NotImplementedError
+
+
 class VxData(eqx.Module):
     """
     VxData class represents vectorized data object, which inherits from eqx.Module.
@@ -313,7 +323,8 @@ class VxData(eqx.Module):
 
     @property
     def data_attributes(self) -> Tuple[str, ...]:
-        return tuple(k for k in self.fields if isinstance(getattr(self, k), VxData))
+        return tuple(k for k in self.fields if
+                     isinstance(getattr(self, k), VxData) and not isinstance(getattr(self, k), VxDataView))
 
     @property
     def timestamp_attributes(self) -> Tuple[str, ...]:
@@ -442,6 +453,9 @@ class VxData(eqx.Module):
                         return False
                 elif isinstance(a_k, (pd.Timestamp, str)):
                     if a_k != b_k:
+                        return False
+                elif isinstance(a_k, VxDataView):
+                    if a_k is not b_k:
                         return False
                 else:
                     raise TypeError(f"Unsupported type {type(a_k)} for attribute {k}")
