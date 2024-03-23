@@ -23,7 +23,7 @@ from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              RatedInputTableConfig, DatasetTablesConfig,
                              DatasetTables, DatasetConfig, DatasetSchemeConfig, Dataset, AbstractDatasetPipelineConfig)
 from lib.ehr.dataset import SECONDS_TO_HOURS_SCALER
-from lib.ehr.example_schemes.icd import ICDScheme
+from lib.ehr.example_schemes.icd import ICDScheme, setup_standard_icd_ccs
 from lib.utils import tqdm_constructor
 
 warnings.filterwarnings('error',
@@ -1076,14 +1076,15 @@ class MIMICIVSQLTablesInterface(Module):
         Returns:
             (CodingScheme.DatasetScheme) A new scheme that is also registered in the current runtime.
         """
-        return DatasetScheme(config=config,
-                             gender=self.register_gender_scheme(config),
-                             ethnicity=self.register_ethnicity_scheme(config),
-                             icu_inputs=self.register_icu_inputs_scheme(config),
-                             icu_procedures=self.register_icu_procedures_scheme(config),
-                             hosp_procedures=self.register_hosp_procedures_scheme(config),
-                             dx_discharge=self.register_dx_discharge_scheme(config),
-                             obs=self.register_obs_scheme(config))
+        manager = setup_standard_icd_ccs(CodingSchemesManager())
+        manager = self.register_gender_scheme(manager, config)
+        manager = self.register_ethnicity_scheme(manager, config)
+        manager = self.register_icu_inputs_scheme(manager, config)
+        manager = self.register_icu_procedures_scheme(manager, config)
+        manager = self.register_hosp_procedures_scheme(manager, config)
+        manager = self.register_dx_discharge_scheme(manager, config)
+        manager = self.register_obs_scheme(manager, config)
+        return manager
 
     def load_tables(self, dataset_scheme: DatasetScheme) -> DatasetTables:
         if dataset_scheme.hosp_procedures is not None:
@@ -1126,7 +1127,7 @@ class MIMICIVDatasetPipelineConfig(AbstractDatasetPipelineConfig):
 class MIMICIVDatasetConfig(MIMICIVSQLConfig):
     tables: MIMICIVSQLTablesConfig = field(default_factory=MIMICIVSQLTablesConfig, kw_only=True)
     pipeline: MIMICIVDatasetPipelineConfig = MIMICIVDatasetPipelineConfig()
-    scheme: DatasetSchemeConfig = DatasetSchemeConfig()
+    scheme: MIMICIVDatasetSchemeConfig = MIMICIVDatasetSchemeConfig()
 
 
 class MIMICIVDataset(Dataset):
@@ -1155,7 +1156,7 @@ class MIMICIVDataset(Dataset):
         return df
 
     @classmethod
-    def load_scheme_manager(cls, config: DatasetConfig) -> CodingSchemesManager:
+    def load_scheme_manager(cls, config: MIMICIVDatasetConfig) -> CodingSchemesManager:
         sql = MIMICIVSQLTablesInterface(config.tables)
         return sql.dataset_scheme_manager_from_selection(config=config.scheme)
 

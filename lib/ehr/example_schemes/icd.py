@@ -642,18 +642,9 @@ class FlatCCSMapOps:
         }
 
     @classmethod
-    def register_ccs_flat_mappings(cls, flatccs_scheme: CodingScheme, icd9_scheme: ICDHierarchicalScheme):
+    def register_ccs_flat_mappings(cls, manager: CodingSchemesManager, flatccs_scheme: CodingScheme,
+                                   icd9_scheme: ICDHierarchicalScheme):
         columns, _ = cls.flatccs_columns(icd9_scheme)
-
-        flatccs2icd9_config = CodeMapConfig(
-            flatccs_scheme.name,
-            icd9_scheme.name,
-            t_dag_space=False)
-        icd92flatccs_config = CodeMapConfig(
-            icd9_scheme.name,
-            flatccs_scheme.name,
-            t_dag_space=False)
-
         assert len(columns['icd9']) == columns['icd9'].nunique(), "1toN mapping expected"
         flatccs2icd9 = defaultdict(set)
         icd92flatccs = defaultdict(set)
@@ -661,8 +652,11 @@ class FlatCCSMapOps:
             flatccs2icd9[ccode].add(icd_code)
             icd92flatccs[icd_code].add(ccode)
 
-        CodeMap.register_map(CodeMap(flatccs2icd9_config, dict(flatccs2icd9)))
-        CodeMap.register_map(CodeMap(icd92flatccs_config, dict(icd92flatccs)))
+        manager = manager.add_map(CodeMap(source_name=flatccs_scheme.name,
+                                          target_name=icd9_scheme.name, data=FrozenDict1N.from_dict(flatccs2icd9)))
+        manager = manager.add_map(CodeMap(source_name=icd9_scheme.name,
+                                          target_name=flatccs_scheme.name, data=FrozenDict1N.from_dict(icd92flatccs)))
+        return manager
 
 
 class DxFlatCCSMapOps(FlatCCSMapOps):
@@ -679,13 +673,13 @@ class FlatCCSScheme(CodingScheme):
     SCHEME_NAME: str = None
 
     @classmethod
-    def create_scheme(cls):
-        icd9_scheme: ICDHierarchicalScheme = CodingScheme.from_name(cls.ICD9_SCHEME_NAME)
+    def create_scheme(cls, manager: CodingSchemesManager) -> CodingSchemesManager:
+        icd9_scheme: ICDHierarchicalScheme = manager.scheme[cls.ICD9_SCHEME_NAME]
         cols, _ = cls.ops.flatccs_columns(icd9_scheme)
-        codes = sorted(set(cols['code']))
-        CodingScheme.register_scheme(cls(config=CodingSchemeConfig(cls.SCHEME_NAME),
-                                         codes=codes,
-                                         desc=dict(zip(cols['code'], cols['desc']))))
+        codes = tuple(sorted(set(cols['code'])))
+        return manager.add_scheme(cls(name=cls.SCHEME_NAME,
+                                      codes=codes,
+                                      desc=FrozenDict11.from_dict(dict(zip(cols['code'], cols['desc'])))))
 
 
 class DxFlatCCS(FlatCCSScheme):
@@ -700,89 +694,62 @@ class PrFlatCCS(FlatCCSScheme):
     SCHEME_NAME: str = 'pr_flatccs'
 
 
-def setup_scheme_loaders():
-    CodingScheme.register_scheme_loader('dx_icd10', DxHierarchicalICD10.create_scheme)
-    CodingScheme.register_scheme_loader('pr_icd10', PrHierarchicalICD10.create_scheme)
-    CodingScheme.register_scheme_loader('dx_flat_icd10', DxFlatICD10.create_scheme)
-    CodingScheme.register_scheme_loader('pr_flat_icd10', PrFlatICD10.create_scheme)
-    CodingScheme.register_scheme_loader('dx_icd9', DxHierarchicalICD9.create_scheme)
-    CodingScheme.register_scheme_loader('pr_icd9', PrHierarchicalICD9.create_scheme)
-    CodingScheme.register_scheme_loader('dx_ccs', DxCCS.create_scheme)
-    CodingScheme.register_scheme_loader('pr_ccs', PrCCS.create_scheme)
-    CodingScheme.register_scheme_loader('dx_flatccs', DxFlatCCS.create_scheme)
-    CodingScheme.register_scheme_loader('pr_flatccs', PrFlatCCS.create_scheme)
-
+def setup_icd_schemes(manager: CodingSchemesManager) -> CodingSchemesManager:
+    for cls in (
+            DxHierarchicalICD10, PrHierarchicalICD10, DxFlatICD10, PrFlatICD10, DxHierarchicalICD9, PrHierarchicalICD9,
+            DxCCS, PrCCS, DxFlatCCS, PrFlatCCS):
+        manager = cls.create_scheme(manager)
     for name in ('dx_flatccs_mlhc_groups', 'dx_flatccs_v1', 'dx_icd9_v1', 'dx_icd9_v2_groups', 'dx_icd9_v3_groups'):
-        FileBasedOutcomeExtractor.register_outcome_extractor_loader(name, f'{name}.json')
+        manager = manager.add_outcome(FileBasedOutcomeExtractor.from_spec_file(f'{name}.json'))
+    return manager
 
 
-def setup_maps_loaders():
+def setup_icd_maps(manager: CodingSchemesManager):
     # ICD9 <-> ICD10s
-    CodeMap.register_map_loader('dx_icd10', 'dx_icd9',
-                                lambda: ICDMapOps.register_mappings('dx_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz'))
-    CodeMap.register_map_loader('dx_icd9', 'dx_icd10',
-                                lambda: ICDMapOps.register_mappings('dx_icd9', 'dx_icd10', '2018_gem_cm_I9I10.txt.gz'))
-    CodeMap.register_map_loader('pr_icd10', 'pr_icd9',
-                                lambda: ICDMapOps.register_mappings('pr_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz'))
-    CodeMap.register_map_loader('pr_icd9', 'pr_icd10',
-                                lambda: ICDMapOps.register_mappings('pr_icd9', 'pr_icd10', '2018_gem_pcs_I9I10.txt.gz'))
-    CodeMap.register_map_loader('dx_flat_icd10', 'dx_icd9',
-                                lambda: ICDMapOps.register_mappings('dx_flat_icd10', 'dx_icd9',
-                                                                    '2018_gem_cm_I10I9.txt.gz'))
-    CodeMap.register_map_loader('dx_icd9', 'dx_flat_icd10',
-                                lambda: ICDMapOps.register_mappings('dx_icd9', 'dx_flat_icd10',
-                                                                    '2018_gem_cm_I9I10.txt.gz'))
-    CodeMap.register_map_loader('pr_flat_icd10', 'pr_icd9',
-                                lambda: ICDMapOps.register_mappings('pr_flat_icd10', 'pr_icd9',
-                                                                    '2018_gem_pcs_I10I9.txt.gz'))
-    CodeMap.register_map_loader('pr_icd9', 'pr_flat_icd10',
-                                lambda: ICDMapOps.register_mappings('pr_icd9', 'pr_flat_icd10',
-                                                                    '2018_gem_pcs_I9I10.txt.gz'))
+
+    manager = ICDMapOps.register_mappings(manager, 'dx_icd10', 'dx_icd9', '2018_gem_cm_I10I9.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'dx_icd9', 'dx_icd10', '2018_gem_cm_I9I10.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'pr_icd10', 'pr_icd9', '2018_gem_pcs_I10I9.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'pr_icd9', 'pr_icd10', '2018_gem_pcs_I9I10.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'dx_icd9', 'dx_flat_icd10',
+                                          '2018_gem_cm_I9I10.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'dx_flat_icd10', 'dx_icd9',
+                                          '2018_gem_cm_I10I9.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'pr_flat_icd10', 'pr_icd9',
+                                          '2018_gem_pcs_I10I9.txt.gz')
+    manager = ICDMapOps.register_mappings(manager, 'pr_icd9', 'pr_flat_icd10',
+                                          '2018_gem_pcs_I9I10.txt.gz')
 
     # ICD9 <-> CCS
-    bimap_dx_ccs_icd9 = lambda: DxCCSMapOps.register_mappings('dx_ccs', 'dx_icd9')
+    manager = DxCCSMapOps.register_mappings(manager, 'dx_ccs', 'dx_icd9')
+    manager = PrCCSMapOps.register_mappings(manager, 'pr_ccs', 'pr_icd9')
 
-    CodeMap.register_map_loader('dx_icd9', 'dx_ccs',
-                                bimap_dx_ccs_icd9)
-    CodeMap.register_map_loader('dx_ccs', 'dx_icd9',
-                                bimap_dx_ccs_icd9)
+    manager = DxCCSMapOps.register_mappings(manager, 'dx_flatccs', 'dx_icd9')
+    manager = PrCCSMapOps.register_mappings(manager, 'pr_flatccs', 'pr_icd9')
 
-    bimap_pr_ccs_icd9 = lambda: PrCCSMapOps.register_mappings('pr_ccs', 'pr_icd9')
-    CodeMap.register_map_loader('pr_icd9', 'pr_ccs',
-                                bimap_pr_ccs_icd9)
-    CodeMap.register_map_loader('pr_ccs', 'pr_icd9',
-                                bimap_pr_ccs_icd9)
-
-    bimap_dx_flatccs_icd9 = lambda: DxCCSMapOps.register_mappings('dx_flatccs', 'dx_icd9')
-    CodeMap.register_map_loader('dx_flatccs', 'dx_icd9',
-                                bimap_dx_flatccs_icd9)
-    CodeMap.register_map_loader('dx_icd9', 'dx_flatccs',
-                                bimap_dx_flatccs_icd9)
-    bimap_pr_flatccs_icd9 = lambda: PrCCSMapOps.register_mappings('pr_flatccs', 'pr_icd9')
-    CodeMap.register_map_loader('pr_flatccs', 'pr_icd9',
-                                bimap_pr_flatccs_icd9)
-    CodeMap.register_map_loader('pr_icd9', 'pr_flatccs',
-                                bimap_pr_flatccs_icd9)
     # ICD10 <-> CCS (Through ICD9 as an intermediate scheme)
     for dx_icd10_str in ('dx_icd10', 'dx_flat_icd10'):
-        CodeMap.register_chained_map_loader('dx_ccs', 'dx_icd9', dx_icd10_str)
-        CodeMap.register_chained_map_loader(dx_icd10_str, 'dx_icd9', 'dx_ccs')
-        CodeMap.register_chained_map_loader('dx_flatccs', 'dx_icd9', dx_icd10_str)
-        CodeMap.register_chained_map_loader(dx_icd10_str, 'dx_icd9', 'dx_flatccs')
+        manager = manager.register_chained_map('dx_ccs', 'dx_icd9', dx_icd10_str)
+        manager = manager.register_chained_map(dx_icd10_str, 'dx_icd9', 'dx_ccs')
+        manager = manager.register_chained_map('dx_flatccs', 'dx_icd9', dx_icd10_str)
+        manager = manager.register_chained_map(dx_icd10_str, 'dx_icd9', 'dx_flatccs')
 
     for pr_icd10_str in ('pr_icd10', 'pr_flat_icd10'):
-        CodeMap.register_chained_map_loader('pr_ccs', 'pr_icd9', pr_icd10_str)
-        CodeMap.register_chained_map_loader(pr_icd10_str, 'pr_icd9', 'pr_ccs')
-        CodeMap.register_chained_map_loader('pr_flatccs', 'pr_icd9', pr_icd10_str)
-        CodeMap.register_chained_map_loader(pr_icd10_str, 'pr_icd9', 'pr_flatccs')
+        manager = manager.register_chained_map('pr_ccs', 'pr_icd9', pr_icd10_str)
+        manager = manager.register_chained_map(pr_icd10_str, 'pr_icd9', 'pr_ccs')
+        manager = manager.register_chained_map('pr_flatccs', 'pr_icd9', pr_icd10_str)
+        manager = manager.register_chained_map(pr_icd10_str, 'pr_icd9', 'pr_flatccs')
 
     # CCS <-> FlatCCS (Through ICD9 as an intermediate scheme)
-    CodeMap.register_chained_map_loader('dx_flatccs', 'dx_icd9', 'dx_ccs')
-    CodeMap.register_chained_map_loader('dx_ccs', 'dx_icd9', 'dx_flatccs')
-    CodeMap.register_chained_map_loader('pr_flatccs', 'pr_icd9', 'pr_ccs')
-    CodeMap.register_chained_map_loader('pr_ccs', 'pr_icd9', 'pr_flatccs')
+    manager = manager.register_chained_map('dx_flatccs', 'dx_icd9', 'dx_ccs')
+    manager = manager.register_chained_map('dx_ccs', 'dx_icd9', 'dx_flatccs')
+    manager = manager.register_chained_map('pr_flatccs', 'pr_icd9', 'pr_ccs')
+    manager = manager.register_chained_map('pr_ccs', 'pr_icd9', 'pr_flatccs')
+
+    return manager
 
 
-def setup_icd():
-    setup_scheme_loaders()
-    setup_maps_loaders()
+def setup_standard_icd_ccs(manager: CodingSchemesManager) -> CodingSchemesManager:
+    manager = setup_icd_schemes(manager)
+    manager = setup_icd_maps(manager)
+    return manager

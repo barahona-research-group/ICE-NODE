@@ -1117,8 +1117,11 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
 
 
 class ExcludingOutcomeExtractor(OutcomeExtractor):
-    base_name: str
     exclude_codes: Tuple[str, ...]
+
+    @cached_property
+    def base_name(self) -> str:
+        return self.base_scheme.name
 
     @cached_property
     def codes(self) -> Tuple[str, ...]:
@@ -1135,6 +1138,16 @@ class ExcludingOutcomeExtractor(OutcomeExtractor):
 
 class FileBasedOutcomeExtractor(OutcomeExtractor):
     spec_file: str
+    exclude_codes: Optional[Tuple[str, ...]] = None
+    name: str = None
+
+    @cached_property
+    def name(self) -> str:
+        return self.spec_file.split('.')[0]
+
+    @cached_property
+    def exclude_codes(self) -> Tuple[str, ...]:
+        return self.specs['exclude_codes']
 
     @cached_property
     def codes(self) -> Tuple[str, ...]:
@@ -1177,6 +1190,10 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
             return conf
         elif 'exclude_codes' in conf:
             return conf
+
+    @staticmethod
+    def from_spec_file(spec_file: str):
+        return FileBasedOutcomeExtractor(spec_file=spec_file, name=spec_file.split('.')[0])
 
 
 class CodingSchemesManager(VxData):
