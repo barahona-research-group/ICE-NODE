@@ -3,6 +3,7 @@ data structures to support conversion between CCS and ICD9."""
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import re
@@ -12,9 +13,8 @@ from dataclasses import field
 from functools import cached_property
 from types import MappingProxyType
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Tuple, Any, Literal, ItemsView, Iterator, \
-    Iterable
+    Iterable, Mapping
 
-import equinox as eqx
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -36,6 +36,9 @@ class FrozenDict11(VxData):
     @staticmethod
     def from_dict(d: Dict[str, str]) -> "FrozenDict11":
         return FrozenDict11(MappingProxyType(d))
+
+    def equals(self, other: "FrozenDict11") -> bool:
+        return self.data == other.data
 
     def __getitem__(self, key: str) -> Union[str, int]:
         return self.data[key]
@@ -69,12 +72,14 @@ class FrozenDict11(VxData):
         return FrozenDict11.from_dict(df.set_index('key')['value'].to_dict())
 
     def to_hdf_group(self, group: tb.Group):
+        h5file = group._v_file
+        h5file.create_array(group, 'classname', obj=self.__class__.__name__.encode('utf-8'))
         df = self.to_dataframe()
-        df.to_hdf(group._v_file.filename, key=group._v_pathname)
+        df.to_hdf(group._v_file.filename, key=f'{group._v_pathname}/data')
 
     @classmethod
     def _from_hdf_group(cls, group: tb.Group) -> 'VxData':
-        df = pd.read_hdf(group._v_file.filename, key=group._v_pathname)
+        df = pd.read_hdf(group._v_file.filename, key=f'{group._v_pathname}/data')
         return cls.from_dataframe(df)
 
 
@@ -99,7 +104,7 @@ class FrozenDict1N(FrozenDict11):
 
     @staticmethod
     def from_dataframe(df: pd.DataFrame) -> "FrozenDict1N":
-        return FrozenDict1N.from_dict(df.set_index('key')['value'].groupby('key').apply(set).to_dict())
+        return FrozenDict1N.from_dict(df.groupby('key')['value'].apply(set).to_dict())
 
 
 class CodesVector(VxData):
@@ -162,13 +167,16 @@ class CodesVector(VxData):
 
 
 class SchemesContextManaged(VxData):
-    _manager: Optional[SchemeManagerView] = field(default=None, repr=False, init=False)
+    context_view: Optional[SchemeManagerView] = None
+
+    def set_context_view(self, context_view: SchemeManagerView):
+        return dataclasses.replace(self, context_view=context_view)
 
 
 class CodingScheme(SchemesContextManaged):
-    name: str
-    codes: Tuple[str, ...]
-    desc: FrozenDict11
+    name: str = field(kw_only=True)
+    codes: Tuple[str, ...] = field(kw_only=True)
+    desc: FrozenDict11 = field(kw_only=True)
 
     # Possible Schemes, Lazy-loaded schemes.
     # _load_schemes: ClassVar[Dict[str, Callable]] = {}
@@ -263,7 +271,7 @@ class CodingScheme(SchemesContextManaged):
         """
         Returns a mapper between the current scheme and the target scheme.
         """
-        return self._manager.map[(self.name, target_scheme)]
+        return self.context_view.map[(self.name, target_scheme)]
 
     def wrap_vector(self, vec: np.ndarray) -> "CodingScheme.vector_cls":
         """
@@ -299,7 +307,7 @@ class CodingScheme(SchemesContextManaged):
 
     @property
     def supported_targets(self):
-        return tuple(t for s, t in self._manager.map.keys() if s == self.name)
+        return tuple(t for s, t in self.context_view.map.keys() if s == self.name)
 
     def as_dataframe(self) -> pd.DataFrame:
         """
@@ -378,7 +386,7 @@ class SchemeWithMissing(CodingScheme):
         _missing_code (str): the code that represents a missing value in the coding scheme.
     """
 
-    missing_code: str
+    missing_code: str = field(kw_only=True)
     vector_cls: ClassVar[Type[CodesVectorWithMissing]] = CodesVectorWithMissing
 
     def __post_init__(self):
@@ -410,7 +418,7 @@ class HierarchicalScheme(CodingScheme):
     This class extends the functionality of the FlatScheme class and provides
     additional methods for working with hierarchical coding schemes.
     """
-    ch2pt: FrozenDict1N
+    ch2pt: FrozenDict1N = field(kw_only=True)
     dag_codes: Optional[Tuple[str, ...]] = None
     dag_desc: Optional[FrozenDict11] = None
     code2dag: Optional[FrozenDict11] = None
@@ -423,8 +431,8 @@ class HierarchicalScheme(CodingScheme):
         self.code2dag = self.code2dag or FrozenDict11.from_dict({c: c for c in self.codes})
 
         # Check types
-        assert isinstance(self.dag_codes, list), f"{self}: codes should be a list."
-        assert isinstance(self.dag_desc, dict), f"{self}: desc should be a dict."
+        assert isinstance(self.dag_codes, tuple), f"{self}: codes should be a list."
+        assert isinstance(self.dag_desc, FrozenDict11), f"{self}: desc should be a dict."
         assert isinstance(self.code2dag, FrozenDict11), f"{self}: code2dag should be a dict."
         assert isinstance(self.ch2pt, FrozenDict1N), f"{self}: ch2pt should be a dict."
         for collection in [self.dag_codes, self.dag_desc.values(), self.dag_desc.keys(), self.code2dag.keys(),
@@ -489,7 +497,7 @@ class HierarchicalScheme(CodingScheme):
         return code in self.dag_codes or code in self.codes
 
     @staticmethod
-    def reverse_connection(connection: FrozenDict1N) -> FrozenDict1N:
+    def reverse_connection(connection: Mapping[str, Set[str]]) -> FrozenDict1N:
         """
         Reverses a connection dictionary.
 
@@ -755,10 +763,9 @@ class CodeMap(SchemesContextManaged):
         codeset2dagset(self, codeset: Set[str]): converts a codeset to a DAG set representation.
         codeset2dagvec(self, codeset: Set[str]): converts a codeset to a DAG vector representation.
     """
-    source_name: str
-    target_name: str
-    mapped_to_dag_space: bool
-    data: FrozenDict1N
+    source_name: str = field(kw_only=True)
+    target_name: str = field(kw_only=True)
+    data: FrozenDict1N = field(kw_only=True)
 
     def __post_init__(self):
         assert isinstance(self.data, FrozenDict1N), "Data should be a FrozenDict1N."
@@ -791,7 +798,7 @@ class CodeMap(SchemesContextManaged):
         Returns:
             Union[CodingScheme, HierarchicalScheme]: the source coding scheme.
         """
-        return self._manager.scheme[self.source_name]
+        return self.context_view.scheme[self.source_name]
 
     @cached_property
     def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
@@ -801,7 +808,7 @@ class CodeMap(SchemesContextManaged):
         Returns:
             Union[CodingScheme, HierarchicalScheme]: the target coding scheme.
         """
-        return self._manager.scheme[self.target_name]
+        return self.context_view.scheme[self.target_name]
 
     def __str__(self):
         """
@@ -1012,7 +1019,7 @@ class IdentityCodeMap(CodeMap):
     unchanged.
 
     """
-    data: Optional[FrozenDict1N] = None
+    data: FrozenDict1N = FrozenDict1N.from_dict({})
 
     @property
     def mapped_to_dag_space(self) -> bool:
@@ -1020,11 +1027,11 @@ class IdentityCodeMap(CodeMap):
 
     @cached_property
     def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        return self._manager.scheme[self.source_name]
+        return self.context_view.scheme[self.source_name]
 
     @cached_property
     def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        return self._manager.scheme[self.target_name]
+        return self.context_view.scheme[self.target_name]
 
     def map_codeset(self, codeset):
         return codeset
@@ -1045,8 +1052,11 @@ class IdentityCodeMap(CodeMap):
 
 
 class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
-    name: str
+    name: str = field(kw_only=True)
 
+    def __len__(self):
+        return len(self.codes)
+    
     @property
     @abstractmethod
     def base_scheme(self) -> CodingScheme:
@@ -1089,7 +1099,7 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
 
         """
 
-        m = self._manager.map[(base_scheme, self.base_scheme.name)]
+        m = self.context_view.map[(base_scheme, self.base_scheme.name)]
         codeset = m.map_codeset(codeset)
 
         if m.mapped_to_dag_space:
@@ -1111,13 +1121,13 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
         """
 
         vec = np.zeros(len(self.index), dtype=bool)
-        for c in self._map_codeset(codes.to_codeset(self._manager), codes.scheme):
+        for c in self._map_codeset(codes.to_codeset(self.context_view), codes.scheme):
             vec[self.index[c]] = True
         return CodesVector(np.array(vec), self.name)
 
 
 class ExcludingOutcomeExtractor(OutcomeExtractor):
-    exclude_codes: Tuple[str, ...]
+    exclude_codes: Tuple[str, ...] = field(kw_only=True)
 
     @cached_property
     def base_name(self) -> str:
@@ -1133,21 +1143,20 @@ class ExcludingOutcomeExtractor(OutcomeExtractor):
 
     @cached_property
     def base_scheme(self) -> CodingScheme:
-        return self._manager.scheme[self.base_name]
+        return self.context_view.scheme[self.base_name]
 
 
 class FileBasedOutcomeExtractor(OutcomeExtractor):
-    spec_file: str
-    exclude_codes: Optional[Tuple[str, ...]] = None
-    name: str = None
+    spec_file: str = field(kw_only=True)
+    exclude_codes: Optional[Tuple[str, ...]] = field(kw_only=True, default=None)
+    name: Optional[str] = field(kw_only=True, default=None)
 
-    @cached_property
-    def name(self) -> str:
-        return self.spec_file.split('.')[0]
+    def __post_init__(self):
+        if self.exclude_codes is None and self.context_view is not None:
+            self.exclude_codes = tuple(self.specs['exclude_codes'])
 
-    @cached_property
-    def exclude_codes(self) -> Tuple[str, ...]:
-        return self.specs['exclude_codes']
+        if self.name is None:
+            self.name = self.spec_file.split('.')[0]
 
     @cached_property
     def codes(self) -> Tuple[str, ...]:
@@ -1159,7 +1168,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
 
     @cached_property
     def specs(self) -> Dict[str, Any]:
-        return self.spec_from_json(self._manager, self.spec_file)
+        return self.spec_from_json(self.context_view, self.spec_file)
 
     @cached_property
     def base_scheme(self) -> CodingScheme:
@@ -1170,7 +1179,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
             CodingScheme: the base coding scheme.
 
         """
-        return self._manager.scheme[self.specs['code_scheme']]
+        return self.context_view.scheme[self.specs['code_scheme']]
 
     @staticmethod
     def spec_from_json(manager: Union[SchemeManagerView, CodingSchemesManager], json_file: str):
@@ -1197,14 +1206,21 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
 
 
 class CodingSchemesManager(VxData):
-    schemes: Tuple[CodingScheme] = field(default_factory=tuple)
-    maps: Tuple[CodeMap] = field(default_factory=tuple)
-    outcomes: Tuple[OutcomeExtractor] = field(default_factory=tuple)
+    schemes: Tuple[CodingScheme, ...] = field(default_factory=tuple)
+    maps: Tuple[CodeMap, ...] = field(default_factory=tuple)
+    outcomes: Tuple[OutcomeExtractor, ...] = field(default_factory=tuple)
 
     def __post_init__(self):
-        self.schemes = tuple(eqx.tree_at(lambda x: x._manager, s, self.view()) for s in self.schemes)
-        self.maps = tuple(eqx.tree_at(lambda x: x._manager, m, self.view()) for m in self.maps)
-        self.outcomes = tuple(eqx.tree_at(lambda x: x._manager, o, self.view()) for o in self.outcomes)
+        super().__post_init__()
+
+    def __len__(self):
+        return len(self.schemes) + len(self.maps) + len(self.outcomes)
+
+    def sync(self) -> CodingSchemesManager:
+        schemes = tuple(s.set_context_view(self.view()) for s in self.schemes)
+        maps = tuple(m.set_context_view(self.view()) for m in self.maps)
+        outcomes = tuple(o.set_context_view(self.view()) for o in self.outcomes)
+        return CodingSchemesManager(schemes=schemes, maps=maps, outcomes=outcomes)
 
     def view(self) -> SchemeManagerView:
         return SchemeManagerView(_manager=self)
@@ -1213,19 +1229,19 @@ class CodingSchemesManager(VxData):
         if scheme.name in self.scheme:
             logging.warning(f'Scheme {scheme.name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes + (scheme,), maps=self.maps, outcomes=self.outcomes)
+        return CodingSchemesManager(schemes=self.schemes + (scheme,), maps=self.maps, outcomes=self.outcomes).sync()
 
     def add_map(self, map: CodeMap) -> CodingSchemesManager:
         if (map.source_name, map.target_name) in self.map:
             logging.warning(f'Map {map.source_name}->{map.target_name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes, maps=self.maps + (map,), outcomes=self.outcomes)
+        return CodingSchemesManager(schemes=self.schemes, maps=self.maps + (map,), outcomes=self.outcomes).sync()
 
     def add_outcome(self, outcome: OutcomeExtractor) -> CodingSchemesManager:
         if outcome.name in self.outcome:
             logging.warning(f'Outcome {outcome.name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes, maps=self.maps, outcomes=self.outcomes + (outcome,))
+        return CodingSchemesManager(schemes=self.schemes, maps=self.maps, outcomes=self.outcomes + (outcome,)).sync()
 
     def union(self, other: CodingSchemesManager) -> CodingSchemesManager:
         updated = self
@@ -1240,19 +1256,23 @@ class CodingSchemesManager(VxData):
 
     @cached_property
     def scheme(self) -> Dict[str, CodingScheme]:
-        raise {s.name: s for s in self.schemes}
+        return {s.name: s for s in self.schemes}
 
     @cached_property
     def identity_maps(self) -> Dict[Tuple[str, str], IdentityCodeMap]:
-        raise {s: IdentityCodeMap(source_name=s, target_name=s) for s in self.scheme.keys()}
+        return {s: IdentityCodeMap(source_name=s, target_name=s) for s in self.scheme.keys()}
+
+    @cached_property
+    def chainable_maps(self) -> Dict[Tuple[str, str, str], CodeMap]:
+        raise NotImplementedError
 
     @cached_property
     def map(self) -> Dict[Tuple[str, str], CodeMap]:
-        raise {(m.source_name, m.target_name): m for m in self.maps} | self.identity_maps
+        return {(m.source_name, m.target_name): m for m in self.maps} | self.identity_maps
 
     @cached_property
     def outcome(self) -> Dict[str, OutcomeExtractor]:
-        raise {o.name: o for o in self.outcomes}
+        return {o.name: o for o in self.outcomes}
 
     def register_chained_map(self, s_scheme: str, inter_scheme: str, t_scheme: str) -> CodingSchemesManager:
         """

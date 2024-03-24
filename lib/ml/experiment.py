@@ -6,7 +6,7 @@ from .model import (InpatientModel, ModelConfig)
 from .trainer import (TrainerConfig, ReportingConfig,
                       TrainerReporting)
 from ..base import Config, Module
-from ..ehr import (TVxEHR, load_dataset, DatasetConfig,
+from ..ehr import (TVxEHR, DatasetConfig,
                    TVxEHRConfig)
 
 

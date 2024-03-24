@@ -168,7 +168,7 @@ class MixedICDScheme(CodingScheme):
 
     @cached_property
     def icd_schemes(self) -> Dict[str, ICDScheme]:
-        return {k: self._manager.scheme[v] for k, v in self.icd_version_schemes.items()}
+        return {k: self.context_view.scheme[v] for k, v in self.icd_version_schemes.items()}
 
     @staticmethod
     def fix_dots(df: pd.DataFrame, c_icd_code: str, c_icd_version: str,
@@ -305,7 +305,7 @@ class MixedICDScheme(CodingScheme):
 
 
 class AggregatedICUInputsScheme(CodingScheme):
-    aggregation: FrozenDict11
+    aggregation: FrozenDict11 = field(kw_only=True)
 
     @staticmethod
     def register_aggregated_scheme(manager: CodingSchemesManager,

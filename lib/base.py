@@ -1,6 +1,7 @@
 import dataclasses
 import json
 from abc import ABCMeta
+from types import MappingProxyType
 from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple
 
 # TODO: update to Python 3.11, then use typing.Self
@@ -375,12 +376,12 @@ class VxData(eqx.Module):
 
             attr_group = h5file.create_group(group, group_name)
             for i, item in enumerate(iterable):
-                if isinstance(item, Array):
-                    self._store_array_to_hdf(attr_group, str(i), item)
-                elif isinstance(item, VxData):
+                if isinstance(item, VxData):
                     item.to_hdf_group(h5file.create_group(attr_group, str(i)))
+                elif isinstance(item, Array):
+                    self._store_array_to_hdf(attr_group, str(i), item)
                 else:
-                    raise TypeError(f"Unsupported type {type(item)} for attribute {attr}")
+                    h5file.create_array(attr_group, str(i), obj=item.encode('utf-8'))
 
     @staticmethod
     def deserialize_iterable(group: tb.Group, iterable_class: Type['VxDataIterableField']) -> 'VxDataIterableField':
@@ -440,22 +441,25 @@ class VxData(eqx.Module):
             b_k = getattr(b, k)
 
             if a_k is not None:
-                if hasattr(a_k, 'equals'):
+                if isinstance(a_k, VxDataView):
+                    continue
+                elif hasattr(a_k, 'equals'):
                     if not a_k.equals(b_k):
                         return False
                 elif isinstance(a_k, (list, tuple)):
                     if len(a_k) != len(b_k):
                         return False
-                    if any(not x.equals(y) for x, y in zip(a_k, b_k)):
-                        return False
+                    if all(isinstance(x, str) for x in a_k):
+                        if a_k != b_k:
+                            return False
+                    else:
+                        if any(not x.equals(y) for x, y in zip(a_k, b_k)):
+                            return False
                 elif isinstance(a_k, Array):
                     if not equal_arrays(a_k, b_k):
                         return False
                 elif isinstance(a_k, (pd.Timestamp, str)):
                     if a_k != b_k:
-                        return False
-                elif isinstance(a_k, VxDataView):
-                    if a_k is not b_k:
                         return False
                 else:
                     raise TypeError(f"Unsupported type {type(a_k)} for attribute {k}")
@@ -487,8 +491,8 @@ class VxData(eqx.Module):
                                                                                                      attribute_names)
 
 
-VxDataItem = Union[VxData, Array]
-VxDataIterableField = Union[list, tuple]
+VxDataItem = Union[VxData, Array, str]
+VxDataIterableField = Union[list, tuple, MappingProxyType]
 VxDataField = Union[VxDataItem, pd.Timestamp, str, VxDataIterableField]
 
 Config.register()

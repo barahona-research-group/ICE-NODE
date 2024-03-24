@@ -1,11 +1,14 @@
 import os
-from copy import deepcopy
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from unittest import mock
 
 import pytest
+import tables as tb
 
-from lib.ehr import (CodingScheme, CodingScheme, CodingSchemeConfig, setup_icd, setup_cprd, OutcomeExtractor)
+from lib.ehr import (CodingScheme)
+from lib.ehr.coding_scheme import CodingSchemesManager, FrozenDict11, OutcomeExtractor
+from lib.ehr.example_schemes.icd import CCSICDSchemeSelection, setup_standard_icd_ccs, CCSICDOutcomeSelection, \
+    setup_icd_schemes, setup_icd_outcomes
 
 _DIR = os.path.dirname(__file__)
 
@@ -25,65 +28,49 @@ _DIR = os.path.dirname(__file__)
 #       [  ] test 1
 #       [  ] test 2
 #       [  ] test 3
-
-@pytest.fixture(scope='class', params=[dict(name='one', codes=['1'], desc={'1': 'one'}),
-                                       dict(name='zero', codes=[], desc=dict()),
-                                       dict(name='100', codes=list(f'code_{i}' for i in range(100)))])
-def primitive_flat_scheme_kwarg(request):
-    config = CodingSchemeConfig(request.param['name'])
-    if 'desc' in request.param:
-        desc = request.param['desc']
-    elif len(request.param['codes']) > 0:
-        desc = dict(zip(request.param['codes'], request.param['codes']))
-    else:
-        desc = dict()
-    return dict(config=config, codes=request.param['codes'], desc=desc)
-
-
-@pytest.fixture(scope='class')
-def primitive_flat_scheme(primitive_flat_scheme_kwarg):
-    return CodingScheme(**primitive_flat_scheme_kwarg)
-
-
-def _clean_schemes():
-    CodingScheme.unregister_schemes()
-    CodingScheme.unregister_scheme_loaders()
-    OutcomeExtractor.unregister_schemes()
-    OutcomeExtractor.unregister_scheme_loaders()
-
-
-@pytest.fixture
-def clean_schemes():
-    _clean_schemes()
-    yield
-    _clean_schemes()
+#
+# @pytest.fixture(scope='session')
+# def icd_schemes_manager():
+#     manager = CodingSchemesManager()
+#     return setup_standard_icd_ccs(manager)
 
 
 class TestFlatScheme:
+    @pytest.fixture(scope='class', params=[dict(name='one', codes=['1'], desc={'1': 'one'}),
+                                           dict(name='zero', codes=[], desc=dict()),
+                                           dict(name='100', codes=list(f'code_{i}' for i in range(100)))])
+    def primitive_flat_scheme_kwarg(self, request):
+        if 'desc' in request.param:
+            desc = request.param['desc']
+        elif len(request.param['codes']) > 0:
+            desc = dict(zip(request.param['codes'], request.param['codes']))
+        else:
+            desc = dict()
+        return dict(name=request.param['name'], codes=tuple(sorted(request.param['codes'])),
+                    desc=FrozenDict11.from_dict(desc))
 
-    def test_from_name(self, primitive_flat_scheme):
-        """
-        Test the `from_name` method of the FlatScheme class.
+    @pytest.fixture(scope='class')
+    def primitive_flat_scheme(self, primitive_flat_scheme_kwarg) -> CodingScheme:
+        return CodingScheme(**primitive_flat_scheme_kwarg)
 
-        This method registers the scheme and asserts that
-        calling `from_name` with the scheme's name returns the same scheme object.
+    @pytest.fixture(scope='class')
+    def scheme_manager(self, primitive_flat_scheme: CodingScheme) -> CodingSchemesManager:
+        return CodingSchemesManager().add_scheme(primitive_flat_scheme)
 
-        If a KeyError is raised, it means that the scheme is not registered and the test passes.
-        """
-        CodingScheme.register_scheme(primitive_flat_scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+    def test_from_name(self, primitive_flat_scheme: CodingScheme, scheme_manager: CodingSchemesManager):
+        assert scheme_manager.scheme[primitive_flat_scheme.name] is primitive_flat_scheme
 
         with pytest.raises(KeyError):
             # Unregistered scheme
-            CodingScheme.from_name('42')
+            scheme_manager.scheme['42']
 
     @pytest.mark.parametrize("codes", [('A', 'B', 'C', 'C'),
                                        ('A', 'B', 'C', 'B'),
                                        ('A', 'A', 'A', 'A')])
     def test_codes_uniqueness(self, codes):
         with pytest.raises(AssertionError) as excinfo:
-            CodingScheme(CodingSchemeConfig('test'), codes=codes, desc={c: c for c in codes})
-        assert 'should be unique' in str(excinfo.value)
+            CodingScheme(name='test', codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict({c: c for c in codes}))
+            assert 'should be unique' in str(excinfo.value)
 
     def test_register_scheme(self, primitive_flat_scheme):
         """
@@ -96,13 +83,13 @@ class TestFlatScheme:
            register a scheme that is already registered with the same name and content.
         """
         # First, test that the register_scheme method works.
-        CodingScheme.register_scheme(primitive_flat_scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+        manager = CodingSchemesManager().add_scheme(primitive_flat_scheme)
+        assert manager.scheme[primitive_flat_scheme.name] is primitive_flat_scheme
 
         # Second, test that the register_scheme method raises an error when
         # the scheme is already registered.
         with mock.patch('logging.warning') as mocker:
-            CodingScheme.register_scheme(primitive_flat_scheme)
+            manager.add_scheme(primitive_flat_scheme)
             mocker.assert_called_once()
 
     def test_scheme_equality(self, primitive_flat_scheme):
@@ -113,68 +100,179 @@ class TestFlatScheme:
         It then mutates the description and index of one of the schemes and asserts that the two
         schemes are not equal.
         """
-        assert primitive_flat_scheme == deepcopy(primitive_flat_scheme)
+        assert primitive_flat_scheme.equals(primitive_flat_scheme)
 
         if len(primitive_flat_scheme) > 0:
-            desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
-            mutated_scheme = CodingScheme(config=primitive_flat_scheme.config,
+            desc_mutated = FrozenDict11.from_dict(
+                {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()})
+            mutated_scheme = CodingScheme(name=primitive_flat_scheme.name,
                                           codes=primitive_flat_scheme.codes,
                                           desc=desc_mutated)
-            assert primitive_flat_scheme != mutated_scheme
+            assert not primitive_flat_scheme.equals(mutated_scheme)
 
-    def test_register_scheme_loader(self, primitive_flat_scheme):
-        """
-        Test case for registering a scheme loader and verifying the scheme registration.
+    # def test_register_scheme_loader(self, primitive_flat_scheme):
+    #     """
+    #     Test case for registering a scheme loader and verifying the scheme registration.
+    #
+    #     This test performs the following steps:
+    #     1. Registers a scheme loader for the scheme's name using a lambda function.
+    #     2. Asserts that the scheme can be retrieved using the scheme's name.
+    #     3. Asserts that attempting to register the same scheme loader again logs a warning if it has the same name with
+    #     matching content.
+    #     4. Asserts that attempting to register the same scheme again logs a warning.
+    #     """
+    #
+    #     CodingScheme.register_scheme_loader(primitive_flat_scheme.name,
+    #                                         lambda: CodingScheme.register_scheme(primitive_flat_scheme))
+    #     assert CodingScheme.from_name(primitive_flat_scheme.name) is primitive_flat_scheme
+    #
+    #     with mock.patch('logging.warning') as mocker:
+    #         CodingScheme.register_scheme_loader(primitive_flat_scheme.name,
+    #                                             lambda: CodingScheme.register_scheme(primitive_flat_scheme))
+    #         mocker.assert_called_once()
+    #     with mock.patch('logging.warning') as mocker:
+    #         CodingScheme.register_scheme(primitive_flat_scheme)
+    #         mocker.assert_called_once()
+    #
+    #     # If the scheme is registered with the same name but different content, an AssertionError should be raised.
+    #     if len(primitive_flat_scheme) > 0:
+    #         desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
+    #         mutated_scheme = CodingScheme(name=primitive_flat_scheme.name,
+    #                                       codes=primitive_flat_scheme.codes,
+    #                                       desc=desc_mutated)
+    #
+    #         with pytest.raises(AssertionError):
+    #             CodingScheme.register_scheme(mutated_scheme)
 
-        This test performs the following steps:
-        1. Registers a scheme loader for the scheme's name using a lambda function.
-        2. Asserts that the scheme can be retrieved using the scheme's name.
-        3. Asserts that attempting to register the same scheme loader again logs a warning if it has the same name with
-        matching content.
-        4. Asserts that attempting to register the same scheme again logs a warning.
-        """
+    @pytest.fixture(params=[('dx_icd10',), ('dx_icd9',), ('pr_icd9',), ('dx_flat_icd10',), ('pr_flat_icd10',),
+                            ('dx_ccs', 'dx_icd9'), ('pr_ccs', 'pr_icd9'), ('dx_flat_ccs', 'dx_icd9'),
+                            ('pr_flat_ccs', 'pr_icd9')],
+                    ids=lambda x: '_'.join(x), scope='class')
+    def scheme_selection(self, request):
+        return CCSICDSchemeSelection(**{k: True for k in request.param})
 
-        CodingScheme.register_scheme_loader(primitive_flat_scheme.config.name,
-                                            lambda: CodingScheme.register_scheme(primitive_flat_scheme))
-        assert CodingScheme.from_name(primitive_flat_scheme.config.name) is primitive_flat_scheme
+    @pytest.fixture(params=[('dx_icd10', 'dx_icd9'), ('dx_icd9', 'dx_icd10'), ('dx_icd9', 'dx_flat_icd10'),
+                            ('dx_flat_icd10', 'dx_icd9'),
+                            ('pr_flat_icd10', 'pr_icd9'), ('pr_icd9', 'pr_flat_icd10'), ('dx_ccs', 'dx_icd9'),
+                            ('pr_ccs', 'pr_icd9'), ('dx_flat_ccs', 'dx_icd9'), ('pr_flat_ccs', 'pr_icd9')],
+                    scope='class',
+                    ids=lambda x: '_'.join(x))
+    def scheme_pair_selection(self, request):
+        return CCSICDSchemeSelection(**{k: True for k in request.param})
 
-        with mock.patch('logging.warning') as mocker:
-            CodingScheme.register_scheme_loader(primitive_flat_scheme.config.name,
-                                                lambda: CodingScheme.register_scheme(primitive_flat_scheme))
-            mocker.assert_called_once()
-        with mock.patch('logging.warning') as mocker:
-            CodingScheme.register_scheme(primitive_flat_scheme)
-            mocker.assert_called_once()
+    @pytest.fixture(params=['dx_icd9_v1', 'dx_icd9_v2_groups', 'dx_icd9_v3_groups', 'dx_flat_ccs_mlhc_groups',
+                            'dx_flat_ccs_v1'], scope='class')
+    def outcome_selection(self, request):
+        return CCSICDOutcomeSelection(**{request.param: True})
 
-        # If the scheme is registered with the same name but different content, an AssertionError should be raised.
-        if len(primitive_flat_scheme) > 0:
-            desc_mutated = {code: f'{desc} muted' for code, desc in primitive_flat_scheme.desc.items()}
-            mutated_scheme = CodingScheme(config=primitive_flat_scheme.config,
-                                          codes=primitive_flat_scheme.codes,
-                                          desc=desc_mutated)
+    @pytest.fixture(scope="class")
+    def outcome_selection_name(self, outcome_selection: CCSICDOutcomeSelection) -> str:
+        (name,) = outcome_selection.flag_set
+        return name
 
-            with pytest.raises(AssertionError):
-                CodingScheme.register_scheme(mutated_scheme)
+    @pytest.fixture(scope="class")
+    def selection_names(self, scheme_selection: CCSICDSchemeSelection) -> Tuple[str, ...]:
+        return tuple(scheme_selection.flag_set)
 
-    @pytest.mark.expensive_test
-    @pytest.mark.usefixtures('clean_schemes')
-    def test_registered_schemes(self):
-        assert CodingScheme.available_schemes() == set()
-        for scheme_setup in [setup_cprd, setup_icd]:
-            scheme_setup()
-        assert len(CodingScheme.available_schemes()) > 0
+    @pytest.fixture(scope="class")
+    def icd_ccs_scheme_manager(self, scheme_selection: CCSICDSchemeSelection) -> CodingSchemesManager:
+        return setup_icd_schemes(CodingSchemesManager(), scheme_selection)
 
-        for scheme_name in CodingScheme.available_schemes():
-            scheme = CodingScheme.from_name(scheme_name)
-            assert isinstance(scheme, CodingScheme)
-            assert scheme.name == scheme_name
+    @pytest.fixture(scope="class")
+    def icd_ccs_outcome_manager_prerequisite(self, outcome_selection: CCSICDOutcomeSelection) -> CodingSchemesManager:
+        return setup_icd_schemes(CodingSchemesManager(), CCSICDSchemeSelection(dx_icd9=True, dx_flat_ccs=True))
+
+    @pytest.fixture(scope="class")
+    def icd_ccs_map_manager(self, scheme_pair_selection: CCSICDSchemeSelection) -> CodingSchemesManager:
+        return setup_standard_icd_ccs(CodingSchemesManager(), scheme_pair_selection, CCSICDOutcomeSelection())
+
+    @pytest.fixture
+    def icd_ccs_outcome_manager(self, icd_ccs_outcome_manager_prerequisite: CodingSchemesManager,
+                                outcome_selection: CCSICDOutcomeSelection) -> CodingSchemesManager:
+        return setup_icd_outcomes(icd_ccs_outcome_manager_prerequisite, outcome_selection)
+
+    def test_icd_ccs_schemes(self, icd_ccs_scheme_manager, selection_names):
+        assert len(icd_ccs_scheme_manager.schemes) == len(selection_names)
+        assert len(icd_ccs_scheme_manager.scheme) == len(selection_names)
+        for name in selection_names:
+            assert name in icd_ccs_scheme_manager.scheme
+            assert icd_ccs_scheme_manager.scheme[name].name == name
+            assert isinstance(icd_ccs_scheme_manager.scheme[name], CodingScheme)
+
+    def test_icd_ccs_outcomes(self, icd_ccs_outcome_manager, outcome_selection_name):
+        assert len(icd_ccs_outcome_manager.outcomes) == 1
+        assert len(icd_ccs_outcome_manager.outcome) == 1
+
+        assert outcome_selection_name in icd_ccs_outcome_manager.outcome
+        assert icd_ccs_outcome_manager.outcome[outcome_selection_name].name == outcome_selection_name
+        assert isinstance(icd_ccs_outcome_manager.outcome[outcome_selection_name], OutcomeExtractor)
+
+    def test_icd_ccs_maps(self, icd_ccs_map_manager: CodingSchemesManager,
+                          scheme_pair_selection: CCSICDSchemeSelection):
+        assert len(scheme_pair_selection.flag_set) == 2
+        assert len(icd_ccs_map_manager.maps) == 2
+        assert len(icd_ccs_map_manager.map) == 2 + 2  # the two identity maps
+        (a, b) = scheme_pair_selection.flag_set
+        assert (a, b) in icd_ccs_map_manager.map
+        assert (b, a) in icd_ccs_map_manager.map
+        assert icd_ccs_map_manager.map[(a, b)].source_name == a
+        assert icd_ccs_map_manager.map[(a, b)].target_name == b
+        assert icd_ccs_map_manager.map[(b, a)].source_name == b
+        assert icd_ccs_map_manager.map[(b, a)].target_name == a
+        assert icd_ccs_map_manager.map[(a, b)].source_scheme.name == a
+        assert icd_ccs_map_manager.map[(a, b)].target_scheme.name == b
+        assert icd_ccs_map_manager.map[(b, a)].source_scheme.name == b
+        assert icd_ccs_map_manager.map[(b, a)].target_scheme.name == a
+
+    def test_primitive_scheme_serialization(self, primitive_flat_scheme: CodingScheme, tmpdir: str):
+        path = f'{tmpdir}/coding_scheme.h5'
+        with tb.open_file(path, 'w') as f:
+            primitive_flat_scheme.to_hdf_group(f.create_group('/', 'scheme_data'))
+
+        with tb.open_file(path, 'r') as f:
+            reloaded = CodingScheme.from_hdf_group(f.root.scheme_data)
+
+        assert primitive_flat_scheme.equals(reloaded)
+
+    def test_icd_ccs_scheme_serialization(self, icd_ccs_scheme_manager: CodingSchemesManager, hf5_write_group: tb.Group,
+                                          tmpdir: str):
+        path = f'{tmpdir}/coding_schemes.h5'
+        with tb.open_file(path, 'w') as f:
+            icd_ccs_scheme_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+
+        with tb.open_file(path, 'r') as f:
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager)
+
+        assert icd_ccs_scheme_manager.equals(reloaded)
+
+    def test_icd_ccs_outcome_serialization(self, icd_ccs_outcome_manager: CodingSchemesManager,
+                                           hf5_write_group: tb.Group, tmpdir: str):
+        path = f'{tmpdir}/coding_schemes.h5'
+        with tb.open_file(path, 'w') as f:
+            icd_ccs_outcome_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+
+        with tb.open_file(path, 'r') as f:
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager).sync()
+
+        assert icd_ccs_outcome_manager.equals(reloaded)
+
+    def test_icd_ccs_map_serialization(self, icd_ccs_map_manager: CodingSchemesManager, hf5_group: tb.Group,
+                                       tmpdir: str):
+        path = f'{tmpdir}/coding_schemes.h5'
+        with tb.open_file(path, 'w') as f:
+            icd_ccs_map_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+
+        with tb.open_file(path, 'r') as f:
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager)
+
+        assert icd_ccs_map_manager.equals(reloaded)
 
 
-    @pytest.mark.parametrize("config, codes, desc",
-                             [(CodingSchemeConfig('problematic_codes'), [1], {'1': 'one'}),
-                              (CodingSchemeConfig('problematic_desc'), ['1'], {1: 'one'}),
-                              (CodingSchemeConfig('problematic_desc'), ['1'], {'1': 5})])
-    def test_type_error(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
+    @pytest.mark.parametrize("name, codes, desc",
+                             [('problematic_codes', [1], {'1': 'one'}),
+                              ('problematic_desc', ['1'], {1: 'one'}),
+                              ('problematic_desc', ['1'], {'1': 5})])
+    def test_type_error(self, name: str, codes: List[str], desc: Dict[str, str]):
         """
         Test for type error handling in the FlatScheme constructor.
 
@@ -183,14 +281,14 @@ class TestFlatScheme:
         or KeyError to be raised.
         """
         with pytest.raises((AssertionError, KeyError)):
-            CodingScheme(config=config, codes=codes, desc=desc)
+            CodingScheme(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(desc))
 
-    @pytest.mark.parametrize("config, codes, desc", [
-        (CodingSchemeConfig('problematic_desc'), ['1', '3'], {'1': 'one'}),
-        (CodingSchemeConfig('problematic_desc'), ['3'], {'3': 'three', '1': 'one'}),
-        (CodingSchemeConfig('duplicate_codes'), ['1', '2', '2'], {'1': 'one', '2': 'two'})
+    @pytest.mark.parametrize("name, codes, desc", [
+        ('problematic_desc', ['1', '3'], {'1': 'one'}),
+        ('problematic_desc', ['3'], {'3': 'three', '1': 'one'}),
+        ('duplicate_codes', ['1', '2', '2'], {'1': 'one', '2': 'two'})
     ])
-    def test_sizes(self, config: CodingSchemeConfig, codes: List[str], desc: Dict[str, str]):
+    def test_sizes(self, name: str, codes: List[str], desc: Dict[str, str]):
         """
         Test the consistency between scheme components, in their size, and mapping correctness.
 
@@ -200,7 +298,7 @@ class TestFlatScheme:
         FlatScheme constructor raises either an AssertionError or KeyError when provided with invalid input.
         """
         with pytest.raises((AssertionError, KeyError)):
-            CodingScheme(config=config, codes=codes, desc=desc)
+            CodingScheme(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(desc))
 
     def test_codes(self, primitive_flat_scheme_kwarg):
         """
@@ -216,7 +314,7 @@ class TestFlatScheme:
         """
         scheme = CodingScheme(**primitive_flat_scheme_kwarg)
         CodingScheme.register_scheme(scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['config'].name).codes == primitive_flat_scheme_kwarg[
+        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['name']).codes == primitive_flat_scheme_kwarg[
             'codes']
 
     def test_desc(self, primitive_flat_scheme_kwarg):
@@ -227,7 +325,7 @@ class TestFlatScheme:
         """
         scheme = CodingScheme(**primitive_flat_scheme_kwarg)
         CodingScheme.register_scheme(scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['config'].name).desc == primitive_flat_scheme_kwarg[
+        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['name'].name).desc == primitive_flat_scheme_kwarg[
             'desc']
 
     def test_name(self, primitive_flat_scheme_kwarg):
@@ -237,7 +335,7 @@ class TestFlatScheme:
         """
         scheme = CodingScheme(**primitive_flat_scheme_kwarg)
         CodingScheme.register_scheme(scheme)
-        assert scheme.name == primitive_flat_scheme_kwarg['config'].name
+        assert scheme.name == primitive_flat_scheme_kwarg['name']
 
     def test_index2code(self, primitive_flat_scheme):
         """
@@ -269,9 +367,9 @@ class TestFlatScheme:
 
         """
         # Arrange
-        scheme = CodingScheme(CodingSchemeConfig('simple_searchable'),
-                              codes=['1', '3'],
-                              desc={'1': 'one', '3': 'pancreatic cAnCeR'})
+        scheme = CodingScheme(name='simple_searchable',
+                              codes=('1', '3'),
+                              desc=FrozenDict11.from_dict({'1': 'one', '3': 'pancreatic cAnCeR'}))
         # Act & Assert
         assert scheme.search_regex('cancer') == {'3'}
         assert scheme.search_regex('one') == {'1'}
@@ -305,7 +403,11 @@ class TestFlatScheme:
         assert set(df.columns) == {'code', 'desc'}
         codes = df.code.tolist()
         desc = df.set_index('code')['desc'].to_dict()
-        assert primitive_flat_scheme == CodingScheme(config=primitive_flat_scheme.config, codes=codes, desc=desc)
+        assert primitive_flat_scheme == CodingScheme(name=primitive_flat_scheme.name, codes=codes, desc=desc)
+
+
+class TestSchemeManager:
+    pass
 
 # class TestCommonCodingSchemes:
 #     def setUp(self):

@@ -689,7 +689,7 @@ class Dataset(AbstractDatasetRepresentation):
         # TODO: offload table loading to the pipeline.
         self.scheme_manager = scheme_manager
         self.tables = self.load_tables(config, self.scheme) if tables is None else tables
-        self.scheme_manager = self.scheme.manager._manager
+        self.scheme_manager = self.scheme.manager.context_view
 
     @classmethod
     @abstractmethod
@@ -740,8 +740,8 @@ class Dataset(AbstractDatasetRepresentation):
         return DatasetScheme(config=self.config.scheme,
                              scheme_manager=scheme_manager.view())
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def load_scheme_manager(cls, config: DatasetConfig) -> CodingSchemesManager:
         pass
 
