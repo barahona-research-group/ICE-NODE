@@ -58,7 +58,7 @@ class TestFlatScheme:
         return CodingSchemesManager().add_scheme(primitive_flat_scheme)
 
     def test_from_name(self, primitive_flat_scheme: CodingScheme, scheme_manager: CodingSchemesManager):
-        assert scheme_manager.scheme[primitive_flat_scheme.name] is primitive_flat_scheme
+        assert scheme_manager.scheme[primitive_flat_scheme.name].equals(primitive_flat_scheme)
 
         with pytest.raises(KeyError):
             # Unregistered scheme
@@ -84,7 +84,7 @@ class TestFlatScheme:
         """
         # First, test that the register_scheme method works.
         manager = CodingSchemesManager().add_scheme(primitive_flat_scheme)
-        assert manager.scheme[primitive_flat_scheme.name] is primitive_flat_scheme
+        assert manager.scheme[primitive_flat_scheme.name].equals(primitive_flat_scheme)
 
         # Second, test that the register_scheme method raises an error when
         # the scheme is already registered.
@@ -300,42 +300,8 @@ class TestFlatScheme:
         with pytest.raises((AssertionError, KeyError)):
             CodingScheme(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(desc))
 
-    def test_codes(self, primitive_flat_scheme_kwarg):
-        """
-        Test the initialization and retrieval of codes in the FlatScheme class.
 
-        This method performs the following steps:
-        1. Registers the scheme using the `register_scheme` method of the FlatScheme class.
-        2. Retrieves the scheme using the `from_name` method of the FlatScheme class.
-        3. Asserts that the retrieved scheme's codes match the provided keyword arguments' codes.
 
-        This test ensures that the codes are properly initialized and can be retrieved correctly.
-
-        """
-        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
-        CodingScheme.register_scheme(scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['name']).codes == primitive_flat_scheme_kwarg[
-            'codes']
-
-    def test_desc(self, primitive_flat_scheme_kwarg):
-        """
-        Test the initialization and description of the FlatScheme.
-
-        Same as the test_codes method, but for the description.
-        """
-        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
-        CodingScheme.register_scheme(scheme)
-        assert CodingScheme.from_name(primitive_flat_scheme_kwarg['name'].name).desc == primitive_flat_scheme_kwarg[
-            'desc']
-
-    def test_name(self, primitive_flat_scheme_kwarg):
-        """
-        Test case to verify if the name attribute of the FlatScheme instance
-        matches the name attribute specified in the scheme configuration.
-        """
-        scheme = CodingScheme(**primitive_flat_scheme_kwarg)
-        CodingScheme.register_scheme(scheme)
-        assert scheme.name == primitive_flat_scheme_kwarg['name']
 
     def test_index2code(self, primitive_flat_scheme):
         """
@@ -403,7 +369,8 @@ class TestFlatScheme:
         assert set(df.columns) == {'code', 'desc'}
         codes = df.code.tolist()
         desc = df.set_index('code')['desc'].to_dict()
-        assert primitive_flat_scheme == CodingScheme(name=primitive_flat_scheme.name, codes=codes, desc=desc)
+        assert primitive_flat_scheme == CodingScheme(name=primitive_flat_scheme.name, codes=tuple(sorted(codes)),
+                                                     desc=FrozenDict11.from_dict(desc))
 
 
 class TestSchemeManager:
