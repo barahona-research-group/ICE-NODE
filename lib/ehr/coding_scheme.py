@@ -1224,18 +1224,21 @@ class CodingSchemesManager(VxData):
         return SchemeManagerView(_manager=self)
 
     def add_scheme(self, scheme: CodingScheme) -> CodingSchemesManager:
+        assert isinstance(scheme, CodingScheme), f"{scheme} is not a CodingScheme."
         if scheme.name in self.scheme:
             logging.warning(f'Scheme {scheme.name} already exists')
             return self
         return CodingSchemesManager(schemes=self.schemes + (scheme,), maps=self.maps, outcomes=self.outcomes).sync()
 
     def add_map(self, map: CodeMap) -> CodingSchemesManager:
+        assert isinstance(map, CodeMap), f"{map} is not a CodeMap."
         if (map.source_name, map.target_name) in self.map:
             logging.warning(f'Map {map.source_name}->{map.target_name} already exists')
             return self
         return CodingSchemesManager(schemes=self.schemes, maps=self.maps + (map,), outcomes=self.outcomes).sync()
 
     def add_outcome(self, outcome: OutcomeExtractor) -> CodingSchemesManager:
+        assert isinstance(outcome, OutcomeExtractor), f"{outcome} is not an OutcomeExtractor."
         if outcome.name in self.outcome:
             logging.warning(f'Outcome {outcome.name} already exists')
             return self
