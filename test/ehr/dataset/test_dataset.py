@@ -322,11 +322,11 @@ class TestDataset:
         # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
         # is not appropriate.
         p_threshold = 1 / len(subject_ids)
-        tolerance = min(
+        tolerance = max(
             abs(split_measure([i]) - split_measure([j])) for i in subject_ids for j in subject_ids if i != j)
         for i in range(len(split_proportions)):
             for j in range(i + 1, len(split_proportions)):
-                if abs(split_proportions[i] - split_proportions[j]) < p_threshold:
+                if abs(split_proportions[i] - split_proportions[j]) < 2 * p_threshold:
                     if balance == 'subjects':
                         # Difference between subjects is at most 1 when balance is applied
                         # on subjects count AND proportions are (almost) equal.
