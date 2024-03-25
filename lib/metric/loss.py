@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal, Callable, Final, Dict
 
 import equinox as eqx
 import jax.nn as jnn
@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from jax.tree_util import tree_flatten
 
 from .dtw import SoftDTW
+from ..base import Array
 
 
 @eqx.filter_jit
@@ -194,40 +195,15 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
     return jnp.nanmean(loss_array, where=(mask & (y_diff != 0)), axis=axis)
 
 
-# @eqx.filter_jit
-# def masked_mse(y: jnp.ndarray,
-#                y_hat: jnp.ndarray,
-#                mask: jnp.ndarray = None,
-#                axis=None):
-#     """Masked L2 loss."""
-#     if mask is None:
-#         mask = jnp.ones_like(y)
-#     return jnp.nanmean(jnp.power(y - y_hat, 2), where=mask, axis=axis)
-
-
-def masked_op(op):
-    def masked_op_fn(y: jnp.ndarray,
-                     y_hat: jnp.ndarray,
-                     mask: jnp.ndarray = None,
-                     axis=None):
-        """Masked L2 loss."""
-        if mask is None:
-            return op(y, y_hat, axis=axis)
-        else:
-            return op(y[mask], y_hat[mask], axis=axis)
-
-    return masked_op_fn
-
-
 def mse_terms(y: jnp.ndarray, y_hat: jnp.ndarray):
     """L2 loss terms."""
     return jnp.power(y - y_hat, 2)
 
 
 @eqx.filter_jit
-def mse(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+def mse(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None):
     """L2 loss."""
-    return jnp.mean(mse_terms(y, y_hat), axis=axis)
+    return jnp.mean(mse_terms(y, y_hat), axis=axis, where=mask)
 
 
 def mae_terms(y: jnp.ndarray, y_hat: jnp.ndarray):
@@ -236,32 +212,42 @@ def mae_terms(y: jnp.ndarray, y_hat: jnp.ndarray):
 
 
 @eqx.filter_jit
-def mae(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+def mae(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None):
     """L1 loss."""
-    return jnp.mean(mae_terms(y, y_hat), axis=axis)
+    return jnp.mean(mae_terms(y, y_hat), axis=axis, where=mask)
 
 
 @eqx.filter_jit
-def rms(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+def rms(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None):
     """Root mean squared error."""
-    return jnp.sqrt(mse(y, y_hat, axis=axis))
+    return jnp.sqrt(mse(y, y_hat, axis=axis, mask=mask))
 
 
-_softdtw_0_1 = SoftDTW(gamma=0.1)
+_soft_dtw_0_1 = SoftDTW(gamma=0.1)
 
 
 @eqx.filter_jit
-def softdtw(y: jnp.ndarray, y_hat: jnp.ndarray, axis=None):
+def softdtw(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None):
     """Soft-DTW loss."""
-    return _softdtw_0_1(y, y_hat)
+    return _soft_dtw_0_1(y, y_hat)
 
 
-masked_mse = masked_op(mse)
-masked_mae = masked_op(mae)
-masked_rms = masked_op(rms)
-masked_softdtw = masked_op(softdtw)
+def r2(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None):
+    """R2 score."""
+    y_mean = jnp.mean(y, axis=axis, where=mask)
+    ss_tot = jnp.sum(jnp.power(y - y_mean, 2), axis=axis, where=mask)
+    ss_res = jnp.sum(jnp.power(y - y_hat, 2), axis=axis, where=mask)
+    return 1 - ss_res / ss_tot
 
-binary_loss = {
+
+BinaryLossLiteral = Literal[
+    'softmax_bce', 'balanced_focal_softmax_bce', 'balanced_focal_bce', 'allpairs_hard_rank',
+    'allpairs_exp_rank', 'allpairs_sigmoid_rank']
+
+NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
+LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
+
+BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
     'balanced_focal_bce': balanced_focal_bce,
@@ -270,24 +256,10 @@ binary_loss = {
     'allpairs_sigmoid_rank': allpairs_sigmoid_rank
 }
 
-numeric_loss = {
-    'mse': masked_mse,
-    'mae': masked_mae,
-    'rms': masked_rms,
-    'softdtw(0.1)': masked_softdtw
-}
-
-colwise_binary_loss = {
-    'softmax_bce':
-        lambda y, y_hat, mask: softmax_bce(y, y_hat, mask, axis=0),
-    'balanced_focal_softmax_bce':
-        lambda y, y_hat, mask: softmax_balanced_focal_bce(y, y_hat, mask, axis=0),
-    'balanced_focal_bce':
-        lambda y, y_hat, mask: balanced_focal_bce(y, y_hat, mask, axis=0)
-}
-
-colwise_numeric_loss = {
-    'mse': lambda y, y_hat, mask: masked_mse(y, y_hat, mask, axis=0),
-    'mae': lambda y, y_hat, mask: masked_mae(y, y_hat, mask, axis=0),
-    'rms': lambda y, y_hat, mask: masked_rms(y, y_hat, mask, axis=0)
+NUMERIC_LOSS: Final[Dict[NumericLossLiteral, LossSignature]] = {
+    'mse': mse,
+    'mae': mae,
+    'rms': rms,
+    'soft_dtw_0_1': softdtw,
+    'r2': r2
 }

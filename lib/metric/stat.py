@@ -1,12 +1,11 @@
 """Performance metrics and loss functions."""
 
 import warnings
-from abc import abstractmethod
-from collections import defaultdict
+from abc import abstractmethod, ABCMeta
 from dataclasses import field, dataclass
 from datetime import datetime
 from functools import cached_property
-from typing import Dict, Optional, List, Tuple, Any, Callable, Union
+from typing import Dict, Optional, List, Tuple, Any, Callable, ClassVar, Type, Literal
 
 import jax
 import jax.numpy as jnp
@@ -17,11 +16,68 @@ from sklearn import metrics
 from tqdm import tqdm
 
 from .delong import FastDeLongTest
-from .loss import (binary_loss, numeric_loss, colwise_binary_loss,
-                   colwise_numeric_loss)
-from ..base import Module, Config
-from ..ehr import (TVxEHR, InpatientObservables)
+from .loss import (NUMERIC_LOSS, NumericLossLiteral, BINARY_LOSS, BinaryLossLiteral)
+from ..base import Module, Config, Array, VxDataItem
+from ..ehr import (TVxEHR, InpatientObservables, CodesVector, LeadingObservableExtractorConfig)
+from ..ehr.coding_scheme import SchemeManagerView
 from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction
+
+PredictionAttributeLiteral = Literal['outcome', 'observables', 'leading_observable']
+
+
+class PredictionLoss(Module, metaclass=ABCMeta):
+    prediction_attribute: ClassVar[PredictionAttributeLiteral] = None
+
+    @abstractmethod
+    def item_loss(self, ground_truth: VxDataItem, prediction: VxDataItem) -> Array:
+        raise NotImplementedError
+
+    def item_weight(self, ground_truth: VxDataItem) -> float:
+        return 1.0
+
+    def __call__(self, predictions: AdmissionsPrediction) -> Array | float:
+        losses = jnp.array([self.item_loss(gt, pred) for gt, pred in predictions.iter_attr(self.prediction_attribute)])
+        weights = jnp.array([self.item_weight(gt) for gt in predictions.list_attr(self.prediction_attribute)[0]])
+        loss = jnp.nansum(losses * (weights / jnp.sum(weights)))
+
+        if jnp.isnan(loss):
+            logging.warning('NaN obs loss detected')
+
+        return jnp.where(jnp.isnan(loss), 0., loss)
+
+
+class NumericPredictionLoss(PredictionLoss):
+    loss_key: NumericLossLiteral = field(default=None, kw_only=True)
+
+    @cached_property
+    def raw_loss(self) -> Callable[[Array, Array, Array], Array]:
+        return NUMERIC_LOSS[self.loss_key]
+
+    def item_loss(self, ground_truth: InpatientObservables, prediction: InpatientObservables) -> Array:
+        return self.raw_loss(ground_truth.value, prediction.value, ground_truth.mask)
+
+    def item_weight(self, ground_truth: InpatientObservables) -> float:
+        return ground_truth.mask.sum()
+
+
+class LeadPredictionLoss(NumericPredictionLoss):
+    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'leading_observable'
+
+
+class ObsPredictionLoss(NumericPredictionLoss):
+    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'observables'
+
+
+class OutcomePredictionLoss(PredictionLoss):
+    loss_key: BinaryLossLiteral = field(default=None, kw_only=True)
+    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'outcome'
+
+    @cached_property
+    def raw_loss(self) -> Callable[[Array, Array], Array]:
+        return BINARY_LOSS[self.loss_key]
+
+    def item_loss(self, ground_truth: CodesVector, prediction: CodesVector) -> Array:
+        return self.raw_loss(ground_truth.vec, prediction.vec)
 
 
 def safe_nan_func(func, x, axis):
@@ -31,28 +87,28 @@ def safe_nan_func(func, x, axis):
         return func(x, axis=axis)
 
 
-def nanaverage(A, weights, axis):
+def silent_nanaverage(A, weights, axis):
     return safe_nan_func(
         lambda x, axis: onp.nansum(x * weights, axis=axis) / ((~onp.isnan(x)) * weights).sum(axis=axis), A, axis=axis)
 
 
-def nanmean(A, axis=None):
+def silent_nanmean(A, axis=None):
     return safe_nan_func(onp.nanmean, A, axis=axis)
 
 
-def nanmedian(A, axis=None):
+def silent_nanmedian(A, axis=None):
     return safe_nan_func(onp.nanmedian, A, axis=axis)
 
 
-def nanstd(A, axis=None):
+def silent_nanstd(A, axis=None):
     return safe_nan_func(onp.nanstd, A, axis=axis)
 
 
-def nanmax(A, axis=None):
+def silent_nanmax(A, axis=None):
     return safe_nan_func(onp.nanmax, A, axis=axis)
 
 
-def nanmin(A, axis=None):
+def silent_nanmin(A, axis=None):
     return safe_nan_func(onp.nanmin, A, axis=axis)
 
 
@@ -123,12 +179,10 @@ class Metric(Module):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    @staticmethod
-    def estimands() -> Tuple[str, ...]:
+    def estimands(self) -> Tuple[str, ...]:
         return tuple()
 
-    @staticmethod
-    def estimands_optimal_directions() -> Tuple[int, ...]:
+    def estimands_optimal_directions(self) -> Tuple[int, ...]:
         return tuple()
 
     @cached_property
@@ -190,12 +244,10 @@ class Metric(Module):
 
 class VisitsAUC(Metric):
 
-    @staticmethod
-    def estimands() -> Tuple[str, ...]:
+    def estimands(self) -> Tuple[str, ...]:
         return 'macro_auc', 'micro_auc'
 
-    @staticmethod
-    def estimands_optimal_directions() -> Tuple[int, ...]:
+    def estimands_optimal_directions(self) -> Tuple[int, ...]:
         return 1, 1
 
     def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
@@ -207,7 +259,7 @@ class VisitsAUC(Metric):
             'macro_auc':
                 compute_auc(onp.hstack(ground_truth_vectors), onp.hstack(prediction_vectors)),
             'micro_auc':
-                nanmean(onp.array(list(map(
+                silent_nanmean(onp.array(list(map(
                     compute_auc,
                     ground_truth_vectors,
                     prediction_vectors,
@@ -215,87 +267,83 @@ class VisitsAUC(Metric):
         }
 
 
-
+class LossMetricConfig(Config):
+    loss_keys: Tuple[str] = field(default_factory=tuple)
 
 
 class LossMetric(Metric):
-    _dx_loss: Dict[str, Callable]
-    _obs_loss: Dict[str, Callable]
-    _lead_loss: Dict[str, Callable]
+    config: LossMetricConfig = LossMetricConfig()
+    prediction_loss_class: ClassVar[Type[PredictionLoss]] = PredictionLoss
 
-    def __init__(self, patients, config=None, **kwargs):
-        if config is None:
-            config = LossMetricConfig()
-        config = config.update(**kwargs)
-        super().__init__(patients=patients, config=config)
-        self._dx_loss = {name: binary_loss[name] for name in config.dx_loss}
-        self._obs_loss = {name: numeric_loss[name] for name in config.obs_loss}
-        self._lead_loss = {
-            name: numeric_loss[name]
-            for name in config.lead_loss
-        }
+    @cached_property
+    def loss_dictionary(self) -> Dict[str, PredictionLoss]:
+        return {k: self.prediction_loss_class(loss_key=k) for k in self.config.loss_keys}
 
-    def dx_fields(self):
-        return [f'dx_{name}' for name in sorted(self.config.dx_loss)]
+    def estimands_optimal_directions(self) -> Tuple[int, ...]:
+        return tuple(1 if 'r2' in k else 0 for k in self.config.loss_keys)
 
-    def obs_fields(self):
-        return [f'obs_{name}' for name in sorted(self.config.obs_loss)]
-
-    def lead_fields(self):
-        return [f'lead_{name}' for name in sorted(self.config.lead_loss)]
-
-    def estimands(self):
-        return self.dx_fields() + self.obs_fields() + self.lead_fields()
-
-    def estimands_optimal_directions(self):
-        return (0,) * len(self)
+    def estimands(self) -> Tuple[str, ...]:
+        return tuple(sorted(self.config.loss_keys))
 
     def __len__(self):
         return len(self.estimands())
 
-    def __call__(self, predictions: AdmissionsPrediction):
-        return {
-            f'dx_{loss_key}': predictions.prediction_dx_loss(dx_loss=loss_f)
-            for loss_key, loss_f in self._dx_loss.items()
-        } | {
-            f'obs_{loss_key}': predictions.prediction_obs_loss(obs_loss=loss_f)
-            for loss_key, loss_f in self._obs_loss.items()
-        } | {
-            f'lead_{loss_key}':
-                predictions.prediction_lead_loss(lead_loss=loss_f)
-            for loss_key, loss_f in self._lead_loss.items()
-        }
+    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
+        return {k: self.prediction_loss_class(loss_key=k)(predictions) for k in self.config.loss_keys}
 
 
-class AKISegmentedAdmissionConfig(Config):
-    stable_window: int = 12
+class ObsPredictionLossConfig(LossMetricConfig):
+    loss_keys: Tuple[NumericLossLiteral, ...] = ('mse', 'mae', 'rms', 'r2', 'soft_dtw_0_1')
 
 
-class LeadingPredictionAccuracyConfig(Config):
-    lookahead_hours: Tuple[int] = (1, 6, 12, 24, 36, 48, 72)
-    recovery_window: int = 12
-    entry_neglect_window: int = 3
-    minimum_acquisitions: int = 1
+class ObsPredictionLossMetric(LossMetric):
+    config: ObsPredictionLossConfig = ObsPredictionLossConfig()
+    prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
 
 
-# TODO: adapt to other interesting obs than AKI.
-# TODO: adapt to trajectory prediction.
+class OutcomePredictionLossConfig(LossMetricConfig):
+    loss_keys: Tuple[BinaryLossLiteral, ...] = ('bce', 'softmax_bce', 'balanced_focal_softmax_bce')
 
 
-class LeadingPredictionAccuracy(Metric):
+class OutcomePredictionLossMetric(LossMetric):
+    config: OutcomePredictionLossConfig = OutcomePredictionLossConfig()
+    prediction_loss_class: ClassVar[Type[PredictionLoss]] = OutcomePredictionLoss
+
+
+class LeadPredictionLossConfig(ObsPredictionLossMetric):
+    pass
+
+
+class LeadPredictionLossMetric(ObsPredictionLossMetric):
+    config: LeadPredictionLossConfig = LeadPredictionLossConfig()
+    prediction_loss_class: ClassVar[Type[PredictionLoss]] = LeadPredictionLoss
+
+
+class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
+    aki_stage_code: str
+
+    @staticmethod
+    def from_extractor_config(config: LeadingObservableExtractorConfig, aki_stage_code: str):
+        return LeadingPredictionAccuracyConfig(**config.as_dict(), aki_stage_code=aki_stage_code)
+
+
+class LeadingAKIPredictionAccuracy(Metric):
+    config: LeadingPredictionAccuracyConfig
+    context_view: SchemeManagerView
 
     @property
-    def lead_config(self):
-        return self.patients.config.leading_observable
+    def lead_extractor(self):
+        return dict(
+            zip(range(len(self.config.leading_hours)),
+                [f'{self.config.observable_code}_next_{h}hrs' for h in self.config.leading_hours]))
 
     @property
-    def lead_times(self):
-        return self.lead_config.leading_hours
+    def aki_stage_index(self) -> int:
+        return self.context_view.scheme[self.config.scheme].index[self.config.aki_stage_code]
 
     @property
-    def lead_index2label(self):
-        index = list(range(len(self.lead_times)))
-        return dict(zip(index, self.lead_times))
+    def aki_binary_index(self):
+        return self.context_view.scheme[self.config.scheme].index[self.config.observable_code]
 
     def _annotate_lead_predictions(self, prediction: pd.DataFrame,
                                    ground_truth: pd.DataFrame):
@@ -343,20 +391,8 @@ class LeadingPredictionAccuracy(Metric):
 
         return prediction
 
-    def _defragment_obs(self, x: Union[List[InpatientObservables],
-    InpatientObservables]):
-        if isinstance(x, list):
-            y = [xi.to_cpu() for xi in x]
-            return InpatientObservables.concat(y)
-        elif isinstance(x, InpatientObservables):
-            return x.to_cpu()
-        else:
-            type_name = type(x).__name__
-            raise NotImplementedError(f'unknown observable type {type_name}')
-
     def _lead_dataframe(self, prediction: AdmissionPrediction):
-        """Returns a dataframe of leading predictions after filtering out
-        non potential (non-useful) cases:
+        """Returns a dataframe of leading predictions after filtering out non-potential (non-useful) cases:
             (1) timestamps before sufficient acquisitions
                 (self.config.minimum_acquisitions) are made.
             (2) timestamps within self.config.entry_neglect_window
@@ -377,8 +413,7 @@ class LeadingPredictionAccuracy(Metric):
             AKI.
             - next_occurrence_value: value of the next occurrence of the AKI.
         """
-        lead_prediction = self._defragment_obs(
-            prediction.leading_observable).to_cpu()
+        lead_prediction = prediction.leading_observable.to_cpu()
 
         # criterion (1) - minimum acquisitions, early skip function.
         if len(lead_prediction) <= self.config.minimum_acquisitions:
@@ -397,10 +432,9 @@ class LeadingPredictionAccuracy(Metric):
             lead_time = lead_time[entry_neglect_mask]
             lead_critical_val = lead_critical_val[entry_neglect_mask]
 
-        obs_ground_truth = self._defragment_obs(
-            prediction.admission.observables)
+        obs_ground_truth = prediction.admission.observables.to_cpu()
 
-        obs_index = self.lead_config.index
+        obs_index = self.aki_binary_index
         mask = obs_ground_truth.mask[:, obs_index]
         # criterion (3) - no valid AKI measured, early skip function.
         if mask.sum() == 0:
@@ -425,8 +459,7 @@ class LeadingPredictionAccuracy(Metric):
 
         # criterion (4) - no recovery since last (current) occurrence.
         pos_ground_truth_df = ground_truth_df[ground_truth_df['value'] > 0]
-        prediction_df = prediction_df[~prediction_df['time'].
-        isin(pos_ground_truth_df['time'])]
+        prediction_df = prediction_df[~prediction_df['time'].isin(pos_ground_truth_df['time'])]
 
         if len(prediction_df) == 0:
             return None
@@ -478,24 +511,17 @@ class LeadingPredictionAccuracy(Metric):
         df = prediction_df
 
         df['class'] = 'unknown'
-        df.loc[(df['last_recovery_time'] == -onp.inf) &
-               (df['next_occurrence_time'] == onp.inf), 'class'] = 'negative'
-        df.loc[(df['last_recovery_time'] == -onp.inf) &
-               (df['next_occurrence_time'] != onp.inf),
-        'class'] = 'first_pre_emergence'
-        df.loc[(df['last_recovery_time'] != -onp.inf) &
-               (df['last_recovery_time'] +
-                self.config.recovery_window < df['time']) &
-               (df['next_occurrence_time'] != onp.inf),
-        'class'] = 'later_pre_emergence'
-        df.loc[(df['last_recovery_time'] != -onp.inf) &
-               (df['last_recovery_time'] +
-                self.config.recovery_window >= df['time']),
-        'class'] = 'recovery_window'
-        df.loc[(df['last_recovery_time'] != -onp.inf) &
-               (df['last_recovery_time'] +
-                self.config.recovery_window < df['time']) &
-               (df['next_occurrence_time'] == onp.inf), 'class'] = 'recovered'
+        df.loc[(df['last_recovery_time'] == -onp.inf) & (df['next_occurrence_time'] == onp.inf), 'class'] = 'negative'
+        df.loc[(df['last_recovery_time'] == -onp.inf) & (
+                df['next_occurrence_time'] != onp.inf), 'class'] = 'first_pre_emergence'
+        df.loc[(df['last_recovery_time'] != -onp.inf) & (
+                df['last_recovery_time'] + self.config.recovery_window < df['time']) & (
+                       df['next_occurrence_time'] != onp.inf), 'class'] = 'later_pre_emergence'
+        df.loc[(df['last_recovery_time'] != -onp.inf) & (
+                df['last_recovery_time'] + self.config.recovery_window >= df['time']), 'class'] = 'recovery_window'
+        df.loc[(df['last_recovery_time'] != -onp.inf) & (
+                df['last_recovery_time'] + self.config.recovery_window < df['time']) & (
+                       df['next_occurrence_time'] == onp.inf), 'class'] = 'recovered'
         return prediction_df
 
     def estimands(self):
@@ -506,7 +532,7 @@ class LeadingPredictionAccuracy(Metric):
 
         fields = [f'n_timestamps_{c}' for c in timestamp_class]
         fields += [f'n_admissions_{c}' for c in timestamp_class]
-        time_window = self.config.lookahead_hours
+        time_window = self.config.leading_hours
         t1 = time_window[-1]
         pre_emergence_types = [
             'first_pre_emergence', 'later_pre_emergence',
@@ -548,7 +574,7 @@ class LeadingPredictionAccuracy(Metric):
         neg_values = onp.concatenate(
             (df_negative['value'].values, df_recovered['value'].values))
         neg_labels = onp.zeros(len(neg_values))
-        time_window = self.config.lookahead_hours
+        time_window = self.config.leading_hours
         t1 = time_window[-1]
         for t0 in time_window[:-1]:
             for c, df in pre_emergence_df.items():
@@ -564,366 +590,74 @@ class LeadingPredictionAccuracy(Metric):
         return res
 
 
-def nan_concat_lagging_windows(x):
-    n = len(x)
-    add_arr = onp.full(n - 1, onp.nan)
-    x_ext = onp.concatenate((add_arr, x))
-    strided = onp.lib.stride_tricks.as_strided
-    nrows = len(x_ext) - n + 1
-    s = x_ext.strides[0]
-    return strided(x_ext, shape=(nrows, n), strides=(s, s))[:, :]
-
-
-class AKISegmentedAdmissionMetric(Metric):
-
-    def _label_aki_timestamps(self, prediction: AdmissionPrediction):
-        """
-        Label the observation timestamps into AKI and non-AKI.
-        The label at a timestamp is:
-            1. '1.0' (i.e. an AKI) if the patient has a nonzero AKI index at \
-                that timestamp or within the preceding 'stable_window' hours.
-            2. '0.0' (stable) if the patient has a zero AKI index at that \
-                timestamp and within the preceding 'stable_window' hours.
-            3. 'NaN' if there is no valid AKI index at that timestamp and \
-                within the preceding 'stable_window' hours.
-
-        Returns:
-            a vector of length len(observation_timestamps) with 1 for AKI and 0
-            for non-AKI.
-        """
-
-        leading_observable_config = self.patients.config.leading_observable
-        aki_index = leading_observable_config.index
-        observables = prediction.admission.observables
-        time = onp.array(observables.time)
-        mask = onp.array(observables.mask[:, aki_index])
-        aki = onp.array(observables.value[:, aki_index])
-        aki = onp.where(mask, aki, onp.nan)
-
-        t_preced = nan_concat_lagging_windows(time)
-        aki_preced = nan_concat_lagging_windows(aki)
-        t_diff = t_preced[:, -1, None] - t_preced
-        mask = t_diff <= self.config.stable_window
-
-        aki_preced = onp.where(mask, (aki_preced > 0) * 1.0, onp.nan)
-
-        aki_max = nanmax(aki_preced, axis=1)
-
-        max_aki_pred = nanmax(prediction.leading_observable.value, axis=1)
-        return time, aki_max, max_aki_pred
-
-    def _segment_aki_labels(self, prediction: AdmissionPrediction):
-        """
-        Segment the AKI labels into periods of constant AKI or \
-            constant non-AKI.
-
-        Returns:
-            a list of tuples (time, aki) where time is a vector of timestamps \
-                and aki is the AKI label (1 for AKI, 0 for non-AKI, NaN for \
-                unknown).
-        """
-        time, aki_labels, aki_preds = self._label_aki_timestamps(prediction)
-        aki_labels = onp.nan_to_num(aki_labels, nan=-1)
-        aki_jumps = onp.hstack((0, aki_labels[1:] - aki_labels[:-1]))
-        aki_jumps_idx = onp.argwhere(aki_jumps != 0).flatten().tolist()
-        indices = [0] + aki_jumps_idx + [len(aki_labels)]
-        data = []
-        for i1, i2 in zip(indices[:-1], indices[1:]):
-            aki = aki_labels[i1]
-            if aki == -1:
-                aki = onp.nan
-
-            data.append({
-                'i1':
-                    i1,
-                'i2':
-                    i2,
-                'admission_id':
-                    prediction.admission.admission_id,
-                'time':
-                    time[i1:i2],
-                'next_interval_time':
-                    time[i2] if i2 < len(time) else onp.nan,
-                'aki_label':
-                    aki_labels[i1],
-                'aki_preds':
-                    aki_preds[i1:i2]
-            })
-
-        return data
-
-    def _classify_aki_segments(self, segmented_AKI: list):
-        """
-        Classify the AKI segments into:
-            'stable': if consists of one segment with zero AKI.
-            'AKI_all', if consists of one segment with nonzero AKI.
-            'AKI_emergence': if consists of more than one segment with \
-                with at least one zero segment followed by a nonzero segment.
-            'AKI_recovery': if consists of two segments where the first \
-                segment is nonzero and the second segment is zero.
-            'unknown': if there are no valid AKI labels.
-        """
-        aki_vals = [segment['aki_label'] for segment in segmented_AKI]
-
-        if len(aki_vals) == 1:
-            if aki_vals[0] == 0:
-                return ['stable']
-            elif aki_vals[0] == 1:
-                return ['AKI']
-            else:
-                return ['unknown']
-
-        segment_class = []
-        for i, aki in enumerate(aki_vals):
-            if aki == 1.0:
-                segment_class.append('AKI')
-            elif onp.isnan(aki):
-                segment_class.append('unknown')
-            elif aki == 0:
-                if i < len(aki_vals) - 1:
-                    if aki_vals[i + 1] == 1:
-                        if i == 0:
-                            segment_class.append('first_AKI_pre_emergence')
-                        else:
-                            segment_class.append('AKI_pre_emergence')
-                    elif onp.isnan(aki_vals[i + 1]):
-                        segment_class.append('unknown')
-                    else:
-                        raise ValueError('Unexpected value in aki_vals')
-                else:
-                    if aki_vals[i - 1] == 1:
-                        segment_class.append('AKI_recovery')
-                    else:
-                        segment_class.append('unknown')
-            else:
-                raise ValueError('Unexpected value in aki_vals')
-        return segment_class
-
-    def _segment_classify_predictions(self, predictions: AdmissionsPrediction):
-        """
-        Segment admission intervals and classify the admissions into \
-            'stable', 'AKI_all', 'AKI_emergence', 'AKI_recovery', or 'other'.
-        """
-        segmented_AKI = {}
-        for sid in predictions:
-            for aid in predictions[sid]:
-                prediction = predictions[sid][aid]
-                _segmented_AKI = self._segment_aki_labels(prediction)
-                _class = self._classify_aki_segments(_segmented_AKI)
-                for i in range(len(_segmented_AKI)):
-                    _segmented_AKI[i]['class'] = _class[i]
-                segmented_AKI[aid] = _segmented_AKI
-        return segmented_AKI
-
-    def _segmented_AKI_byclass(self, segmented_AKI: dict):
-        """
-        Segment the admissions by class.
-        """
-        segmented_AKI_byclass = defaultdict(list)
-        for aid in segmented_AKI:
-            for segment in segmented_AKI[aid]:
-                _class = segment['class']
-                segmented_AKI_byclass[_class].append(segment)
-        return segmented_AKI_byclass
-
-    def _filter_empty_observables(self, predictions):
-        """
-        Filter out admissions with empty observables.
-        """
-        filtered_predictions = {}
-        for sid in predictions:
-            filtered_predictions[sid] = {}
-            for aid in predictions[sid]:
-                prediction = predictions[sid][aid]
-                if onp.size(prediction.observables.time) > 0:
-                    filtered_predictions[sid][aid] = prediction
-        return filtered_predictions
-
-    @property
-    def time_window(self):
-        return [1, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
-
-    def estimands(self):
-        segmented_classes = [
-            'stable', 'AKI', 'unknown', 'first_AKI_pre_emergence',
-            'AKI_pre_emergence', 'AKI_recovery'
-        ]
-
-        fields = [f'n_{c}' for c in segmented_classes]
-        fields += [f'm_{c}' for c in segmented_classes]
-        time_window = self.time_window
-        for time_win in time_window[:-1]:
-            fields.append(f'n_emergence_{time_win}-{time_window[-1]}')
-            fields.append(f'emergence_auc_{time_win}-{time_window[-1]}')
-            fields.append(f'n_first_emergence_{time_win}-{time_window[-1]}')
-            fields.append(f'first_emergence_auc_{time_win}-{time_window[-1]}')
-            fields.append(f'n_all_emergence_{time_win}-{time_window[-1]}')
-            fields.append(f'all_emergence_auc_{time_win}-{time_window[-1]}')
-
-        return fields
-
-    def estimands_optimal_directions(self):
-        return (1,) * len(self.estimands())
-
-    def _apply(self, predictions: AdmissionsPrediction):
-        some_obs = list(next(iter(
-            predictions.values())).values())[0].observables
-        if not isinstance(some_obs, InpatientObservables):
-            predictions = predictions.defragment_observables()
-        some_obs = list(next(iter(
-            predictions.values())).values())[0].observables
-        assert isinstance(some_obs, InpatientObservables), \
-            "Observables must be InpatientObservables."
-        predictions = self._filter_empty_observables(predictions)
-
-        time_window = self.time_window
-        segmented_AKI = self._segment_classify_predictions(predictions)
-        segmented_AKI_byclass = self._segmented_AKI_byclass(segmented_AKI)
-
-        n_adm_trends = {c: len(v) for c, v in segmented_AKI_byclass.items()}
-        res = {f'n_{k}': v for k, v in n_adm_trends.items()}
-        res.update({
-            f'm_{k}': sum(len(vi['time']) for vi in v)
-            for k, v in segmented_AKI_byclass.items()
-        })
-
-        aki_emergence = segmented_AKI_byclass['AKI_pre_emergence']
-        first_aki_emergence = segmented_AKI_byclass['first_AKI_pre_emergence']
-        stable = segmented_AKI_byclass['stable'][0]['aki_preds']
-
-        for time_win in time_window[:-1]:
-            aki_emergence_preds = []
-            first_aki_emergence_preds = []
-            for pred in first_aki_emergence:
-                ts = pred['time']
-                last_ts = pred['next_interval_time']
-                mask = (last_ts - ts <= time_window[-1]) & (last_ts - ts
-                                                            >= time_win)
-                first_aki_emergence_preds.append(pred['aki_preds'][mask])
-            for pred in aki_emergence:
-                ts = pred['time']
-                last_ts = pred['next_interval_time']
-                mask = (last_ts - ts <= time_window[-1]) & (last_ts - ts
-                                                            >= time_win)
-                aki_emergence_preds.append(pred['aki_preds'][mask])
-
-            # later emergence
-            em_preds = onp.hstack([stable] + aki_emergence_preds)
-            labels = onp.hstack(
-                [onp.zeros(len(stable))] +
-                [onp.ones(len(f)) for f in aki_emergence_preds])
-            (n_emerge, _), em_auc = nan_compute_auc(labels, em_preds)
-
-            # first emergence
-            first_em_preds = onp.hstack([stable] + first_aki_emergence_preds)
-            labels = onp.hstack(
-                [onp.zeros(len(stable))] +
-                [onp.ones(len(f)) for f in first_aki_emergence_preds])
-            (n_first_emerge,
-             _), fem_auc = nan_compute_auc(labels, first_em_preds)
-
-            # all emergence
-            em_preds = onp.hstack([stable] + aki_emergence_preds +
-                                  first_aki_emergence_preds)
-            labels = onp.hstack(
-                [onp.zeros(len(stable))] +
-                [onp.ones(len(f)) for f in aki_emergence_preds] +
-                [onp.ones(len(f)) for f in first_aki_emergence_preds])
-            (n_all_emerge, _), aem_auc = nan_compute_auc(labels, em_preds)
-
-            res[f'n_emergence_{time_win}-{time_window[-1]}'] = n_emerge
-            res[f'emergence_auc_{time_win}-{time_window[-1]}'] = em_auc
-
-            res[f'n_first_emergence_{time_win}-{time_window[-1]}'] = n_first_emerge
-            res[f'first_emergence_auc_{time_win}-{time_window[-1]}'] = fem_auc
-
-            res[f'n_all_emergence_{time_win}-{time_window[-1]}'] = n_all_emerge
-            res[f'all_emergence_auc_{time_win}-{time_window[-1]}'] = aem_auc
-
-        return res, segmented_AKI, segmented_AKI_byclass
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        res, segmented_AKI, segmented_AKI_byclass = self._apply(predictions)
-        return res
-
-
 class CodeLevelMetricConfig(Config):
-    code_level: bool = True
-    aggregate_level: bool = True
+    scheme: str
+    code_scores: bool = True
+    global_scores: bool = True
 
 
 class CodeLevelMetric(Metric):
-    _index2code: Dict[int, str]
-    _code2index: Dict[str, int]
+    config: CodeLevelMetricConfig
+    context_view: SchemeManagerView
 
-    # Show estimates per code
-    def __init__(self, patients, config=None, **kwargs):
-        if config is None:
-            config = CodeLevelMetricConfig()
-        config = config.update(**kwargs)
-        super().__init__(patients=patients, config=config)
-
-    def _post_init(self):
-        index = self.patients.scheme.outcome.index
-        self._code2index = index
-        self._index2code = {i: c for c, i in index.items()}
+    @cached_property
+    def codes(self) -> Tuple[str, ...]:
+        raise NotImplementedError
 
     @staticmethod
     def agg_fields():
-        return (('mean', nanmean), ('median', nanmedian), ('max', nanmax),
-                ('min', nanmin), ('std', nanstd), ('count', onp.size))
+        return (('mean', silent_nanmean), ('median', silent_nanmedian), ('max', silent_nanmax),
+                ('min', silent_nanmin), ('std', silent_nanstd), ('count', onp.size))
 
     def code_qualifier(self, code_index):
-        return f'I{code_index}C{self._index2code[code_index]}'
+        return f'I{code_index}C{self.codes[code_index]}'
 
-    def estimand_column_name(self, code_index, field):
-        clsname = self.classname()
-        return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
+    def estimand_column_name(self, code_index, estimand):
+        return f'{self.classname()}.{self.code_qualifier(code_index)}.{estimand}'
 
     @classmethod
-    def agg_column(cls, agg_key, field):
-        return f'{cls.classname()}.{agg_key}({field})'
+    def agg_column(cls, agg_key, estimand):
+        return f'{cls.classname()}.{agg_key}({estimand})'
 
     def agg_columns(self):
-        clsname = self.classname()
         cols = []
-        for field in self.estimands():
+        for est in self.estimands():
             for agg_k, _ in self.agg_fields():
-                cols.append(self.agg_column(agg_k, field))
+                cols.append(self.agg_column(agg_k, est))
         return tuple(cols)
 
     def order(self):
-        for index in sorted(self._index2code):
-            for field in self.estimands():
-                yield (index, field)
+        for index in range(len(self.codes)):
+            for est in self.estimands():
+                yield index, est
 
     def column_names(self):
         cols = []
-        if self.config.code_level:
+        if self.config.code_scores:
             cols.append(
-                tuple(self.estimand_column_name(idx, field) for idx, field in self.order()))
-        if self.config.aggregate_level:
+                tuple(self.estimand_column_name(idx, est) for idx, est in self.order()))
+        if self.config.global_scores:
             cols.append(self.agg_columns())
 
         return sum(tuple(cols), tuple())
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
-        for field in self.estimands():
-            if isinstance(result[field], dict):
-                field_vals = onp.array(list(result[field].values()))
+        for est in self.estimands():
+            if isinstance(result[est], dict):
+                field_vals = onp.array(list(result[est].values()))
             else:
-                field_vals = result[field]
+                field_vals = result[est]
             for _, agg_f in self.agg_fields():
                 row.append(agg_f(field_vals))
         return tuple(row)
 
     def estimand_values(self, result: Dict[str, Dict[int, float]]):
         row = []
-        if self.config.code_level:
+        if self.config.code_scores:
             row.append(
-                tuple(result[field][index] for index, field in self.order()))
-        if self.config.aggregate_level:
+                tuple(result[est][index] for index, est in self.order()))
+        if self.config.global_scores:
             row.append(self.agg_row(result))
 
         return sum(tuple(row), tuple())
@@ -934,41 +668,34 @@ class CodeLevelMetric(Metric):
         assert (code_index is None) != (
                 code
                 is None), "providing code and code_index are mutually exlusive"
-        code_index = self._code2index[code] if code is not None else code_index
+        code_index = self.codes.index(code) if code is not None else code_index
         column = self.estimand_column_name(code_index, keys['field'])
-        return self.from_df_functor(column, self.estimand_optimal_direction(keys['field']))
+        return self.from_df_functor(column, self.estimand_optimal_direction[keys['estimand']])
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
-        column = self.agg_column(agg, keys.get('field', self.estimands()[0]))
-        return self.from_df_functor(column, self.estimand_optimal_direction(keys['field']))
+        column = self.agg_column(agg, keys.get('estimand', self.estimands()[0]))
+        return self.from_df_functor(column, self.estimand_optimal_direction[keys['estimand']])
 
 
 class ObsCodeLevelMetric(CodeLevelMetric):
-
-    def _post_init(self):
-        index = self.patients.scheme.obs.index
-        self._code2index = index
-        self._index2code = {i: c for c, i in index.items()}
-
-
-class LeadingObsMetric(CodeLevelMetric):
-
-    def _post_init(self):
-        conf = self.patients.config.leading_observable
-        self._code2index = conf.code2index
-        self._index2code = conf.index2code
+    @cached_property
+    def codes(self) -> Tuple[str, ...]:
+        return self.context_view.scheme[self.config.scheme].codes
 
 
 class CodeAUC(CodeLevelMetric):
+    @cached_property
+    def codes(self) -> Tuple[str, ...]:
+        return self.context_view.outcome[self.config.scheme].codes
 
     @staticmethod
-    def agg_fields():
-        return (('mean', nanmean), ('weighted_mean', nanaverage),
-                ('median', nanmedian), ('max', nanmax), ('min', nanmin),
-                ('std', nanstd), ('count', onp.size))
+    def agg_fields() -> Tuple[Tuple[str, Callable], ...]:
+        return (('mean', silent_nanmean), ('weighted_mean', silent_nanaverage),
+                ('median', silent_nanmedian), ('max', silent_nanmax), ('min', silent_nanmin),
+                ('std', silent_nanstd), ('count', onp.size))
 
-    def agg_row(self, result: Dict[str, Dict[int, float]]):
+    def agg_row(self, result: Dict[str, Dict[int, float]]) -> Tuple[float, ...]:
         row = []
         for field in self.estimands():
             field_vals = onp.array(list(result[field].values()))
@@ -981,23 +708,18 @@ class CodeAUC(CodeLevelMetric):
 
         return tuple(row)
 
-    @staticmethod
-    def estimands():
-        return ('auc', 'n')
+    def estimands(self) -> Tuple[str, ...]:
+        return 'auc', 'n'
 
-    @staticmethod
-    def estimands_optimal_directions():
-        return (1, 1)
+    def estimands_optimal_directions(self):
+        return 1, 1
 
     def __call__(self, predictions: AdmissionsPrediction):
         ground_truth = []
         preds = []
-
-        for subj_id, admission_risks in predictions.items():
-            for admission_idx in sorted(admission_risks):
-                pred = admission_risks[admission_idx]
-                ground_truth.append(pred.admission.outcome.vec)
-                preds.append(pred.outcome.vec)
+        for ground_truth_outcome, predicted_outcome in predictions.iter_attr('outcome'):
+            ground_truth.append(ground_truth_outcome.vec)
+            preds.append(predicted_outcome.vec)
 
         ground_truth_mat = onp.vstack(ground_truth)
         predictions_mat = onp.vstack(preds)
@@ -1018,231 +740,6 @@ class CodeAUC(CodeLevelMetric):
         return vals
 
 
-class ColwiseLossMetricConfig(Config):
-    loss: List[str] = field(default_factory=list)
-
-
-class CodeLevelLossMetric(CodeLevelMetric):
-    _loss_functions: Dict[str, Callable]
-
-    def _post_init(self):
-        CodeLevelMetric._post_init(self)
-        self._loss_functions = {
-            name: colwise_binary_loss[name]
-            for name in self.config.loss
-        }
-
-    def estimands(self):
-        return list(map(lambda n: f'dx_{n}', sorted(self.config.loss)))
-
-    def estimands_optimal_directions(self):
-        return (0,) * len(self.estimands())
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        loss_vals = {
-            f'dx_{name}': predictions.prediction_dx_loss(loss_f)
-            for name, loss_f in self._loss_functions.items()
-        }
-        loss_vals = {
-            name: dict(zip(range(len(v)), v))
-            for name, v in loss_vals.items()
-        }
-        return loss_vals
-
-
-class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
-    _loss_functions: Dict[str, Callable]
-
-    def _post_init(self):
-        ObsCodeLevelMetric._post_init(self)
-        self._loss_functions = {
-            name: colwise_numeric_loss[name]
-            for name in self.config.loss
-        }
-
-    def estimands(self):
-        return list(map(lambda n: f'obs_{n}', sorted(self.config.loss)))
-
-    def estimands_optimal_directions(self):
-        return (0,) * len(self.estimands())
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        loss_vals = {
-            f'obs_{name}': predictions.prediction_obs_loss(loss_f)
-            for name, loss_f in self._loss_functions.items()
-        }
-        loss_vals = {
-            name: dict(zip(range(len(v)), v))
-            for name, v in loss_vals.items()
-        }
-        return loss_vals
-
-
-class LeadingObsLossMetric(ObsCodeLevelLossMetric):
-    _loss_functions: Dict[str, Callable]
-
-    def _post_init(self):
-        LeadingObsMetric._post_init(self)
-        self._loss_functions = {
-            name: colwise_numeric_loss[name]
-            for name in self.config.loss
-        }
-
-    def estimands(self):
-        return list(map(lambda n: f'lead_{n}', sorted(self.config.loss)))
-
-    def estimands_optimal_directions(self):
-        return (0,) * len(self.estimands())
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        loss_vals = {
-            f'lead_{name}': predictions.prediction_lead_loss(loss_f)
-            for name, loss_f in self._loss_functions.items()
-        }
-        loss_vals = {
-            name: dict(zip(range(len(v)), v))
-            for name, v in loss_vals.items()
-        }
-        return loss_vals
-
-
-class LeadingObsTrends(LeadingObsMetric):
-
-    def estimands(self):
-        return ('tp', 'tn', 'fp', 'fn', 'n', 'pearson', 'spearman',
-                'tp_pearson', 'tp_spearman', 'tn_pearson', 'tn_spearman',
-                'mae', 'rms', 'mse')
-
-    def estimands_optimal_directions(self):
-        return (1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0)
-
-    @classmethod
-    def _compute_tp(cls, trend, trend_hat, mask):
-        tp = (trend > 0) * (trend_hat > 0) * mask
-
-        trend = pd.DataFrame(jnp.where(tp > 0, trend, jnp.nan))
-        trend_hat = pd.DataFrame(jnp.where(tp > 0, trend_hat, jnp.nan))
-
-        tp_spearman = trend.corrwith(trend_hat, axis=0,
-                                     method='spearman').values
-        tp_pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
-        return tp.sum(axis=0) / mask.sum(axis=0), tp_pearson, tp_spearman
-
-    @classmethod
-    def _compute_tn(cls, trend, trend_hat, mask):
-        tn = (trend <= 0) * (trend_hat <= 0) * mask
-        trend = pd.DataFrame(jnp.where(tn > 0, trend, jnp.nan))
-        trend_hat = pd.DataFrame(jnp.where(tn > 0, trend_hat, jnp.nan))
-
-        tn_spearman = trend.corrwith(trend_hat, axis=0,
-                                     method='spearman').values
-        tn_pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
-
-        return tn.sum(axis=0) / mask.sum(axis=0), tn_pearson, tn_spearman
-
-    @classmethod
-    def _compute_fp(cls, trend, trend_hat, mask):
-        a = (trend <= 0) * (trend_hat > 0) * mask
-        return a.sum(axis=0) / mask.sum(axis=0)
-
-    @classmethod
-    def _compute_fn(cls, trend, trend_hat, mask):
-        a = (trend > 0) * (trend_hat <= 0) * mask
-        return a.sum(axis=0) / mask.sum(axis=0)
-
-    @classmethod
-    def _compute_corr(cls, trend, trend_hat, mask):
-        trend = pd.DataFrame(onp.where(mask > 0, trend, jnp.nan))
-        trend_hat = pd.DataFrame(onp.where(mask > 0, trend_hat, jnp.nan))
-
-        spearman = trend.corrwith(trend_hat, axis=0, method='spearman').values
-        pearson = trend.corrwith(trend_hat, axis=0, method='pearson').values
-        return pearson, spearman
-
-    @classmethod
-    def _compute_errors(cls, trend, trend_hat, mask):
-        trend = jnp.where(mask > 0, trend, jnp.nan)
-        trend_hat = jnp.where(mask > 0, trend_hat, jnp.nan)
-
-        mae = nanmean(onp.abs(trend - trend_hat), axis=0)
-        rms = onp.sqrt(nanmean((trend - trend_hat) ** 2, axis=0))
-        mse = nanmean((trend - trend_hat) ** 2, axis=0)
-        return mae, rms, mse
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        obs_index = self.patients.config.leading_observable.index
-        data = predictions.prediction_lead_data(obs_index)
-        y = onp.array(data['y'])
-        y_hat = onp.array(data['y_hat'])
-        mask = onp.array(data['mask'])
-        obs = onp.array(data['obs'])
-        obs_mask = onp.array(data['obs_mask'])
-
-        trend = y - obs
-        trend_hat = y_hat - obs
-        mask = mask * obs_mask
-
-        n = mask.sum(axis=0)
-        tp, tp_pearson, tp_spearman = self._compute_tp(trend, trend_hat, mask)
-        tn, tn_pearson, tn_spearman = self._compute_tn(trend, trend_hat, mask)
-        fp = self._compute_fp(trend, trend_hat, mask)
-        fn = self._compute_fn(trend, trend_hat, mask)
-        pearson, spearman = self._compute_corr(trend, trend_hat, mask)
-        mae, rms, mse = self._compute_errors(trend, trend_hat, mask)
-        return {
-            'tp': tp,
-            'tn': tn,
-            'fp': fp,
-            'fn': fn,
-            'n': n,
-            'pearson': pearson,
-            'spearman': spearman,
-            'tp_pearson': tp_pearson,
-            'tp_spearman': tp_spearman,
-            'tn_pearson': tn_pearson,
-            'tn_spearman': tn_spearman,
-            'mae': mae,
-            'rms': rms,
-            'mse': mse
-        }
-
-
-class UntilFirstCodeAUC(CodeAUC):
-
-    def __call__(self, predictions: AdmissionsPrediction):
-        ground_truth = []
-        preds = []
-        masks = []
-
-        for subj_id, adms_predictions in predictions.items():
-            # first_occ is a vector of admission indices
-            # where the code at the corresponding
-            # coordinate has first appeard for the patient. the index value of
-            # (-1) means that the code will not appear at all for this patient.
-            first_occ = self.patients.outcome_first_occurrence(subj_id)
-
-            for admission_id in sorted(adms_predictions):
-                mask = (admission_id <= first_occ)
-                pred = adms_predictions[admission_id]
-                ground_truth.append(pred.admission.outcome.vec)
-                preds.append(pred.outcome.vec)
-                masks.append(mask)
-
-        ground_truth_mat = onp.vstack(ground_truth)
-        predictions_mat = onp.vstack(preds)
-        mask_mat = onp.vstack(masks).astype(bool)
-
-        vals = {'n': {}, 'auc': {}}
-        for code_index in range(ground_truth_mat.shape[1]):
-            code_mask = mask_mat[:, code_index]
-            code_ground_truth = ground_truth_mat[code_mask, code_index]
-            code_predictions = predictions_mat[code_mask, code_index]
-            vals['n'][code_index] = code_mask.sum()
-            vals['auc'][code_index] = compute_auc(code_ground_truth,
-                                                  code_predictions)
-        return vals
-
-
 class MetricLevelsConfig(Config):
     # Show estimates for each admission for each subject (extremely large
     # table)
@@ -1256,6 +753,7 @@ class MetricLevelsConfig(Config):
 
 
 class AdmissionAUC(Metric):
+    config: MetricLevelsConfig
 
     def __init__(self,
                  patients: TVxEHR,
@@ -1267,18 +765,16 @@ class AdmissionAUC(Metric):
         self.patients = patients
         self.config = config
 
-    @staticmethod
-    def estimands():
+    def estimands(self):
         return ('auc',)
 
-    @staticmethod
-    def estimands_optimal_directions():
+    def estimands_optimal_directions(self):
         return (1,)
 
     @staticmethod
     def agg_fields():
-        return (('mean', nanmean), ('median', nanmedian), ('max', nanmax),
-                ('min', nanmin), ('std', nanstd), ('count', onp.size))
+        return (('mean', silent_nanmean), ('median', silent_nanmedian), ('max', silent_nanmax),
+                ('min', silent_nanmin), ('std', silent_nanstd), ('count', onp.size))
 
     @staticmethod
     def subject_qualifier(subject_id):
@@ -1321,15 +817,14 @@ class AdmissionAUC(Metric):
 
     @classmethod
     def ordered_subjects(cls, predictions: AdmissionsPrediction):
-        return sorted(predictions)
+        return sorted(p.subject_id for p in predictions.predictions)
 
-    @classmethod
-    def order(cls, predictions: AdmissionsPrediction):
-        for subject_id in cls.ordered_subjects(predictions):
-            subject_predictions = predictions[subject_id]
-            for admission_id in sorted(subject_predictions):
-                for field in cls.estimands():
-                    yield (subject_id, admission_id, field)
+    def order(self, predictions: AdmissionsPrediction):
+        for subject_id in self.ordered_subjects(predictions):
+            subject_predictions = predictions.subject_predictions[subject_id]
+            for admission_id in sorted(p.admission.admission_id for p in subject_predictions):
+                for field in self.estimands():
+                    yield subject_id, admission_id, field
 
     def column_names(self, order_gen, subject_order_gen):
         cols = []
@@ -1346,14 +841,12 @@ class AdmissionAUC(Metric):
 
     def __call__(self, predictions: AdmissionsPrediction):
         auc = {}
-        for subject_id in sorted(predictions):
-            subject_predictions = predictions[subject_id]
+        for subject_id, subject_predictions in predictions.subject_predictions.items():
             subject_auc = {}
-            for admission_id in sorted(subject_predictions):
-                pred = subject_predictions[admission_id]
-                auc_score = compute_auc(pred.admission.outcome.vec,
-                                        pred.outcome.vec)
-                subject_auc[admission_id] = auc_score
+            for admission_prediction in subject_predictions:
+                auc_score = compute_auc(admission_prediction.admission.outcome.vec,
+                                        admission_prediction.outcome.vec)
+                subject_auc[admission_prediction.admission.admission_id] = auc_score
             auc[subject_id] = subject_auc
         return {'auc': auc}
 
@@ -1398,21 +891,21 @@ class AdmissionAUC(Metric):
     def value_extractor(self, keys):
         subject_id = keys['subject_id']
         admission_id = keys['admission_id']
-        field = keys.get('field', self.estimands()[0])
-        column = self.estimand_column_name(subject_id, admission_id, field)
-        return self.from_df_functor(column, self.estimand_optimal_direction(field))
+        estimand = keys.get('estimand', self.estimands()[0])
+        column = self.estimand_column_name(subject_id, admission_id, estimand)
+        return self.from_df_functor(column, self.estimand_optimal_direction[estimand])
 
     def subject_aggregate_extractor(self, keys):
-        field = keys.get('field', self.estimands()[0])
+        estimand = keys.get('estimand', self.estimands()[0])
         column = self.subject_agg_column(keys['subject_id'], keys['aggregate'],
-                                         field)
-        return self.from_df_functor(column, self.estimand_optimal_direction(field))
+                                         estimand)
+        return self.from_df_functor(column, self.estimand_optimal_direction[estimand])
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
-        field = keys.get('field', self.estimands()[0])
-        column = self.agg_column(agg, field)
-        return self.from_df_functor(column, self.estimand_optimal_direction(field))
+        estimand = keys.get('estimand', self.estimands()[0])
+        column = self.agg_column(agg, estimand)
+        return self.from_df_functor(column, self.estimand_optimal_direction[estimand])
 
 
 class CodeGroupTopAlarmAccuracyConfig(Config):
@@ -1422,24 +915,8 @@ class CodeGroupTopAlarmAccuracyConfig(Config):
 
 
 class CodeGroupTopAlarmAccuracy(Metric):
-    _code_groups: List[List[int]]
+    code_groups: List[List[int]]
     config: CodeGroupTopAlarmAccuracyConfig
-
-    def __init__(self,
-                 patients: TVxEHR,
-                 train_split: List[int],
-                 config: MetricLevelsConfig = None,
-                 **kwargs):
-        if config is None:
-            config = CodeGroupTopAlarmAccuracyConfig()
-        config = config.update(**kwargs)
-        super().__init__(patients=patients, config=config)
-
-        if len(train_split) == 0:
-            train_split = patients.dataset.subject_ids
-
-        self._code_groups = patients.outcome_frequency_partitions(
-            config.n_partitions, train_split)
 
     @classmethod
     def external_argnames(cls):
@@ -1458,7 +935,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
     def order(self):
         for k in self.config.top_k_list:
-            for gi in range(len(self._code_groups)):
+            for gi in range(len(self.code_groups)):
                 for field in self.estimands():
                     yield gi, k, field
 
@@ -1471,10 +948,9 @@ class CodeGroupTopAlarmAccuracy(Metric):
         ground_truth = []
         preds = []
 
-        for subject_risks in predictions.values():
-            for pred in subject_risks.values():
-                preds.append(pred.outcome.vec)
-                ground_truth.append(pred.admission.outcome.vec)
+        for ground_truth_outcome, predicted_outcome in predictions.iter_attr('outcome'):
+            preds.append(predicted_outcome.vec)
+            ground_truth.append(ground_truth_outcome.vec)
 
         preds = onp.vstack(preds)
         ground_truth = onp.vstack(ground_truth).astype(bool)
@@ -1488,7 +964,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
             true_positive[k] = (topk_risks_k & ground_truth)
 
         alarm_acc = {}
-        for gi, code_indices in enumerate(self._code_groups):
+        for gi, code_indices in enumerate(self.code_groups):
             group_true = ground_truth[:, tuple(code_indices)]
             group_alarm_acc = {}
             for k in top_k_list:
@@ -1504,30 +980,10 @@ class CodeGroupTopAlarmAccuracy(Metric):
         k = keys['k']
         gi = keys['group_index']
         assert k in self.config.top_k_list, f"k={k} is not in {self.config.top_k_list}"
-        assert gi < len(
-            self._code_groups), f"group_index ({gi}) >= len(self.code_groups)"
-        field = keys.get('field', self.estimands()[0])
-        colname = self.estimand_column_name(gi, k, field)
-        return self.from_df_functor(colname, self.estimand_optimal_direction(field))
-
-
-class OtherMetrics(Metric):
-
-    def __call__(self, some_flat_dict: Dict[str, float]):
-        return some_flat_dict
-
-    def estimand_values(self, some_flat_dict: Dict[str, float]) -> Tuple[float]:
-        return tuple(map(some_flat_dict.get, sorted(some_flat_dict)))
-
-    def to_dict(self, some_flat_dict):
-        return some_flat_dict
-
-    def to_df(self, index: int, some_flat_dict: Dict[str, float]):
-        some_flat_dict = {
-            k: v.item() if hasattr(v, 'item') else v
-            for k, v in some_flat_dict.items()
-        }
-        return pd.DataFrame(some_flat_dict, index=[index])
+        assert gi < len(self.code_groups), f"group_index ({gi}) >= len(self.code_groups)"
+        estimand = keys.get('estimand', self.estimands()[0])
+        colname = self.estimand_column_name(gi, k, estimand)
+        return self.from_df_functor(colname, self.estimand_optimal_direction[estimand])
 
 
 @dataclass
@@ -1535,7 +991,7 @@ class MetricsCollection:
     metrics: List[Metric] = field(default_factory=list)
 
     def columns(self):
-        return tuple(sum([m.column_names() for m in self.metrics], ()))
+        return tuple(sum([m.column_names for m in self.metrics], ()))
 
     def to_df(self,
               iteration: int,
@@ -1545,20 +1001,9 @@ class MetricsCollection:
         return pd.concat(dfs, axis=1)
 
 
-class DeLongTestConfig(Config):
-    masking: str = 'all'
-
-
 class DeLongTest(CodeLevelMetric):
 
-    def __init__(self,
-                 patients,
-                 config: DeLongTestConfig = DeLongTestConfig(),
-                 **kwargs):
-        super().__init__(patients, config=config, **kwargs)
-
-    @staticmethod
-    def estimands():
+    def estimands(self) -> Dict[str, Tuple[str, ...]]:
         return {
             'code': ('n_pos',),
             'model': ('auc', 'auc_var'),
@@ -1569,8 +1014,7 @@ class DeLongTest(CodeLevelMetric):
     def fields_category():
         return ('code', 'model', 'pair')
 
-    @staticmethod
-    def estimand_column_name():
+    def estimand_column_name(self):
 
         def code_col(field):
             return f'{field}'
@@ -1606,7 +1050,7 @@ class DeLongTest(CodeLevelMetric):
         assert (code_index is None) != (
                 code
                 is None), "providing code and code_index are mutually exlusive"
-        code_index = self._code2index[code] if code is not None else code_index
+        code_index = self.codes.index(code) if code is not None else code_index
 
         if field in self.estimands()['model']:
             column_gen = lambda kw: self.estimand_column_name()['model'](kw['model'], field)
@@ -1652,7 +1096,7 @@ class DeLongTest(CodeLevelMetric):
 
     def rows(self, data, clfs):
         rows = []
-        for code_index in sorted(self._index2code):
+        for code_index in range(len(self.codes)):
             row_gen = self._row(code_index, data, clfs)
             rows.append(
                 sum((row_gen[cat]() for cat in self.fields_category()),
@@ -1715,46 +1159,23 @@ class DeLongTest(CodeLevelMetric):
         return list(sorted(subject_sets[0]))
 
     def _extract_grountruth_vs_predictions(self, predictions):
-
-        def masks(subj_id):
-            adms = self.patients.subjects[subj_id].admissions
-            if self.config.masking == 'all':
-                return self.patients.outcome_all_masks(subj_id)
-            elif self.config.masking == 'first':
-                return self.patients.outcome_first_occurrence_masks(subj_id)
-            else:
-                raise ValueError(f"Unknown masking type {self.config.masking}")
-
-        subjects = self._extract_subjects(predictions)
         true_mat = {}
         pred_mat = {}
-        mask_mat = {}
         for clf_label, clf_preds in predictions.items():
             clf_true = []
             clf_pred = []
-            clf_mask = []
-            for subject_id in subjects:
-                subj_preds = [
-                    clf_preds[subject_id][aid]
-                    for aid in sorted(clf_preds[subject_id])
-                ]
-                subj_masks = masks(subject_id)
-                for pred, mask in zip(subj_preds, subj_masks):
-                    clf_true.append(pred.admission.outcome.vec)
-                    clf_mask.append(mask)
-                    clf_pred.append(pred.outcome.vec)
+            for ground_truth_outcome, predicted_outcome in clf_preds.iter_attr('outcome'):
+                clf_true.append(ground_truth_outcome.vec)
+                clf_pred.append(predicted_outcome.vec)
 
             true_mat[clf_label] = onp.vstack(clf_true)
             pred_mat[clf_label] = onp.vstack(clf_pred)
-            mask_mat[clf_label] = onp.vstack(clf_mask).astype(bool)
 
         tm0 = list(true_mat.values())[0]
-        mask = list(mask_mat.values())[0]
-        for tm, msk in zip(true_mat.values(), mask_mat.values()):
+        for tm in true_mat.values():
             assert (tm0 == tm).all(), "Mismatch in ground-truth across models."
-            assert (mask == msk).all(), "Mismatch in mask across models."
 
-        return tm0, mask, pred_mat
+        return tm0, pred_mat
 
     def __call__(self, predictions: Dict[str, AdmissionsPrediction]):
         """
@@ -1767,8 +1188,7 @@ class DeLongTest(CodeLevelMetric):
         """
         # Classifier labels
         clf_labels = list(sorted(predictions.keys()))
-        true_mat, mask_mat, preds = self._extract_grountruth_vs_predictions(
-            predictions)
+        true_mat, preds = self._extract_grountruth_vs_predictions(predictions)
         clf_pairs = self._model_pairs(clf_labels)
 
         n_pos = {}  # only codewise
@@ -1777,8 +1197,7 @@ class DeLongTest(CodeLevelMetric):
         p_val = {}  # pairwise
 
         for code_index in tqdm(range(true_mat.shape[1])):
-            mask = mask_mat[:, code_index]
-            code_truth = true_mat[mask, code_index]
+            code_truth = true_mat[:, code_index]
             _n_pos = code_truth.sum()
             n_neg = len(code_truth) - _n_pos
             n_pos[code_index] = _n_pos
@@ -1799,8 +1218,8 @@ class DeLongTest(CodeLevelMetric):
                         code_auc_var[clf] = code_auc_var.get(clf, float('nan'))
                     continue
 
-                preds1 = preds[clf1][mask, code_index]
-                preds2 = preds[clf2][mask, code_index]
+                preds1 = preds[clf1][:, code_index]
+                preds2 = preds[clf2][:, code_index]
                 auc1, auc2, auc1_v, auc2_v, p = FastDeLongTest.delong_roc_test(
                     code_truth, preds1, preds2)
 

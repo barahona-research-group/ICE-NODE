@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import field
 from functools import cached_property
 from pathlib import Path
-from typing import Optional, Union, Tuple, Callable, Any, Iterable, Literal
+from typing import Optional, Union, Tuple, Callable, Any, Iterable, Literal, Dict, List
 
 import equinox as eqx
 import numpy as np
 import tables as tbl
-from jax import numpy as jnp
 
 from lib import Config
-from lib.base import VxData, VxDataItem, Array, Module
+from lib.base import VxData, VxDataItem
 from lib.ehr import Admission, CodesVector, InpatientObservables
 from lib.utils import tree_hasnan
 
@@ -46,69 +46,15 @@ class AdmissionPrediction(VxData):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))
 
 
-# Loss aggregation types.
-# 1. 'concat': concatenate the predictions, pass to the loss function, receive then return a scalar.
-#   Rank-based loss should follow this type.
-# 2. 'mean': accumulate the loss for each prediction, return an averaging scalar.
-# 3. 'struct_time': apply the loss function to temporally structured data, return a scalar for every temporal vector
-#   pairs (i.e. the ground-truth vs. prediction). DTW-based loss should follow this type.
-# 4. 'struct_prob_div': apply the loss function to structured data with probability distributions, return a scalar
-#   for every probability distribution parameter set pairs. KL-divergence-based loss should follow this type.
-# 5. 'struct_prob_div_time': apply the loss function to structured data with probability distributions and temporally
-#   structured data, return a scalar for every temporal vector pairs (i.e. the ground-truth vs. prediction).
-#       KL-divergence-based loss with DTW should follow this type.
-
-LossAggreagationType = Literal['concat', 'mean', 'struct_time', 'struct_prob_div', 'struct_prob_div_time']
-
-
-class LossWrapperConfig(Config):
-    aggregation: LossAggreagationType = 'mean'
-
-    def __post_init__(self):
-        if self.aggregation not in ['concat', 'mean']:
-            if self.aggregation not in ['struct_time', 'struct_prob_div', 'struct_prob_div_time']:
-                raise NotImplementedError(f'Aggregation type {self.aggregation} not implemented yet.')
-            else:
-                raise ValueError(f'Invalid aggregation type: {self.aggregation}.')
-
-
-class LossWrapper(Module):
-    config: LossWrapperConfig
-    loss_fn: Callable[[VxDataItem, VxDataItem], Array]
-    concatenate: Optional[Callable[[Iterable[VxDataItem]], VxDataItem]] = None
-
-    def __post_init__(self):
-        if self.config.aggregation == 'concat' and self.concatenate is None:
-            raise ValueError('concatenation function must be provided for aggregation type "concat"')
-
-    @staticmethod
-    def codes_concat_wrapper(loss_fn: Callable[[Array, Array], Array]) -> LossWrapper:
-        return LossWrapper(LossWrapperConfig('concat'), loss_fn, lambda l: jnp.hstack([v.vec for v in l]))
-
-    @staticmethod
-    def observables_mean_wrapper(loss_fn: Callable[[Array, Array, Array], Array]) -> LossWrapper:
-        def obs_loss(obs_true: InpatientObservables, obs_pred: InpatientObservables) -> Array:
-            return loss_fn(obs_true.value, obs_pred.value, obs_true.mask)
-
-        return LossWrapper(LossWrapperConfig('mean'), obs_loss, None)
-
-    def __call__(self, ground_truth: Iterable[VxDataItem], predictions: Iterable[VxDataItem]) -> Array:
-        if self.config.aggregation == 'concat':
-            loss = self.loss_fn(self.concatenate(ground_truth), self.concatenate(predictions))
-        elif self.config.aggregation == 'mean':
-            losses = jnp.array([self.loss_fn(gt, pred) for gt, pred in zip(ground_truth, predictions)])
-            loss = jnp.nanmean(losses)
-        else:
-            raise NotImplementedError(f'Aggregation type {self.config.aggregation} not implemented yet.')
-
-        if jnp.isnan(loss):
-            logging.warning('NaN obs loss detected')
-
-        return jnp.where(jnp.isnan(loss), 0., loss)
-
-
 class AdmissionsPrediction(VxData):
     predictions: Tuple[AdmissionPrediction, ...] = field(default_factory=tuple)
+
+    @cached_property
+    def subject_predictions(self) -> Dict[str, List[AdmissionPrediction]]:
+        dictionary = defaultdict(list)
+        for prediction in self.predictions:
+            dictionary[prediction.subject_id].append(prediction)
+        return dictionary
 
     def save(self, path: Union[str, Path]):
         """
@@ -142,8 +88,16 @@ class AdmissionsPrediction(VxData):
     def add(self, *args, **kwargs) -> AdmissionsPrediction:
         return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (AdmissionPrediction(*args, **kwargs),))
 
+    @cached_property
+    def sorted_predictions(self) -> Tuple[AdmissionPrediction, ...]:
+        prediction_list = []
+        for subject_id in sorted(self.subject_predictions.keys()):
+            for prediction in sorted(self.subject_predictions[subject_id], key=lambda p: p.admission.admission_id):
+                prediction_list.append(prediction)
+        return tuple(prediction_list)
+
     def __iter__(self) -> Iterable[AdmissionPrediction]:
-        return iter(self.predictions)
+        return iter(self.sorted_predictions)
 
     def iter_attr(self, attr: str) -> Iterable[Tuple[VxDataItem, VxDataItem]]:
         return ((getattr(p.admission, attr), getattr(p, attr)) for p in self)
@@ -199,17 +153,3 @@ class AdmissionsPrediction(VxData):
             raise ValueError('No predictions left after NaN filtering')
 
         return clean_predictions
-
-    def apply_loss(self, attribute: PredictionAttribute, loss: LossWrapper) -> Array:
-        """
-        Calculate the loss of the predictions.
-
-        Args:
-            attribute: the attribute to calculate the loss for.
-            loss: the loss function.
-
-        Returns:
-            The loss.
-        """
-        ground_truth, predictions = self.list_attr(attribute)
-        return loss(ground_truth, predictions)

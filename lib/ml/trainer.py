@@ -23,7 +23,7 @@ from .artefacts import AdmissionsPrediction
 from .model import AbstractModel, ModelRegularisation
 from ..base import Config, Module
 from ..ehr import TVxEHR
-from ..metric.loss import binary_loss, numeric_loss
+from ..metric.loss import BINAR_LOSS, numeric_loss
 from ..metric.stat import (MetricsCollection, Metric)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
@@ -688,7 +688,7 @@ class Trainer(Module):
             reg_hyperparams = ModelRegularisation()
         self.config = config
         self.reg_hyperparams = reg_hyperparams
-        self._dx_loss = binary_loss[config.dx_loss]
+        self._dx_loss = BINAR_LOSS[config.dx_loss]
         self._obs_loss = numeric_loss[config.obs_loss]
         self._lead_loss = numeric_loss[config.lead_loss]
 
