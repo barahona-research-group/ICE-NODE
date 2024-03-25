@@ -127,7 +127,6 @@ class ICDMapOps:
 
         return conversion_table.groupby('source').apply(_get_status).to_dict()
 
-
     @staticmethod
     def register_mappings(manager: CodingSchemesManager, source_scheme: str, target_scheme: str,
                           conversion_filename: str) -> CodingSchemesManager:
@@ -537,12 +536,12 @@ class CCSMapOps:
 
 
 class DxCCSMapOps(CCSMapOps):
-    SCHEME_FILE = 'ccs_multi_dx_tool_2015.csv.gz'
+    SCHEME_FILE: str = 'ccs_multi_dx_tool_2015.csv.gz'
     N_LEVELS = 4
 
 
 class PrCCSMapOps(CCSMapOps):
-    SCHEME_FILE = 'ccs_multi_pr_tool_2015.csv.gz'
+    SCHEME_FILE: str = 'ccs_multi_pr_tool_2015.csv.gz'
     N_LEVELS = 3
 
 
@@ -600,9 +599,9 @@ class FlatCCSMapOps:
         }
 
     @classmethod
-    def register_ccs_flat_mappings(cls, manager: CodingSchemesManager, flat_ccs_scheme: CodingScheme,
-                                   icd9_scheme: ICDHierarchicalScheme):
-        columns, _ = cls.flat_ccs_columns(icd9_scheme)
+    def register_ccs_flat_mappings(cls, manager: CodingSchemesManager, flat_ccs_scheme: str,
+                                   icd9_scheme: str):
+        columns, _ = cls.flat_ccs_columns(manager.scheme[icd9_scheme])
         assert len(columns['icd9']) == columns['icd9'].nunique(), "1toN mapping expected"
         flat_ccs2icd9 = defaultdict(set)
         icd92flat_ccs = defaultdict(set)
@@ -610,10 +609,12 @@ class FlatCCSMapOps:
             flat_ccs2icd9[ccode].add(icd_code)
             icd92flat_ccs[icd_code].add(ccode)
 
-        manager = manager.add_map(CodeMap(source_name=flat_ccs_scheme.name,
-                                          target_name=icd9_scheme.name, data=FrozenDict1N.from_dict(flat_ccs2icd9)))
-        manager = manager.add_map(CodeMap(source_name=icd9_scheme.name,
-                                          target_name=flat_ccs_scheme.name, data=FrozenDict1N.from_dict(icd92flat_ccs)))
+        manager = manager.add_map(CodeMap(source_name=flat_ccs_scheme,
+                                          target_name=icd9_scheme,
+                                          data=FrozenDict1N.from_dict(flat_ccs2icd9)))
+        manager = manager.add_map(CodeMap(source_name=icd9_scheme,
+                                          target_name=flat_ccs_scheme,
+                                          data=FrozenDict1N.from_dict(icd92flat_ccs)))
         return manager
 
 
@@ -729,9 +730,9 @@ def setup_icd_maps(manager: CodingSchemesManager, scheme_selection: CCSICDScheme
         manager = PrCCSMapOps.register_mappings(manager, 'pr_ccs', 'pr_icd9')
 
     if scheme_selection.dx_flat_ccs and scheme_selection.dx_icd9:
-        manager = DxCCSMapOps.register_mappings(manager, 'dx_flat_ccs', 'dx_icd9')
+        manager = DxFlatCCSMapOps.register_ccs_flat_mappings(manager, 'dx_flat_ccs', 'dx_icd9')
     if scheme_selection.pr_flat_ccs and scheme_selection.pr_icd9:
-        manager = PrCCSMapOps.register_mappings(manager, 'pr_flat_ccs', 'pr_icd9')
+        manager = PrFlatCCSMapOps.register_ccs_flat_mappings(manager, 'pr_flat_ccs', 'pr_icd9')
 
     return manager
 

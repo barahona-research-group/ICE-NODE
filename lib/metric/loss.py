@@ -1,9 +1,10 @@
-import jax
-import jax.numpy as jnp
-import jax.nn as jnn
-from jax.tree_util import tree_flatten
+from typing import Optional
+
 import equinox as eqx
-import re
+import jax.nn as jnn
+import jax.numpy as jnp
+from jax.tree_util import tree_flatten
+
 from .dtw import SoftDTW
 
 
@@ -22,7 +23,8 @@ def l1_absolute(pytree):
 
 
 @eqx.filter_jit
-def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray, axis=None):
+def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: Optional[jnp.ndarray] = None,
+        axis: Optional[int] = None) -> jnp.ndarray:
     """Binary cross-entropy loss, averaged,
     vectorized (multi-label classification).
     The function takes two inputs:
@@ -38,8 +40,8 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: jnp.ndarray, axis=None):
 @eqx.filter_jit
 def softmax_bce(y: jnp.ndarray,
                 logits: jnp.ndarray,
-                mask: jnp.ndarray,
-                axis=None):
+                mask: Optional[jnp.ndarray] = None,
+                axis: Optional[int] = None):
     """Categorical cross-entropy, averaged.
 
     The function takes two inputs:
@@ -49,17 +51,17 @@ def softmax_bce(y: jnp.ndarray,
       where each element is a float in :math:`(-\infty, \infty)`.
     """
     terms = y * jnn.log_softmax(logits) + (
-        1 - y) * jnp.log(1 - jnn.softmax(logits))
+            1 - y) * jnp.log(1 - jnn.softmax(logits))
     return -jnp.nanmean(terms, where=mask, axis=axis)
 
 
 @eqx.filter_jit
 def balanced_focal_bce(y: jnp.ndarray,
                        logits: jnp.ndarray,
-                       mask: jnp.ndarray,
-                       gamma=2,
-                       beta=0.999,
-                       axis=None):
+                       mask: Optional[jnp.ndarray] = None,
+                       gamma: float = 2,
+                       beta: float = 0.999,
+                       axis: Optional[int] = None):
     """
     This loss function employs two concepts:
       - Effective number of sample, to mitigate class imbalance [1].
@@ -82,8 +84,8 @@ def balanced_focal_bce(y: jnp.ndarray,
     n1 = jnp.sum(y, axis=0)
     n0 = len(y) - n1
     # Effective number of samples.
-    e1 = (1 - beta**n1) / (1 - beta) + 1e-1
-    e0 = (1 - beta**n0) / (1 - beta) + 1e-1
+    e1 = (1 - beta ** n1) / (1 - beta) + 1e-1
+    e0 = (1 - beta ** n0) / (1 - beta) + 1e-1
 
     # Focal weighting
     p = jnn.sigmoid(logits)
@@ -92,32 +94,32 @@ def balanced_focal_bce(y: jnp.ndarray,
     # Note: softplus(-logits) = -log(sigmoid(logits)) = -log(p)
     # Note: softplut(logits) = -log(1 - sigmoid(logits)) = -log(1-p)
     terms = y * (w1 / e1) * jnn.softplus(-logits) + (1 - y) * (
-        w0 / e0) * jnn.softplus(logits)
+            w0 / e0) * jnn.softplus(logits)
     return jnp.nanmean(terms, where=mask, axis=axis)
 
 
 @eqx.filter_jit
 def softmax_balanced_focal_bce(y: jnp.ndarray,
                                logits: jnp.ndarray,
-                               mask: jnp.ndarray,
-                               gamma=2,
-                               beta=0.999,
-                               axis=None):
+                               mask: Optional[jnp.ndarray] = None,
+                               gamma: float = 2,
+                               beta: float = 0.999,
+                               axis: Optional[int] = None):
     """Same as ``balanced_focal_bce``, but with
     applying Softmax activation on the `logits`."""
-    #TODO:FIX this for softmax (multinomial case), n1 = np.sum(y, axis=0)
+    # TODO:FIX this for softmax (multinomial case), n1 = np.sum(y, axis=0)
     n1 = jnp.sum(y, axis=0)
     n0 = y.shape[0] - n1
     # Effective number of samples.
-    e1 = (1 - beta**n1) / (1 - beta) + 1e-5
-    e0 = (1 - beta**n0) / (1 - beta) + 1e-5
+    e1 = (1 - beta ** n1) / (1 - beta) + 1e-5
+    e0 = (1 - beta ** n0) / (1 - beta) + 1e-5
 
     # Focal weighting
     p = jnn.softmax(logits)
     w1 = jnp.power(1 - p, gamma)
     w0 = jnp.power(p, gamma)
     terms = y * (w1 / e1) * jnn.log_softmax(logits) + (1 - y) * (
-        w0 / e0) * jnp.log(1 - p)
+            w0 / e0) * jnp.log(1 - p)
     return -jnp.nanmean(terms, where=mask, axis=axis)
 
 
@@ -204,7 +206,6 @@ def allpairs_sigmoid_rank(y: jnp.ndarray,
 
 
 def masked_op(op):
-
     def masked_op_fn(y: jnp.ndarray,
                      y_hat: jnp.ndarray,
                      mask: jnp.ndarray = None,
@@ -278,11 +279,11 @@ numeric_loss = {
 
 colwise_binary_loss = {
     'softmax_bce':
-    lambda y, y_hat, mask: softmax_bce(y, y_hat, mask, axis=0),
+        lambda y, y_hat, mask: softmax_bce(y, y_hat, mask, axis=0),
     'balanced_focal_softmax_bce':
-    lambda y, y_hat, mask: softmax_balanced_focal_bce(y, y_hat, mask, axis=0),
+        lambda y, y_hat, mask: softmax_balanced_focal_bce(y, y_hat, mask, axis=0),
     'balanced_focal_bce':
-    lambda y, y_hat, mask: balanced_focal_bce(y, y_hat, mask, axis=0)
+        lambda y, y_hat, mask: balanced_focal_bce(y, y_hat, mask, axis=0)
 }
 
 colwise_numeric_loss = {

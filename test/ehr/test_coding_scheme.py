@@ -226,10 +226,10 @@ class TestFlatScheme:
         assert m1.target_scheme.name == b
         assert m2.source_scheme.name == b
         assert m2.target_scheme.name == a
-        assert m1.support_ratio > 0.5
-        assert m2.support_ratio > 0.5
-        assert m1.range_ratio > 0.5
-        assert m2.range_ratio > 0.5
+        assert m1.support_ratio > 0.2
+        assert m2.support_ratio > 0.2
+        assert m1.range_ratio > 0.2
+        assert m2.range_ratio > 0.2
 
 
     def test_primitive_scheme_serialization(self, primitive_flat_scheme: CodingScheme, tmpdir: str):

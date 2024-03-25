@@ -48,20 +48,34 @@ class AdmissionPrediction(VxData):
 
 # Loss aggregation types.
 # 1. 'concat': concatenate the predictions, pass to the loss function, receive then return a scalar.
+#   Rank-based loss should follow this type.
 # 2. 'mean': accumulate the loss for each prediction, return an averaging scalar.
+# 3. 'struct_time': apply the loss function to temporally structured data, return a scalar for every temporal vector
+#   pairs (i.e. the ground-truth vs. prediction). DTW-based loss should follow this type.
+# 4. 'struct_prob_div': apply the loss function to structured data with probability distributions, return a scalar
+#   for every probability distribution parameter set pairs. KL-divergence-based loss should follow this type.
+# 5. 'struct_prob_div_time': apply the loss function to structured data with probability distributions and temporally
+#   structured data, return a scalar for every temporal vector pairs (i.e. the ground-truth vs. prediction).
+#       KL-divergence-based loss with DTW should follow this type.
+
+LossAggreagationType = Literal['concat', 'mean', 'struct_time', 'struct_prob_div', 'struct_prob_div_time']
+
 
 class LossWrapperConfig(Config):
-    aggregation: Literal['concat', 'mean'] = 'mean'
+    aggregation: LossAggreagationType = 'mean'
 
     def __post_init__(self):
         if self.aggregation not in ['concat', 'mean']:
-            raise ValueError('Invalid aggregation type')
+            if self.aggregation not in ['struct_time', 'struct_prob_div', 'struct_prob_div_time']:
+                raise NotImplementedError(f'Aggregation type {self.aggregation} not implemented yet.')
+            else:
+                raise ValueError(f'Invalid aggregation type: {self.aggregation}.')
 
 
 class LossWrapper(Module):
     config: LossWrapperConfig
     loss_fn: Callable[[VxDataItem, VxDataItem], Array]
-    concatenate: Optional[Callable[[Iterable[VxDataItem]], Array]] = None
+    concatenate: Optional[Callable[[Iterable[VxDataItem]], VxDataItem]] = None
 
     def __post_init__(self):
         if self.config.aggregation == 'concat' and self.concatenate is None:
@@ -81,9 +95,11 @@ class LossWrapper(Module):
     def __call__(self, ground_truth: Iterable[VxDataItem], predictions: Iterable[VxDataItem]) -> Array:
         if self.config.aggregation == 'concat':
             loss = self.loss_fn(self.concatenate(ground_truth), self.concatenate(predictions))
-        else:
+        elif self.config.aggregation == 'mean':
             losses = jnp.array([self.loss_fn(gt, pred) for gt, pred in zip(ground_truth, predictions)])
             loss = jnp.nanmean(losses)
+        else:
+            raise NotImplementedError(f'Aggregation type {self.config.aggregation} not implemented yet.')
 
         if jnp.isnan(loss):
             logging.warning('NaN obs loss detected')

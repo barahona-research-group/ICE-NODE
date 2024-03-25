@@ -5,6 +5,7 @@ from abc import abstractmethod
 from collections import defaultdict
 from dataclasses import field, dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import Dict, Optional, List, Tuple, Any, Callable, Union
 
 import jax
@@ -31,10 +32,8 @@ def safe_nan_func(func, x, axis):
 
 
 def nanaverage(A, weights, axis):
-    return safe_nan_func(lambda x, axis: onp.nansum(x * weights, axis=axis) /
-                                         ((~onp.isnan(x)) * weights).sum(axis=axis),
-                         A,
-                         axis=axis)
+    return safe_nan_func(
+        lambda x, axis: onp.nansum(x * weights, axis=axis) / ((~onp.isnan(x)) * weights).sum(axis=axis), A, axis=axis)
 
 
 def nanmean(A, axis=None):
@@ -120,116 +119,103 @@ def nan_compute_auc(v_truth, v_preds):
 
 class Metric(Module):
     config: Config = Config()
-    patients: TVxEHR
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._post_init()
-
-    def _post_init(self):
-        pass
 
     @staticmethod
-    def fields():
+    def estimands() -> Tuple[str, ...]:
         return tuple()
 
     @staticmethod
-    def dirs():
+    def estimands_optimal_directions() -> Tuple[int, ...]:
         return tuple()
 
-    def field_dir(self, field):
-        return dict(zip(self.fields(), self.dirs()))[field]
+    @cached_property
+    def estimand_optimal_direction(self) -> Dict[str, int]:
+        assert len(self.estimands()) == len(self.estimands_optimal_directions()), \
+            f'{self.classname()} must define estimands and their optimal directions.'
+        return dict(zip(self.estimands(), self.estimands_optimal_directions()))
 
     @classmethod
-    def classname(cls):
+    def classname(cls) -> str:
         return cls.__name__
 
-    def column(self, field):
-        return f'{self.classname()}.{field}'
+    def estimand_column_name(self, estimand: str) -> str:
+        return f'{self.classname()}.{estimand}'
 
-    def columns(self):
-        return tuple(map(self.column, self.fields()))
+    @cached_property
+    def column_names(self) -> Tuple[str, ...]:
+        return tuple(map(self.estimand_column_name, self.estimands()))
 
     @abstractmethod
-    def __call__(self, predictions: AdmissionsPrediction):
+    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
         pass
 
-    def row(self, result: Dict[str, Any]) -> Tuple[float]:
-        return tuple(map(result.get, self.fields()))
+    def estimand_values(self, result: Dict[str, float]) -> Tuple[float, ...]:
+        return tuple(map(result.get, self.estimands()))
 
-    def to_dict(self, predictions: AdmissionsPrediction):
+    def to_dict(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
         result = self(predictions)
-        return dict(zip(self.columns(), self.row(result)))
+        return dict(zip(self.column_names, self.estimand_values(result)))
 
-    def to_df(self, index: int, predictions: AdmissionsPrediction):
+    def to_df(self, index: int, predictions: AdmissionsPrediction) -> pd.DataFrame:
         timenow = datetime.now()
         data = self.to_dict(predictions)
         eval_time = (datetime.now() - timenow).total_seconds()
         data.update({f'{self.classname()}.eval_time': eval_time})
         return pd.DataFrame(data, index=[index])
 
-    def value_extractor(self, keys: Dict[str, str]):
-        field_name = keys.get('field', self.fields()[0])
-        colname = self.column(field_name)
-        return self.from_df_functor(colname, self.field_dir(field_name))
+    def value_extractor(self, **kwargs) -> Callable[[pd.DataFrame, Optional[int]], float | Tuple[int, float]]:
+        field_name = kwargs.get('estimand', self.estimands()[0])
+        column_name = self.estimand_column_name(field_name)
+        return self.from_df_functor(column_name, self.estimand_optimal_direction[field_name])
 
-    def from_df_functor(self, colname, direction):
+    def from_df_functor(self, column_name, direction) -> Callable[[pd.DataFrame, str | int], float | Tuple[int, float]]:
 
-        def from_df(df, index=-1):
+        def from_df(df: pd.DataFrame, index: str | int = -1) -> float | Tuple[int, float]:
             if isinstance(df, AdmissionsPrediction):
                 df = self.to_df(index, df)
 
-            if index == 'best':
+            if index == 'optimum':
                 if direction == 1:
-                    return df[colname].argmax(), df[colname].max()
+                    return df[column_name].argmax(), df[column_name].max()
                 else:
-                    return df[colname].argmin(), df[colname].min()
+                    return df[column_name].argmin(), df[column_name].min()
             else:
-                return df[colname].iloc[index]
+                return df[column_name].iloc[index]
 
         return from_df
-
-    @classmethod
-    def external_argnames(cls):
-        return ['patients']
 
 
 class VisitsAUC(Metric):
 
     @staticmethod
-    def fields():
-        return ('macro_auc', 'micro_auc')
+    def estimands() -> Tuple[str, ...]:
+        return 'macro_auc', 'micro_auc'
 
     @staticmethod
-    def dirs():
-        return (1, 1)
+    def estimands_optimal_directions() -> Tuple[int, ...]:
+        return 1, 1
 
-    def __call__(self, predictions: AdmissionsPrediction) -> Tuple[float]:
-        gtruth = []
-        preds = []
-        for patient_predictions in predictions.values():
-            for p in patient_predictions.values():
-                gtruth.append(p.admission.outcome.vec)
-                preds.append(p.outcome.vec)
-
-        gtruth_vec = onp.hstack(gtruth)
-        preds_vec = onp.hstack(preds)
+    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
+        ground_truth_vectors, prediction_vectors = [], []
+        for ground_truth_outcome, predicted_outcome in predictions.iter_attr('outcome'):
+            ground_truth_vectors.append(ground_truth_outcome.vec)
+            prediction_vectors.append(predicted_outcome.vec)
         return {
             'macro_auc':
-                compute_auc(gtruth_vec, preds_vec),
+                compute_auc(onp.hstack(ground_truth_vectors), onp.hstack(prediction_vectors)),
             'micro_auc':
                 nanmean(onp.array(list(map(
                     compute_auc,
-                    gtruth,
-                    preds,
+                    ground_truth_vectors,
+                    prediction_vectors,
                 ))))
         }
 
 
-class LossMetricConfig(Config):
-    dx_loss: List[str] = field(default_factory=list)
-    obs_loss: List[str] = field(default_factory=list)
-    lead_loss: List[str] = field(default_factory=list)
+
 
 
 class LossMetric(Metric):
@@ -258,14 +244,14 @@ class LossMetric(Metric):
     def lead_fields(self):
         return [f'lead_{name}' for name in sorted(self.config.lead_loss)]
 
-    def fields(self):
+    def estimands(self):
         return self.dx_fields() + self.obs_fields() + self.lead_fields()
 
-    def dirs(self):
+    def estimands_optimal_directions(self):
         return (0,) * len(self)
 
     def __len__(self):
-        return len(self.fields())
+        return len(self.estimands())
 
     def __call__(self, predictions: AdmissionsPrediction):
         return {
@@ -512,7 +498,7 @@ class LeadingPredictionAccuracy(Metric):
                (df['next_occurrence_time'] == onp.inf), 'class'] = 'recovered'
         return prediction_df
 
-    def fields(self):
+    def estimands(self):
         timestamp_class = [
             'negative', 'unknown', 'first_pre_emergence',
             'later_pre_emergence', 'recovery_window'
@@ -757,7 +743,7 @@ class AKISegmentedAdmissionMetric(Metric):
     def time_window(self):
         return [1, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72]
 
-    def fields(self):
+    def estimands(self):
         segmented_classes = [
             'stable', 'AKI', 'unknown', 'first_AKI_pre_emergence',
             'AKI_pre_emergence', 'AKI_recovery'
@@ -776,8 +762,8 @@ class AKISegmentedAdmissionMetric(Metric):
 
         return fields
 
-    def dirs(self):
-        return (1,) * len(self.fields())
+    def estimands_optimal_directions(self):
+        return (1,) * len(self.estimands())
 
     def _apply(self, predictions: AdmissionsPrediction):
         some_obs = list(next(iter(
@@ -890,7 +876,7 @@ class CodeLevelMetric(Metric):
     def code_qualifier(self, code_index):
         return f'I{code_index}C{self._index2code[code_index]}'
 
-    def column(self, code_index, field):
+    def estimand_column_name(self, code_index, field):
         clsname = self.classname()
         return f'{clsname}.{self.code_qualifier(code_index)}.{field}'
 
@@ -901,21 +887,21 @@ class CodeLevelMetric(Metric):
     def agg_columns(self):
         clsname = self.classname()
         cols = []
-        for field in self.fields():
+        for field in self.estimands():
             for agg_k, _ in self.agg_fields():
                 cols.append(self.agg_column(agg_k, field))
         return tuple(cols)
 
     def order(self):
         for index in sorted(self._index2code):
-            for field in self.fields():
+            for field in self.estimands():
                 yield (index, field)
 
-    def columns(self):
+    def column_names(self):
         cols = []
         if self.config.code_level:
             cols.append(
-                tuple(self.column(idx, field) for idx, field in self.order()))
+                tuple(self.estimand_column_name(idx, field) for idx, field in self.order()))
         if self.config.aggregate_level:
             cols.append(self.agg_columns())
 
@@ -923,7 +909,7 @@ class CodeLevelMetric(Metric):
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
-        for field in self.fields():
+        for field in self.estimands():
             if isinstance(result[field], dict):
                 field_vals = onp.array(list(result[field].values()))
             else:
@@ -932,7 +918,7 @@ class CodeLevelMetric(Metric):
                 row.append(agg_f(field_vals))
         return tuple(row)
 
-    def row(self, result: Dict[str, Dict[int, float]]):
+    def estimand_values(self, result: Dict[str, Dict[int, float]]):
         row = []
         if self.config.code_level:
             row.append(
@@ -949,13 +935,13 @@ class CodeLevelMetric(Metric):
                 code
                 is None), "providing code and code_index are mutually exlusive"
         code_index = self._code2index[code] if code is not None else code_index
-        column = self.column(code_index, keys['field'])
-        return self.from_df_functor(column, self.field_dir(keys['field']))
+        column = self.estimand_column_name(code_index, keys['field'])
+        return self.from_df_functor(column, self.estimand_optimal_direction(keys['field']))
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
-        column = self.agg_column(agg, keys.get('field', self.fields()[0]))
-        return self.from_df_functor(column, self.field_dir(keys['field']))
+        column = self.agg_column(agg, keys.get('field', self.estimands()[0]))
+        return self.from_df_functor(column, self.estimand_optimal_direction(keys['field']))
 
 
 class ObsCodeLevelMetric(CodeLevelMetric):
@@ -984,7 +970,7 @@ class CodeAUC(CodeLevelMetric):
 
     def agg_row(self, result: Dict[str, Dict[int, float]]):
         row = []
-        for field in self.fields():
+        for field in self.estimands():
             field_vals = onp.array(list(result[field].values()))
             for agg_k, agg_f in self.agg_fields():
                 if agg_k.startswith('weighted'):
@@ -996,11 +982,11 @@ class CodeAUC(CodeLevelMetric):
         return tuple(row)
 
     @staticmethod
-    def fields():
+    def estimands():
         return ('auc', 'n')
 
     @staticmethod
-    def dirs():
+    def estimands_optimal_directions():
         return (1, 1)
 
     def __call__(self, predictions: AdmissionsPrediction):
@@ -1046,11 +1032,11 @@ class CodeLevelLossMetric(CodeLevelMetric):
             for name in self.config.loss
         }
 
-    def fields(self):
+    def estimands(self):
         return list(map(lambda n: f'dx_{n}', sorted(self.config.loss)))
 
-    def dirs(self):
-        return (0,) * len(self.fields())
+    def estimands_optimal_directions(self):
+        return (0,) * len(self.estimands())
 
     def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
@@ -1074,11 +1060,11 @@ class ObsCodeLevelLossMetric(ObsCodeLevelMetric):
             for name in self.config.loss
         }
 
-    def fields(self):
+    def estimands(self):
         return list(map(lambda n: f'obs_{n}', sorted(self.config.loss)))
 
-    def dirs(self):
-        return (0,) * len(self.fields())
+    def estimands_optimal_directions(self):
+        return (0,) * len(self.estimands())
 
     def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
@@ -1102,11 +1088,11 @@ class LeadingObsLossMetric(ObsCodeLevelLossMetric):
             for name in self.config.loss
         }
 
-    def fields(self):
+    def estimands(self):
         return list(map(lambda n: f'lead_{n}', sorted(self.config.loss)))
 
-    def dirs(self):
-        return (0,) * len(self.fields())
+    def estimands_optimal_directions(self):
+        return (0,) * len(self.estimands())
 
     def __call__(self, predictions: AdmissionsPrediction):
         loss_vals = {
@@ -1122,12 +1108,12 @@ class LeadingObsLossMetric(ObsCodeLevelLossMetric):
 
 class LeadingObsTrends(LeadingObsMetric):
 
-    def fields(self):
+    def estimands(self):
         return ('tp', 'tn', 'fp', 'fn', 'n', 'pearson', 'spearman',
                 'tp_pearson', 'tp_spearman', 'tn_pearson', 'tn_spearman',
                 'mae', 'rms', 'mse')
 
-    def dirs(self):
+    def estimands_optimal_directions(self):
         return (1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0)
 
     @classmethod
@@ -1282,11 +1268,11 @@ class AdmissionAUC(Metric):
         self.config = config
 
     @staticmethod
-    def fields():
+    def estimands():
         return ('auc',)
 
     @staticmethod
-    def dirs():
+    def estimands_optimal_directions():
         return (1,)
 
     @staticmethod
@@ -1303,7 +1289,7 @@ class AdmissionAUC(Metric):
         return f'{cls.subject_qualifier(subject_id)}A{admission_id}'
 
     @classmethod
-    def column(cls, subject_id, admission_id, field):
+    def estimand_column_name(cls, subject_id, admission_id, field):
         clsname = cls.classname()
         return f'{clsname}.{cls.admission_qualifier(subject_id, admission_id)}.{field}'
 
@@ -1315,7 +1301,7 @@ class AdmissionAUC(Metric):
     def subject_agg_columns(cls, subject_order_gen):
         cols = []
         for subject_id in subject_order_gen():
-            for field in cls.fields():
+            for field in cls.estimands():
                 for agg_k, _ in cls.agg_fields():
                     cols.append(
                         cls.subject_agg_column(subject_id, agg_k, field))
@@ -1328,7 +1314,7 @@ class AdmissionAUC(Metric):
     @classmethod
     def agg_columns(cls):
         cols = []
-        for field in cls.fields():
+        for field in cls.estimands():
             for agg_k, _ in cls.agg_fields():
                 cols.append(cls.agg_column(agg_k, field))
         return tuple(cols)
@@ -1342,13 +1328,13 @@ class AdmissionAUC(Metric):
         for subject_id in cls.ordered_subjects(predictions):
             subject_predictions = predictions[subject_id]
             for admission_id in sorted(subject_predictions):
-                for field in cls.fields():
+                for field in cls.estimands():
                     yield (subject_id, admission_id, field)
 
-    def columns(self, order_gen, subject_order_gen):
+    def column_names(self, order_gen, subject_order_gen):
         cols = []
         if self.config.admission:
-            cols.append(tuple(self.column(*o) for o in order_gen()))
+            cols.append(tuple(self.estimand_column_name(*o) for o in order_gen()))
 
         if self.config.subject_aggregate:
             cols.append(self.subject_agg_columns(subject_order_gen))
@@ -1374,7 +1360,7 @@ class AdmissionAUC(Metric):
     def subject_agg_row(self, result, subject_order_gen):
         row = []
         for subject_id in subject_order_gen():
-            for field in self.fields():
+            for field in self.estimands():
                 field_data = onp.array(list(
                     result[field][subject_id].values()))
                 for _, agg_f in self.agg_fields():
@@ -1383,7 +1369,7 @@ class AdmissionAUC(Metric):
 
     def agg_row(self, result):
         row = []
-        for field in self.fields():
+        for field in self.estimands():
             fdata = result[field]
             data = list(v for sdata in fdata.values() for v in sdata.values())
             data = onp.array(data)
@@ -1391,7 +1377,7 @@ class AdmissionAUC(Metric):
                 row.append(agg_f(data))
         return tuple(row)
 
-    def row(self, result: Dict[str, Any], order_gen, subject_order_gen):
+    def estimand_values(self, result: Dict[str, Any], order_gen, subject_order_gen):
         row = []
         if self.config.admission:
             row.append(tuple(result[f][s][a] for s, a, f in order_gen()))
@@ -1405,28 +1391,28 @@ class AdmissionAUC(Metric):
         order_gen = lambda: self.order(predictions)
         subject_order_gen = lambda: self.ordered_subjects(predictions)
         result = self(predictions)
-        cols = self.columns(order_gen, subject_order_gen)
-        rows = self.row(result, order_gen, subject_order_gen)
+        cols = self.column_names(order_gen, subject_order_gen)
+        rows = self.estimand_values(result, order_gen, subject_order_gen)
         return dict(zip(cols, rows))
 
     def value_extractor(self, keys):
         subject_id = keys['subject_id']
         admission_id = keys['admission_id']
-        field = keys.get('field', self.fields()[0])
-        column = self.column(subject_id, admission_id, field)
-        return self.from_df_functor(column, self.field_dir(field))
+        field = keys.get('field', self.estimands()[0])
+        column = self.estimand_column_name(subject_id, admission_id, field)
+        return self.from_df_functor(column, self.estimand_optimal_direction(field))
 
     def subject_aggregate_extractor(self, keys):
-        field = keys.get('field', self.fields()[0])
+        field = keys.get('field', self.estimands()[0])
         column = self.subject_agg_column(keys['subject_id'], keys['aggregate'],
                                          field)
-        return self.from_df_functor(column, self.field_dir(field))
+        return self.from_df_functor(column, self.estimand_optimal_direction(field))
 
     def aggregate_extractor(self, keys):
         agg = keys['aggregate']
-        field = keys.get('field', self.fields()[0])
+        field = keys.get('field', self.estimands()[0])
         column = self.agg_column(agg, field)
-        return self.from_df_functor(column, self.field_dir(field))
+        return self.from_df_functor(column, self.estimand_optimal_direction(field))
 
 
 class CodeGroupTopAlarmAccuracyConfig(Config):
@@ -1460,24 +1446,24 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return ('train_split', 'patients')
 
     @staticmethod
-    def fields():
+    def estimands():
         return ('acc',)
 
     @staticmethod
-    def dirs():
+    def estimands_optimal_directions():
         return (1,)
 
-    def column(self, group_index, k, field):
+    def estimand_column_name(self, group_index, k, field):
         return f'{self.classname()}.G{group_index}k{k}.{field}'
 
     def order(self):
         for k in self.config.top_k_list:
             for gi in range(len(self._code_groups)):
-                for field in self.fields():
+                for field in self.estimands():
                     yield gi, k, field
 
-    def columns(self):
-        return tuple(self.column(gi, k, f) for gi, k, f in self.order())
+    def column_names(self):
+        return tuple(self.estimand_column_name(gi, k, f) for gi, k, f in self.order())
 
     def __call__(self, predictions: AdmissionsPrediction):
         top_k_list = sorted(self.config.top_k_list)
@@ -1511,7 +1497,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
             alarm_acc[gi] = group_alarm_acc
         return {'acc': alarm_acc}
 
-    def row(self, result: Dict[str, Dict[int, Dict[int, float]]]):
+    def estimand_values(self, result: Dict[str, Dict[int, Dict[int, float]]]):
         return tuple(result[f][gi][k] for gi, k, f in self.order())
 
     def value_extractor(self, keys: Dict[str, str]):
@@ -1520,9 +1506,9 @@ class CodeGroupTopAlarmAccuracy(Metric):
         assert k in self.config.top_k_list, f"k={k} is not in {self.config.top_k_list}"
         assert gi < len(
             self._code_groups), f"group_index ({gi}) >= len(self.code_groups)"
-        field = keys.get('field', self.fields()[0])
-        colname = self.column(gi, k, field)
-        return self.from_df_functor(colname, self.field_dir(field))
+        field = keys.get('field', self.estimands()[0])
+        colname = self.estimand_column_name(gi, k, field)
+        return self.from_df_functor(colname, self.estimand_optimal_direction(field))
 
 
 class OtherMetrics(Metric):
@@ -1530,7 +1516,7 @@ class OtherMetrics(Metric):
     def __call__(self, some_flat_dict: Dict[str, float]):
         return some_flat_dict
 
-    def row(self, some_flat_dict: Dict[str, float]) -> Tuple[float]:
+    def estimand_values(self, some_flat_dict: Dict[str, float]) -> Tuple[float]:
         return tuple(map(some_flat_dict.get, sorted(some_flat_dict)))
 
     def to_dict(self, some_flat_dict):
@@ -1549,7 +1535,7 @@ class MetricsCollection:
     metrics: List[Metric] = field(default_factory=list)
 
     def columns(self):
-        return tuple(sum([m.columns() for m in self.metrics], ()))
+        return tuple(sum([m.column_names() for m in self.metrics], ()))
 
     def to_df(self,
               iteration: int,
@@ -1572,7 +1558,7 @@ class DeLongTest(CodeLevelMetric):
         super().__init__(patients, config=config, **kwargs)
 
     @staticmethod
-    def fields():
+    def estimands():
         return {
             'code': ('n_pos',),
             'model': ('auc', 'auc_var'),
@@ -1584,7 +1570,7 @@ class DeLongTest(CodeLevelMetric):
         return ('code', 'model', 'pair')
 
     @staticmethod
-    def column():
+    def estimand_column_name():
 
         def code_col(field):
             return f'{field}'
@@ -1622,12 +1608,12 @@ class DeLongTest(CodeLevelMetric):
                 is None), "providing code and code_index are mutually exlusive"
         code_index = self._code2index[code] if code is not None else code_index
 
-        if field in self.fields()['model']:
-            column_gen = lambda kw: self.column()['model'](kw['model'], field)
-        elif field in self.fields()['code']:
-            column_gen = lambda _: self.column()['code'](field)
+        if field in self.estimands()['model']:
+            column_gen = lambda kw: self.estimand_column_name()['model'](kw['model'], field)
+        elif field in self.estimands()['code']:
+            column_gen = lambda _: self.estimand_column_name()['code'](field)
         else:
-            column_gen = lambda kw: self.column()['pair'](tuple(
+            column_gen = lambda kw: self.estimand_column_name()['pair'](tuple(
                 sorted(kw['pair'])), field)
 
         def from_df(df, **kw):
@@ -1637,11 +1623,11 @@ class DeLongTest(CodeLevelMetric):
 
         return from_df
 
-    def columns(self, clfs: List[str]):
+    def column_names(self, clfs: List[str]):
         cols = []
         order_gen = self.order(clfs)
         for cat in self.fields_category():
-            col_f = self.column()[cat]
+            col_f = self.estimand_column_name()[cat]
             cols.append(tuple(col_f(*t) for t in order_gen[cat]()))
         return sum(cols, tuple())
 
@@ -1675,7 +1661,7 @@ class DeLongTest(CodeLevelMetric):
 
     def to_df(self, predictions: Dict[str, AdmissionsPrediction]):
         clfs = sorted(predictions)
-        cols = self.columns(clfs)
+        cols = self.column_names(clfs)
         data = self(predictions)
         df = pd.DataFrame(columns=cols)
         for idx, row in enumerate(self.rows(data, clfs)):
@@ -1684,7 +1670,7 @@ class DeLongTest(CodeLevelMetric):
 
     def to_dict(self, predictions: Dict[str, AdmissionsPrediction]):
         clfs = sorted(predictions)
-        cols = self.columns(clfs)
+        cols = self.column_names(clfs)
         data = self(predictions)
         res = {}
         for idx, row in enumerate(self.rows(data, clfs)):
@@ -1702,20 +1688,20 @@ class DeLongTest(CodeLevelMetric):
     def order(self, clfs: List[str]):
 
         def model_order():
-            fields = self.fields()['model']
+            fields = self.estimands()['model']
             for model in clfs:
                 for field in fields:
                     yield (model, field)
 
         def pair_order():
             pairs = self._model_pairs(clfs)
-            fields = self.fields()['pair']
+            fields = self.estimands()['pair']
             for model_pair in pairs:
                 for field in fields:
                     yield (model_pair, field)
 
         def code_order():
-            fields = self.fields()['code']
+            fields = self.estimands()['code']
             for field in fields:
                 yield (field,)
 
@@ -1847,7 +1833,7 @@ class DeLongTest(CodeLevelMetric):
         m_pairs = self._model_pairs(models)
 
         # exclude tests with nans
-        pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
+        pval_cols = [self.estimand_column_name()['pair'](pair, 'p_val') for pair in m_pairs]
         valid_tests = results.loc[:, pval_cols].isnull().max(axis=1) == 0
         results = results[valid_tests]
         logging.info(
@@ -1855,7 +1841,7 @@ class DeLongTest(CodeLevelMetric):
         )
 
         # AUC cut-off
-        auc_cols = [self.column()['model'](m, 'auc') for m in models]
+        auc_cols = [self.estimand_column_name()['model'](m, 'auc') for m in models]
         accepted_aucs = results.loc[:, auc_cols].max(axis=1) > min_auc
         results = results[accepted_aucs]
         logging.info(f'{sum(accepted_aucs)}/{len(accepted_aucs)} rows with\
@@ -1867,6 +1853,6 @@ class DeLongTest(CodeLevelMetric):
                                       models: List[str], p_value: float):
         models = sorted(models)
         m_pairs = self._model_pairs(models)
-        pval_cols = [self.column()['pair'](pair, 'p_val') for pair in m_pairs]
+        pval_cols = [self.estimand_column_name()['pair'](pair, 'p_val') for pair in m_pairs]
         insigificant = results.loc[:, pval_cols].min(axis=1) > p_value
         return results[insigificant]
