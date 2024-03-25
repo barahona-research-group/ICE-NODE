@@ -456,7 +456,7 @@ class Report(Config):
 
 class AbstractDatasetRepresentation(Module):
     config: Config
-    pipeline_report: pd.DataFrame = field(default_factory=pd.DataFrame)
+    pipeline_report: pd.DataFrame = pd.DataFrame()
     report_class: ClassVar[Type[Report]] = Report
 
     @cached_property
@@ -680,16 +680,17 @@ class Dataset(AbstractDatasetRepresentation):
         load(cls, path: Union[str, Path]): loads the dataset from disk.
     """
     config: DatasetConfig
-    tables: DatasetTables
-    scheme_manager: CodingSchemesManager
+    tables: Optional[DatasetTables] = None
+    scheme_manager: Optional[CodingSchemesManager] = None
 
-    def __init__(self, config: DatasetConfig, tables: Optional[DatasetTables] = None,
-                 scheme_manager: Optional[CodingSchemesManager] = None):
-        super().__init__(config=config)
+    def __post_init__(self):
         # TODO: offload table loading to the pipeline.
-        self.scheme_manager = scheme_manager
-        self.tables = self.load_tables(config, self.scheme) if tables is None else tables
+        if self.tables is None:
+            self.tables = self.load_tables(self.config, self.scheme)
+
         self.scheme_manager = self.scheme.context_view._manager
+
+
 
     @classmethod
     @abstractmethod
@@ -702,6 +703,7 @@ class Dataset(AbstractDatasetRepresentation):
     def save(self, store: Union[str, Path, tbl.Group], overwrite: bool = False,
              complib: Literal['blosc', 'zlib', 'lzo', 'bzip2'] = 'blosc', complevel: int = 9):
         if not isinstance(store, tbl.Group):
+            self.save_config(store, key='dataset', overwrite=overwrite)
             filters = tbl.Filters(complib=complib, complevel=complevel)
             with tbl.open_file(str(Path(store).with_suffix('.h5')), mode='w', filters=filters,
                                max_numexpr_threads=None, max_blosc_threads=None) as store:
@@ -724,7 +726,7 @@ class Dataset(AbstractDatasetRepresentation):
                 return cls.load(store.root)
         h5file = store._v_file
         config, classname = cls.load_config(Path(h5file.filename), key='dataset')
-        scheme_manager = CodingSchemesManager.from_hdf_group(h5file.root.schemes).sync()
+        scheme_manager = CodingSchemesManager.from_hdf_group(store.schemes).sync()
         dataset = Module.import_module(config=config,
                                        classname=classname,
                                        tables=DatasetTables.load(store.tables),

@@ -19,7 +19,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tables as tb
-
+import equinox as eqx
 from ..base import VxData, VxDataView
 from ..utils import load_config
 
@@ -167,7 +167,7 @@ class CodesVector(VxData):
 
 
 class SchemesContextManaged(VxData):
-    context_view: Optional[SchemeManagerView] = None
+    context_view: Optional[SchemeManagerView] = eqx.field(default=None, static=True)
 
     def set_context_view(self, context_view: SchemeManagerView):
         return dataclasses.replace(self, context_view=context_view)

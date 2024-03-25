@@ -1,3 +1,4 @@
+import dataclasses
 import random
 from typing import List
 from unittest.mock import patch, PropertyMock
@@ -591,8 +592,7 @@ def dataset_config(dataset_scheme_config, dataset_tables_config):
 @pytest.fixture(scope=DATASET_SCOPE)
 def dataset(dataset_config, dataset_tables, dataset_scheme_manager):
     ds = NaiveDataset(scheme_manager=dataset_scheme_manager, config=dataset_config)
-    return eqx.tree_at(lambda x: x.tables, ds, dataset_tables,
-                       is_leaf=lambda x: x is None)
+    return dataclasses.replace(ds, tables= dataset_tables)
 
 
 @pytest.fixture

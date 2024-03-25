@@ -472,7 +472,7 @@ class TVxEHR(AbstractDatasetRepresentation):
     @cached_property
     def scheme(self):
         """Get the scheme."""
-        scheme = TVxEHRScheme(config=self.config.scheme)
+        scheme = TVxEHRScheme(config=self.config.scheme, context_view=self.dataset.scheme_manager.view())
         TVxEHRScheme.validate_mapping(self.dataset.scheme, scheme)
         return scheme
 
@@ -552,13 +552,15 @@ class TVxEHR(AbstractDatasetRepresentation):
             overwrite (bool, optional): whether to overwrite existing files. Defaults to False.
         """
         if not isinstance(store, tbl.Group):
+            self.save_config(store, key='tvx_ehr', overwrite=overwrite)
             filters = tbl.Filters(complib=complib, complevel=complevel)
             with tbl.open_file(str(Path(store).with_suffix('.h5')), mode='w', filters=filters,
                                max_numexpr_threads=None, max_blosc_threads=None) as store:
                 return self.save(store.root, overwrite=overwrite)
+        else:
+            self.save_config(store._v_file.filename, key='tvx_ehr', overwrite=True)
         h5file = store._v_file
         self.dataset.save(h5file.create_group(store, 'dataset'), overwrite=overwrite)
-        self.save_config(Path(h5file.filename), key='tvx_ehr', overwrite=overwrite)
         if self.splits is not None:
             self.save_splits(h5file.create_group(store, 'splits'))
         self.numerical_processors.save(h5file.create_group(store, 'numerical_processors'))
