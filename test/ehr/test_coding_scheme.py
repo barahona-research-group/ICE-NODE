@@ -215,14 +215,22 @@ class TestFlatScheme:
         (a, b) = scheme_pair_selection.flag_set
         assert (a, b) in icd_ccs_map_manager.map
         assert (b, a) in icd_ccs_map_manager.map
-        assert icd_ccs_map_manager.map[(a, b)].source_name == a
-        assert icd_ccs_map_manager.map[(a, b)].target_name == b
-        assert icd_ccs_map_manager.map[(b, a)].source_name == b
-        assert icd_ccs_map_manager.map[(b, a)].target_name == a
-        assert icd_ccs_map_manager.map[(a, b)].source_scheme.name == a
-        assert icd_ccs_map_manager.map[(a, b)].target_scheme.name == b
-        assert icd_ccs_map_manager.map[(b, a)].source_scheme.name == b
-        assert icd_ccs_map_manager.map[(b, a)].target_scheme.name == a
+        m1 = icd_ccs_map_manager.map[(a, b)]
+        m2 = icd_ccs_map_manager.map[(b, a)]
+
+        assert m1.source_name == a
+        assert m1.target_name == b
+        assert m2.source_name == b
+        assert m2.target_name == a
+        assert m1.source_scheme.name == a
+        assert m1.target_scheme.name == b
+        assert m2.source_scheme.name == b
+        assert m2.target_scheme.name == a
+        assert m1.support_ratio > 0.5
+        assert m2.support_ratio > 0.5
+        assert m1.range_ratio > 0.5
+        assert m2.range_ratio > 0.5
+
 
     def test_primitive_scheme_serialization(self, primitive_flat_scheme: CodingScheme, tmpdir: str):
         path = f'{tmpdir}/coding_scheme.h5'

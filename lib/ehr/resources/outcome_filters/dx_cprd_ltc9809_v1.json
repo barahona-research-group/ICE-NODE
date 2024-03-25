@@ -1,6 +1,5 @@
 {
-    "code_scheme": "DxLTC9809FlatMedcodes",
+    "code_scheme": "dx_ltc9809_flat_medcodes",
     "exclude_codes": [],
-    "exclude_codes_description": {},
-    "outcome_scheme": "DxLTC9809FlatMedcodes"
+    "exclude_codes_description": {}
 }

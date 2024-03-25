@@ -46,7 +46,7 @@ def test_serialization_multi_subjects(multi_subjects_ehr: TVxEHR, tmpdir: str):
 
 class TestSampleSubjects:
 
-    @pytest.fixture(params=[(1, 3), (111, 9)])
+    @pytest.fixture(params=[(1, 3), (111, 5)])
     def sampled_tvx_ehr(self, multi_subjects_ehr: TVxEHR, request):
         seed, offset = request.param
         n_subjects = len(multi_subjects_ehr.dataset.tables.static) // 5

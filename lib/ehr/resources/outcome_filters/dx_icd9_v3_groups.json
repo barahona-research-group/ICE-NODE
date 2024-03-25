@@ -1,6 +1,5 @@
 {
-    "code_scheme": "DxICD9",
-    "outcome_scheme": "DxICD9",
+    "code_scheme": "dx_icd9",
     "selected_codes": [
         "380.30",
         "188.8",

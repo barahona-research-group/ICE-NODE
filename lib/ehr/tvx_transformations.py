@@ -403,7 +403,8 @@ class LeadingObservableExtraction(AbstractTVxTransformation):
     # TODO: blocks time binning.
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
-        extractor = LeadingObservableExtractor(tv_ehr.config.leading_observable)
+        extractor = LeadingObservableExtractor(tv_ehr.config.leading_observable,
+                                               context_view=tv_ehr.dataset.scheme_manager.view())
 
         if tv_ehr.config.leading_observable is None:
             return cls.skip(tv_ehr, report)

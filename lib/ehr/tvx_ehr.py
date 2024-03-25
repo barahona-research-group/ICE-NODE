@@ -254,11 +254,12 @@ class TVxEHRScheme(DatasetScheme):
 
     @cached_property
     def outcome(self) -> Optional[OutcomeExtractor]:
-        return OutcomeExtractor.from_name(self.config.outcome) if self.config.outcome else None
+        return self.context_view.outcome[self.config.outcome] if self.config.outcome else None
 
     @staticmethod
-    def validate_outcome_scheme(dx_discharge: str, outcome: str) -> bool:
-        return outcome in FileBasedOutcomeExtractor.supported_outcomes(dx_discharge)
+    def validate_outcome_scheme(outcome_scheme: OutcomeExtractor, dx_discharge: str) -> bool:
+        context = outcome_scheme.context_view
+        return context.supported_outcome(outcome_scheme.name, dx_discharge)
 
     @staticmethod
     def validate_mapping(source: DatasetScheme, target: TVxEHRScheme):
@@ -267,9 +268,10 @@ class TVxEHRScheme(DatasetScheme):
             assert source_scheme.mapper_to(
                 target_schemes[key].name
             ), f"Cannot map {key} from {source_scheme.name} to {target_schemes[key].name}"
+
         if target.outcome is not None:
             assert TVxEHRScheme.validate_outcome_scheme(
-                target.dx_discharge.name, target.outcome.name
+                target.outcome, target.dx_discharge.name
             ), f"Outcome {target.outcome.name} not supported for {target.dx_discharge.name}"
 
     def demographic_vector_size(self, demographic_vector_config: DemographicVectorConfig):

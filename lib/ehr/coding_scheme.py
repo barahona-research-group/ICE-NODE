@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import os
 import re
 from abc import abstractmethod, ABCMeta
@@ -15,11 +16,12 @@ from types import MappingProxyType
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Tuple, Any, Literal, ItemsView, Iterator, \
     Iterable, Mapping
 
+import equinox as eqx
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import tables as tb
-import equinox as eqx
+
 from ..base import VxData, VxDataView
 from ..utils import load_config
 
@@ -791,6 +793,33 @@ class CodeMap(SchemesContextManaged):
         return is_dag_subset
 
     @cached_property
+    def support_ratio(self) -> float:
+        """
+        Returns the ratio between the source scheme codes covered by the mapping and the total source scheme codes.
+
+        Returns:
+            float: the support ratio of the CodeMap.
+        """
+        return len(set(self.data.keys()) & set(self.source_scheme.codes)) / len(self.source_scheme.codes)
+
+    @cached_property
+    def range_ratio(self) -> float:
+        """
+        Returns the ratio between the target scheme codes covered by the mapping and the total target scheme codes.
+
+        Returns:
+            float: the range ratio of the CodeMap.
+        """
+        return len(set.union(*self.data.values()) & set(self.target_scheme.codes)) / len(self.target_scheme.codes)
+
+    @cached_property
+    def log_ratios(self) -> float:
+        """
+        Returns the score of mapping between schemes as the logarithm of support ratio multiplied by range ratio.
+        """
+        return math.log(self.support_ratio) + math.log(self.range_ratio)
+
+    @cached_property
     def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
         """
         Returns the source coding scheme.
@@ -1202,7 +1231,6 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         return FileBasedOutcomeExtractor(spec_file=spec_file, name=spec_file.split('.')[0])
 
 
-
 class CodingSchemesManager(VxData):
     schemes: Tuple[CodingScheme, ...] = field(default_factory=tuple)
     maps: Tuple[CodeMap, ...] = field(default_factory=tuple)
@@ -1244,6 +1272,10 @@ class CodingSchemesManager(VxData):
             return self
         return CodingSchemesManager(schemes=self.schemes, maps=self.maps, outcomes=self.outcomes + (outcome,)).sync()
 
+    def supported_outcome(self, outcome_name: str, supporting_scheme: str) -> bool:
+        return outcome_name in self.outcome and (
+            supporting_scheme, self.outcome[outcome_name].base_scheme.name) in self.map
+
     def union(self, other: CodingSchemesManager) -> CodingSchemesManager:
         updated = self
         with logging.captureWarnings(False):
@@ -1261,7 +1293,8 @@ class CodingSchemesManager(VxData):
 
     @cached_property
     def identity_maps(self) -> Dict[Tuple[str, str], IdentityCodeMap]:
-        return {(s, s): IdentityCodeMap(source_name=s, target_name=s) for s in self.scheme.keys()}
+        return {(s, s): IdentityCodeMap(source_name=s, target_name=s).set_context_view(self.view()) for s in
+                self.scheme.keys()}
 
     @cached_property
     def chainable_maps(self) -> Dict[Tuple[str, str, str], CodeMap]:
@@ -1351,3 +1384,6 @@ class SchemeManagerView(VxDataView):
     @cached_property
     def outcome(self) -> Dict[str, OutcomeExtractor]:
         return self._manager.outcome
+
+    def supported_outcome(self, outcome_name: str, supporting_scheme: str) -> bool:
+        return self._manager.supported_outcome(outcome_name, supporting_scheme)
