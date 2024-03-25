@@ -272,7 +272,6 @@ def icu_input_table_config(admission_table_config: AdmissionTableConfig,
 
 def sample_subjects_dataframe(static_table_config: StaticTableConfig,
                               ethnicity_scheme: CodingScheme, gender_scheme: CodingScheme, n: int) -> pd.DataFrame:
-
     return pd.DataFrame({
         static_table_config.subject_id_alias: list(str(i) for i in range(n)),
         static_table_config.race_alias: random.choices(ethnicity_scheme.codes, k=n),
@@ -433,7 +432,7 @@ def icu_inputs_scheme(request) -> CodingScheme:
                          ('B', 'C', 'O', 'N', 'N'))])
 def observation_scheme(request) -> CodingScheme:
     name, codes, types = request.param
-    return NumericScheme(config=name,
+    return NumericScheme(name=name,
                          codes=tuple(sorted(codes)),
                          desc=FrozenDict11.from_dict(dict(zip(codes, codes))),
                          type_hint=FrozenDict11.from_dict(dict(zip(codes, types))))
@@ -445,9 +444,10 @@ def outcome_extractor(dx_scheme: CodingScheme) -> ExcludingOutcomeExtractor:
     k = max(3, len(dx_scheme.codes) - 1)
     random.seed(0)
     excluded = random.sample(dx_scheme.codes, k=k)
-    return ExcludingOutcomeExtractor(name=name,
-                                     base_scheme=dx_scheme.name,
-                                     exclude_codes=excluded)
+    manager = CodingSchemesManager().add_scheme(dx_scheme).add_outcome(ExcludingOutcomeExtractor(name=name,
+                                                                                                 base_name=dx_scheme.name,
+                                                                                                 exclude_codes=excluded))
+    return manager.outcome[name]
 
 
 @pytest.fixture
@@ -486,19 +486,20 @@ def tvx_ehr_scheme_config(ethnicity_scheme: CodingScheme,
                               hosp_procedures=hosp_proc_scheme.name)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def dataset_scheme_manager(ethnicity_scheme: CodingScheme,
-                          gender_scheme: CodingScheme,
-                          dx_scheme: CodingScheme,
-                          outcome_extractor: CodingScheme,
-                          icu_proc_scheme: CodingScheme,
-                          icu_inputs_scheme: CodingScheme,
-                          observation_scheme: CodingScheme,
-                          hosp_proc_scheme: CodingScheme) -> CodingSchemesManager:
-    manager = CodingSchemesManager()
-    for scheme in (ethnicity_scheme, gender_scheme, dx_scheme, outcome_extractor,
+                           gender_scheme: CodingScheme,
+                           dx_scheme: CodingScheme,
+                           outcome_extractor: ExcludingOutcomeExtractor,
+                           icu_proc_scheme: CodingScheme,
+                           icu_inputs_scheme: CodingScheme,
+                           observation_scheme: CodingScheme,
+                           hosp_proc_scheme: CodingScheme) -> CodingSchemesManager:
+    manager = CodingSchemesManager().add_outcome(outcome_extractor)
+    for scheme in (ethnicity_scheme, gender_scheme, dx_scheme,
                    icu_proc_scheme, icu_inputs_scheme, observation_scheme, hosp_proc_scheme):
         manager = manager.add_scheme(scheme)
+
     return manager
 
 
@@ -524,39 +525,39 @@ def dataset_tables_config(static_table_config: StaticTableConfig,
                 ids=lambda x: f"_{x[0]}_subjects_{x[0] * x[1]}_admissions_{x[0] * x[1] * x[2]}_records")
 def dataset_tables(dataset_tables_config: DatasetTablesConfig,
                    dataset_scheme_config: DatasetSchemeConfig,
-                   manager: CodingSchemesManager,
+                   dataset_scheme_manager: CodingSchemesManager,
                    request) -> DatasetTables:
     n_subjects, n_admission_per_subject, n_per_admission = request.param
     subjects_df = sample_subjects_dataframe(dataset_tables_config.static,
-                                            manager.scheme[dataset_scheme_config.ethnicity],
-                                            manager.scheme[dataset_scheme_config.gender],
+                                            dataset_scheme_manager.scheme[dataset_scheme_config.ethnicity],
+                                            dataset_scheme_manager.scheme[dataset_scheme_config.gender],
                                             n_subjects)
     admissions_df = sample_admissions_dataframe(subjects_df, dataset_tables_config.static,
                                                 dataset_tables_config.admissions,
                                                 n_admission_per_subject * n_subjects)
     dx_df = sample_dx_dataframe(admissions_df, dataset_tables_config.admissions,
                                 dataset_tables_config.dx_discharge,
-                                manager.scheme[dataset_scheme_config.dx_discharge],
+                                dataset_scheme_manager.scheme[dataset_scheme_config.dx_discharge],
                                 n_per_admission * n_subjects * n_admission_per_subject)
 
     obs_df = sample_obs_dataframe(admissions_df, dataset_tables_config.admissions,
                                   dataset_tables_config.obs,
-                                  manager.scheme[dataset_scheme_config.obs],
+                                  dataset_scheme_manager.scheme[dataset_scheme_config.obs],
                                   n_per_admission * n_subjects * n_admission_per_subject)
 
     icu_proc_df = _sample_proc_dataframe(admissions_df, dataset_tables_config.admissions,
                                          dataset_tables_config.icu_procedures,
-                                         manager.scheme[dataset_scheme_config.icu_procedures],
+                                         dataset_scheme_manager.scheme[dataset_scheme_config.icu_procedures],
                                          n_per_admission * n_subjects * n_admission_per_subject)
 
     hosp_proc_df = _sample_proc_dataframe(admissions_df, dataset_tables_config.admissions,
                                           dataset_tables_config.hosp_procedures,
-                                          manager.scheme[dataset_scheme_config.hosp_procedures],
+                                          dataset_scheme_manager.scheme[dataset_scheme_config.hosp_procedures],
                                           n_per_admission * n_subjects * n_admission_per_subject)
 
     icu_inputs_df = sample_icu_inputs_dataframe(admissions_df, dataset_tables_config.admissions,
                                                 dataset_tables_config.icu_inputs,
-                                                manager.scheme[dataset_scheme_config.icu_inputs],
+                                                dataset_scheme_manager.scheme[dataset_scheme_config.icu_inputs],
                                                 n_per_admission * n_subjects * n_admission_per_subject)
 
     return DatasetTables(static=subjects_df,
@@ -695,13 +696,13 @@ def unit_converter_table(dataset_config, dataset_tables):
 
 @pytest.fixture
 def mimiciv_dataset_scheme_config(ethnicity_scheme: CodingScheme,
-                          gender_scheme: CodingScheme,
-                          dx_scheme: CodingScheme,
-                          outcome_extractor: CodingScheme,
-                          icu_proc_scheme: CodingScheme,
-                          icu_inputs_scheme: CodingScheme,
-                          observation_scheme: CodingScheme,
-                          hosp_proc_scheme: CodingScheme) -> MockMIMICIVDatasetSchemeConfig:
+                                  gender_scheme: CodingScheme,
+                                  dx_scheme: CodingScheme,
+                                  outcome_extractor: CodingScheme,
+                                  icu_proc_scheme: CodingScheme,
+                                  icu_inputs_scheme: CodingScheme,
+                                  observation_scheme: CodingScheme,
+                                  hosp_proc_scheme: CodingScheme) -> MockMIMICIVDatasetSchemeConfig:
     return MockMIMICIVDatasetSchemeConfig(
         ethnicity=ethnicity_scheme.name,
         gender=gender_scheme.name,
@@ -718,7 +719,8 @@ def mimiciv_dataset_config(mimiciv_dataset_scheme_config, dataset_tables_config)
 
 
 @pytest.fixture
-def mimiciv_dataset_no_conv(dataset_scheme_manager, mimiciv_dataset_config, dataset_tables, unit_converter_table) -> MockMIMICIVDataset:
+def mimiciv_dataset_no_conv(dataset_scheme_manager, mimiciv_dataset_config, dataset_tables,
+                            unit_converter_table) -> MockMIMICIVDataset:
     ds = MockMIMICIVDataset(scheme_manager=dataset_scheme_manager, config=mimiciv_dataset_config)
     with patch(__name__ + '.MockMIMICIVDatasetSchemeConfig.icu_inputs_uom_normalization_table',
                return_value=unit_converter_table,
@@ -728,7 +730,8 @@ def mimiciv_dataset_no_conv(dataset_scheme_manager, mimiciv_dataset_config, data
 
 
 @pytest.fixture
-def mimiciv_dataset(dataset_scheme_manager, mimiciv_dataset_config, dataset_tables, unit_converter_table) -> MockMIMICIVDataset:
+def mimiciv_dataset(dataset_scheme_manager, mimiciv_dataset_config, dataset_tables,
+                    unit_converter_table) -> MockMIMICIVDataset:
     ds = MockMIMICIVDataset(scheme_manager=dataset_scheme_manager, config=mimiciv_dataset_config)
     with patch(__name__ + '.MockMIMICIVDatasetSchemeConfig.icu_inputs_uom_normalization_table',
                return_value=unit_converter_table,

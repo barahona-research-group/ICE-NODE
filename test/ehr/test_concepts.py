@@ -11,7 +11,7 @@ import pytest
 import tables as tb
 
 from lib.ehr import CodingScheme, CodesVector, OutcomeExtractor
-from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
+from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme, CodingSchemesManager
 from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtractorConfig, LeadingObservableExtractor,
                                   InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                                   SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient, AdmissionDates,
@@ -80,12 +80,12 @@ def _outcome(outcome_extractor_: OutcomeExtractor, dx_codes: CodesVector):
 
 
 @pytest.fixture
-def outcome(dx_codes: CodesVector, outcome_extractor: OutcomeExtractor):
+def outcome(dx_codes: CodesVector, outcome_extractor: OutcomeExtractor, dataset_scheme_manager):
     return _outcome(outcome_extractor, dx_codes)
 
 
-def _inpatient_observables(obs_scheme: CodingScheme, n_timestamps: int):
-    d = len(obs_scheme)
+def _inpatient_observables(observation_scheme: CodingScheme, n_timestamps: int):
+    d = len(observation_scheme)
     timestamps_grid = np.linspace(0, LENGTH_OF_STAY, 1000, dtype=np.float64)
     t = np.array(sorted(nrand.choice(timestamps_grid, replace=False, size=n_timestamps)))
     v = nrand.randn(n_timestamps, d)
@@ -94,9 +94,9 @@ def _inpatient_observables(obs_scheme: CodingScheme, n_timestamps: int):
 
 
 @pytest.fixture(params=[0, 1, 501])
-def inpatient_observables(obs_scheme: CodingScheme, request):
+def inpatient_observables(observation_scheme: CodingScheme, request):
     n_timestamps = request.param
-    return _inpatient_observables(obs_scheme, n_timestamps)
+    return _inpatient_observables(observation_scheme, n_timestamps)
 
 
 def inpatient_binary_input(n: int, p: int):
@@ -171,23 +171,28 @@ def segmented_inpatient_interventions(inpatient_interventions: InpatientInterven
                                               maximum_padding=1)
 
 
-def leading_observables_extractor(obs_scheme: NumericScheme, leading_hours: List[float] = (1.0,),
+def leading_observables_extractor(observation_scheme: NumericScheme,
+                                  dataset_scheme_manager: CodingSchemesManager,
+                                  leading_hours: List[float] = (1.0,),
                                   entry_neglect_window: float = 0.0,
                                   recovery_window: float = 0.0,
                                   minimum_acquisitions: int = 0,
                                   code_index: int = BINARY_OBSERVATION_CODE_INDEX) -> LeadingObservableExtractor:
-    config = LeadingObservableExtractorConfig(observable_code=obs_scheme.codes[code_index],
-                                              scheme=obs_scheme.name,
+    config = LeadingObservableExtractorConfig(observable_code=observation_scheme.codes[code_index],
+                                              scheme=observation_scheme.name,
                                               entry_neglect_window=entry_neglect_window,
                                               recovery_window=recovery_window,
                                               minimum_acquisitions=minimum_acquisitions,
                                               leading_hours=leading_hours)
-    return LeadingObservableExtractor(config=config)
+    return LeadingObservableExtractor(config=config, context_view=dataset_scheme_manager.view())
 
 
 @pytest.fixture
-def leading_observable(obs_scheme: NumericScheme, inpatient_observables: InpatientObservables) -> InpatientObservables:
-    return leading_observables_extractor(obs_scheme=obs_scheme)(inpatient_observables)
+def leading_observable(observation_scheme: NumericScheme,
+                       inpatient_observables: InpatientObservables,
+                       dataset_scheme_manager) -> InpatientObservables:
+    return leading_observables_extractor(observation_scheme=observation_scheme,
+                                         dataset_scheme_manager=dataset_scheme_manager)(inpatient_observables)
 
 
 def _admission(admission_id: str, admission_date: pd.Timestamp,
@@ -233,14 +238,16 @@ def segmented_patient(patient: Patient, icu_inputs_scheme: CodingScheme, icu_pro
 
 
 def _admissions(n_admissions, dx_scheme: CodingScheme,
-                outcome_extractor_: OutcomeExtractor, obs_scheme: NumericScheme,
+                outcome_extractor_: OutcomeExtractor, observation_scheme: NumericScheme,
                 icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
-                hosp_proc_scheme: CodingScheme) -> List[Admission]:
+                hosp_proc_scheme: CodingScheme,
+                dataset_scheme_manager: CodingSchemesManager) -> List[Admission]:
     admissions = []
     for i in range(n_admissions):
         dx_codes = _dx_codes(dx_scheme)
-        obs = _inpatient_observables(obs_scheme, n_timestamps=nrand.randint(0, 100))
-        lead = leading_observables_extractor(obs_scheme=obs_scheme)(obs)
+        obs = _inpatient_observables(observation_scheme, n_timestamps=nrand.randint(0, 100))
+        lead = leading_observables_extractor(observation_scheme=observation_scheme,
+                                             dataset_scheme_manager=dataset_scheme_manager)(obs)
         icu_proc = _proc(icu_proc_scheme, n_timestamps=nrand.randint(0, 50))
         hosp_proc = _proc(hosp_proc_scheme, n_timestamps=nrand.randint(0, 50))
         icu_inputs = _icu_inputs(icu_inputs_scheme, n_timestamps=nrand.randint(0, 50))
@@ -259,26 +266,26 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
 @pytest.fixture(params=[0, 1, 50])
 def patient(request, static_info: StaticInfo,
             dx_scheme: CodingScheme,
-            outcome_extractor: OutcomeExtractor, obs_scheme: CodingScheme,
+            outcome_extractor: OutcomeExtractor, observation_scheme: CodingScheme,
             icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
-            hosp_proc_scheme: CodingScheme) -> List[Patient]:
+            hosp_proc_scheme: CodingScheme,
+            dataset_scheme_manager: CodingSchemesManager) -> List[Patient]:
     admissions = _admissions(n_admissions=request.param, dx_scheme=dx_scheme,
-                             outcome_extractor_=outcome_extractor, obs_scheme=obs_scheme,
+                             outcome_extractor_=outcome_extractor, observation_scheme=observation_scheme,
+                             dataset_scheme_manager=dataset_scheme_manager,
                              icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
                              hosp_proc_scheme=hosp_proc_scheme)
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)
 
 
-
-
 class TestInpatientObservables:
 
-    def test_empty(self, obs_scheme: str):
-        obs = InpatientObservables.empty(len(obs_scheme))
+    def test_empty(self, observation_scheme: str):
+        obs = InpatientObservables.empty(len(observation_scheme))
         assert len(obs.time) == 0
         assert len(obs.value) == 0
         assert len(obs.mask) == 0
-        assert all(a.shape == (0, len(obs_scheme)) for a in [obs.value, obs.mask])
+        assert all(a.shape == (0, len(observation_scheme)) for a in [obs.value, obs.mask])
 
     @pytest.mark.parametrize('time_valid_dtype', [np.float64])
     @pytest.mark.parametrize('mask_valid_dtype', [bool])
@@ -414,11 +421,11 @@ class TestInpatientObservables:
 
     @pytest.mark.parametrize("hours", [1.0, 2.0, 3.0])
     def test_time_binning(self, hours: float, inpatient_observables: InpatientObservables,
-                          obs_scheme: NumericScheme):
+                          observation_scheme: NumericScheme):
         if len(inpatient_observables) == 0:
             pytest.skip("No observations to test")
 
-        binned = inpatient_observables.time_binning(hours, obs_scheme.type_array)
+        binned = inpatient_observables.time_binning(hours, observation_scheme.type_array)
         assert np.all(binned.time % hours == 0.0)
         assert sorted(binned.time) == binned.time.tolist()
 
@@ -429,7 +436,7 @@ class TestInpatientObservables:
             # NUMERIC_OBSERVATION_CODE_INDEX is aggregated with mean.
             val[i:, NUMERIC_OBSERVATION_CODE_INDEX] = np.inf
             obs = eqx.tree_at(lambda x: x.value, inpatient_observables, val)
-            binned = obs.time_binning(hours, obs_scheme.type_array)
+            binned = obs.time_binning(hours, observation_scheme.type_array)
             assert np.all(binned.value[binned.time < ti] < np.inf)
 
             mask = inpatient_observables.mask.copy()
@@ -440,8 +447,9 @@ class TestInpatientObservables:
 class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
-    def test_len(self, obs_scheme: NumericScheme, leading_hours: List[float]):
-        extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+    def test_len(self, observation_scheme: NumericScheme, leading_hours: List[float], dataset_scheme_manager):
+        extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                  dataset_scheme_manager=dataset_scheme_manager,
                                                   leading_hours=leading_hours)
         assert len(extractor) == len(leading_hours)
 
@@ -449,15 +457,16 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
-    def test_init(self, obs_scheme: NumericScheme, leading_hours: List[float],
+    def test_init(self, observation_scheme: NumericScheme, leading_hours: List[float],
                   entry_neglect_window: float, recovery_window: float,
-                  minimum_acquisitions: int):
+                  minimum_acquisitions: int, dataset_scheme_manager):
         if len(leading_hours) < 2:
             pytest.skip("Not enough leading hours to test")
 
         with pytest.raises(AssertionError):
             # leading hours must be sorted
-            leading_observables_extractor(obs_scheme=obs_scheme,
+            leading_observables_extractor(observation_scheme=observation_scheme,
+                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=list(reversed(leading_hours)),
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -466,7 +475,8 @@ class TestLeadingObservableExtractor:
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
-            leading_observables_extractor(obs_scheme=obs_scheme,
+            leading_observables_extractor(observation_scheme=observation_scheme,
+                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -475,7 +485,8 @@ class TestLeadingObservableExtractor:
 
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
-            leading_observables_extractor(obs_scheme=obs_scheme,
+            leading_observables_extractor(observation_scheme=observation_scheme,
+                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -493,8 +504,10 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
     @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
-    def test_empty(self, obs_scheme: NumericScheme, leading_hours: List[float], code_index: int):
-        extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+    def test_empty(self, observation_scheme: NumericScheme, leading_hours: List[float], code_index: int,
+                   dataset_scheme_manager):
+        extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                  dataset_scheme_manager=dataset_scheme_manager,
                                                   leading_hours=leading_hours,
                                                   code_index=code_index)
         empty = extractor.empty()
@@ -539,9 +552,11 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("minimum_acquisitions", [0, 1, 2, 3])
     def test_filter_first_acquisitions(self, inpatient_observables: InpatientObservables,
-                                       obs_scheme: NumericScheme,
-                                       minimum_acquisitions: int):
-        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+                                       observation_scheme: NumericScheme,
+                                       minimum_acquisitions: int,
+                                       dataset_scheme_manager):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        minimum_acquisitions=minimum_acquisitions)
         m = lead_extractor.filter_first_acquisitions(len(inpatient_observables), minimum_acquisitions)
         n_affected = min(minimum_acquisitions, len(inpatient_observables))
@@ -550,9 +565,11 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1.0, 2.0])
     def test_neutralize_entry_neglect_window(self, inpatient_observables: InpatientObservables,
-                                             obs_scheme: NumericScheme,
-                                             entry_neglect_window: int):
-        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+                                             observation_scheme: NumericScheme,
+                                             entry_neglect_window: int,
+                                             dataset_scheme_manager):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        entry_neglect_window=entry_neglect_window)
         t = inpatient_observables.time
         m = lead_extractor.filter_entry_neglect_window(t, entry_neglect_window)
@@ -562,14 +579,16 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("recovery_window", [0.0, 1.0, 2.0])
     def test_neutralize_recovery_window(self, inpatient_observables: InpatientObservables,
-                                        obs_scheme: NumericScheme,
-                                        recovery_window: float):
+                                        observation_scheme: NumericScheme,
+                                        recovery_window: float,
+                                        dataset_scheme_manager):
         if len(inpatient_observables) == 0:
             pytest.skip("No observations to test")
 
-        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        entry_neglect_window=recovery_window)
-        x = inpatient_observables.value[:, lead_extractor.config.code_index]
+        x = inpatient_observables.value[:, lead_extractor.code_index]
         t = inpatient_observables.time
         m = lead_extractor.filter_recovery_window(t, x, recovery_window)
 
@@ -592,15 +611,17 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("entry_neglect_window", [0.0, 1000.0])
     @pytest.mark.parametrize("recovery_window", [0.0, 10000.0])
     def test_mask_noisy_observations(self, inpatient_observables: InpatientObservables,
-                                     obs_scheme: NumericScheme,
+                                     observation_scheme: NumericScheme,
+                                     dataset_scheme_manager,
                                      minimum_acquisitions: int,
                                      entry_neglect_window: int,
                                      recovery_window: float):
-        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        minimum_acquisitions=minimum_acquisitions,
                                                        entry_neglect_window=entry_neglect_window,
                                                        recovery_window=recovery_window)
-        x = inpatient_observables.value[:, lead_extractor.config.code_index]
+        x = inpatient_observables.value[:, lead_extractor.code_index]
         t = inpatient_observables.time
         qual = f'{lead_extractor.__module__}.{type(lead_extractor).__qualname__}'
         with mock.patch(f'{qual}.filter_first_acquisitions') as mocker1:
@@ -615,11 +636,12 @@ class TestLeadingObservableExtractor:
 
     @pytest.mark.parametrize("code_index", [BINARY_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX])
     def test_extract_leading_window(self, inpatient_observables: InpatientObservables,
-                                    obs_scheme: NumericScheme, code_index: int):
-        lead_extractor = leading_observables_extractor(obs_scheme=obs_scheme,
+                                    observation_scheme: NumericScheme, dataset_scheme_manager, code_index: int):
+        lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
+                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        code_index=code_index)
-        x = inpatient_observables.value[:, lead_extractor.config.code_index]
-        m = inpatient_observables.mask[:, lead_extractor.config.code_index]
+        x = inpatient_observables.value[:, lead_extractor.code_index]
+        m = inpatient_observables.mask[:, lead_extractor.code_index]
         t = inpatient_observables.time
         lead = lead_extractor(inpatient_observables)
 

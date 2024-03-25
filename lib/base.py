@@ -263,6 +263,9 @@ class VxDataView(eqx.Module):
     def from_hdf_group(cls, group: tb.Group) -> "VxDataView":
         raise NotImplementedError
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}()"
+
 
 class VxData(eqx.Module):
     """
@@ -491,7 +494,7 @@ class VxData(eqx.Module):
                                                                                                      attribute_names)
 
 
-VxDataItem = Union[VxData, Array, str]
+VxDataItem = Union[VxData, Array, str, VxDataView]
 VxDataIterableField = Union[list, tuple, MappingProxyType]
 VxDataField = Union[VxDataItem, pd.Timestamp, str, VxDataIterableField]
 

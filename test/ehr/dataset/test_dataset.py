@@ -6,8 +6,8 @@ import equinox as eqx
 import pandas as pd
 import pytest
 import tables as tb
-from lib.ehr import CodingScheme
-from lib.ehr.coding_scheme import CodeMapConfig, CodeMap, CodingSchemeConfig, CodingScheme
+
+from lib.ehr.coding_scheme import CodeMap, CodingScheme, CodingSchemesManager, FrozenDict11, FrozenDict1N
 from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
     Dataset, AbstractDatasetPipeline
 from test.ehr.conftest import NaiveDataset
@@ -116,35 +116,40 @@ class TestDatasetTables:
         assert loaded.equals(dataset_tables)
 
 
-
-
 @pytest.fixture(params=[{'dx_discharge': 2, 'obs': 2, 'icu_procedures': 1, 'icu_inputs': 1, 'hosp_procedures': 2}, {}])
-def dataset_scheme_targets(dataset_scheme_config, request) -> Dict[str, Tuple[str]]:
+def dataset_scheme_manager_targets(dataset_scheme_manager: CodingSchemesManager,
+                                   dataset_scheme_config: DatasetSchemeConfig, request) -> \
+        Tuple[CodingSchemesManager, Dict[str, Tuple[str]]]:
     """
     Make different schemes where the input schemes can be mapped to.
     """
 
     targets = {}
+    manager = dataset_scheme_manager
     for space, n_targets in request.param.items():
-        source_scheme = CodingScheme.from_name(getattr(dataset_scheme_config, space))
+        source_scheme = dataset_scheme_manager.scheme[getattr(dataset_scheme_config, space)]
         target_schemes = []
         for i in range(n_targets):
             target_name = f'{source_scheme.name}_target_{i}'
-            target_codes = [f'{c}_target_{i}' for c in source_scheme.codes]
-            target_desc = dict(zip(target_codes, target_codes))
-
-            map_config = CodeMapConfig(source_scheme=source_scheme.name,
-                                       target_scheme=target_name,
-                                       mapped_to_dag_space=False)
-            map_data = {c: {c_target} for c, c_target in zip(source_scheme.codes, target_codes)}
-            CodingScheme.register_scheme(CodingScheme(config=CodingSchemeConfig(name=target_name),
+            target_codes = tuple(f'{c}_target_{i}' for c in source_scheme.codes)
+            target_desc = FrozenDict11.from_dict(dict(zip(target_codes, target_codes)))
+            manager = manager.add_scheme(CodingScheme(name=target_name,
                                                       codes=target_codes,
                                                       desc=target_desc))
-            CodeMap.register_map(CodeMap(map_config, map_data))
+            map_data = FrozenDict1N.from_dict({c: {c_target} for c, c_target in zip(source_scheme.codes, target_codes)})
+
+            manager = manager.add_map(CodeMap(source_name=source_scheme.name, target_name=target_name, data=map_data))
             target_schemes.append(target_name)
         targets[space] = tuple(target_schemes)
-    return targets
+    return manager, targets
 
+@pytest.fixture
+def dataset_scheme_target(dataset_scheme_manager_targets: Tuple[CodingSchemesManager, Dict[str, Tuple[str]]]) -> Dict[str, Tuple[str]]:
+    return dataset_scheme_manager_targets[1]
+
+@pytest.fixture
+def dataset_target_scheme_manager(dataset_scheme_manager_targets) -> CodingSchemesManager:
+    return dataset_scheme_manager_targets[0]
 
 def traverse_all_targets(dataset_scheme_target: Dict[str, Tuple[str]]):
     default_target_config = {}
@@ -165,21 +170,10 @@ def traverse_all_targets(dataset_scheme_target: Dict[str, Tuple[str]]):
     return target_combinations
 
 
-@pytest.fixture
-def cleanup_dataset_scheme_targets(dataset_scheme_config, dataset_scheme_targets) -> None:
-    yield  # The following code is run after the test.
-    # Clean up
-    for space, target_names in dataset_scheme_targets.items():
-        source_scheme = CodingScheme.from_name(getattr(dataset_scheme_config, space))
-        for target_name in target_names:
-            CodingScheme.deregister_scheme(target_name)
-            CodeMap.deregister_map(source_scheme.name, target_name)
-
-
 class TestDatasetScheme:
 
-    def test_scheme_dict(self, dataset_scheme_config: DatasetSchemeConfig):
-        scheme = DatasetScheme(config=dataset_scheme_config)
+    def test_scheme_dict(self, dataset_scheme_config: DatasetSchemeConfig, dataset_target_scheme_manager: CodingSchemesManager):
+        scheme = DatasetScheme(config=dataset_scheme_config, context_view=dataset_target_scheme_manager.view())
 
         for space, scheme_name in dataset_scheme_config.as_dict().items():
             assert hasattr(scheme, space)
@@ -328,7 +322,8 @@ class TestDataset:
         # NOTE: no specified behaviour when splits have equal proportions, so comparing argsorts
         # is not appropriate.
         p_threshold = 1 / len(subject_ids)
-        tolerance = min(abs(split_measure([i]) - split_measure([j])) for i in subject_ids for j in subject_ids if i != j)
+        tolerance = min(
+            abs(split_measure([i]) - split_measure([j])) for i in subject_ids for j in subject_ids if i != j)
         for i in range(len(split_proportions)):
             for j in range(i + 1, len(split_proportions)):
                 if abs(split_proportions[i] - split_proportions[j]) < p_threshold:

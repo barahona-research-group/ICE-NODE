@@ -343,11 +343,11 @@ class DatasetScheme(Module):
         supported_target_scheme_options(self): returns the supported target scheme options for each coding scheme.
     """
     config: DatasetSchemeConfig
-    scheme_manager: SchemeManagerView
+    context_view: SchemeManagerView
 
     def _scheme(self, name: str) -> Optional[CodingScheme]:
         try:
-            return self.scheme_manager.scheme[name]
+            return self.context_view.scheme[name]
         except KeyError as e:
             return None
 
@@ -689,7 +689,7 @@ class Dataset(AbstractDatasetRepresentation):
         # TODO: offload table loading to the pipeline.
         self.scheme_manager = scheme_manager
         self.tables = self.load_tables(config, self.scheme) if tables is None else tables
-        self.scheme_manager = self.scheme.manager.context_view
+        self.scheme_manager = self.scheme.context_view._manager
 
     @classmethod
     @abstractmethod
@@ -724,7 +724,7 @@ class Dataset(AbstractDatasetRepresentation):
                 return cls.load(store.root)
         h5file = store._v_file
         config, classname = cls.load_config(Path(h5file.filename), key='dataset')
-        scheme_manager = CodingSchemesManager.from_hdf_group(h5file.root.schemes)
+        scheme_manager = CodingSchemesManager.from_hdf_group(h5file.root.schemes).sync()
         dataset = Module.import_module(config=config,
                                        classname=classname,
                                        tables=DatasetTables.load(store.tables),
@@ -738,12 +738,11 @@ class Dataset(AbstractDatasetRepresentation):
     def scheme(self) -> DatasetScheme:
         scheme_manager = self.scheme_manager or self.load_scheme_manager(self.config)
         return DatasetScheme(config=self.config.scheme,
-                             scheme_manager=scheme_manager.view())
+                             context_view=scheme_manager.view())
 
     @classmethod
-    @abstractmethod
     def load_scheme_manager(cls, config: DatasetConfig) -> CodingSchemesManager:
-        pass
+        raise NotImplementedError
 
     @cached_property
     def subject_ids(self):

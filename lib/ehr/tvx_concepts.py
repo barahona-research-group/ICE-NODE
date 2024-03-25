@@ -14,7 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme)
+from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme, SchemeManagerView)
 from ..base import Config, VxData, Module, Array
 
 
@@ -327,61 +327,6 @@ class LeadingObservableExtractorConfig(Config):
 
         assert isinstance(self.scheme, str), f"Expected scheme to be a string, got {type(self.scheme)}"
 
-        # assert self.type_hint in ('B', 'O'), (
-        #     f"LeadingObservableExtractor only supports binary and ordinal observables, "
-        #     f"got {self.type_hint}. Categorical and Numeric types "
-        #     "would require custom aggregation function specific to the observation of interest,"
-        #     "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
-        #     "relevant to use max/min aggregation over numeric observables. Create a feature request "
-        #     "if you need this feature.")
-
-    @cached_property
-    def code_index(self) -> int:
-        """
-        Returns the index of the observable code.
-
-        Returns:
-            int: the index of the observable code.
-        """
-        return self.scheme_object.index[self.observable_code]
-
-    @cached_property
-    def scheme_object(self) -> NumericScheme:
-        """
-        Returns the scheme object based on the scheme name.
-
-        Returns:
-            NumericScheme: the scheme object.
-        """
-        scheme = CodingScheme.from_name(self.scheme)
-        assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
-        return scheme
-
-    @cached_property
-    def type_hint(self) -> NumericalTypeHint:
-        """
-        Returns the type hint for the observable.
-
-        Returns:
-            NumericalTypeHint: the type hint for the observable.
-        """
-        return self.scheme_object.type_hint[self.observable_code]
-
-    @cached_property
-    def aggregation(self) -> str:
-        """
-        Returns the aggregation function based on the aggregation scheme.
-
-        Returns:
-            Callable: the aggregation function.
-        """
-        if self.type_hint == 'B':
-            return 'any'
-        elif self.type_hint == 'O':
-            return 'max'
-        else:
-            assert False, f"unsupported type hint {self.type_hint}"
-
 
 class LeadingObservableExtractor(Module):
     """
@@ -394,6 +339,63 @@ class LeadingObservableExtractor(Module):
         code2index (Dict[str, int]): a dictionary mapping code to index.
     """
     config: LeadingObservableExtractorConfig
+    context_view: SchemeManagerView
+
+    def __post_init__(self):
+        assert self.type_hint in ('B', 'O'), (
+            f"LeadingObservableExtractor only supports binary and ordinal observables, "
+            f"got {self.type_hint}. Categorical and Numeric types "
+            "would require custom aggregation function specific to the observation of interest,"
+            "e.g. the mode of categorical or the mean of numerical. In other cases, it could be more "
+            "relevant to use max/min aggregation over numeric observables. Create a feature request "
+            "if you need this feature.")
+
+    @cached_property
+    def code_index(self) -> int:
+        """
+        Returns the index of the observable code.
+
+        Returns:
+            int: the index of the observable code.
+        """
+        return self.scheme_object.index[self.config.observable_code]
+
+    @cached_property
+    def scheme_object(self) -> NumericScheme:
+        """
+        Returns the scheme object based on the scheme name.
+
+        Returns:
+            NumericScheme: the scheme object.
+        """
+        scheme = self.context_view.scheme[self.config.scheme]
+        assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
+        return scheme
+
+    @cached_property
+    def type_hint(self) -> NumericalTypeHint:
+        """
+        Returns the type hint for the observable.
+
+        Returns:
+            NumericalTypeHint: the type hint for the observable.
+        """
+        return self.scheme_object.type_hint[self.config.observable_code]
+
+    @cached_property
+    def aggregation_name(self) -> str:
+        """
+        Returns the aggregation function based on the aggregation scheme.
+
+        Returns:
+            Callable: the aggregation function.
+        """
+        if self.type_hint == 'B':
+            return 'any'
+        elif self.type_hint == 'O':
+            return 'max'
+        else:
+            assert False, f"unsupported type hint {self.type_hint}"
 
     def __len__(self):
         """
@@ -412,7 +414,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Dict[int, str]: the mapping of index to code.
         """
-        desc = self.config.scheme_object.desc[self.config.observable_code]
+        desc = self.scheme_object.desc[self.config.observable_code]
         return dict(
             zip(range(len(self.config.leading_hours)),
                 [f'{desc}_next_{h}hrs' for h in self.config.leading_hours]))
@@ -630,14 +632,14 @@ class LeadingObservableExtractor(Module):
             return self.empty()
 
         time = observables.time
-        value = observables.value[:, self.config.code_index]
-        mask = observables.mask[:, self.config.code_index]
+        value = observables.value[:, self.code_index]
+        mask = observables.mask[:, self.code_index]
         mask &= self.mask_noisy_observations(time, value,
                                              entry_neglect_window=self.config.entry_neglect_window,
                                              recovery_window=self.config.recovery_window,
                                              minimum_acquisitions=self.config.minimum_acquisitions)
         value = np.where(mask, value, np.nan)
-        value = self.extract_leading_window(time, value, self.config.leading_hours, self.config.aggregation)
+        value = self.extract_leading_window(time, value, self.config.leading_hours, self.aggregation_name)
         return InpatientObservables(time, value, mask=~np.isnan(value))
 
 

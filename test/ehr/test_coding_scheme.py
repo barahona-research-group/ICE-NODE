@@ -238,10 +238,10 @@ class TestFlatScheme:
                                           tmpdir: str):
         path = f'{tmpdir}/coding_schemes.h5'
         with tb.open_file(path, 'w') as f:
-            icd_ccs_scheme_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+            icd_ccs_scheme_manager.to_hdf_group(f.create_group('/', 'context_view'))
 
         with tb.open_file(path, 'r') as f:
-            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager)
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.context_view)
 
         assert icd_ccs_scheme_manager.equals(reloaded)
 
@@ -249,10 +249,10 @@ class TestFlatScheme:
                                            hf5_write_group: tb.Group, tmpdir: str):
         path = f'{tmpdir}/coding_schemes.h5'
         with tb.open_file(path, 'w') as f:
-            icd_ccs_outcome_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+            icd_ccs_outcome_manager.to_hdf_group(f.create_group('/', 'context_view'))
 
         with tb.open_file(path, 'r') as f:
-            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager).sync()
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.context_view).sync()
 
         assert icd_ccs_outcome_manager.equals(reloaded)
 
@@ -260,10 +260,10 @@ class TestFlatScheme:
                                        tmpdir: str):
         path = f'{tmpdir}/coding_schemes.h5'
         with tb.open_file(path, 'w') as f:
-            icd_ccs_map_manager.to_hdf_group(f.create_group('/', 'scheme_manager'))
+            icd_ccs_map_manager.to_hdf_group(f.create_group('/', 'context_view'))
 
         with tb.open_file(path, 'r') as f:
-            reloaded = CodingSchemesManager.from_hdf_group(f.root.scheme_manager)
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.context_view)
 
         assert icd_ccs_map_manager.equals(reloaded)
 

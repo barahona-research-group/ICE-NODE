@@ -1056,7 +1056,7 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
 
     def __len__(self):
         return len(self.codes)
-    
+
     @property
     @abstractmethod
     def base_scheme(self) -> CodingScheme:
@@ -1128,10 +1128,7 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
 
 class ExcludingOutcomeExtractor(OutcomeExtractor):
     exclude_codes: Tuple[str, ...] = field(kw_only=True)
-
-    @cached_property
-    def base_name(self) -> str:
-        return self.base_scheme.name
+    base_name: str = field(kw_only=True, default=None)
 
     @cached_property
     def codes(self) -> Tuple[str, ...]:
@@ -1205,6 +1202,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         return FileBasedOutcomeExtractor(spec_file=spec_file, name=spec_file.split('.')[0])
 
 
+
 class CodingSchemesManager(VxData):
     schemes: Tuple[CodingScheme, ...] = field(default_factory=tuple)
     maps: Tuple[CodeMap, ...] = field(default_factory=tuple)
@@ -1260,7 +1258,7 @@ class CodingSchemesManager(VxData):
 
     @cached_property
     def identity_maps(self) -> Dict[Tuple[str, str], IdentityCodeMap]:
-        return {s: IdentityCodeMap(source_name=s, target_name=s) for s in self.scheme.keys()}
+        return {(s, s): IdentityCodeMap(source_name=s, target_name=s) for s in self.scheme.keys()}
 
     @cached_property
     def chainable_maps(self) -> Dict[Tuple[str, str, str], CodeMap]:
