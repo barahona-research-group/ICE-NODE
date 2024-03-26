@@ -11,7 +11,7 @@ import jax.random as jrandom
 from ..base import Config, VxData
 from ..ehr.coding_scheme import ReducedCodeMapN1, AggregationLiteral, CodesVector
 from ..ehr.tvx_concepts import SegmentedInpatientInterventions, InpatientObservables, SegmentedInpatientObservables, \
-    SegmentedAdmission, SegmentedPatient
+    SegmentedAdmission, SegmentedPatient, Admission, Patient
 
 
 class GroupEmbedding(eqx.Module):
@@ -271,7 +271,7 @@ class PatientEmbedding(eqx.Module):
         emb_segments = tuple(self._embed_observables_segment(s) for s in segments)
         return EmbeddedAdmission(observables=emb_segments)
 
-    def embed_admission(self, admission: SegmentedAdmission,
+    def embed_admission(self, admission: SegmentedAdmission | Admission,
                         demographic_input: Optional[jnp.ndarray]) -> EmbeddedAdmission:
         """
         Embeds an admission into fixed vectors as described above.
@@ -282,91 +282,92 @@ class PatientEmbedding(eqx.Module):
                            self.embed_interventions(admission.interventions),
                            self.embed_dx_codes(admission.dx_codes, admission.dx_codes_history))
 
-    def __call__(self, inpatient: SegmentedPatient, admission_demographic: Dict[str, jnp.ndarray]) -> List[
+    def __call__(self, inpatient: SegmentedPatient | Patient, admission_demographic: Dict[str, jnp.ndarray]) -> List[
         EmbeddedAdmission]:
         """
         Embeds all the admissions of an inpatient into fixed vectors as \
         described above.
         """
+        if isinstance(inpatient, Patient):
+            assert self._f_interventions_emb is None, "Interventions embedding is " \
+                                                      "not supported for (unsegmented) patient."
+
         return [
             self.embed_admission(admission, admission_demographic.get(admission.admission_id))
             for admission in inpatient.admissions
         ]
 
-# class DeepMindPatientEmbeddingConfig(Config):
-#     dx: int = 30
-#     demo: int = 5
-#     obs: int = 20
-#     sequence: int = 50
-#
-# class DeepMindEmbeddedAdmission(VxData):
-#     dx0: jnp.ndarray
-#     demo: jnp.ndarray
-#     sequence: jnp.ndarray
-#
-# class DeepMindPatientEmbedding(PatientEmbedding):
-#     _f_dx_emb: Callable
-#     _f_dem_emb: Callable
-#     _f_obs_emb: Callable
-#     _f_sequence_emb: Callable
-#
-#     def __init__(self, config: OutpatientEmbeddingConfig,
-#                  schemes: Tuple[DatasetScheme],
-#                  demographic_vector_config: DemographicVectorConfig,
-#                  key: jrandom.PRNGKey):
-#         (super_key, obs_emb_key, sequence_emb_key) = jrandom.split(key, 3)
-#         super().__init__(config=config,
-#                          schemes=schemes,
-#                          demographic_vector_config=demographic_vector_config,
-#                          key=super_key)
-#
-#         self._f_sequence_emb = eqx.nn.MLP(config.dx + config.demo + config.obs,
-#                                           config.sequence,
-#                                           config.sequence * 2,
-#                                           depth=1,
-#                                           final_activation=jnp.tanh,
-#                                           key=sequence_emb_key)
-#
-#     @eqx.filter_jit
-#     def embed_dx(self, x: jnp.ndarray) -> jnp.ndarray:
-#         """Embeds the discharge codes history into a fixed vector."""
-#         return self._f_dx_emb(x)
-#
-#     @eqx.filter_jit
-#     def dx_embdeddings(self):
-#         in_size = self._f_dx_emb.in_size
-#         return eqx.filter_vmap(self._f_dx_emb)(jnp.eye(in_size))
-#
-#     @eqx.filter_jit
-#     def _embed_demo(self, demo: jnp.ndarray) -> jnp.ndarray:
-#         """Embeds the demographics into a fixed vector."""
-#         return self._f_dem_emb(demo)
-#
-#     def _embed_admission(
-#             self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
-#             observables: jnp.ndarray) -> DeepMindEmbeddedAdmission:
-#         """ Embeds an admission into fixed vectors as described above."""
-#
-#         dx_emb = self.embed_dx(dx_history_vec)
-#         demo_e = self._embed_demo(demo)
-#         obs_e = jax.vmap(self._f_obs_emb)(observables)
-#
-#         def _embed_sequence_features(obs_e_i):
-#             return self._f_sequence_emb(jnp.hstack((dx_emb, demo_e, obs_e_i)))
-#
-#         sequence_e = [_embed_sequence_features(obs_e_i) for obs_e_i in obs_e]
-#         return DeepMindEmbeddedAdmission(dx0=dx_emb,
-#                                          sequence=sequence_e,
-#                                          demo=demo_e)
-#
-#     def embed_admission(self, static_info: StaticInfo, admission: Admission):
-#         demo = static_info.demographic_vector(admission.admission_dates[0])
-#
-#         assert (not isinstance(admission.observables,
-#                                list)), "Observables should not be fragmented"
-#
-#         observables = jnp.hstack(
-#             (admission.observables.value, admission.observables.mask))
-#
-#         return self._embed_admission(demo, admission.dx_codes_history.vec,
-#                                      observables)
+
+class AdmissionSequentialEmbeddingsConfig(Config):
+    dx_codes: int = 0
+    demographic: int = 0
+    observables: int = 0
+    sequence: int = 50
+
+    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
+        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
+                                         interventions=None,
+                                         demographic=self.demographic,
+                                         observables=self.observables)
+
+
+class EmbeddedAdmissionSequence(VxData):
+    dx_codes_history: jnp.ndarray  # (config.dx, )
+    demographic: jnp.ndarray  # (config.demo, )
+    sequence: jnp.ndarray  # (n_timestamps, config.sequence)
+
+
+class AdmissionSequentialEmbedding(eqx.Module):
+    _f_components_emb: PatientEmbedding
+    _f_sequence_emb: Callable
+
+    def __init__(self, config: AdmissionSequentialEmbeddingsConfig,
+                 dx_codes_size: Optional[int] = None,
+                 demographic_size: Optional[int] = None,
+                 observables_size: Optional[int] = None, *,
+                 key: jrandom.PRNGKey):
+        (components_emb_key, sequence_emb_key) = jrandom.split(key, )
+
+        self._f_components_emb = PatientEmbedding(config=config.to_admission_embeddings_config(),
+                                                  dx_codes_size=dx_codes_size,
+                                                  icu_inputs_map=None,
+                                                  icu_procedures_size=None,
+                                                  hosp_procedures_size=None,
+                                                  demographic_size=demographic_size,
+                                                  observables_size=observables_size,
+                                                  key=components_emb_key)
+
+        self._f_sequence_emb = eqx.nn.MLP(config.dx_codes + config.demographic + config.observables,
+                                          config.sequence,
+                                          config.sequence * 2,
+                                          depth=1,
+                                          final_activation=jnp.tanh,
+                                          key=sequence_emb_key)
+
+    @eqx.filter_jit
+    def _embed_sequence_features(self, dx_history_emb, demo_emb, obs_e_i):
+        return self._f_sequence_emb(jnp.hstack((dx_history_emb, demo_emb, obs_e_i)))
+
+    def embed_admission_components(self, components: EmbeddedAdmission) -> EmbeddedAdmissionSequence:
+        """ Embeds an admission into fixed vectors as described above."""
+        dx_history_emb = components.dx_codes_history
+        demo_emb = components.demographic
+        assert len(components.observables) == 1, "Only one segment is supported"
+        obs_emb = components.observables[0]
+        sequence_e = [self._embed_sequence_features(dx_history_emb, demo_emb, obs_e_i) for obs_e_i in obs_emb]
+        return EmbeddedAdmissionSequence(dx_codes_history=dx_history_emb,
+                                         sequence=sequence_e,
+                                         demographic=demo_emb)
+
+    def __call__(self, inpatient: Patient, admission_demographic: Dict[str, jnp.ndarray]) -> List[
+        EmbeddedAdmissionSequence]:
+        """
+        Embeds all the admissions of an inpatient into fixed vectors as \
+        described above.
+        """
+        assert not isinstance(inpatient, SegmentedPatient), "SegmentedPatient not supported"
+
+        return [
+            self.embed_admission_components(emb_admission)
+            for emb_admission in self._f_components_emb(inpatient, admission_demographic)
+        ]
