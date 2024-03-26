@@ -118,7 +118,7 @@ class CodesVector(VxData):
         scheme (str): the coding scheme.
     """
 
-    vec: npt.NDArray[bool]
+    vec: npt.NDArray[bool] | np.ndarray[np.bool_]
     scheme: str
 
     @classmethod
@@ -1086,14 +1086,13 @@ class ReducedCodeMapN1(CodeMap):
         return tuple(np.cumsum(self.groups_size).tolist())
 
     @cached_property
-    def groups_argsort(self) -> Tuple[int, ...]:
+    def groups_permute(self) -> Tuple[int, ...]:
         source_index = self.source_index
-        argsort = sum((tuple(map(source_index.get, g)) for g in self.groups), tuple())
-        if len(argsort) == len(source_index):
-            return argsort
+        permutes = sum((tuple(map(source_index.get, g)) for g in self.groups), tuple())
+        if len(permutes) == len(source_index):
+            return permutes
         else:
-            return argsort + tuple(set(source_index.keys()) - set(argsort))
-
+            return permutes + tuple(set(source_index.keys()) - set(permutes))
 
 
 

@@ -494,6 +494,15 @@ class VxData(eqx.Module):
                                                                                                      attribute_names)
 
 
+def np_module(a: Array) -> Any:
+    if isinstance(a, np.ndarray):
+        return np
+    elif isinstance(a, (jnp.ndarray, jax.Array)):
+        return jnp
+    else:
+        raise TypeError(f"Unsupported array type {type(a)}.")
+
+
 VxDataItem = Union[VxData, Array, str, VxDataView]
 VxDataIterableField = Union[list, tuple, MappingProxyType]
 VxDataField = Union[VxDataItem, pd.Timestamp, str, VxDataIterableField]

@@ -6,16 +6,15 @@ import functools
 import statistics
 from datetime import date
 from functools import cached_property
-from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, ClassVar)
+from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, ClassVar, Iterator)
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
 from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme, SchemeManagerView)
-from ..base import Config, VxData, Module, Array
+from ..base import Config, VxData, Module, Array, np_module
 
 
 class InpatientObservables(VxData):
@@ -121,26 +120,23 @@ class InpatientObservables(VxData):
 
         assert len(index2code) == self.value.shape[1], \
             f'Expected {len(index2code)} columns, got {self.value.shape[1]}'
-        if isinstance(self.time, jax.Array):
-            _np = jnp
-        else:
-            _np = np
 
+        xnp = np_module(self.time)
         dic = {}
-        time = _np.array(self.time)
-        value = _np.array(self.value)
-        mask = _np.array(self.mask)
+        time = xnp.array(self.time)
+        value = xnp.array(self.value)
+        mask = xnp.array(self.mask)
 
         for i, code in index2code.items():
             mask_i = mask[:, i]
-            if not _np.any(mask_i):
+            if not xnp.any(mask_i):
                 continue
 
             value_i = value[:, i][mask_i]
             time_i = time[mask_i]
             dic[code] = InpatientObservables(time=time_i,
                                              value=value_i,
-                                             mask=_np.ones_like(value_i, dtype=bool))
+                                             mask=xnp.ones_like(value_i, dtype=bool))
         return dic
 
     @staticmethod
@@ -156,14 +152,10 @@ class InpatientObservables(VxData):
         """
         if len(observables) == 0:
             return InpatientObservables.empty(0)
-        if isinstance(observables[0].time, jax.Array):
-            _np = jnp
-        else:
-            _np = np
-
-        time = _np.hstack([o.time for o in observables])
-        value = _np.vstack([o.value for o in observables])
-        mask = _np.vstack([o.mask for o in observables])
+        xnp = np_module(observables[0].time)
+        time = xnp.hstack([o.time for o in observables])
+        value = xnp.vstack([o.value for o in observables])
+        mask = xnp.vstack([o.mask for o in observables])
 
         return InpatientObservables(time, value, mask)
 
@@ -269,7 +261,7 @@ class SegmentedInpatientObservables(InpatientObservables):
         return np.searchsorted(time, time_split)
 
     @cached_property
-    def _segments(self) -> List[InpatientObservables]:
+    def _segments(self) -> Tuple[InpatientObservables, ...]:
         """
         Splits the InpatientObservables object into multiple segments based on the given time points.
 
@@ -280,15 +272,11 @@ class SegmentedInpatientObservables(InpatientObservables):
             List[InpatientObservables]: list of segmented InpatientObservables objects.
         """
         if len(self.indexed_split) == 0:
-            return [self]
+            return (self,)
         time = np.split(self.time, self.indexed_split)
         value = np.vsplit(self.value, self.indexed_split)
         mask = np.vsplit(self.mask, self.indexed_split)
-
-        return [
-            InpatientObservables(t, v, m)
-            for t, v, m in zip(time, value, mask)
-        ]
+        return tuple(InpatientObservables(t, v, m) for t, v, m in zip(time, value, mask))
 
     def __getitem__(self, item: int) -> InpatientObservables:
         return self._segments[item]
@@ -731,9 +719,9 @@ class InpatientInterventions(VxData):
 
 class SegmentedInpatientInterventions(VxData):
     time: Array
-    hosp_procedures: Optional[Array] = None
-    icu_procedures: Optional[Array] = None
     icu_inputs: Optional[Array] = None
+    icu_procedures: Optional[Array] = None
+    hosp_procedures: Optional[Array] = None
 
     def __len__(self):
         return sum(1 for o in [self.hosp_procedures, self.icu_procedures, self.icu_inputs] if o is not None)
@@ -803,6 +791,18 @@ class SegmentedInpatientInterventions(VxData):
         out = np.stack([inpatient_input(ti, input_size) for ti in t], axis=0)
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
+
+    def iter_tuples(self) -> Iterator[Tuple[Optional[Array], Optional[Array], Optional[Array]]]:
+        """
+        Iterates over the segmented interventions and yields the time and intervention data.
+
+        Yields:
+            Tuple: a tuple containing the time and intervention data.
+        """
+        for i in enumerate(self.time[:-1]):
+            yield (self.hosp_procedures[i] if self.hosp_procedures else None,
+                   self.icu_procedures[i] if self.icu_procedures else None,
+                   self.icu_inputs[i] if self.icu_inputs else None)
 
 
 class AdmissionDates(VxData):
@@ -1036,15 +1036,11 @@ class StaticInfo(VxData):
 
     def constant_vec(self, demographic_vector_config: DemographicVectorConfig) -> Array:
         attrs_vec = self.constant_attrs_list(demographic_vector_config)
-        if any(isinstance(a, jax.Array) for a in attrs_vec):
-            _np = jnp
-        else:
-            _np = np
-
+        xnp = np_module(attrs_vec[0])
         if len(attrs_vec) == 0:
-            return _np.array([], dtype=jnp.float16)
+            return xnp.array([], dtype=xnp.float16)
         else:
-            return _np.hstack(attrs_vec)
+            return xnp.hstack(attrs_vec)
 
     def age(self, current_date: date) -> float:
         """
@@ -1057,36 +1053,36 @@ class StaticInfo(VxData):
             float: the age of the patient in years.
         """
         return (current_date - self.date_of_birth).days / 365.25
-
-    def demographic_vector(self,
-                           demographic_vector_config: DemographicVectorConfig,
-                           static_vector: jnp.ndarray, current_date: date) -> Array:
-        """
-        Returns the demographic vector based on the current date.
-
-        Args:
-            current_date (date): the current date.
-
-        Returns:
-            Array: the demographic vector.
-        """
-        if demographic_vector_config.age:
-            return self._concat(self.age(current_date), static_vector)
-        return static_vector
-
-    @staticmethod
-    def _concat(age, vec):
-        """
-        Concatenates the age and vector.
-
-        Args:
-            age (float): the age of the patient.
-            vec (Array): the vector to be concatenated.
-
-        Returns:
-            Array: the concatenated vector.
-        """
-        return jnp.hstack((age, vec), dtype=jnp.float16)
+    #
+    # def demographic_vector(self,
+    #                        demographic_vector_config: DemographicVectorConfig,
+    #                        static_vector: jnp.ndarray, current_date: date) -> Array:
+    #     """
+    #     Returns the demographic vector based on the current date.
+    #
+    #     Args:
+    #         current_date (date): the current date.
+    #
+    #     Returns:
+    #         Array: the demographic vector.
+    #     """
+    #     if demographic_vector_config.age:
+    #         return self._concat(self.age(current_date), static_vector)
+    #     return static_vector
+    #
+    # @staticmethod
+    # def _concat(age, vec):
+    #     """
+    #     Concatenates the age and vector.
+    #
+    #     Args:
+    #         age (float): the age of the patient.
+    #         vec (Array): the vector to be concatenated.
+    #
+    #     Returns:
+    #         Array: the concatenated vector.
+    #     """
+    #     return jnp.hstack((age, vec), dtype=jnp.float16)
 
 
 class CPRDStaticInfo(StaticInfo):
