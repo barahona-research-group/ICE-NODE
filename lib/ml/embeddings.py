@@ -1,237 +1,18 @@
 from __future__ import annotations
-from typing import (Any, Dict, List, Callable, Optional, Tuple)
+
 from abc import abstractmethod
+from typing import (List, Callable, Optional, Tuple)
+
+import equinox as eqx
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import equinox as eqx
-import numpy as np
 
-from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
-                   InpatientInput, InpatientInterventions, DemographicVectorConfig, CodingScheme)
 from ..base import Config, VxData
-
-
-class MaskedAggregator(eqx.Module):
-    """
-    A class representing a masked aggregator.
-
-    Attributes:
-        mask (jnp.array): The mask used for aggregation.
-    """
-
-    mask: jnp.array = eqx.static_field()
-
-    def __init__(self,
-                 subsets: jax.Array | List[int],
-                 input_size: int):
-        super().__init__()
-        mask = np.zeros((len(subsets), input_size), dtype=bool)
-        for i, s in enumerate(subsets):
-            mask[i, s] = True
-        self.mask = jnp.array(mask)
-
-    def __call__(self, x: jax.Array) -> jax.Array:
-        raise NotImplementedError
-
-
-class MaskedPerceptron(MaskedAggregator):
-    """
-    A masked perceptron model for classification tasks.
-
-    Parameters:
-    - subsets: an array of subsets used for masking.
-    - input_size: the size of the input features.
-    - key: a PRNGKey for random initialization.
-    - backend: the backend framework to use (default: 'jax').
-
-    Attributes:
-    - linear: a linear layer for the perceptron.
-
-    Methods:
-    - __call__(self, x): performs forward pass of the perceptron.
-    """
-
-    linear: eqx.nn.Linear
-
-    def __init__(self,
-                 subsets: jax.Array,
-                 input_size: int,
-                 key: "jax.random.PRNGKey"):
-        """
-        Initialize the MaskedPerceptron class.
-
-        Args:
-            subsets (Array): the subsets of input features.
-            input_size (int): the size of the input.
-            key (jax.random.PRNGKey): the random key for initialization.
-        """
-        super().__init__(subsets, input_size)
-        self.linear = eqx.nn.Linear(input_size,
-                                    len(subsets),
-                                    use_bias=False,
-                                    key=key)
-
-    @property
-    def weight(self):
-        """
-        Returns the weight of the linear layer.
-
-        Returns:
-            Array: the weights of the linear layer.
-        """
-        return self.linear.weight
-
-    @eqx.filter_jit
-    def __call__(self, x: jax.Array) -> jax.Array:
-        """
-        Performs forward pass of the perceptron.
-
-        Args:
-            x (Array): the input features.
-
-        Returns:
-            Array: the output of the perceptron.
-        """
-        return (self.weight * self.mask) @ x
-
-
-class MaskedSum(MaskedAggregator):
-
-    def __call__(self, x: jax.Array) -> jax.Array:
-        """
-        performs a masked sum aggregation on the input array x.
-
-        Args:
-            x (Array): input array to aggregate.
-
-        Returns:
-            Array: sum of x for True mask locations.
-        """
-        return self.mask @ x
-
-
-class MaskedOr(MaskedAggregator):
-
-    def __call__(self, x):
-        """Performs a masked OR aggregation.
-
-        For each row of the input array `x`, performs a logical OR operation between
-        elements of that row and the mask. Returns a boolean array indicating if there
-        was at least one `True` value for each row.
-
-        Args:
-            x: Input array to aggregate. Can be numpy ndarray or jax ndarray.
-
-        Returns:
-            Boolean ndarray indicating if there was at least one True value in each
-            row of x after applying the mask.
-        """
-        return jnp.any(self.mask & (x != 0), axis=1)
-
-
-class AggregateRepresentation(eqx.Module):
-    """
-    AggregateRepresentation aggregates input codes into target codes.
-
-    It initializes masked aggregators based on the target scheme's
-    aggregation and aggregation groups. On call, it splits the input,
-    aggregates each split with the corresponding aggregator, and
-    concatenates the results.
-
-    Handles both jax and numpy arrays for the input.
-
-    Attributes:
-        aggregators: a list of masked aggregators.
-        splits: a tuple of integers indicating the splits of the input.
-
-    Methods:
-        __call__(self, x): performs the aggregation.
-    """
-    aggregators: List[MaskedAggregator]
-    splits: Tuple[int] = eqx.static_field()
-
-    def __init__(self,
-                 source_scheme: CodingScheme,
-                 target_scheme: CodingScheme,
-                 key: "jax.random.PRNGKey" = None):
-        """
-        Initializes an AggregateRepresentation.
-
-        Constructs the masked aggregators based on the target scheme's
-        aggregation and aggregation groups. Splits the input into sections
-        for each aggregator.
-
-        Args:
-            source_scheme: Source coding scheme to aggregate from
-            target_scheme: Target coding scheme to aggregate to
-            key: JAX PRNGKey for initializing perceptrons
-        """
-        super().__init__()
-        self.aggregators = []
-        aggs = target_scheme.aggregation
-        agg_grps = target_scheme.aggregation_groups
-        grps = target_scheme.groups
-        splits = []
-
-        def is_contagious(x):
-            return x.max() - x.min() == len(x) - 1 and len(set(x)) == len(x)
-
-        for agg in aggs:
-            selectors = []
-            agg_offset = len(source_scheme)
-            for grp in agg_grps[agg]:
-                input_codes = grps[grp]
-                input_index = sorted(source_scheme.index[c]
-                                     for c in input_codes)
-                input_index = jnp.array(input_index, dtype=int)
-                assert is_contagious(input_index), (
-                    f"Selectors must be contiguous, but {input_index} is not. Codes: {input_codes}. Group: {grp}"
-                )
-                agg_offset = min(input_index.min().item(), agg_offset)
-                selectors.append(input_index)
-            selectors = [s - agg_offset for s in selectors]
-            agg_input_size = sum(len(s) for s in selectors)
-            max_index = max(s.max().item() for s in selectors)
-            assert max_index == agg_input_size - 1, (
-                f"Selectors must be contiguous, max index is {max_index} but size is {agg_input_size}"
-            )
-            splits.append(agg_input_size)
-
-            if agg == 'w_sum':
-                self.aggregators.append(
-                    MaskedPerceptron(selectors, agg_input_size, key))
-                (key,) = jrandom.split(key, 1)
-            elif agg == 'sum':
-                self.aggregators.append(
-                    MaskedSum(selectors, agg_input_size))
-            elif agg == 'or':
-                self.aggregators.append(
-                    MaskedOr(selectors, agg_input_size))
-            else:
-                raise ValueError(f"Aggregation {agg} not supported")
-        splits = jnp.cumsum([0] + splits)[1:-1]
-        self.splits = tuple(splits.tolist())
-
-    @eqx.filter_jit
-    def __call__(self, inpatient_input: jax.Array) -> jax.Array:
-        """
-        Apply aggregators to the input data.
-
-        Args:
-            inpatient_input (Array): the input data to be processed.
-
-        Returns:
-            Array: the processed data after applying aggregators.
-        """
-        if isinstance(inpatient_input, jax.Array):
-            splitted = jnp.hsplit(inpatient_input, self.splits)
-            return jnp.hstack(
-                [agg(x) for x, agg in zip(splitted, self.aggregators)])
-
-        splitted = jnp.hsplit(inpatient_input, self.splits)
-        return jnp.hstack(
-            [agg(x) for x, agg in zip(splitted, self.aggregators)])
+from ..ehr import (Patient, Admission, StaticInfo, DatasetScheme,
+                   DemographicVectorConfig)
+from ..ehr.coding_scheme import ReducedCodeMapN1, AggregationLiteral
 
 
 class EmbeddedAdmission(VxData):
@@ -266,10 +47,11 @@ class InpatientLiteEmbeddingConfig(PatientEmbeddingConfig):
     pass
 
 
-class InpatientEmbeddingConfig(PatientEmbeddingConfig):
-    inp: int = 10
-    proc: int = 10
-    inp_proc_demo: int = 15
+class InterventionsEmbeddingsConfig(Config):
+    icu_inputs: int = 10
+    icu_procedures: int = 10
+    hosp_procedures: int = 10
+    interventions: int = 20
 
 
 class PatientEmbedding(eqx.Module):
@@ -364,96 +146,137 @@ class InpatientLiteEmbedding(PatientEmbedding):
         return self._embed_admission(demo, admission.dx_codes_history.vec)
 
 
-class InpatientEmbedding(PatientEmbedding):
+class GroupEmbedding(eqx.Module):
+    groups_split: Tuple[int, ...] = eqx.static_field()
+    groups_argsort: Tuple[int, ...] = eqx.static_field()
+    source_size: int = eqx.static_field()
+    target_size: int = eqx.static_field()
+    groups_aggregation: Tuple[Callable, ...]
+    linear: eqx.nn.Linear
+
+    @staticmethod
+    def group_function(aggregation: AggregationLiteral, input_size: int, group_key: "jax.random.PRNGKey") -> Callable:
+        if aggregation == 'sum':
+            return jnp.sum
+        if aggregation == 'or':
+            return jnp.any
+        if aggregation == 'w_sum':
+            return eqx.nn.Linear(input_size, 1, use_bias=False, key=group_key)
+        raise ValueError(f"Unrecognised aggregation: {aggregation}")
+
+    def __init__(self, reduced_map: ReducedCodeMapN1, embeddings_size: int, key: "jax.random.PRNGKey"):
+        self.groups_split = reduced_map.groups_split
+        self.groups_argsort = reduced_map.groups_argsort
+        self.source_size = len(reduced_map.source_scheme)
+        self.target_size = len(self.groups_aggregation)
+        linear_key, aggregation_key = jrandom.split(key, 2)
+        self.groups_aggregation = tuple(map(self.group_function,
+                                            reduced_map.groups_aggregation,
+                                            reduced_map.groups_size,
+                                            jrandom.split(aggregation_key, self.target_size)))
+        self.linear = eqx.nn.Linear(self.target_size, embeddings_size, use_bias=False, key=linear_key)
+
+    def split_source_array(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, ...]:
+        assert x.ndim == 1 and len(x) == self.source_size
+        y = x[self.groups_argsort]
+        return tuple(jnp.hsplit(y, self.groups_split)[:-1])
+
+    def __call__(self, x: jnp.ndarray):
+        y = jnp.hstack(self.split_source_array(x))
+        return self.linear(y)
+
+
+class InterventionsEmbeddings(eqx.Module):
     """
     Embeds an inpatient admission into fixed vectors:
         - Embdedded discharge codes history.
         - A sequence of embedded vectors each fusing the input, procedure \
             and demographic information.
     """
-    _f_inp_agg: Callable
-    _f_inp_emb: Callable
-    _f_proc_emb: Callable
-    _f_int_emb: Callable
+    config: InterventionsEmbeddingsConfig = eqx.static_field()
+    _f_icu_inputs_emb: GroupEmbedding
+    _f_icu_procedures_emb: eqx.nn.Linear
+    _f_hosp_procedures_emb: eqx.nn.Linear
+    _f_emb: eqx.nn.Linear
+    activation: Callable
+    final_activation: Callable
 
-    def __init__(self, config: InpatientEmbeddingConfig,
-                 schemes: Tuple[DatasetScheme],
-                 demographic_vector_config: DemographicVectorConfig,
+    def __init__(self, config: InterventionsEmbeddingsConfig,
+                 icu_inputs_map: ReducedCodeMapN1,
+                 icu_procedures_source_size: int,
+                 hosp_procedures_source_size: int,
+                 activation: Callable = jnn.relu,
+                 final_activation: Callable = lambda x: x, *,
                  key: "jax.random.PRNGKey"):
-        (super_key, inp_agg_key, inp_emb_key, proc_emb_key,
-         int_emb_key) = jrandom.split(key, 5)
+        super().__init__()
+        self.config = config
+        self.activation = activation
+        self.final_activation = final_activation
+        (icu_inputs_key, icu_procedures_key, hosp_procedures_key, interventions_key) = jrandom.split(key, 4)
 
-        if schemes[1].demographic_vector_size(demographic_vector_config) == 0:
-            config = eqx.tree_at(lambda d: d.demo, config, 0)
+        self._f_icu_inputs_emb = GroupEmbedding(icu_inputs_map, config.icu_inputs, icu_inputs_key)
+        self._f_icu_procedures_emb = eqx.nn.Linear(icu_procedures_source_size,
+                                                   config.icu_procedures,
+                                                   use_bias=False,
+                                                   key=icu_procedures_key)
+        self._f_hosp_procedures_emb = eqx.nn.Linear(hosp_procedures_source_size,
+                                                    config.hosp_procedures,
+                                                    use_bias=False,
+                                                    key=hosp_procedures_key)
+        self._f_emb = eqx.nn.Linear(config.icu_inputs + config.icu_procedures + config.hosp_procedures,
+                                    config.interventions,
+                                    use_bias=False,
+                                    key=interventions_key)
 
-        super().__init__(config=config,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         key=super_key)
-        self._f_inp_agg = AggregateRepresentation(schemes[0].int_input,
-                                                  schemes[1].int_input,
-                                                  inp_agg_key, 'jax')
-        self._f_inp_emb = eqx.nn.MLP(len(schemes[1].int_input),
-                                     config.inp,
-                                     config.inp * 5,
-                                     final_activation=jnp.tanh,
-                                     depth=1,
-                                     key=inp_emb_key)
-        self._f_proc_emb = eqx.nn.MLP(len(schemes[1].int_proc),
-                                      config.proc,
-                                      config.proc * 5,
-                                      final_activation=jnp.tanh,
-                                      depth=1,
-                                      key=proc_emb_key)
-        self._f_int_emb = eqx.nn.MLP(config.inp + config.proc + config.demo,
-                                     config.inp_proc_demo,
-                                     config.inp_proc_demo * 5,
-                                     final_activation=jnp.tanh,
-                                     depth=1,
-                                     key=int_emb_key)
+    def __call__(self, icu_inputs: jnp.ndarray, icu_procedures: jnp.ndarray, hosp_procedures: jnp.ndarray):
+        y_icu_inputs = self._f_icu_inputs_emb(icu_inputs)
+        y_icu_procedures = self._f_icu_procedures_emb(icu_procedures)
+        y_hosp_procedures = self._f_hosp_procedures_emb(hosp_procedures)
+        y = jnp.hstack((y_icu_inputs, y_icu_procedures, y_hosp_procedures))
+        return self.final_activation(self._f_emb(self.activation(y)))
 
-    @eqx.filter_jit
-    def _embed_demo(self, demo: jnp.ndarray) -> jnp.ndarray:
-        """Embeds the demographics into a fixed vector."""
-        return self._f_dem_emb(demo)
-
-    @eqx.filter_jit
-    def _embed_segment(self, inp: InpatientInput, proc: InpatientInput,
-                       demo_e: jnp.ndarray) -> jnp.ndarray:
-        """
-        Embeds a  of the intervention (procedures and inputs) \
-        and demographics into a fixed vector.
-        """
-
-        inp_emb = self._f_inp_emb(self._f_inp_agg(inp))
-        proc_emb = self._f_proc_emb(proc)
-        return self._f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_e]))
-
-    @eqx.filter_jit
-    def embed_dx(self, x: jnp.ndarray) -> jnp.ndarray:
-        """Embeds the discharge codes history into a fixed vector."""
-        return self._f_dx_emb(x)
-
-    @eqx.filter_jit
-    def _embed_admission(self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
-                         segmented_inp: jnp.ndarray,
-                         segmented_proc: jnp.ndarray) -> EmbeddedInAdmission:
-        """ Embeds an admission into fixed vectors as described above."""
-
-        demo_e = self._embed_demo(demo)
-        dx_emb = self.embed_dx(dx_history_vec)
-
-        def _embed_segment(inp, proc):
-            return self._embed_segment(inp, proc, demo_e)
-
-        inp_proc_demo = jax.vmap(_embed_segment)(segmented_inp, segmented_proc)
-        return EmbeddedInAdmission(dx0=dx_emb, inp_proc_demo=inp_proc_demo)
-
-    def embed_admission(self, static_info: StaticInfo, admission: Admission):
-        demo = static_info.demographic_vector(admission.admission_dates[0])
-        return self._embed_admission(demo, admission.dx_codes_history.vec,
-                                     admission.interventions.segmented_input,
-                                     admission.interventions.segmented_proc)
+    # @eqx.filter_jit
+    # def _embed_demo(self, demo: jnp.ndarray) -> jnp.ndarray:
+    #     """Embeds the demographics into a fixed vector."""
+    #     return self._f_dem_emb(demo)
+    #
+    # @eqx.filter_jit
+    # def _embed_segment(self, inp: InpatientInput, proc: InpatientInput,
+    #                    demo_e: jnp.ndarray) -> jnp.ndarray:
+    #     """
+    #     Embeds a  of the intervention (procedures and inputs) \
+    #     and demographics into a fixed vector.
+    #     """
+    #
+    #     inp_emb = self._f_inp_emb(self._f_inp_agg(inp))
+    #     proc_emb = self._f_proc_emb(proc)
+    #     return self._f_int_emb(jnp.hstack([inp_emb, proc_emb, demo_e]))
+    #
+    # @eqx.filter_jit
+    # def embed_dx(self, x: jnp.ndarray) -> jnp.ndarray:
+    #     """Embeds the discharge codes history into a fixed vector."""
+    #     return self._f_dx_emb(x)
+    #
+    # @eqx.filter_jit
+    # def _embed_admission(self, demo: jnp.ndarray, dx_history_vec: jnp.ndarray,
+    #                      segmented_inp: jnp.ndarray,
+    #                      segmented_proc: jnp.ndarray) -> EmbeddedInAdmission:
+    #     """ Embeds an admission into fixed vectors as described above."""
+    #
+    #     demo_e = self._embed_demo(demo)
+    #     dx_emb = self.embed_dx(dx_history_vec)
+    #
+    #     def _embed_segment(inp, proc):
+    #         return self._embed_segment(inp, proc, demo_e)
+    #
+    #     inp_proc_demo = jax.vmap(_embed_segment)(segmented_inp, segmented_proc)
+    #     return EmbeddedInAdmission(dx0=dx_emb, inp_proc_demo=inp_proc_demo)
+    #
+    # def embed_admission(self, static_info: StaticInfo, admission: Admission):
+    #     demo = static_info.demographic_vector(admission.admission_dates[0])
+    #     return self._embed_admission(demo, admission.dx_codes_history.vec,
+    #                                  admission.interventions.segmented_input,
+    #                                  admission.interventions.segmented_proc)
 
 
 class DeepMindPatientEmbeddingConfig(Config):
@@ -479,7 +302,6 @@ class DeepMindPatientEmbedding(PatientEmbedding):
                  schemes: Tuple[DatasetScheme],
                  demographic_vector_config: DemographicVectorConfig,
                  key: "jax.random.PRNGKey"):
-
         (super_key, obs_emb_key, sequence_emb_key) = jrandom.split(key, 3)
         super().__init__(config=config,
                          schemes=schemes,

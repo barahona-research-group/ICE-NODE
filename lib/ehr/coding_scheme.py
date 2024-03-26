@@ -22,7 +22,7 @@ import numpy.typing as npt
 import pandas as pd
 import tables as tb
 
-from ..base import VxData, VxDataView
+from ..base import VxData, VxDataView, Array
 from ..utils import load_config
 
 NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, Categorical
@@ -1037,6 +1037,64 @@ class CodeMap(SchemesContextManaged):
             logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
 
         return vec
+
+
+AggregationLiteral = Literal['sum', 'or', 'w_sum']
+
+
+class ReducedCodeMapN1(CodeMap):
+    set_aggregation: FrozenDict11
+    reduced_groups: FrozenDict1N
+
+    @staticmethod
+    def from_data(source_name: str, target_name: str, map_data: FrozenDict1N,
+                  set_aggregation: FrozenDict11) -> ReducedCodeMapN1:
+        assert all(len(t) == 1 for t in map_data.values()), "A code should have one target."
+
+        new_map = defaultdict(set)
+        for code, (target,) in map_data.items():
+            new_map[target].add(code)
+
+        return ReducedCodeMapN1(source_name=source_name, target_name=target_name, data=map_data,
+                                set_aggregation=set_aggregation,
+                                reduced_groups=FrozenDict1N.from_dict(new_map))
+
+    @cached_property
+    def groups(self) -> Tuple[Tuple[str, ...], ...]:
+        source_index = self.source_index
+        target_codes = tuple(sorted(self.reduced_groups.keys()))
+        return tuple(tuple(sorted(self.reduced_groups[t], key=source_index.get)) for t in target_codes)
+
+    @staticmethod
+    def _validate_aggregation(a) -> AggregationLiteral:
+        if a in ('sum', 'or', 'w_sum'):
+            return a
+        else:
+            raise ValueError(f"Unrecognised aggregation: {a}")
+
+    @cached_property
+    def groups_aggregation(self) -> Tuple[AggregationLiteral, ...]:
+        aggregation = tuple(self.set_aggregation[g] for g in sorted(self.reduced_groups.keys()))
+        return tuple(self._validate_aggregation(a) for a in aggregation)
+
+    @cached_property
+    def groups_size(self) -> Tuple[int, ...]:
+        return tuple(len(g) for g in self.groups)
+
+    @cached_property
+    def groups_split(self) -> Tuple[int, ...]:
+        return tuple(np.cumsum(self.groups_size).tolist())
+
+    @cached_property
+    def groups_argsort(self) -> Tuple[int, ...]:
+        source_index = self.source_index
+        argsort = sum((tuple(map(source_index.get, g)) for g in self.groups), tuple())
+        if len(argsort) == len(source_index):
+            return argsort
+        else:
+            return argsort + tuple(set(source_index.keys()) - set(argsort))
+
+
 
 
 class IdentityCodeMap(CodeMap):

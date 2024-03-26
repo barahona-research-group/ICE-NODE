@@ -15,7 +15,7 @@ from sqlalchemy import Engine
 
 from lib.base import Module, Config
 from lib.ehr.coding_scheme import (CodingScheme, CodeMap, resources_dir, NumericScheme,
-                                   CodingSchemesManager, FrozenDict11, FrozenDict1N)
+                                   CodingSchemesManager, FrozenDict11, FrozenDict1N, ReducedCodeMapN1)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
@@ -325,14 +325,16 @@ class AggregatedICUInputsScheme(CodingScheme):
         target_codes = tuple(sorted(mapping[c_target_code].drop_duplicates().astype(str).tolist()))
         target_desc = FrozenDict11.from_dict(mapping.set_index(c_target_code)[c_target_desc].to_dict())
         target_agg = FrozenDict11.from_dict(mapping.set_index(c_target_code)[c_target_aggregation].to_dict())
-        target_scheme = AggregatedICUInputsScheme(name=target_name, codes=target_codes, desc=target_desc,
-                                                  aggregation=target_agg)
+        target_scheme = CodingScheme(name=target_name, codes=target_codes, desc=target_desc)
         manager = manager.add_scheme(target_scheme)
 
         mapping = mapping[[c_code, c_target_code]].astype(str)
         mapping = mapping[mapping[c_code].isin(scheme.codes) & mapping[c_target_code].isin(target_scheme.codes)]
         mapping = FrozenDict1N.from_dict(mapping.groupby(c_code)[c_target_code].apply(set).to_dict())
-        return manager.add_map(CodeMap(source_name=scheme.name, target_name=target_scheme.name, data=mapping))
+        return manager.add_map(ReducedCodeMapN1.from_data(source_name=scheme.name,
+                                                          target_name=target_scheme.name,
+                                                          map_data=mapping,
+                                                          set_aggregation=target_agg))
 
 
 class AdmissionIntervalBasedMixedICDTableConfig(AdmissionMixedICDSQLTableConfig,
