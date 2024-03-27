@@ -827,7 +827,7 @@ class Trainer(Module):
 
         n_train_admissions = patients.n_admissions(
             train_ids,
-            ignore_first_admission=model.counts_ignore_first_admission)
+            ignore_first_admission=model.discount_first_admission)
 
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
@@ -870,7 +870,7 @@ class Trainer(Module):
             epoch_splits = patients.epoch_splits(
                 train_ids,
                 batch_n_admissions=batch_size,
-                ignore_first_admission=model.counts_ignore_first_admission)
+                ignore_first_admission=model.discount_first_admission)
             split_gen = tqdm_constructor(epoch_splits,
                                          leave=False,
                                          unit='Batch')

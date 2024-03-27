@@ -1,30 +1,28 @@
 """Abstract class for predictive EHR models."""
 
 from __future__ import annotations
-from typing import (List, TYPE_CHECKING, Callable, Union, Tuple, Optional, Any,
-                    Dict, Type)
-from abc import abstractmethod, ABCMeta
+
 import zipfile
+from abc import abstractmethod
+from typing import (TYPE_CHECKING, Callable, Optional, Any, Tuple)
+
+import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-import equinox as eqx
 
-from ..utils import tqdm_constructor, translate_path
-from ..ehr import (TVxEHR, Patient, DemographicVectorConfig, DatasetScheme,
-                   Admission,
-                   InpatientInput, InpatientObservables)
-from .artefacts import AdmissionPrediction, AdmissionsPrediction, TrajectoryConfig
-from ..base import Config, Module, VxData
-
-from .embeddings import (PatientEmbedding, PatientEmbeddingConfig,
+from .artefacts import AdmissionsPrediction, TrajectoryConfig
+from .embeddings import (PatientEmbedding,
                          EmbeddedAdmission)
+from ..base import Config, Module, VxData
+from ..ehr import (TVxEHR, Patient, Admission)
+from ..utils import tqdm_constructor, translate_path
 
 if TYPE_CHECKING:
     import optuna
 
 
 class ModelConfig(Config):
-    emb: PatientEmbeddingConfig = PatientEmbeddingConfig()
+    embedding: Config = Config()
 
 
 class ModelRegularisation(Config):
@@ -37,8 +35,8 @@ class Precomputes(VxData):
 
 
 class AbstractModel(Module):
-    _f_emb: PatientEmbedding
-    _f_dx_dec: Callable
+    f_emb: PatientEmbedding
+    f_dx_dec: Callable
 
     config: ModelConfig = eqx.static_field()
 
@@ -46,10 +44,6 @@ class AbstractModel(Module):
     @abstractmethod
     def dyn_params_list(self):
         pass
-
-    @classmethod
-    def external_argnames(cls):
-        return []
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -59,7 +53,7 @@ class AbstractModel(Module):
     def params_list_mask(self, pytree):
         assert isinstance(pytree, dict) and 'dyn' in pytree and len(
             pytree) == 2, 'Expected a "dyn" label in Dict'
-        (other_key, ) = set(pytree.keys()) - {'dyn'}
+        (other_key,) = set(pytree.keys()) - {'dyn'}
 
         params_list = self.params_list()
         dyn_params = self.dyn_params_list
@@ -68,28 +62,8 @@ class AbstractModel(Module):
         mask[other_key] = [not m for m in mask['dyn']]
         return mask
 
-    @classmethod
-    def _assert_demo_dim(cls, config: ModelConfig, scheme: DatasetScheme,
-                         demographic_vector_config: DemographicVectorConfig):
-        demo_vec_dim = scheme.demographic_vector_size(
-            demographic_vector_config)
-        assert ((demo_vec_dim == 0 and config.emb.demo == 0) or
-                (demo_vec_dim > 0 and config.emb.demo > 0)), \
-            f"Model dimensionality for demographic embedding size "\
-            f"({config.emb.demo}) and input demographic vector size "\
-            f"({demo_vec_dim}) must both be zero or non-zero."
-
     def precomputes(self, inpatients: TVxEHR):
         return Precomputes()
-
-    @abstractmethod
-    def __call__(self,
-                 x: Union[Patient, Admission],
-                 embedded_x: Union[List[EmbeddedAdmission], EmbeddedAdmission],
-                 precomputes: Precomputes,
-                 regularisation: Optional[ModelRegularisation] = None,
-                 store_embeddings: Optional[TrajectoryConfig] = None):
-        pass
 
     @abstractmethod
     def batch_predict(
@@ -98,46 +72,37 @@ class AbstractModel(Module):
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
-    ) -> Predictions:
+    ) -> AdmissionsPrediction:
         pass
 
     @property
     @abstractmethod
-    def counts_ignore_first_admission(self):
-        pass
-
-    # @classmethod
-    # def sample_reg_regularisation(cls, trial: optuna.Trial):
-    #     return {
-    #         'L_l1': 0,  #trial.suggest_float('l1', 1e-8, 5e-3, log=True),
-    #         'L_l2': 0  # trial.suggest_float('l2', 1e-8, 5e-3, log=True),
-    #     }
+    def discount_first_admission(self):
+        raise NotImplementedError
 
     @classmethod
     def sample_model_config(cls, trial: optuna.Trial):
         return {}
 
-    def weights(self):
+    def weights(self) -> Tuple[jnp.ndarray, ...]:
 
         def _weights(x):
-            w = []
             if not hasattr(x, '__dict__'):
-                return w
-            for k, v in x.__dict__.items():
-                if 'weight' in k:
-                    w.append(v)
-            return tuple(w)
+                return tuple()
+            return tuple(v for k, v in x.__dict__.items() if 'weight' in k)
 
-        has_weight = lambda leaf: len(_weights(leaf)) > 0
+        def _has_weight(leaf):
+            return len(_weights(leaf)) > 0
+
         # Valid for eqx.nn.MLP and ml.base_models.GRUDynamics
         return sum((_weights(x)
-                    for x in jtu.tree_leaves(self, is_leaf=has_weight)
-                    if has_weight(x)), ())
+                    for x in jtu.tree_leaves(self, is_leaf=_has_weight)
+                    if _has_weight(x)), tuple())
 
-    def l1(self):
+    def l1(self) -> float:
         return sum(jnp.abs(w).sum() for w in jtu.tree_leaves(self.weights()))
 
-    def l2(self):
+    def l2(self) -> float:
         return sum(
             jnp.square(w).sum() for w in jtu.tree_leaves(self.weights()))
 
@@ -203,23 +168,17 @@ class AbstractModel(Module):
 class InpatientModel(AbstractModel):
 
     @property
-    def counts_ignore_first_admission(self):
+    def discount_first_admission(self):
         return False
 
-    @classmethod
-    def external_argnames(cls):
-        return [
-            "schemes", "demographic_vector_config",
-            "leading_observable_config", "key"
-        ]
-
-    # def decode_lead_trajectory(
-    #         self, trajectory: PatientTrajectory) -> PatientTrajectory:
-    #     raise NotImplementedError
-    #
-    # def decode_obs_trajectory(
-    #         self, trajectories: PatientTrajectory) -> PatientTrajectory:
-    #     raise NotImplementedError
+    @abstractmethod
+    def __call__(self,
+                 x: Admission,
+                 embedded_x: EmbeddedAdmission,
+                 precomputes: Precomputes,
+                 regularisation: Optional[ModelRegularisation] = None,
+                 store_embeddings: Optional[TrajectoryConfig] = None):
+        pass
 
     def batch_predict(
             self,
@@ -231,7 +190,7 @@ class InpatientModel(AbstractModel):
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {
-            i: self._f_emb(subject)
+            i: self.f_emb(subject, inpatients.admission_demographics)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',
@@ -247,31 +206,36 @@ class InpatientModel(AbstractModel):
             results = AdmissionsPrediction()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
                 pbar.set_description(
-                    f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
+                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
                 for adm, adm_e in zip(inpatient.admissions,
                                       embedded_admissions):
                     results = results.add(subject_id=subject_id,
-                                prediction=self(
-                                    adm,
-                                    adm_e,
-                                    regularisation=regularisation,
-                                    store_embeddings=store_embeddings,
-                                    precomputes=precomputes))
+                                          prediction=self(
+                                              adm,
+                                              adm_e,
+                                              regularisation=regularisation,
+                                              store_embeddings=store_embeddings,
+                                              precomputes=precomputes))
                     pbar.update(adm.interval_days)
             return results.filter_nans()
 
 
-class OutpatientModel(AbstractModel):
+class DischargeSummaryModel(AbstractModel):
 
     @property
-    def counts_ignore_first_admission(self):
+    def discount_first_admission(self):
         return True
 
-    @classmethod
-    def external_argnames(cls):
-        return ["schemes", "demographic_vector_config", "key"]
+    @abstractmethod
+    def __call__(self,
+                 x: Patient,
+                 embedded_x: Tuple[EmbeddedAdmission, ...],
+                 precomputes: Precomputes,
+                 regularisation: Optional[ModelRegularisation] = None,
+                 store_embeddings: Optional[TrajectoryConfig] = None):
+        pass
 
     def batch_predict(
             self,
@@ -279,11 +243,11 @@ class OutpatientModel(AbstractModel):
             leave_pbar: bool = False,
             regularisation: Optional[ModelRegularisation] = None,
             store_embeddings: Optional[TrajectoryConfig] = None
-    ) -> Predictions:
+    ) -> AdmissionsPrediction:
         total_int_days = inpatients.d2d_interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {
-            i: self._f_emb(subject)
+            i: self.f_emb(subject, inpatients.admission_demographics)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',
@@ -295,10 +259,10 @@ class OutpatientModel(AbstractModel):
                               bar_format=bar_format,
                               unit='longitudinal-days',
                               leave=leave_pbar) as pbar:
-            results = Predictions()
+            results = AdmissionsPrediction()
             for i, subject_id in enumerate(inpatients.subjects.keys()):
                 pbar.set_description(
-                    f"Subject: {subject_id} ({i+1}/{len(inpatients)})")
+                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
                 embedded_admissions = inpatients_emb[subject_id]
                 for pred in self(inpatient,
@@ -306,10 +270,9 @@ class OutpatientModel(AbstractModel):
                                  precomputes=precomputes,
                                  regularisation=regularisation,
                                  store_embeddings=store_embeddings):
-                    results.add(subject_id=subject_id, prediction=pred)
+                    results = results.add(subject_id=subject_id, prediction=pred)
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()
 
     def patient_embeddings(self, patients: TVxEHR):
         pass
-

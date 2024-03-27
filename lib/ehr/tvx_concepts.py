@@ -1136,6 +1136,23 @@ class Patient(VxData):
     def __len__(self):
         return len(self.admissions)
 
+    def admission_demographics(self, demographic_vector_config: DemographicVectorConfig) -> Dict[str, Array]:
+        """
+        Returns the demographic vector for the patient.
+
+        Args:
+            demographic_vector_config (DemographicVectorConfig): the demographic vector configuration.
+
+        Returns:
+            Array: the demographic vector.
+        """
+        static_demographics = self.static_info.constant_vec(demographic_vector_config)
+        if demographic_vector_config.age:
+            admission_age = {admission.admission_id: self.static_info.age(admission.admission_dates[0]) for admission in
+                             self.admissions}
+            return {admission_id: jnp.hstack((age, static_demographics)) for admission_id, age in admission_age.items()}
+        return {admission.admission_id: static_demographics for admission in self.admissions}
+
     @cached_property
     def d2d_interval_days(self):
         """

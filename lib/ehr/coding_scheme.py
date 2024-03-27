@@ -22,7 +22,7 @@ import numpy.typing as npt
 import pandas as pd
 import tables as tb
 
-from ..base import VxData, VxDataView, Array
+from ..base import VxData, VxDataView
 from ..utils import load_config
 
 NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, Categorical
@@ -308,7 +308,7 @@ class CodingScheme(SchemesContextManaged):
         return CodingScheme.vector_cls(vec, self.name)
 
     @property
-    def supported_targets(self):
+    def supported_targets(self) -> Tuple[str, ...]:
         return tuple(t for s, t in self.context_view.map.keys() if s == self.name)
 
     def as_dataframe(self) -> pd.DataFrame:
@@ -1042,6 +1042,15 @@ class CodeMap(SchemesContextManaged):
 AggregationLiteral = Literal['sum', 'or', 'w_sum']
 
 
+class GroupingData(VxData):
+    permute: np.ndarray
+    split: np.ndarray
+    size: np.ndarray
+    aggregation: Tuple[AggregationLiteral, ...]
+    source_size: int
+    target_size: int
+
+
 class ReducedCodeMapN1(CodeMap):
     set_aggregation: FrozenDict11
     reduced_groups: FrozenDict1N
@@ -1094,6 +1103,13 @@ class ReducedCodeMapN1(CodeMap):
         else:
             return permutes + tuple(set(source_index.keys()) - set(permutes))
 
+    @cached_property
+    def grouping_data(self) -> GroupingData:
+        return GroupingData(permute=np.array(self.groups_permute, dtype=int),
+                            split=np.array(self.groups_split, dtype=int),
+                            size=np.array(self.groups_size, dtype=int),
+                            aggregation=self.groups_aggregation,
+                            source_size=len(self.source_scheme))
 
 
 class IdentityCodeMap(CodeMap):
@@ -1333,6 +1349,9 @@ class CodingSchemesManager(VxData):
         return outcome_name in self.outcome and (
             supporting_scheme, self.outcome[outcome_name].base_scheme.name) in self.map
 
+    def supported_outcomes(self, supporting_scheme: str) -> Tuple[str, ...]:
+        return tuple(o for o in self.outcome if self.supported_outcome(o, supporting_scheme))
+
     def union(self, other: CodingSchemesManager) -> CodingSchemesManager:
         updated = self
         with logging.captureWarnings(False):
@@ -1444,3 +1463,6 @@ class SchemeManagerView(VxDataView):
 
     def supported_outcome(self, outcome_name: str, supporting_scheme: str) -> bool:
         return self._manager.supported_outcome(outcome_name, supporting_scheme)
+
+    def supported_outcomes(self, supporting_scheme: str) -> Tuple[str, ...]:
+        return self._manager.supported_outcomes(supporting_scheme)

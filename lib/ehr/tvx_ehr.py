@@ -14,7 +14,7 @@ import pandas as pd
 import tables as tbl
 
 from . import OutcomeExtractor
-from .coding_scheme import FileBasedOutcomeExtractor, CodesVector
+from .coding_scheme import CodesVector
 from .dataset import Dataset, DatasetScheme, DatasetSchemeConfig, ReportAttributes, \
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
@@ -300,14 +300,13 @@ class TVxEHRScheme(DatasetScheme):
         return source_scheme.hosp_procedures.mapper_to(self.hosp_procedures.name)
 
     @staticmethod
-    def supported_target_scheme_options(dataset_scheme: DatasetScheme):
+    def check_target_scheme_support(dataset_scheme: DatasetScheme) -> Dict[str, Tuple[str, ...]]:
         supported_attr_targets = {
-            k: (v.name,) + v.supported_targets
+            k: v.supported_targets
             for k, v in dataset_scheme.scheme_dict.items()
         }
-        supported_outcomes = FileBasedOutcomeExtractor.supported_outcomes(dataset_scheme.dx_discharge.name)
-        supported_attr_targets['outcome'] = supported_outcomes
-        return supported_attr_targets
+        supported_outcomes = dataset_scheme.context_view.supported_outcomes(dataset_scheme.dx_discharge.name)
+        return supported_attr_targets | {'outcome': supported_outcomes}
 
 
 class TVxEHRConfig(Config):
@@ -509,7 +508,21 @@ class TVxEHR(AbstractDatasetRepresentation):
 
     @cached_property
     def admission_ids(self) -> List[str]:
-        return sum(self.subjects_sorted_admission_ids.values(), [])
+
+        admission_ids = sum(self.subjects_sorted_admission_ids.values(), [])
+        # Check unique admission IDs across all subjects.
+        if len(admission_ids) != len(set(admission_ids)):
+            raise ValueError("Duplicate admission IDs found.")
+
+        return admission_ids
+
+    def subject_admission_demographics(self, subject_id: str) -> Dict[str, jnp.ndarray]:
+        return self.subjects[subject_id].admission_demographics(self.config.demographic)
+
+    @cached_property
+    def admission_demographics(self) -> Dict[str, jnp.ndarray]:
+        return {admission_id: admission_demo for subject_id in self.subjects for admission_id, admission_demo in
+                self.subject_admission_demographics(subject_id).items()}
 
     @cached_property
     def admission_dates(self) -> Dict[str, AdmissionDates]:

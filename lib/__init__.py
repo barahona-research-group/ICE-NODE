@@ -10,12 +10,11 @@ from .ml import embeddings
 from .ml import evaluation
 from .ml import experiment
 from .ml import in_models
-from .ml import in_models_modular
 from .ml import model
 from .ml import trainer
 
 modules = [
-    model, dx_models, in_models, in_models_modular, embeddings, trainer,
+    model, dx_models, in_models, embeddings, trainer,
     experiment, evaluation, stat,
     # schemes
     icd,

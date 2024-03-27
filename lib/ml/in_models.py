@@ -52,26 +52,26 @@ class MonotonicLeadingObsPredictor(eqx.Module):
         p = jnp.cumsum(jnn.softmax(y[:-1]))
         return risk * p
 
-
-class SigmoidLeadingObsPredictor(eqx.Module):
-    _t: jnp.ndarray = eqx.static_field()
-    _mlp: eqx.nn.MLP
-
-    def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableExtractorConfig,
-                 key: jax.random.PRNGKey, **mlp_kwargs):
-        super().__init__()
-        self._t = jnp.array(leading_observable_config.leading_hours)
-        width = mlp_kwargs.get("width_size", len(self._t) * 5)
-        self._mlp = eqx.nn.MLP(input_size,
-                               4,
-                               width_size=width,
-                               depth=3,
-                               key=key)
-
-    def __call__(self, lead):
-        [vscale, hscale, vshift, hshift] = self._mlp(lead)
-        return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
+#
+# class SigmoidLeadingObsPredictor(eqx.Module):
+#     _t: jnp.ndarray = eqx.static_field()
+#     _mlp: eqx.nn.MLP
+#
+#     def __init__(self, input_size: int,
+#                  leading_observable_config: LeadingObservableExtractorConfig,
+#                  key: jax.random.PRNGKey, **mlp_kwargs):
+#         super().__init__()
+#         self._t = jnp.array(leading_observable_config.leading_hours)
+#         width = mlp_kwargs.get("width_size", len(self._t) * 5)
+#         self._mlp = eqx.nn.MLP(input_size,
+#                                4,
+#                                width_size=width,
+#                                depth=3,
+#                                key=key)
+#
+#     def __call__(self, lead):
+#         [vscale, hscale, vshift, hshift] = self._mlp(lead)
+#         return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
 
 
 class MLPLeadingObsPredictor(eqx.Module):
@@ -113,11 +113,10 @@ class InICENODE(InpatientModel):
 
     config: InICENODEConfig = eqx.static_field()
 
-    def __init__(self, config: InICENODEConfig, schemes: Tuple[DatasetScheme],
+    def __init__(self, config: InICENODEConfig,
                  demographic_vector_config: DemographicVectorConfig,
                  leading_observable_config: LeadingObservableExtractorConfig,
                  key: "jax.random.PRNGKey"):
-        self._assert_demo_dim(config, schemes[1], demographic_vector_config)
         (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
          update_key) = jrandom.split(key, 6)
         f_emb = self._make_embedding(
@@ -152,11 +151,6 @@ class InICENODE(InpatientModel):
                                                 leading_observable_config,
                                                 key=key,
                                                 **kwargs)
-        elif config.lead_predictor == "sigmoid":
-            return SigmoidLeadingObsPredictor(input_size,
-                                              leading_observable_config,
-                                              key=key,
-                                              **kwargs)
         elif config.lead_predictor == "mlp":
             return MLPLeadingObsPredictor(input_size,
                                           leading_observable_config,

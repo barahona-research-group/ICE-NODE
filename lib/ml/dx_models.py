@@ -16,7 +16,7 @@ from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import (OutpatientModel, ModelConfig, ModelRegularisation,
+from .model import (DischargeSummaryModel, ModelConfig, ModelRegularisation,
                     Precomputes)
 
 
@@ -34,7 +34,7 @@ class ICENODERegularisation(ModelRegularisation):
 #         return {'state_size': trial.suggest_int('s', 10, 100, 10)}
 
 
-class ICENODE(OutpatientModel):
+class ICENODE(DischargeSummaryModel):
     _f_dyn: Callable
     _f_update: Callable
     config: ICENODEConfig = eqx.static_field()
@@ -196,7 +196,7 @@ class GRUConfig(ModelConfig):
     pass
 
 
-class GRU(OutpatientModel):
+class GRU(DischargeSummaryModel):
     _f_update: Callable
     config: GRUConfig = eqx.static_field()
 
@@ -279,7 +279,7 @@ class RETAINConfig(ModelConfig):
     #     return {'state_size': (sa, sb)}
 
 
-class RETAIN(OutpatientModel):
+class RETAIN(DischargeSummaryModel):
 
     _f_gru_a: Callable
     _f_gru_b: Callable

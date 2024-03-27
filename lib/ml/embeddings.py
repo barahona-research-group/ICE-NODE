@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import (List, Callable, Optional, Tuple, Dict)
+from typing import (Callable, Optional, Tuple, Dict, Union)
 
 import equinox as eqx
 import jax
@@ -9,17 +9,13 @@ import jax.numpy as jnp
 import jax.random as jrandom
 
 from ..base import Config, VxData
-from ..ehr.coding_scheme import ReducedCodeMapN1, AggregationLiteral, CodesVector
+from ..ehr.coding_scheme import AggregationLiteral, CodesVector, GroupingData
 from ..ehr.tvx_concepts import SegmentedInpatientInterventions, InpatientObservables, SegmentedInpatientObservables, \
     SegmentedAdmission, SegmentedPatient, Admission, Patient
 
 
 class GroupEmbedding(eqx.Module):
-    groups_split: jnp.ndarray = eqx.static_field()
-    groups_permute: jnp.ndarray = eqx.static_field()
-    source_size: int = eqx.static_field()
-    target_size: int = eqx.static_field()
-    groups_aggregation: Tuple[Callable, ...]
+    grouping_data: GroupingData = eqx.static_field()
     linear: eqx.nn.Linear
 
     @staticmethod
@@ -32,26 +28,24 @@ class GroupEmbedding(eqx.Module):
             return eqx.nn.Linear(input_size, 1, use_bias=False, key=group_key)
         raise ValueError(f"Unrecognised aggregation: {aggregation}")
 
-    def __init__(self, reduced_map: ReducedCodeMapN1, embeddings_size: int, key: jrandom.PRNGKey):
-        self.groups_split = jnp.array(reduced_map.groups_split)
-        self.groups_permute = jnp.array(reduced_map.groups_permute)
-        self.source_size = len(reduced_map.source_scheme)
-        self.target_size = len(self.groups_aggregation)
+    def __init__(self, grouping_data: GroupingData, embeddings_size: int, key: jrandom.PRNGKey):
         linear_key, aggregation_key = jrandom.split(key, 2)
+        n_groups = len(grouping_data.aggregation)
         self.groups_aggregation = tuple(map(self.group_function,
-                                            reduced_map.groups_aggregation,
-                                            reduced_map.groups_size,
-                                            jrandom.split(aggregation_key, self.target_size)))
-        self.linear = eqx.nn.Linear(self.target_size, embeddings_size, use_bias=False, key=linear_key)
+                                            grouping_data.aggregation,
+                                            grouping_data.size,
+                                            jrandom.split(aggregation_key, n_groups)))
+
+        self.linear = eqx.nn.Linear(n_groups, embeddings_size, use_bias=False, key=linear_key)
 
     def split_source_array(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, ...]:
-        assert x.ndim == 1 and len(x) == self.source_size
-        y = x[self.groups_permute]
-        return tuple(jnp.hsplit(y, self.groups_split)[:-1])
+        assert x.ndim == 1 and len(x) == self.grouping_data.source_size
+        y = x[self.grouping_data.permute]
+        return tuple(jnp.hsplit(y, self.grouping_data.split)[:-1])
 
     def __call__(self, x: jnp.ndarray):
         xs = self.split_source_array(x)
-        y = jnp.hstack([group(x_i) for group, x_i in zip(self.groups_aggregation, xs)])
+        y = jnp.hstack([group_apply(x_i) for group_apply, x_i in zip(self.groups_aggregation, xs)])
         return self.linear(jnn.relu(y))
 
 
@@ -85,7 +79,7 @@ class InterventionsEmbeddings(eqx.Module):
     final_activation: Callable
 
     def __init__(self, config: InterventionsEmbeddingsConfig,
-                 icu_inputs_map: Optional[ReducedCodeMapN1] = None,
+                 icu_inputs_grouping: Optional[GroupingData] = None,
                  icu_procedures_size: Optional[int] = None,
                  hosp_procedures_size: Optional[int] = None,
                  activation: Callable = jnn.relu,
@@ -97,8 +91,8 @@ class InterventionsEmbeddings(eqx.Module):
         self.final_activation = final_activation
         (icu_inputs_key, icu_procedures_key, hosp_procedures_key, interventions_key) = jrandom.split(key, 4)
 
-        if icu_inputs_map and config.icu_inputs:
-            self._f_icu_inputs_emb = GroupEmbedding(icu_inputs_map, config.icu_inputs, icu_inputs_key)
+        if icu_inputs_grouping and config.icu_inputs:
+            self._f_icu_inputs_emb = GroupEmbedding(icu_inputs_grouping, config.icu_inputs, icu_inputs_key)
 
         if icu_procedures_size and config.icu_procedures:
             self._f_icu_procedures_emb = eqx.nn.Linear(icu_procedures_size,
@@ -137,7 +131,8 @@ class EmbeddedAdmission(VxData):
     dx_codes_history: Optional[jnp.ndarray] = None  # (config.dx_codes, )
     interventions: Optional[jnp.ndarray] = None  # (n_segments, config.interventions)
     demographic: Optional[jnp.ndarray] = None  # (config.demographic, )
-    observables: Tuple[jnp.ndarray, ...] = None  # Tuple[n_segments](n_timestamps, config.observation)
+    observables: Union[
+        Tuple[jnp.ndarray, ...], jnp.ndarray] = None  # Tuple[n_segments](n_segment_timestamps, config.observation)
 
 
 class PatientEmbedding(eqx.Module):
@@ -154,13 +149,13 @@ class PatientEmbedding(eqx.Module):
 
     @staticmethod
     def make_interventions_emb(interventions_config: InterventionsEmbeddingsConfig,
-                               icu_inputs_map: Optional[ReducedCodeMapN1],
+                               icu_inputs_grouping: Optional[GroupingData],
                                icu_procedures_size: Optional[int],
                                hosp_procedures_size: Optional[int],
                                key: jrandom.PRNGKey) -> Tuple[InterventionsEmbeddings, jrandom.PRNGKey]:
         key, interventions_key = jrandom.split(key)
         return InterventionsEmbeddings(interventions_config,
-                                       icu_inputs_map,
+                                       icu_inputs_grouping,
                                        icu_procedures_size,
                                        hosp_procedures_size,
                                        key=interventions_key), key
@@ -199,7 +194,7 @@ class PatientEmbedding(eqx.Module):
 
     def __init__(self, config: AdmissionEmbeddingsConfig,
                  dx_codes_size: Optional[int] = None,
-                 icu_inputs_map: Optional[ReducedCodeMapN1] = None,
+                 icu_inputs_grouping: Optional[GroupingData] = None,
                  icu_procedures_size: Optional[int] = None,
                  hosp_procedures_size: Optional[int] = None,
                  demographic_size: Optional[int] = None,
@@ -211,9 +206,10 @@ class PatientEmbedding(eqx.Module):
             self._f_dx_codes_emb, key = self.make_dx_codes_emb(dx_codes_size, config.dx_codes, key=key)
 
         if config.interventions:
-            assert icu_inputs_map or icu_procedures_size or hosp_procedures_size, "Any of icu_inputs_map, icu_procedures_size or hosp_procedures_size must be provided."
+            assert icu_inputs_grouping or icu_procedures_size or hosp_procedures_size, \
+                "Any of icu_inputs_map, icu_procedures_size or hosp_procedures_size must be provided."
             self._f_interventions_emb, key = self.make_interventions_emb(config.interventions,
-                                                                         icu_inputs_map,
+                                                                         icu_inputs_grouping,
                                                                          icu_procedures_size,
                                                                          hosp_procedures_size,
                                                                          key=key)
@@ -262,14 +258,13 @@ class PatientEmbedding(eqx.Module):
 
         if isinstance(observables, SegmentedInpatientObservables):
             segments = [jnp.concatenate((obs.value, obs.mask), axis=1) for obs in observables]
+            return EmbeddedAdmission(observables=tuple(self._embed_observables_segment(s) for s in segments))
 
         elif isinstance(observables, InpatientObservables):
-            segments = [jnp.concatenate((observables.value, observables.mask), axis=1)]
+            obs = jnp.concatenate((observables.value, observables.mask), axis=1)
+            return EmbeddedAdmission(observables=self._embed_observables_segment(obs))
         else:
             raise ValueError(f"Unrecognised observables type: {type(observables)}")
-
-        emb_segments = tuple(self._embed_observables_segment(s) for s in segments)
-        return EmbeddedAdmission(observables=emb_segments)
 
     def embed_admission(self, admission: SegmentedAdmission | Admission,
                         demographic_input: Optional[jnp.ndarray]) -> EmbeddedAdmission:
@@ -282,8 +277,8 @@ class PatientEmbedding(eqx.Module):
                            self.embed_interventions(admission.interventions),
                            self.embed_dx_codes(admission.dx_codes, admission.dx_codes_history))
 
-    def __call__(self, inpatient: SegmentedPatient | Patient, admission_demographic: Dict[str, jnp.ndarray]) -> List[
-        EmbeddedAdmission]:
+    def __call__(self, inpatient: SegmentedPatient | Patient, admission_demographic: Dict[str, jnp.ndarray]) -> Tuple[
+        EmbeddedAdmission, ...]:
         """
         Embeds all the admissions of an inpatient into fixed vectors as \
         described above.
@@ -292,10 +287,9 @@ class PatientEmbedding(eqx.Module):
             assert self._f_interventions_emb is None, "Interventions embedding is " \
                                                       "not supported for (unsegmented) patient."
 
-        return [
+        return tuple(
             self.embed_admission(admission, admission_demographic.get(admission.admission_id))
-            for admission in inpatient.admissions
-        ]
+            for admission in inpatient.admissions)
 
 
 class AdmissionSequentialEmbeddingsConfig(Config):
@@ -345,29 +339,94 @@ class AdmissionSequentialEmbedding(eqx.Module):
                                           key=sequence_emb_key)
 
     @eqx.filter_jit
-    def _embed_sequence_features(self, dx_history_emb, demo_emb, obs_e_i):
-        return self._f_sequence_emb(jnp.hstack((dx_history_emb, demo_emb, obs_e_i)))
+    def _embed_sequence_features(self, *embeddings):
+        return self._f_sequence_emb(jnp.hstack(tuple(emb for emb in embeddings if emb is not None)))
 
     def embed_admission_components(self, components: EmbeddedAdmission) -> EmbeddedAdmissionSequence:
         """ Embeds an admission into fixed vectors as described above."""
         dx_history_emb = components.dx_codes_history
         demo_emb = components.demographic
-        assert len(components.observables) == 1, "Only one segment is supported"
-        obs_emb = components.observables[0]
+        obs_emb = components.observables
         sequence_e = [self._embed_sequence_features(dx_history_emb, demo_emb, obs_e_i) for obs_e_i in obs_emb]
         return EmbeddedAdmissionSequence(dx_codes_history=dx_history_emb,
                                          sequence=sequence_e,
                                          demographic=demo_emb)
 
-    def __call__(self, inpatient: Patient, admission_demographic: Dict[str, jnp.ndarray]) -> List[
-        EmbeddedAdmissionSequence]:
+    def __call__(self, inpatient: Patient, admission_demographic: Dict[str, jnp.ndarray]) -> Tuple[
+        EmbeddedAdmissionSequence, ...]:
         """
         Embeds all the admissions of an inpatient into fixed vectors as \
         described above.
         """
         assert not isinstance(inpatient, SegmentedPatient), "SegmentedPatient not supported"
 
-        return [
+        return tuple(
             self.embed_admission_components(emb_admission)
-            for emb_admission in self._f_components_emb(inpatient, admission_demographic)
-        ]
+            for emb_admission in self._f_components_emb(inpatient, admission_demographic))
+
+
+class DischargeSummarySequentialEmbeddingsConfig(Config):
+    dx_codes: int = 0
+    demographic: int = 0
+    sequence: int = 50
+
+    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
+        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
+                                         interventions=None,
+                                         demographic=self.demographic,
+                                         observables=None)
+
+
+class EmbeddedDischargeSummarySequence(VxData):
+    dx_codes: jnp.ndarray  # (config.dx, )
+    demographic: jnp.ndarray  # (config.demo, )
+    sequence: jnp.ndarray  # (config.sequence, )
+
+
+class DischargeSummarySequentialEmbedding(eqx.Module):
+    _f_components_emb: PatientEmbedding
+    _f_sequence_emb: Callable
+
+    def __init__(self, config: DischargeSummarySequentialEmbeddingsConfig,
+                 dx_codes_size: Optional[int] = None,
+                 demographic_size: Optional[int] = None, *,
+                 key: jrandom.PRNGKey):
+        (components_emb_key, sequence_emb_key) = jrandom.split(key, )
+
+        self._f_components_emb = PatientEmbedding(config=config.to_admission_embeddings_config(),
+                                                  dx_codes_size=dx_codes_size,
+                                                  icu_inputs_map=None,
+                                                  icu_procedures_size=None,
+                                                  hosp_procedures_size=None,
+                                                  demographic_size=demographic_size,
+                                                  observables_size=None,
+                                                  key=components_emb_key)
+
+        self._f_sequence_emb = eqx.nn.MLP(config.dx_codes + config.demographic,
+                                          config.sequence,
+                                          config.sequence * 2,
+                                          depth=1,
+                                          final_activation=jnp.tanh,
+                                          key=sequence_emb_key)
+
+    @eqx.filter_jit
+    def _embed_sequence_features(self, dx_history_emb, demo_emb):
+        return self._f_sequence_emb(jnp.hstack((dx_history_emb, demo_emb)))
+
+    def embed_admission_components(self, components: EmbeddedAdmission) -> EmbeddedDischargeSummarySequence:
+        """ Embeds an admission into fixed vectors as described above."""
+        seq = self._embed_sequence_features(components.dx_codes, components.demographic)
+        return EmbeddedDischargeSummarySequence(dx_codesy=components.dx_codes, sequence=seq,
+                                                demographic=components.demographic)
+
+    def __call__(self, patient: Patient, admission_demographic: Dict[str, jnp.ndarray]) -> Tuple[
+        EmbeddedDischargeSummarySequence, ...]:
+        """
+        Embeds all the admissions of an inpatient into fixed vectors as \
+        described above.
+        """
+        assert not isinstance(patient, SegmentedPatient), "SegmentedPatient not supported"
+
+        return tuple(
+            self.embed_admission_components(emb_admission)
+            for emb_admission in self._f_components_emb(patient, admission_demographic))
