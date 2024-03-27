@@ -1,7 +1,7 @@
 """."""
 from __future__ import annotations
 
-from typing import Callable, Tuple, Optional, List
+from typing import Callable, Tuple, Optional, List, Literal
 
 import equinox as eqx
 import jax
@@ -9,24 +9,26 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 
+from .artefacts import AdmissionPrediction, TrajectoryConfig
 from .base_models import (ObsStateUpdate, NeuralODE_JAX)
 from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
-from .embeddings import (InpatientEmbedding, EmbeddedInAdmission, InpatientLiteEmbedding,
-                         LiteEmbeddedInAdmission, DeepMindPatientEmbedding,
-                         DeepMindEmbeddedAdmission)
+from .embeddings import AdmissionEmbedding, AdmissionEmbeddingsConfig
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
                     Precomputes)
-from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector, LeadingObservableExtractorConfig)
-from .artefacts import AdmissionPrediction, TrajectoryConfig
+from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
+                   LeadingObservableExtractorConfig)
+from ..ehr.coding_scheme import GroupingData
 from ..utils import model_params_scaler
 
+AutonomousLeadPredictorName = Literal['monotonic', 'mlp']
 
-class InICENODEConfig(ModelConfig):
+
+class InpatientModelConfig(ModelConfig):
     state: int = 50
-    lead_predictor: str = "monotonic"
+    lead_predictor: AutonomousLeadPredictorName = "monotonic"
 
 
-class InICENODERegularisation(ModelRegularisation):
+class NODERegularisation(ModelRegularisation):
     L_taylor: float = 0.0
     taylor_order: int = 0
 
@@ -35,10 +37,10 @@ class MonotonicLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
     def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableExtractorConfig,
-                 key: jax.random.PRNGKey, **mlp_kwargs):
+                 n_lead_times: int,
+                 key: jrandom.PRNGKey, **mlp_kwargs):
         super().__init__()
-        out_size = len(leading_observable_config.leading_hours) + 1
+        out_size = n_lead_times + 1
         width = mlp_kwargs.get("width_size", out_size * 5)
         self._mlp = eqx.nn.MLP(input_size,
                                out_size,
@@ -48,47 +50,24 @@ class MonotonicLeadingObsPredictor(eqx.Module):
 
     def __call__(self, lead):
         y = self._mlp(lead)
-        risk = y[-1]
+        risk = jnn.sigmoid(y[-1])
         p = jnp.cumsum(jnn.softmax(y[:-1]))
         return risk * p
-
-#
-# class SigmoidLeadingObsPredictor(eqx.Module):
-#     _t: jnp.ndarray = eqx.static_field()
-#     _mlp: eqx.nn.MLP
-#
-#     def __init__(self, input_size: int,
-#                  leading_observable_config: LeadingObservableExtractorConfig,
-#                  key: jax.random.PRNGKey, **mlp_kwargs):
-#         super().__init__()
-#         self._t = jnp.array(leading_observable_config.leading_hours)
-#         width = mlp_kwargs.get("width_size", len(self._t) * 5)
-#         self._mlp = eqx.nn.MLP(input_size,
-#                                4,
-#                                width_size=width,
-#                                depth=3,
-#                                key=key)
-#
-#     def __call__(self, lead):
-#         [vscale, hscale, vshift, hshift] = self._mlp(lead)
-#         return vscale * jnn.sigmoid(hscale * (self._t - hshift)) + vshift
 
 
 class MLPLeadingObsPredictor(eqx.Module):
     _mlp: eqx.nn.MLP
 
     def __init__(self, input_size: int,
-                 leading_observable_config: LeadingObservableExtractorConfig,
+                 n_lead_times: int,
                  key: jax.random.PRNGKey, **mlp_kwargs):
         super().__init__()
-        width = mlp_kwargs.get(
-            "width_size",
-            len(leading_observable_config.leading_hours) * 5)
+        width = mlp_kwargs.get("width_size", n_lead_times * 5)
         self._mlp = eqx.nn.MLP(input_size,
-                               len(leading_observable_config.leading_hours),
+                               n_lead_times,
                                width_size=width,
                                final_activation=jnn.sigmoid,
-                               depth=3,
+                               depth=2,
                                key=key)
 
     def __call__(self, lead):
@@ -104,100 +83,112 @@ class InICENODE(InpatientModel):
         - f_dyn: Dynamics function.
         - f_update: Update function.
     """
-    _f_emb: Callable[[Admission], EmbeddedInAdmission]
-    _f_obs_dec: Callable
-    _f_lead_dec: Callable
-    _f_dx_dec: Callable
-    _f_dyn: Callable
-    _f_update: Callable
+    f_emb: AdmissionEmbedding
+    f_obs_dec: Callable
+    f_lead_dec: Callable
+    f_outcome_dec: Callable
+    f_dyn: NeuralODE_JAX
+    f_update: Callable
 
-    config: InICENODEConfig = eqx.static_field()
+    config: InpatientModelConfig = eqx.static_field()
 
-    def __init__(self, config: InICENODEConfig,
+    def __init__(self, config: InpatientModelConfig,
+                 embeddings_config: AdmissionEmbeddingsConfig,
                  demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableExtractorConfig,
+                 lead_times: Tuple[float, ...],
+                 dx_codes_size: Optional[int] = None,
+                 outcome_size: Optional[int] = None,
+                 icu_inputs_grouping: Optional[GroupingData] = None,
+                 icu_procedures_size: Optional[int] = None,
+                 hosp_procedures_size: Optional[int] = None,
+                 demographic_size: Optional[int] = None,
+                 observables_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey"):
-        (emb_key, obs_dec_key, lead_key, dx_dec_key, dyn_key,
+        super().__init__(config=config)
+        (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key,
          update_key) = jrandom.split(key, 6)
-        f_emb = self._make_embedding(
-            schemes=schemes,
-            demographic_vector_config=demographic_vector_config,
-            config=config,
-            key=emb_key)
-        f_dx_dec = self._make_dx_dec(config=config,
-                                     dx_size=len(schemes[1].outcome),
-                                     key=dx_dec_key)
+        self.f_emb = self._make_embedding(config=embeddings_config,
+                                          dx_codes_size=dx_codes_size,
+                                          icu_inputs_grouping=icu_inputs_grouping,
+                                          icu_procedures_size=icu_procedures_size,
+                                          hosp_procedures_size=hosp_procedures_size,
+                                          demographic_size=demographic_size,
+                                          observables_size=observables_size,
+                                          key=key)
+        self.f_outcome_dec = self._make_outcome_dec(config=config,
+                                                    outcome_size=outcome_size,
+                                                    key=outcome_dec_key)
 
-        self._f_obs_dec = self._make_obs_dec(config=config,
-                                             obs_size=len(schemes[1].obs),
-                                             key=obs_dec_key)
-        self._f_lead_dec = self._make_lead_dec(
-            config=config,
-            input_size=config.state,
-            leading_observable_config=leading_observable_config,
-            key=lead_key)
-        self._f_dyn = self._make_dyn(config=config, key=dyn_key)
-        self._f_update = self._make_update(config=config,
-                                           obs_size=len(schemes[1].obs),
-                                           key=update_key)
+        self.f_obs_dec = self._make_obs_dec(config=config,
+                                            observables_size=observables_size,
+                                            key=obs_dec_key)
+        self.f_dyn = self._make_dyn(state_size=config.state,
+                                    interventions_size=embeddings_config.interventions.interventions,
+                                    key=dyn_key)
+        self.f_update = self._make_update(config=config,
+                                          observables_size=observables_size,
+                                          key=update_key)
 
-        super().__init__(config=config, _f_emb=f_emb, _f_dx_dec=f_dx_dec)
-
-    @staticmethod
-    def _make_lead_dec(config, input_size, leading_observable_config, key,
-                       **kwargs):
-        if config.lead_predictor == "monotonic":
-            return MonotonicLeadingObsPredictor(input_size,
-                                                leading_observable_config,
-                                                key=key,
-                                                **kwargs)
-        elif config.lead_predictor == "mlp":
-            return MLPLeadingObsPredictor(input_size,
-                                          leading_observable_config,
-                                          key=key,
-                                          **kwargs)
-        else:
-            raise ValueError(
-                f"Unknown leading predictor type: {config.lead_predictor}")
+        self.f_lead_dec = self._make_lead_dec(f_dyn=self.f_dyn, lead_times=lead_times, key=lead_key)
 
     @staticmethod
-    def _make_dyn(config, key):
-        dyn_input_size = config.state + config.emb.inp_proc_demo
-        f_dyn = eqx.nn.MLP(in_size=dyn_input_size,
-                           out_size=config.state,
+    def _make_lead_dec(
+            f_dyn: NeuralODE_JAX,
+            lead_times: Tuple[float, ...],
+            key: jrandom.PRNGKey
+    ) -> Callable:
+        pass
+
+    @staticmethod
+    def _make_dyn(state_size: int, interventions_size: int, key: jrandom.PRNGKey):
+        f_dyn = eqx.nn.MLP(in_size=state_size + interventions_size,
+                           out_size=state_size,
                            activation=jnn.tanh,
                            depth=2,
-                           width_size=config.state * 5,
+                           width_size=state_size * 5,
                            key=key)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODE_JAX(f_dyn, timescale=1.0)
 
     @staticmethod
-    def _make_update(config, obs_size, key):
-        return ObsStateUpdate(config.state, obs_size, key=key)
+    def _make_update(config, observables_size, key):
+        return ObsStateUpdate(config.state, observables_size, key=key)
 
     @staticmethod
-    def _make_dx_dec(config, dx_size, key):
+    def _make_outcome_dec(config, outcome_size, key):
         return eqx.nn.MLP(config.state,
-                          dx_size,
-                          config.state * 5,
+                          outcome_size,
+                          outcome_size // 3,
+                          activation=jnp.tanh,
                           depth=1,
                           key=key)
 
     @staticmethod
-    def _make_obs_dec(config, obs_size, key):
+    def _make_obs_dec(config, observables_size, key):
         return eqx.nn.MLP(config.state,
-                          obs_size,
-                          obs_size * 5,
+                          observables_size,
+                          observables_size * 5,
+                          activation=jnp.tanh,
                           depth=1,
                           key=key)
 
     @staticmethod
-    def _make_embedding(config, demographic_vector_config, schemes, key):
-        return InpatientEmbedding(
-            schemes=schemes,
-            demographic_vector_config=demographic_vector_config,
-            config=config.emb,
+    def _make_embedding(config: AdmissionEmbeddingsConfig,
+                        dx_codes_size: Optional[int],
+                        icu_inputs_grouping: Optional[GroupingData],
+                        icu_procedures_size: Optional[int],
+                        hosp_procedures_size: Optional[int],
+                        demographic_size: Optional[int],
+                        observables_size: Optional[int],
+                        key: jrandom.PRNGKey, **kwargs):
+        return AdmissionEmbedding(
+            config=config,
+            dx_codes_size=dx_codes_size,
+            icu_inputs_grouping=icu_inputs_grouping,
+            icu_procedures_size=icu_procedures_size,
+            hosp_procedures_size=hosp_procedures_size,
+            demographic_size=demographic_size,
+            observables_size=observables_size,
             key=key)
 
     @eqx.filter_jit
@@ -333,6 +324,24 @@ class InICENODE(InpatientModel):
     @property
     def dyn_params_list(self):
         return self.params_list(self._f_dyn)
+
+    # @staticmethod
+    # def _make_lead_dec(predictor: AutonomousLeadPredictorName,
+    #                    input_size, leading_observable_config, key,
+    #                    **kwargs):
+    #     if predictor == "monotonic":
+    #         return MonotonicLeadingObsPredictor(input_size,
+    #                                             leading_observable_config,
+    #                                             key=key,
+    #                                             **kwargs)
+    #     elif predictor == "mlp":
+    #         return MLPLeadingObsPredictor(input_size,
+    #                                       leading_observable_config,
+    #                                       key=key,
+    #                                       **kwargs)
+    #     else:
+    #         raise ValueError(
+    #             f"Unknown leading predictor type: {predictor}")
 
 
 class InICENODELiteConfig(InICENODEConfig):

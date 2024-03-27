@@ -20,7 +20,7 @@
 # from .embeddings import (InpatientEmbedding, InpatientEmbeddingConfig,
 #                          EmbeddedAdmission, OutpatientEmbedding,
 #                          OutpatientEmbeddingConfig, PatientEmbeddingConfig,
-#                          PatientEmbedding, DeepMindPatientEmbeddingConfig,
+#                          AdmissionEmbedding, DeepMindPatientEmbeddingConfig,
 #                          InpatientLiteEmbedding, InpatientLiteEmbeddingConfig)
 #
 # from .trainer import (Trainer, OptimizerConfig, TrainerReporting, InTrainer,

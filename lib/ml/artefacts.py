@@ -34,7 +34,6 @@ PredictionAttribute = Literal['outcome', 'observables', 'leading_observable']
 
 
 class AdmissionPrediction(VxData):
-    subject_id: str
     admission: Admission  # ground_truth
     observables: Optional[InpatientObservables] = None
     leading_observable: Optional[InpatientObservables] = None
@@ -47,13 +46,13 @@ class AdmissionPrediction(VxData):
 
 
 class AdmissionsPrediction(VxData):
-    predictions: Tuple[AdmissionPrediction, ...] = field(default_factory=tuple)
+    predictions: Tuple[Tuple[str, AdmissionPrediction], ...] = field(default_factory=tuple)
 
     @cached_property
     def subject_predictions(self) -> Dict[str, List[AdmissionPrediction]]:
         dictionary = defaultdict(list)
-        for prediction in self.predictions:
-            dictionary[prediction.subject_id].append(prediction)
+        for subject_id, prediction in self.predictions:
+            dictionary[subject_id].append(prediction)
         return dictionary
 
     def save(self, path: Union[str, Path]):
@@ -85,8 +84,9 @@ class AdmissionsPrediction(VxData):
         with tbl.open_file(str(Path(path).with_suffix('.h5')), 'r') as store:
             return AdmissionsPrediction.from_hdf_group(store.root)
 
-    def add(self, *args, **kwargs) -> AdmissionsPrediction:
-        return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (AdmissionPrediction(*args, **kwargs),))
+    def add(self, subject_id: str, prediction: AdmissionPrediction) -> AdmissionsPrediction:
+        prediction_item = (subject_id, prediction)
+        return eqx.tree_at(lambda p: p.predictions, self, self.predictions + (prediction_item,))
 
     @cached_property
     def sorted_predictions(self) -> Tuple[AdmissionPrediction, ...]:
@@ -135,13 +135,13 @@ class AdmissionsPrediction(VxData):
 
         cleaned = tuple()
         nan_detected = False
-        for p in self:
+        for subject_id, p in self.predictions:
             if not p.has_nans():
-                cleaned += (p,)
+                cleaned += ((subject_id, p),)
             else:
                 nan_detected = True
                 logging.warning('Skipping prediction with NaNs: '
-                                f'subject_id={p.subject_id}, admission_id={p.admission.admission_id} '
+                                f'subject_id={subject_id}, admission_id={p.admission.admission_id} '
                                 f'interval_hours= {p.admission.interval_hours}. '
                                 'Note: long intervals is a likely reason to destabilise the model')
         clean_predictions = AdmissionsPrediction(cleaned)

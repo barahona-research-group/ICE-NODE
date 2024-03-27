@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import statistics
+from dataclasses import field
 from datetime import date
 from functools import cached_property
 from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, ClassVar, Iterator)
@@ -11,9 +12,8 @@ from typing import (List, Tuple, Optional, Dict, Union, Callable, Type, ClassVar
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 
-from .coding_scheme import (CodesVector, CodingScheme, NumericalTypeHint, NumericScheme, SchemeManagerView)
+from .coding_scheme import (CodesVector, NumericalTypeHint, NumericScheme, SchemeManagerView)
 from ..base import Config, VxData, Module, Array, np_module
 
 
@@ -39,6 +39,7 @@ class InpatientObservables(VxData):
     time: Array  # (time,)
     value: Array  # (time, size)
     mask: Array  # (time, size)
+    extra_layers: Tuple[Array, ...] = field(default_factory=tuple)
 
     def __post_init__(self):
         assert self.time.dtype == np.float64, f"Expected time to be of type float64, got {self.time.dtype}"
@@ -49,6 +50,11 @@ class InpatientObservables(VxData):
         assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, " \
                                                     f"got {self.value.shape}"
         assert self.time.ndim == 1, f"Expected time to be 1D, got {self.time.ndim}"
+        for a in self.extra_layers:
+            assert a.ndim == 2
+            assert self.value.shape == a.shape
+            assert self.value.dtype == a.dtype
+
         super().__post_init__()
 
     @staticmethod
@@ -82,28 +88,6 @@ class InpatientObservables(VxData):
         """
         return np.sum(self.mask)
 
-    def as_dataframe(self,
-                     scheme: CodingScheme,
-                     filter_missing_columns: bool = False) -> pd.DataFrame:
-        """
-        Converts the observables to a pandas DataFrame.
-
-        Args:
-            scheme (AbstractScheme): the coding scheme used to convert the codes to descriptions.
-            filter_missing_columns (bool): whether to filter out columns that contain only missing values.
-
-        Returns:
-            pd.DataFrame: a pandas DataFrame containing the time and observable values.
-        """
-        cols = ['time'] + [scheme.index2desc[i] for i in range(len(scheme))]
-        value = jnp.where(self.mask, self.value, np.nan)
-        tuples = np.hstack([self.time.reshape(-1, 1), value]).tolist()
-        df = pd.DataFrame(tuples, columns=cols)
-        if filter_missing_columns:
-            return df.dropna(axis=1, how='all')
-        else:
-            return df
-
     def groupby_code(self, index2code: Dict[int, str]) -> Dict[str, InpatientObservables]:
         """
         Groups the data in the EHR object by the provided index-to-code mapping.
@@ -124,19 +108,20 @@ class InpatientObservables(VxData):
         xnp = np_module(self.time)
         dic = {}
         time = xnp.array(self.time)
-        value = xnp.array(self.value)
         mask = xnp.array(self.mask)
+        value = xnp.array(self.value)
+        extra = list(map(xnp.array, self.extra_layers))
 
         for i, code in index2code.items():
             mask_i = mask[:, i]
-            if not xnp.any(mask_i):
-                continue
-
-            value_i = value[:, i][mask_i]
-            time_i = time[mask_i]
-            dic[code] = InpatientObservables(time=time_i,
-                                             value=value_i,
-                                             mask=xnp.ones_like(value_i, dtype=bool))
+            if xnp.any(mask_i):
+                time_i = time[mask_i]
+                value_i = value[:, i][mask_i][:, None]
+                extra_i = tuple(value[:, i][mask_i][:, None] for value in extra)
+                dic[code] = InpatientObservables(time=time_i,
+                                                 value=value_i,
+                                                 mask=xnp.ones_like(value_i, dtype=bool),
+                                                 extra_layers=extra_i)
         return dic
 
     @staticmethod
@@ -154,10 +139,12 @@ class InpatientObservables(VxData):
             return InpatientObservables.empty(0)
         xnp = np_module(observables[0].time)
         time = xnp.hstack([o.time for o in observables])
-        value = xnp.vstack([o.value for o in observables])
         mask = xnp.vstack([o.mask for o in observables])
+        value = xnp.vstack([o.value for o in observables])
 
-        return InpatientObservables(time, value, mask)
+        extras = [o.extra_layers for o in observables]
+        extra = tuple(map(xnp.vstack, *extras))
+        return InpatientObservables(time=time, value=value, mask=mask, extra_layers=extra)
 
     @staticmethod
     @functools.cache
@@ -215,6 +202,8 @@ class InpatientObservables(VxData):
 
         if len(self) == 0:
             return self
+        if len(self.extra_layers) > 0:
+            raise NotImplementedError("TODO: apply aggregation when data exist in extra layers.")
 
         last_ts = (int(self.time[-1] / hours) + 1) * hours
         new_time = np.arange(0, last_ts + hours, hours) * 1.0
@@ -243,6 +232,7 @@ class SegmentedInpatientObservables(InpatientObservables):
     @classmethod
     def from_observables(cls, observables: InpatientObservables, time_split: Array) -> SegmentedInpatientObservables:
         return cls(time=observables.time, value=observables.value, mask=observables.mask,
+                   extra_layers=observables.extra_layers,
                    indexed_split=cls.indexed_split_array(observables.time, time_split))
 
     @staticmethod
@@ -273,6 +263,9 @@ class SegmentedInpatientObservables(InpatientObservables):
         """
         if len(self.indexed_split) == 0:
             return (self,)
+        if len(self.extra_layers) > 0:
+            raise NotImplementedError("TODO: apply segmentation when data exist in extra layers.")
+
         time = np.split(self.time, self.indexed_split)
         value = np.vsplit(self.value, self.indexed_split)
         mask = np.vsplit(self.mask, self.indexed_split)
@@ -618,6 +611,9 @@ class LeadingObservableExtractor(Module):
         """
         if len(observables) == 0:
             return self.empty()
+
+        if len(observables.extra_layers) > 0:
+            raise NotImplementedError("TODO: apply aggregation when data exist in extra layers.")
 
         time = observables.time
         value = observables.value[:, self.code_index]
@@ -1053,36 +1049,6 @@ class StaticInfo(VxData):
             float: the age of the patient in years.
         """
         return (current_date - self.date_of_birth).days / 365.25
-    #
-    # def demographic_vector(self,
-    #                        demographic_vector_config: DemographicVectorConfig,
-    #                        static_vector: jnp.ndarray, current_date: date) -> Array:
-    #     """
-    #     Returns the demographic vector based on the current date.
-    #
-    #     Args:
-    #         current_date (date): the current date.
-    #
-    #     Returns:
-    #         Array: the demographic vector.
-    #     """
-    #     if demographic_vector_config.age:
-    #         return self._concat(self.age(current_date), static_vector)
-    #     return static_vector
-    #
-    # @staticmethod
-    # def _concat(age, vec):
-    #     """
-    #     Concatenates the age and vector.
-    #
-    #     Args:
-    #         age (float): the age of the patient.
-    #         vec (Array): the vector to be concatenated.
-    #
-    #     Returns:
-    #         Array: the concatenated vector.
-    #     """
-    #     return jnp.hstack((age, vec), dtype=jnp.float16)
 
 
 class CPRDStaticInfo(StaticInfo):

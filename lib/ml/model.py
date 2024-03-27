@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from .artefacts import AdmissionsPrediction, TrajectoryConfig
-from .embeddings import (PatientEmbedding,
+from .embeddings import (AdmissionEmbedding,
                          EmbeddedAdmission)
 from ..base import Config, Module, VxData
 from ..ehr import (TVxEHR, Patient, Admission)
@@ -35,10 +35,8 @@ class Precomputes(VxData):
 
 
 class AbstractModel(Module):
-    f_emb: PatientEmbedding
-    f_dx_dec: Callable
-
     config: ModelConfig = eqx.static_field()
+    f_emb: Callable[[Admission, Optional[jnp.ndarray]], EmbeddedAdmission]
 
     @property
     @abstractmethod
@@ -189,12 +187,12 @@ class InpatientModel(AbstractModel):
     ) -> AdmissionsPrediction:
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
-        inpatients_emb = {
-            i: self.f_emb(subject, inpatients.admission_demographics)
+        admissions_emb = {
+            admission.admission_id: self.f_emb(admission, inpatients.admission_demographics[admission.admission_id])
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',
-                                               leave=leave_pbar)
+                                               leave=leave_pbar) for admission in subject.admissions
         }
 
         r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
@@ -208,17 +206,15 @@ class InpatientModel(AbstractModel):
                 pbar.set_description(
                     f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
                 inpatient = inpatients.subjects[subject_id]
-                embedded_admissions = inpatients_emb[subject_id]
-                for adm, adm_e in zip(inpatient.admissions,
-                                      embedded_admissions):
+                for admission in inpatient.admissions:
                     results = results.add(subject_id=subject_id,
                                           prediction=self(
-                                              adm,
-                                              adm_e,
+                                              admission,
+                                              admissions_emb[admission.admission_id],
                                               regularisation=regularisation,
                                               store_embeddings=store_embeddings,
                                               precomputes=precomputes))
-                    pbar.update(adm.interval_days)
+                    pbar.update(admission.interval_days)
             return results.filter_nans()
 
 
