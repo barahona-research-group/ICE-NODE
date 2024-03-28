@@ -11,8 +11,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from .artefacts import AdmissionsPrediction, TrajectoryConfig
-from .embeddings import (AdmissionEmbedding,
-                         EmbeddedAdmission)
+from .embeddings import (EmbeddedAdmission)
 from ..base import Config, Module, VxData
 from ..ehr import (TVxEHR, Patient, Admission)
 from ..utils import tqdm_constructor, translate_path
@@ -243,7 +242,8 @@ class DischargeSummaryModel(AbstractModel):
         total_int_days = inpatients.d2d_interval_days()
         precomputes = self.precomputes(inpatients)
         inpatients_emb = {
-            i: self.f_emb(subject, inpatients.admission_demographics)
+            i: tuple(self.f_emb(admission, inpatients.admission_demographics[admission.admission_id]) for admission in
+                     subject.admissions)
             for i, subject in tqdm_constructor(inpatients.subjects.items(),
                                                desc="Embedding",
                                                unit='subject',

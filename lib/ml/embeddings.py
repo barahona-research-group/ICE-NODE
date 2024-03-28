@@ -96,18 +96,18 @@ class InterventionsEmbeddings(Module):
 
         if icu_procedures_size and config.icu_procedures:
             self.f_icu_procedures_emb = eqx.nn.Linear(icu_procedures_size,
-                                                       config.icu_procedures,
-                                                       use_bias=False,
-                                                       key=icu_procedures_key)
+                                                      config.icu_procedures,
+                                                      use_bias=False,
+                                                      key=icu_procedures_key)
         if hosp_procedures_size and config.hosp_procedures:
             self.f_hosp_procedures_emb = eqx.nn.Linear(hosp_procedures_size,
-                                                        config.hosp_procedures,
-                                                        use_bias=False,
-                                                        key=hosp_procedures_key)
+                                                       config.hosp_procedures,
+                                                       use_bias=False,
+                                                       key=hosp_procedures_key)
         self.f_emb = eqx.nn.Linear(config.icu_inputs + config.icu_procedures + config.hosp_procedures,
-                                    config.interventions,
-                                    use_bias=False,
-                                    key=interventions_key)
+                                   config.interventions,
+                                   use_bias=False,
+                                   key=interventions_key)
 
     def __call__(self, icu_inputs: Optional[jnp.ndarray] = None,
                  icu_procedures: Optional[jnp.ndarray] = None,
@@ -210,10 +210,10 @@ class AdmissionEmbedding(Module):
             assert icu_inputs_grouping or icu_procedures_size or hosp_procedures_size, \
                 "Any of icu_inputs_map, icu_procedures_size or hosp_procedures_size must be provided."
             self.f_interventions_emb, key = self.make_interventions_emb(config.interventions,
-                                                                         icu_inputs_grouping,
-                                                                         icu_procedures_size,
-                                                                         hosp_procedures_size,
-                                                                         key=key)
+                                                                        icu_inputs_grouping,
+                                                                        icu_procedures_size,
+                                                                        hosp_procedures_size,
+                                                                        key=key)
         if config.demographic:
             assert demographic_size, "demographic_size must be provided."
             self.f_demographic_emb, key = self.make_demographics_emb(demographic_size, config.demographic, key=key)
@@ -251,10 +251,10 @@ class AdmissionEmbedding(Module):
         return EmbeddedAdmission(demographic=self._f_demographic_emb(demographic))
 
     def _embed_observables_segment(self, obs: jnp.ndarray) -> jnp.ndarray:
-        return jax.vmap(self._f_observables_emb)(obs)
+        return jax.vmap(self.f_observables_emb)(obs)
 
     def embed_observables(self, observables: InpatientObservables | SegmentedInpatientObservables) -> EmbeddedAdmission:
-        if self._f_observables_emb is None:
+        if self.f_observables_emb is None:
             return EmbeddedAdmission()
 
         if isinstance(observables, SegmentedInpatientObservables):
@@ -274,8 +274,8 @@ class AdmissionEmbedding(Module):
         """
 
         if not isinstance(admission, SegmentedAdmission):
-            assert self._f_interventions_emb is None, "Interventions embedding is " \
-                                                      "not supported for (unsegmented) admission."
+            assert self.f_interventions_emb is None, "Interventions embedding is " \
+                                                     "not supported for (unsegmented) admission."
 
         return eqx.combine(self.embed_observables(admission.observables),
                            self.embed_demographic(demographic_input),
@@ -311,33 +311,32 @@ class AdmissionSequentialEmbedding(eqx.Module):
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
                  key: jrandom.PRNGKey):
-
         (components_emb_key, sequence_emb_key) = jrandom.split(key, )
 
-        self._f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
-                                                    dx_codes_size=dx_codes_size,
-                                                    icu_inputs_grouping=None,
-                                                    icu_procedures_size=None,
-                                                    hosp_procedures_size=None,
-                                                    demographic_size=demographic_size,
-                                                    observables_size=observables_size,
-                                                    key=components_emb_key)
+        self.f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
+                                                   dx_codes_size=dx_codes_size,
+                                                   icu_inputs_grouping=None,
+                                                   icu_procedures_size=None,
+                                                   hosp_procedures_size=None,
+                                                   demographic_size=demographic_size,
+                                                   observables_size=observables_size,
+                                                   key=components_emb_key)
 
-        self._f_sequence_emb = eqx.nn.MLP(config.dx_codes + config.demographic + config.observables,
-                                          config.sequence,
-                                          config.sequence * 2,
-                                          depth=1,
-                                          final_activation=jnp.tanh,
-                                          key=sequence_emb_key)
+        self.f_sequence_emb = eqx.nn.MLP(config.dx_codes + config.demographic + config.observables,
+                                         config.sequence,
+                                         config.sequence * 2,
+                                         depth=1,
+                                         final_activation=jnp.tanh,
+                                         key=sequence_emb_key)
 
     @eqx.filter_jit
     def _embed_sequence_features(self, *embeddings):
-        return self._f_sequence_emb(jnp.hstack(tuple(emb for emb in embeddings if emb is not None)))
+        return self.f_sequence_emb(jnp.hstack(tuple(emb for emb in embeddings if emb is not None)))
 
     def __call__(self, admission: Admission, admission_demographic: jnp.ndarray) -> EmbeddedAdmissionSequence:
         assert not isinstance(admission, SegmentedAdmission), "SegmentedPatient not supported"
         """ Embeds an admission into fixed vectors as described above."""
-        emb_components = self._f_components_emb(admission, admission_demographic)
+        emb_components = self.f_components_emb(admission, admission_demographic)
         dx_history_emb = emb_components.dx_codes_history
         demo_emb = emb_components.demographic
         obs_emb = emb_components.observables
@@ -375,30 +374,30 @@ class DischargeSummarySequentialEmbedding(eqx.Module):
                  key: jrandom.PRNGKey):
         (components_emb_key, sequence_emb_key) = jrandom.split(key, )
 
-        self._f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
-                                                    dx_codes_size=dx_codes_size,
-                                                    icu_inputs_grouping=None,
-                                                    icu_procedures_size=None,
-                                                    hosp_procedures_size=None,
-                                                    demographic_size=demographic_size,
-                                                    observables_size=None,
-                                                    key=components_emb_key)
+        self.f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
+                                                   dx_codes_size=dx_codes_size,
+                                                   icu_inputs_grouping=None,
+                                                   icu_procedures_size=None,
+                                                   hosp_procedures_size=None,
+                                                   demographic_size=demographic_size,
+                                                   observables_size=None,
+                                                   key=components_emb_key)
 
-        self._f_summary_emb = eqx.nn.MLP(config.dx_codes + config.demographic,
-                                         config.summary,
-                                         config.summary * 2,
-                                         depth=1,
-                                         final_activation=jnp.tanh,
-                                         key=sequence_emb_key)
+        self.f_summary_emb = eqx.nn.MLP(config.dx_codes + config.demographic,
+                                        config.summary,
+                                        config.summary * 2,
+                                        depth=1,
+                                        final_activation=jnp.tanh,
+                                        key=sequence_emb_key)
 
     @eqx.filter_jit
     def _embed_summary_features(self, dx_codes_emb, demo_emb):
-        return self._f_summary_emb(jnp.hstack((dx_codes_emb, demo_emb)))
+        return self.f_summary_emb(jnp.hstack((dx_codes_emb, demo_emb)))
 
     def __call__(self, admission: Admission, admission_demographic: jnp.ndarray) -> EmbeddedDischargeSummary:
         """ Embeds an admission into fixed vectors as described above."""
         assert not isinstance(admission, SegmentedAdmission), "SegmentedAdmission not supported"
-        emb_components = self._f_components_emb(admission, admission_demographic)
+        emb_components = self.f_components_emb(admission, admission_demographic)
         summary = self._embed_summary_features(emb_components.dx_codes, emb_components.demographic)
         return EmbeddedDischargeSummary(dx_codes=emb_components.dx_codes, demographic=emb_components.demographic,
                                         summary=summary)
