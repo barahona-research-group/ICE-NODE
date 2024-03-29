@@ -252,35 +252,7 @@ class NeuralODE(eqx.Module):
         return jnp.minimum(100. * h0, h1)
 
 
-class ObsStateUpdate(eqx.Module):
-    """Implements discrete update based on the received observations."""
-    f_project_error: Callable
-    f_update: Callable
 
-    def __init__(self, state_size: int, obs_size: int,
-                 key: "jax.random.PRNGKey"):
-        super().__init__()
-        key1, key2 = jrandom.split(key, 2)
-
-        self.f_project_error = eqx.nn.MLP(obs_size,
-                                          obs_size,
-                                          width_size=obs_size * 5,
-                                          depth=1,
-                                          use_bias=True,
-                                          activation=jnn.relu,
-                                          final_activation=jnn.tanh,
-                                          key=key1)
-        self.f_update = eqx.nn.GRUCell(obs_size,
-                                       state_size,
-                                       use_bias=True,
-                                       key=key2)
-
-    @eqx.filter_jit
-    def __call__(self, state: jnp.ndarray, predicted_obs: jnp.ndarray,
-                 true_obs: jnp.ndarray, mask_obs) -> jnp.ndarray:
-        error = jnp.where(mask_obs, predicted_obs - true_obs, 0.0)
-        projected_error = self.f_project_error(error)
-        return self.f_update(projected_error, state)
 
 
 class StateUpdate(eqx.Module):

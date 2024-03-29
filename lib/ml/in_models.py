@@ -1,7 +1,7 @@
 """."""
 from __future__ import annotations
 
-from typing import Callable, Tuple, Optional, List, Literal
+from typing import Callable, Tuple, Optional, Literal, Type
 
 import equinox as eqx
 import jax
@@ -9,8 +9,8 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 
-from .artefacts import AdmissionPrediction, TrajectoryConfig
-from .base_models import (ObsStateUpdate, NeuralODE_JAX)
+from .artefacts import AdmissionPrediction
+from .base_models import (NeuralODE_JAX)
 from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
 from .embeddings import AdmissionEmbedding, AdmissionEmbeddingsConfig, EmbeddedAdmission, AdmissionSequentialEmbedding, \
     AdmissionSequentialEmbeddingsConfig, EmbeddedAdmissionSequence
@@ -19,14 +19,16 @@ from .model import (InpatientModel, ModelConfig, ModelRegularisation,
 from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
                    LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import GroupingData
+from ..ehr.tvx_concepts import SegmentedAdmission
 from ..utils import model_params_scaler
 
-AutonomousLeadPredictorName = Literal['monotonic', 'mlp']
+LeadPredictorName = Literal['monotonic', 'mlp', 'ode_solve']
 
 
 class InpatientModelConfig(ModelConfig):
     state: int = 50
-    lead_predictor: AutonomousLeadPredictorName = "monotonic"
+    lead_predictor: LeadPredictorName = "monotonic"
+    lead_predictor_ode_solve: bool = False
 
 
 class NODERegularisation(ModelRegularisation):
@@ -46,11 +48,13 @@ class MonotonicLeadingObsPredictor(eqx.Module):
         self._mlp = eqx.nn.MLP(input_size,
                                out_size,
                                width_size=width,
+                               activation=jnn.tanh,
                                depth=2,
                                key=key)
 
-    def __call__(self, lead):
-        y = self._mlp(lead)
+    @eqx.filter_jit
+    def __call__(self, state):
+        y = self._mlp(state)
         risk = jnn.sigmoid(y[-1])
         p = jnp.cumsum(jnn.softmax(y[:-1]))
         return risk * p
@@ -67,12 +71,119 @@ class MLPLeadingObsPredictor(eqx.Module):
         self._mlp = eqx.nn.MLP(input_size,
                                n_lead_times,
                                width_size=width,
+                               activation=jnn.tanh,
                                final_activation=jnn.sigmoid,
                                depth=2,
                                key=key)
 
-    def __call__(self, lead):
-        return self._mlp(lead)
+    @eqx.filter_jit
+    def __call__(self, state):
+        return self._mlp(state)
+
+
+class InICENODEStateAdjust(eqx.Module):
+    """Implements discrete update based on the received observations."""
+    f_project_error: eqx.nn.MLP
+    f_update: eqx.nn.GRUCell
+
+    def __init__(self, state_size: int, obs_size: int,
+                 key: "jax.random.PRNGKey"):
+        super().__init__()
+        key1, key2 = jrandom.split(key, 2)
+
+        self.f_project_error = eqx.nn.MLP(obs_size,
+                                          obs_size,
+                                          width_size=obs_size * 5,
+                                          depth=1,
+                                          use_bias=False,
+                                          activation=jnn.tanh,
+                                          key=key1)
+        self.f_update = eqx.nn.GRUCell(obs_size * 2,
+                                       state_size,
+                                       use_bias=False,
+                                       key=key2)
+
+    @eqx.filter_jit
+    def __call__(self, forecasted_state: jnp.ndarray,
+                 forecasted_observables: jnp.ndarray,
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
+        error = jnp.where(observables_mask, forecasted_observables - true_observables, 0.0)
+        projected_error = self.f_project_error(error)
+        return self.f_update(jnp.hstack(observables_mask, projected_error), forecasted_state)
+
+
+class ICENODEStateTrajectory(InpatientObservables):
+    def __post_init__(self):
+        assert self.forecasted_state.shape == self.adjusted_state.shape
+
+    @property
+    def forecasted_state(self):
+        return self.value
+
+    @property
+    def adjusted_state(self):
+        return self.extra_layers[0]
+
+    @staticmethod
+    def empty(size: int,
+              time_dtype: Type | str = jnp.float64,
+              value_dtype: Type | str = jnp.float16,
+              mask_dtype: Type | str = bool) -> ICENODEStateTrajectory:
+        traj = InpatientObservables.empty(size, time_dtype, value_dtype, mask_dtype)
+        return eqx.tree_at(lambda x: x.extra_layers, traj, (traj.value,))
+
+    @staticmethod
+    def compile(time: jnp.ndarray, forecasted_state: Tuple[jnp.ndarray],
+                adjusted_state: Tuple[jnp.ndarray]) -> ICENODEStateTrajectory:
+        forecasted_state = jnp.vstack(forecasted_state)
+        adjusted_state = jnp.vstack(adjusted_state)
+        return ICENODEStateTrajectory(time=time, forecasted_state=forecasted_state, adjusted_state=adjusted_state,
+                                      mask=jnp.ones_like(forecasted_state, dtype=bool))
+
+
+class DirectLeadPredictorWrapper(eqx.Module):
+    predictor: MonotonicLeadingObsPredictor | MLPLeadingObsPredictor
+
+    def __init__(self, input_size: int,
+                 lead_times: Tuple[float, ...],
+                 predictor: LeadPredictorName,
+                 key: jrandom.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        if predictor == "monotonic":
+            self.predictor = MonotonicLeadingObsPredictor(input_size, len(lead_times), key, **mlp_kwargs)
+        elif predictor == "mlp":
+            self.predictor = MLPLeadingObsPredictor(input_size, len(lead_times), key, **mlp_kwargs)
+        else:
+            raise ValueError(f"Unknown leading predictor type: {predictor}")
+
+    def __call__(self, trajectory: ICENODEStateTrajectory, **kwargs) -> InpatientObservables:
+        leading_values = eqx.filter_vmap(self.predictor)(trajectory.forecasted_state)
+        return InpatientObservables(time=trajectory.time, value=leading_values,
+                                    mask=jnp.ones_like(leading_values, dtype=bool))
+
+
+class ODESolveLeadPredictorWrapper(eqx.Module):
+    predictor: eqx.nn.MLP
+    lead_times: Tuple[float, ...]
+
+    def __init__(self, input_size: int,
+                 lead_times: Tuple[float, ...],
+                 key: jrandom.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        width = mlp_kwargs.get("width_size", 5)
+        self.lead_times = lead_times
+        self.predictor = eqx.nn.MLP(input_size,
+                                    1,
+                                    width_size=width,
+                                    depth=2,
+                                    key=key)
+
+    def __call__(self, trajectory: ICENODEStateTrajectory, admission: SegmentedAdmission,
+                 embedded_admission: EmbeddedAdmission, precomputes: Precomputes,
+                 ode_dyn: Callable,
+                 **kwargs) -> InpatientObservables:
+        pass
+        # Wrap predictor(ode_dyn) in max operator.
 
 
 class InICENODE(InpatientModel):
@@ -86,13 +197,14 @@ class InICENODE(InpatientModel):
     """
     f_emb: AdmissionEmbedding
     f_obs_dec: eqx.nn.MLP
-    f_lead_dec: Callable
+    f_lead_dec: DirectLeadPredictorWrapper | ODESolveLeadPredictorWrapper
     f_dyn: NeuralODE_JAX
-    f_update: Callable
+    f_update: InICENODEStateAdjust
     f_init: eqx.nn.MLP
     f_outcome_dec: Optional[Callable] = None
 
     config: InpatientModelConfig = eqx.static_field()
+    regularisation: NODERegularisation = eqx.static_field(default=NODERegularisation())
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: AdmissionEmbeddingsConfig,
@@ -104,7 +216,7 @@ class InICENODE(InpatientModel):
                  hosp_procedures_size: Optional[int] = None,
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
-                 key: "jax.random.PRNGKey"):
+                 key: "jax.random.PRNGKey", **lead_mlp_kwargs):
         super().__init__(config=config)
         (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key,
          update_key) = jrandom.split(key, 6)
@@ -131,7 +243,7 @@ class InICENODE(InpatientModel):
                                           observables_size=observables_size,
                                           key=update_key)
 
-        self.f_lead_dec = self._make_lead_dec(f_dyn=self.f_dyn, lead_times=lead_times, key=lead_key)
+        self.f_lead_dec = self._make_lead_dec()
 
     @staticmethod
     def _make_init(dx_codes_size: Optional[int],
@@ -147,11 +259,17 @@ class InICENODE(InpatientModel):
 
     @staticmethod
     def _make_lead_dec(
-            f_dyn: NeuralODE_JAX,
-            lead_times: Tuple[float, ...],
-            key: jrandom.PRNGKey
-    ) -> Callable:
-        pass
+            input_size: int,
+            n_lead_times: int,
+            predictor: DirectLeadPredictorName,
+            ode_solve: bool,
+            key: jrandom.PRNGKey, **mlp_kwargs
+    ) -> DirectLeadPredictorWrapper | ODESolveLeadPredictorWrapper:
+        if ode_solve:
+            wrapper_cls = ODESolveLeadPredictorWrapper
+        else:
+            wrapper_cls = DirectLeadPredictorWrapper
+        return Wrapper(input_size, n_lead_times, predictor, key, **mlp_kwargs)
 
     @staticmethod
     def _make_dyn(state_size: int, interventions_size: int, key: jrandom.PRNGKey):
@@ -165,11 +283,11 @@ class InICENODE(InpatientModel):
         return NeuralODE_JAX(f_dyn, timescale=1.0)
 
     @staticmethod
-    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey):
-        return ObsStateUpdate(state_size, observables_size, key=key)
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateAdjust:
+        return InICENODEStateAdjust(state_size, observables_size, key=key)
 
     @staticmethod
-    def _make_outcome_dec(state_size: int, outcome_size: Optional[int], key: jrandom.PRNGKey):
+    def _make_outcome_dec(state_size: int, outcome_size: Optional[int], key: jrandom.PRNGKey) -> Callable:
         return eqx.nn.MLP(state_size,
                           outcome_size,
                           state_size * 2,
@@ -178,7 +296,7 @@ class InICENODE(InpatientModel):
                           key=key) if outcome_size is not None else None
 
     @staticmethod
-    def _make_obs_dec(config, observables_size, key):
+    def _make_obs_dec(config, observables_size, key) -> eqx.nn.MLP:
         return eqx.nn.MLP(config.state,
                           observables_size,
                           observables_size * 5,
@@ -207,119 +325,51 @@ class InICENODE(InpatientModel):
 
     @eqx.filter_jit
     def _safe_integrate(self, delta, state, int_e, precomputes):
-        # dt = float(jax.block_until_ready(delta))
-        # if dt < 0.0:
-        # logging.error(f"Time diff is {dt}!")
-        # return state
-        # if dt < 1 / 3600.0:
-        # logging.debug(f"Time diff is less than 1 second: {dt}")
-        # return state
-        # else:
         second = jnp.array(1 / 3600.0)
         delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
         return self.f_dyn(delta, state, args=dict(control=int_e))[-1]
 
-    def sample_state_trajectory(self, state: jnp.ndarray, int_e: jnp.ndarray,
-                                t0: float, t1: float,
-                                sampling_time: Optional[jnp.ndarray],
-                                precomputes: Precomputes) -> List[jnp.ndarray]:
-        if sampling_time is None:
-            return []
-        mask = (sampling_time > t0) & (sampling_time <= t1)
-        if jnp.sum(mask) == 0:
-            return []
-        sampling_time = sampling_time[mask]
-        trajectory = []
-        t = t0
-        for t_sample in sampling_time:
-            delta_i = t_sample - t
-            state = self._safe_integrate(delta_i, state, int_e, precomputes)
-            t = t_sample
-            trajectory.append(state)
-        return trajectory
-
-    def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
-                     obs: InpatientObservables, lead: InpatientObservables,
-                     t0: float, t1: float,
-                     sampling_time: Optional[jnp.ndarray],
-                     precomputes: Precomputes):
-        preds = []
-        lead_preds = []
-        trajectory = []
-        t = t0
-        for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
-            trajectory.extend(
-                self.sample_state_trajectory(state, int_e, t, t_obs,
-                                             sampling_time, precomputes))
-            # if time-diff is more than 1 seconds, we integrate.
-            state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
-            pred_obs = self.f_obs_dec(state)
-            pred_lead = self.f_lead_dec(state)
-            state = self.f_update(state, pred_obs, val, mask)
-            t = t_obs
-            preds.append(pred_obs)
-            lead_preds.append(pred_lead)
-
-        trajectory.extend(
-            self.sample_state_trajectory(state, int_e, t, t1, sampling_time,
-                                         precomputes))
-        state = self._safe_integrate(t1 - t, state, int_e, precomputes)
-
-        if len(preds) > 0:
-            pred_obs_val = jnp.vstack(preds)
-            pred_lead_val = jnp.vstack(lead_preds)
-        else:
-            pred_obs_val = jnp.empty_like(obs.value)
-            pred_lead_val = jnp.empty_like(lead.value)
-
-        return state, (InpatientObservables(obs.time, pred_obs_val, obs.mask),
-                       InpatientObservables(lead.time, pred_lead_val,
-                                            lead.mask)), trajectory
+    def decode_state_trajectory_observables(self,
+                                            admission: SegmentedAdmission,
+                                            embedded_admission: EmbeddedAdmission,
+                                            precomputes: Precomputes,
+                                            state_trajectory: ICENODEStateTrajectory) -> AdmissionPrediction:
+        pass
 
     def __call__(
-            self, admission: Admission,
-            embedded_admission: EmbeddedAdmission, precomputes: Precomputes,
-            regularisation: NODERegularisation = NODERegularisation(),
-            store_embeddings: Optional[TrajectoryConfig] = None
+            self, admission: SegmentedAdmission,
+            embedded_admission: EmbeddedAdmission, precomputes: Precomputes
     ) -> AdmissionPrediction:
-        state = self._init_state(embedded_admission.dx0)
-        int_e = embedded_admission.inp_proc_demo
+        int_e = embedded_admission.interventions
         obs = admission.observables
-        lead = admission.leading_observable
-        pred_obs_l = []
-        pred_lead_l = []
-        t0 = admission.interventions.t0
-        t1 = admission.interventions.t1
+        n_segments = obs.n_segments
+        t = 0.0
+        state_trajectory = tuple()
+        state = self.f_init(jnp.hstack(embedded_admission.dx_codes_history, embedded_admission.demographic))
+        segments_t1 = admission.interventions.t1
+        for segment_index in range(n_segments):
+            segment_t1 = segments_t1[segment_index]
+            segment_obs = obs[segment_index]
+            segment_interventions = int_e[segment_index]
 
-        trajectory = [state]
-        if store_embeddings is not None:
-            dt = store_embeddings.sampling_rate
-            sampling_time = jnp.arange(0.0, t1[-1], dt)
-        else:
-            sampling_time = None
-        for i in range(len(t0)):
-            state, pred, traj = self.step_segment(state, int_e[i], obs[i],
-                                                  lead[i], t0[i], t1[i],
-                                                  sampling_time, precomputes)
-            pred_obs, pred_lead = pred
-
-            pred_obs_l.append(pred_obs)
-            pred_lead_l.append(pred_lead)
-            trajectory.extend(traj)
-
-        pred_dx = CodesVector(self.f_dx_dec(state), admission.outcome.scheme)
-
-        # if len(trajectory) > 0:
-        #     trajectory = PatientTrajectory(time=sampling_time,
-        #                                    value=jnp.vstack(trajectory))
-        # else:
-        #     trajectory = None
-        #
-        # return AdmissionPrediction(admission=admission,
-        #                            outcome=pred_dx,
-        #                            observables=pred_obs_l,
-        #                            leading_observable=pred_lead_l,
-        #                            trajectory=trajectory)
+            for obs_t, obs_val, obs_mask in segment_obs:
+                # if time-diff is more than 1 seconds, we integrate.
+                forecasted_state = self._safe_integrate(obs_t - t, state, segment_interventions, precomputes)
+                state = self.f_update(forecasted_state, self.f_obs_dec(state), obs_val, obs_mask)
+                state_trajectory += ((forecasted_state, state),)
+                t = obs_t
+            state = self._safe_integrate(segment_t1 - t, state, segment_interventions, precomputes)
+            t = segment_t1
+        forecasted_states, adjusted_states = zip(*state_trajectory)
+        icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
+                                                                  adjusted_state=adjusted_states)
+        outcome_prediction = AdmissionPrediction(admission=admission,
+                                                 outcome=CodesVector(self.f_dx_dec(state), admission.outcome.scheme))
+        obs_predictions = self.decode_state_trajectory_observables(admission=admission,
+                                                                   embedded_admission=embedded_admission,
+                                                                   precomputes=precomputes,
+                                                                   state_trajectory=icenode_state_trajectory)
+        return eqx.combine(outcome_prediction, obs_predictions)
 
     @property
     def dyn_params_list(self):

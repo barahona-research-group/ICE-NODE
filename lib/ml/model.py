@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import zipfile
 from abc import abstractmethod
-from typing import (TYPE_CHECKING, Callable, Optional, Any, Tuple)
+from typing import (TYPE_CHECKING, Callable, Optional, Any, Tuple, Self)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -33,14 +33,22 @@ class Precomputes(VxData):
     pass
 
 
+
+
+
 class AbstractModel(Module):
     config: ModelConfig = eqx.static_field()
     f_emb: Callable[[Admission, Optional[jnp.ndarray]], EmbeddedAdmission]
+    regularisation: Optional[ModelRegularisation] = None
 
     @property
     @abstractmethod
     def dyn_params_list(self):
         pass
+
+    def regularised(self, regularisation: Optional[ModelRegularisation]) -> Self:
+        return eqx.tree_at(lambda m: m.regularisation, self, regularisation,
+                           is_leaf=lambda x: x is None)
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -172,9 +180,7 @@ class InpatientModel(AbstractModel):
     def __call__(self,
                  x: Admission,
                  embedded_x: EmbeddedAdmission,
-                 precomputes: Precomputes,
-                 regularisation: Optional[ModelRegularisation] = None,
-                 store_embeddings: Optional[TrajectoryConfig] = None):
+                 precomputes: Precomputes):
         pass
 
     def batch_predict(

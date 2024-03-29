@@ -11,35 +11,29 @@ import equinox as eqx
 import numpy as np
 import tables as tbl
 
-from lib import Config
 from lib.base import VxData, VxDataItem
 from lib.ehr import Admission, CodesVector, InpatientObservables
 from lib.utils import tree_hasnan
-
-
-class PatientAdmissionTrajectory(VxData):
-    observables: Optional[InpatientObservables] = None
-    leading_observable: Optional[InpatientObservables] = None
 
 
 class ModelBehaviouralMetrics(VxData):
     pass
 
 
-class TrajectoryConfig(Config):
-    sampling_rate: float = 0.5  # 0.5 means every 30 minutes.
+class PredictedTrajectory(VxData):
+    pass
 
 
 PredictionAttribute = Literal['outcome', 'observables', 'leading_observable']
 
 
 class AdmissionPrediction(VxData):
-    admission: Admission  # ground_truth
+    admission: Optional[Admission] = None  # ground_truth
     observables: Optional[InpatientObservables] = None
     leading_observable: Optional[InpatientObservables] = None
     outcome: Optional[CodesVector] = None
-    trajectory: PatientAdmissionTrajectory = field(default_factory=PatientAdmissionTrajectory)
-    model_behavioural_metrics: ModelBehaviouralMetrics = field(default_factory=ModelBehaviouralMetrics)
+    trajectory: Optional[PredictedTrajectory] = None
+    model_behavioural_metrics: Optional[ModelBehaviouralMetrics] = None
 
     def has_nans(self):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))

@@ -42,7 +42,10 @@ class InpatientObservables(VxData):
     extra_layers: Tuple[Array, ...] = field(default_factory=tuple)
 
     def __post_init__(self):
+        xnp = np_module(self.time)
+
         assert self.time.dtype == np.float64, f"Expected time to be of type float64, got {self.time.dtype}"
+
         assert self.mask.dtype == bool, f"Expected mask to be of type bool, got {self.mask.dtype}"
 
         assert self.value.ndim == 2, f"Expected value to be 2D, got {self.value.ndim}"
@@ -50,6 +53,8 @@ class InpatientObservables(VxData):
         assert self.value.shape == self.mask.shape, f"Expected value.shape to be {self.mask.shape}, " \
                                                     f"got {self.value.shape}"
         assert self.time.ndim == 1, f"Expected time to be 1D, got {self.time.ndim}"
+        assert len(self.time) == len(xnp.unique(self.time)), "Time stamps are not unique."
+        assert len(self.time) < 2 or (self.time[:-1] < self.time[1:]).all(), "Time stamps are not sorted."
         for a in self.extra_layers:
             assert a.ndim == 2
             assert self.value.shape == a.shape
@@ -221,6 +226,23 @@ class InpatientObservables(VxData):
         values = np.where(masks, values, 0.0)
         return InpatientObservables(time=new_time[1:], value=values, mask=masks)
 
+    @cached_property
+    def timestamps(self) -> Tuple[float]:
+        return tuple(self.time.tolist())
+
+    @cached_property
+    def time2index(self) -> Dict[float, int]:
+        return {t: i for i, t in enumerate(self.timestamps)}
+
+    def at(self, t: float, layer_index: Optional[int] = None) -> Tuple[Array, Array]:
+        i = self.time2index[t]
+        if layer_index:
+            return self.value[i], self.extra_layers[layer_index][i]
+        return self.value[i], self.mask[i]
+
+    def __iter__(self) -> Iterator[Tuple[float, Array, Array]]:
+        return zip(self.time, self.value, self.mask)
+
 
 class SegmentedInpatientObservables(InpatientObservables):
     indexed_split: Array
@@ -270,6 +292,10 @@ class SegmentedInpatientObservables(InpatientObservables):
         value = np.vsplit(self.value, self.indexed_split)
         mask = np.vsplit(self.mask, self.indexed_split)
         return tuple(InpatientObservables(t, v, m) for t, v, m in zip(time, value, mask))
+
+    @property
+    def n_segments(self) -> int:
+        return len(self._segments)
 
     def __getitem__(self, item: int) -> InpatientObservables:
         return self._segments[item]
@@ -828,28 +854,28 @@ class SegmentedInpatientInterventions(VxData):
         arg, new_time = SegmentedInpatientInterventions.extracted_interval_args(t0, t1, time)
         return new_time, interventions_array[arg, :]
 
-    # @cached_property
-    # def t0_padded(self):
-    #     return self.time[:-1]
-    #
-    # @property
-    # def t0(self):
-    #     """Start times for segmenting the interventions"""
-    #     t = self.time
-    #     xnp = np_module(t)
-    #     return t[~xnp.isnan(t)][:-1]
-    #
-    # @property
-    # def t1_padded(self):
-    #     """End times for segmenting the interventions"""
-    #     return self.time[1:]
-    #
-    # @property
-    # def t1(self):
-    #     """End times for segmenting the interventions"""
-    #     t = self.time
-    #     xnp = np_module(t)
-    #     return t[~xnp.isnan(t)][1:]
+    @cached_property
+    def t0_padded(self):
+        return self.time[:-1]
+
+    @property
+    def t0(self):
+        """Start times for segmenting the interventions"""
+        t = self.time
+        xnp = np_module(t)
+        return t[~xnp.isnan(t)][:-1]
+
+    @property
+    def t1_padded(self):
+        """End times for segmenting the interventions"""
+        return self.time[1:]
+
+    @property
+    def t1(self):
+        """End times for segmenting the interventions"""
+        t = self.time
+        xnp = np_module(t)
+        return t[~xnp.isnan(t)][1:]
     #
     # @property
     # def t_sep(self):
