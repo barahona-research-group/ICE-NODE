@@ -62,7 +62,7 @@ DEFAULT_AKI_LEAD_EXTRACTION_FACTORY: Final[
     observable_code=OBSERVABLE_AKI_TARGET_CODE,
     scheme=DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG.obs,
     leading_hours=[6., 12., 24., 48., 72.],  # hours
-    entry_neglect_window=4.,  # hours
+    entry_neglect_window=6.,  # hours
     minimum_acquisitions=2,  # number of observables acquisitions.
     recovery_window=12.)  # hours
 

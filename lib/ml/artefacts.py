@@ -20,20 +20,19 @@ class ModelBehaviouralMetrics(VxData):
     pass
 
 
-class PredictedTrajectory(VxData):
-    pass
-
-
 PredictionAttribute = Literal['outcome', 'observables', 'leading_observable']
 
 
 class AdmissionPrediction(VxData):
-    admission: Optional[Admission] = None  # ground_truth
+    admission: Optional[Admission]
     observables: Optional[InpatientObservables] = None
     leading_observable: Optional[InpatientObservables] = None
     outcome: Optional[CodesVector] = None
-    trajectory: Optional[PredictedTrajectory] = None
+    trajectory: Optional[InpatientObservables] = None
     model_behavioural_metrics: Optional[ModelBehaviouralMetrics] = None
+
+    def add(self, **kwargs) -> AdmissionPrediction:
+        return eqx.combine(self, AdmissionPrediction(admission=None, **kwargs))
 
     def has_nans(self):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))

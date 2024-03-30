@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import abstractmethod, ABCMeta
 from typing import (Callable, Optional, Tuple, Union)
 
 import equinox as eqx
@@ -126,6 +127,24 @@ class AdmissionEmbeddingsConfig(Config):
     observables: Optional[int] = None
 
 
+class SpecialisedAdmissionEmbeddingsConfig(Config, meta=ABCMeta):
+    @abstractmethod
+    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
+        pass
+
+
+class InICENODEEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
+    dx_codes: int = 0
+    demographic: int = 0
+    interventions: Optional[InterventionsEmbeddingsConfig] = None
+
+    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
+        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
+                                         interventions=self.interventions,
+                                         demographic=self.demographic,
+                                         observables=None)
+
+
 class EmbeddedAdmission(VxData):
     dx_codes: Optional[jnp.ndarray] = None  # (config.dx_codes, )
     dx_codes_history: Optional[jnp.ndarray] = None  # (config.dx_codes, )
@@ -246,9 +265,9 @@ class AdmissionEmbedding(Module):
 
     @eqx.filter_jit
     def embed_demographic(self, demographic: jnp.ndarray) -> EmbeddedAdmission:
-        if self._f_demographic_emb is None:
+        if self.f_demographic_emb is None:
             return EmbeddedAdmission()
-        return EmbeddedAdmission(demographic=self._f_demographic_emb(demographic))
+        return EmbeddedAdmission(demographic=self.f_demographic_emb(demographic))
 
     def _embed_observables_segment(self, obs: jnp.ndarray) -> jnp.ndarray:
         return jax.vmap(self.f_observables_emb)(obs)
@@ -283,7 +302,7 @@ class AdmissionEmbedding(Module):
                            self.embed_dx_codes(admission.dx_codes, admission.dx_codes_history))
 
 
-class AdmissionSequentialEmbeddingsConfig(Config):
+class AdmissionSequentialEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     observables: int = 0
@@ -296,15 +315,15 @@ class AdmissionSequentialEmbeddingsConfig(Config):
                                          observables=self.observables)
 
 
-class EmbeddedAdmissionSequence(VxData):
+class EmbeddedAdmissionObsSequence(VxData):
     dx_codes_history: jnp.ndarray  # (config.dx, )
     demographic: jnp.ndarray  # (config.demo, )
     sequence: jnp.ndarray  # (n_timestamps, config.sequence)
 
 
-class AdmissionSequentialEmbedding(eqx.Module):
-    _f_components_emb: AdmissionEmbedding
-    _f_sequence_emb: Callable
+class AdmissionSequentialObsEmbedding(eqx.Module):
+    f_components_emb: AdmissionEmbedding
+    f_sequence_emb: Callable
 
     def __init__(self, config: AdmissionSequentialEmbeddingsConfig,
                  dx_codes_size: Optional[int] = None,
@@ -333,7 +352,7 @@ class AdmissionSequentialEmbedding(eqx.Module):
     def _embed_sequence_features(self, *embeddings):
         return self.f_sequence_emb(jnp.hstack(tuple(emb for emb in embeddings if emb is not None)))
 
-    def __call__(self, admission: Admission, admission_demographic: jnp.ndarray) -> EmbeddedAdmissionSequence:
+    def __call__(self, admission: Admission, admission_demographic: jnp.ndarray) -> EmbeddedAdmissionObsSequence:
         assert not isinstance(admission, SegmentedAdmission), "SegmentedPatient not supported"
         """ Embeds an admission into fixed vectors as described above."""
         emb_components = self.f_components_emb(admission, admission_demographic)
@@ -341,12 +360,12 @@ class AdmissionSequentialEmbedding(eqx.Module):
         demo_emb = emb_components.demographic
         obs_emb = emb_components.observables
         sequence_e = [self._embed_sequence_features(dx_history_emb, demo_emb, obs_e_i) for obs_e_i in obs_emb]
-        return EmbeddedAdmissionSequence(dx_codes_history=dx_history_emb,
-                                         sequence=sequence_e,
-                                         demographic=demo_emb)
+        return EmbeddedAdmissionObsSequence(dx_codes_history=dx_history_emb,
+                                            sequence=sequence_e,
+                                            demographic=demo_emb)
 
 
-class DischargeSummarySequentialEmbeddingsConfig(Config):
+class DischargeSummarySequentialEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     summary: int = 50
@@ -362,6 +381,7 @@ class EmbeddedDischargeSummary(VxData):
     dx_codes: jnp.ndarray  # (config.dx, )
     demographic: jnp.ndarray  # (config.demo, )
     summary: jnp.ndarray  # (config.sequence, )
+    history_summary: jnp.ndarray  # (config.sequence, )
 
 
 class DischargeSummarySequentialEmbedding(eqx.Module):
@@ -399,5 +419,6 @@ class DischargeSummarySequentialEmbedding(eqx.Module):
         assert not isinstance(admission, SegmentedAdmission), "SegmentedAdmission not supported"
         emb_components = self.f_components_emb(admission, admission_demographic)
         summary = self._embed_summary_features(emb_components.dx_codes, emb_components.demographic)
+        history_summary = self._embed_summary_features(emb_components.dx_codes_history, emb_components.demographic)
         return EmbeddedDischargeSummary(dx_codes=emb_components.dx_codes, demographic=emb_components.demographic,
-                                        summary=summary)
+                                        summary=summary, history_summary=history_summary)
