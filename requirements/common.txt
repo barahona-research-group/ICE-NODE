@@ -1,5 +1,5 @@
 diffrax==0.4.1
-equinox==0.10.11
+equinox==0.11.3
 optax==0.1.4
 numpy==1.24.4
 pandas==2.1.4

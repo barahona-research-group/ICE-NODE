@@ -23,7 +23,7 @@ from .model import (InpatientModel, ModelConfig, ModelRegularisation,
 from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
                    LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import GroupingData
-from ..ehr.tvx_concepts import SegmentedAdmission
+from ..ehr.tvx_concepts import SegmentedAdmission, SegmentedInpatientInterventions
 from ..utils import model_params_scaler
 
 LeadPredictorName = Literal['monotonic', 'mlp']
@@ -175,8 +175,6 @@ class InICENODEStateAdjust(eqx.Module):
 
 
 class ICENODEStateTrajectory(InpatientObservables):
-    def __post_init__(self):
-        assert self.forecasted_state.shape == self.adjusted_state.shape
 
     @property
     def forecasted_state(self):
@@ -195,12 +193,55 @@ class ICENODEStateTrajectory(InpatientObservables):
         return eqx.tree_at(lambda x: x.extra_layers, traj, (traj.value,))
 
     @staticmethod
-    def compile(time: jnp.ndarray, forecasted_state: Tuple[jnp.ndarray],
-                adjusted_state: Tuple[jnp.ndarray]) -> ICENODEStateTrajectory:
+    def compile(time: jnp.ndarray, forecasted_state: Tuple[jnp.ndarray, ...],
+                adjusted_state: Tuple[jnp.ndarray, ...]) -> ICENODEStateTrajectory:
         forecasted_state = jnp.vstack(forecasted_state)
         adjusted_state = jnp.vstack(adjusted_state)
         return ICENODEStateTrajectory(time=time, value=forecasted_state, extra_layers=(adjusted_state,),
                                       mask=jnp.ones_like(forecasted_state, dtype=bool))
+
+
+class AdmissionTrajectoryPrediction(AdmissionPrediction):
+    trajectory: Optional[ICENODEStateTrajectory] = None
+
+
+class LeadingPredictionLayers(InpatientObservables):
+
+    @property
+    def hidden_status_prediction(self):
+        return self.value
+
+    @property
+    def forecasted_forced_observable(self):
+        return self.extra_layers[0]
+
+    @property
+    def forecasted_autonomous_observable(self):
+        return self.extra_layers[1]
+
+    @property
+    def hidden_status_uncertainty(self):
+        return self.extra_layers[2]
+
+    @staticmethod
+    def empty(size: int,
+              time_dtype: Type | str = jnp.float64,
+              value_dtype: Type | str = jnp.float16,
+              mask_dtype: Type | str = bool) -> ICENODEStateTrajectory:
+        traj = InpatientObservables.empty(size, time_dtype, value_dtype, mask_dtype)
+        return eqx.tree_at(lambda x: x.extra_layers, traj, (traj.value,) * 3)
+
+    @staticmethod
+    def compile(time: jnp.ndarray, mask: jnp.ndarray,
+                hidden_status_prediction: Tuple[jnp.ndarray, ...],
+                forecasted_forced_observable: Tuple[jnp.ndarray, ...],
+                forecasted_autonomous_observable: Tuple[jnp.ndarray, ...],
+                hidden_status_uncertainty: Tuple[jnp.ndarray, ...]) -> LeadingPredictionLayers:
+        hidden_status_prediction = jnp.vstack(hidden_status_prediction)
+        extra = tuple(jnp.vstack(x) for x in (
+            forecasted_forced_observable, forecasted_autonomous_observable, hidden_status_uncertainty))
+        return LeadingPredictionLayers(time=time, value=hidden_status_prediction, extra_layers=extra,
+                                       mask=mask)
 
 
 class DirectLeadPredictorWrapper(eqx.Module):
@@ -382,8 +423,8 @@ class InICENODE(InpatientModel):
     def __call__(
             self, admission: SegmentedAdmission,
             embedded_admission: EmbeddedAdmission, precomputes: Precomputes
-    ) -> AdmissionPrediction:
-        prediction = AdmissionPrediction(admission=admission)
+    ) -> AdmissionTrajectoryPrediction:
+        prediction = AdmissionTrajectoryPrediction(admission=admission)
         int_e = embedded_admission.interventions or jnp.array([[]])
         demo_e = embedded_admission.demographic or jnp.array([])
         obs = admission.observables
@@ -406,15 +447,18 @@ class InICENODE(InpatientModel):
                 t = obs_t
             state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes)
             t = segment_t1
-        forecasted_states, adjusted_states = zip(*state_trajectory)
-        icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
-                                                                  adjusted_state=adjusted_states)
-        # TODO: test --> assert len(obs.time) == len(forecasted_states)
-        prediction = prediction.add(outcome=CodesVector(self.f_dx_dec(state), admission.outcome.scheme))
-        prediction = prediction.add(observables=self.decode_state_trajectory_observables(
-            admission=admission, state_trajectory=icenode_state_trajectory))
-        prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
-            admission=admission, state_trajectory=icenode_state_trajectory))
+
+        if self.f_outcome_dec is not None:
+            prediction = prediction.add(outcome=CodesVector(self.f_dx_dec(state), admission.outcome.scheme))
+        if len(state_trajectory) > 0:
+            forecasted_states, adjusted_states = zip(*state_trajectory)
+            icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
+                                                                      adjusted_state=adjusted_states)
+            # TODO: test --> assert len(obs.time) == len(forecasted_states)
+            prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+                admission=admission, state_trajectory=icenode_state_trajectory))
+            prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
+                admission=admission, state_trajectory=icenode_state_trajectory))
         return prediction
 
     @property
@@ -438,6 +482,106 @@ class InICENODELite(InICENODE):
                          dx_codes_size=dx_codes_size, outcome_size=None, icu_inputs_grouping=icu_inputs_grouping,
                          icu_procedures_size=icu_procedures_size, hosp_procedures_size=hosp_procedures_size,
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
+
+
+class AugmentedForcedVectorField(ForcedVectorField):
+    mlp: eqx.nn.MLP  # should be shared with f_dyn.
+
+    def __call__(self, t: float, x: PyTree, u: PyTree) -> PyTree:
+        force, zero_force = u
+        x_f, x_a = x
+        dx_f = self.mlp(jnp.hstack((x_f, force)))
+        dx_a = self.mlp(jnp.hstack((x_a, zero_force)))
+        return dx_f, dx_a
+
+
+class TrajectoryInterventionEffectEstimator(NeuralODESolver):
+    f: AugmentedForcedVectorField
+
+    def get_args(self, x0: PyTree, u: PyTree, precomputes: Optional[Precomputes]) -> PyTree:
+        forced, unforced = u
+        return forced, unforced
+
+    def get_aug_x0(self, x0: PyTree, precomputes: Precomputes) -> PyTree:
+        return x0, x0
+
+    @staticmethod
+    def from_mlp(mlp: eqx.nn.MLP, second: float = 1 / 3600.0, dt0: float = 60.0):
+        raise NotImplementedError("This method is disabled for this class. Use from_shared_dyn instead.")
+
+    @staticmethod
+    def from_shared_dyn(shared_dyn: NeuralODESolver):
+        return TrajectoryInterventionEffectEstimator(f=AugmentedForcedVectorField(mlp=shared_dyn.f.mlp),
+                                                     SECOND=shared_dyn.SECOND, DT0=shared_dyn.DT0)
+
+
+class UAInICENODE(InICENODELite):  # Uncertainty-Aware InICENODE
+    leading_observable_index: int
+    lead_times: Tuple[float, ...]
+
+    @property
+    def f_ua_dyn(self):
+        return TrajectoryInterventionEffectEstimator.from_shared_dyn(self.f_dyn)
+
+    def __init__(self, config: InpatientModelConfig,
+                 embeddings_config: Union[AdmissionEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
+                 leading_observables_index: int,
+                 lead_times: Tuple[float, ...],
+                 dx_codes_size: Optional[int] = None,
+                 icu_inputs_grouping: Optional[GroupingData] = None,
+                 icu_procedures_size: Optional[int] = None,
+                 hosp_procedures_size: Optional[int] = None,
+                 demographic_size: Optional[int] = None,
+                 observables_size: Optional[int] = None, *,
+                 key: "jax.random.PRNGKey"):
+        super().__init__(config=config, embeddings_config=embeddings_config, lead_times=lead_times,
+                         dx_codes_size=dx_codes_size, icu_inputs_grouping=icu_inputs_grouping,
+                         icu_procedures_size=icu_procedures_size, hosp_procedures_size=hosp_procedures_size,
+                         demographic_size=demographic_size, observables_size=observables_size, key=key)
+        self.leading_observable_index = leading_observables_index
+        self.lead_times = lead_times
+
+    def _estimate_intervention_effect(self, t: float, initial_state: jnp.ndarray,
+                                      admission: SegmentedAdmission,
+                                      embdedded_interventions: jnp.ndarray,
+                                      embedded_demographic: Optional[jnp.ndarray],
+                                      precomputes: Precomputes) -> Tuple[jnp.ndarray, ...]:
+        segments_t0 = admission.interventions.t0
+        segments_t1 = admission.interventions.t1
+        demo_e = embedded_demographic or jnp.array([])
+        no_intervention_u = jnp.hstack((demo_e, jnp.zeros_like(embdedded_interventions[0])))
+
+        n_segments = admission.observables.n_segments
+        for segment_index in range(n_segments):
+            segment_t1 = segments_t1[segment_index]
+            if t < segment_t1:
+                continue
+            segment_interventions = embdedded_interventions[segment_index]
+            intervention_u = jnp.hstack((demo_e, segment_interventions))
+
+            # for obs_t, obs_val, obs_mask in segment_obs:
+            #     # if time-diff is more than 1 seconds, we integrate.
+            #     forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
+            #     state = self.f_update(forecasted_state, self.f_obs_dec(state), obs_val, obs_mask)
+            #     state_trajectory += ((forecasted_state, state),)
+            #     t = obs_t
+            # state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes)
+            t = segment_t1
+
+    def __call__(self, admission: SegmentedAdmission,
+                 embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> AdmissionTrajectoryPrediction:
+        prediction = super().__call__(admission, embedded_admission, precomputes)
+        function_trajectory = tuple()
+        for i, (t, value, mask) in enumerate(prediction.leading_observable):
+            if mask.sum() == 0:
+                function_trajectory += ((value * jnp.nan,) * 3,)
+            else:
+                assert t == prediction.trajectory.time[i]
+                initial_state = prediction.trajectory.adjusted_state[i]
+                estimands = self._estimate_intervention_effect(t, initial_state, admission.interventions, precomputes)
+                forecasted_forced_obs, forecasted_autonomous_obs, status_uncertainty = estimands
+
+        return prediction
 
 
 class CompiledGRU(eqx.nn.GRUCell):

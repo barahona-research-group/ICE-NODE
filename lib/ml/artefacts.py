@@ -38,6 +38,7 @@ class AdmissionPrediction(VxData):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))
 
 
+
 class AdmissionsPrediction(VxData):
     predictions: Tuple[Tuple[str, AdmissionPrediction], ...] = field(default_factory=tuple)
 

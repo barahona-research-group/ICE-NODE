@@ -234,12 +234,6 @@ class InpatientObservables(VxData):
     def time2index(self) -> Dict[float, int]:
         return {t: i for i, t in enumerate(self.timestamps)}
 
-    def at(self, t: float, layer_index: Optional[int] = None) -> Tuple[Array, Array]:
-        i = self.time2index[t]
-        if layer_index:
-            return self.value[i], self.extra_layers[layer_index][i]
-        return self.value[i], self.mask[i]
-
     def __iter__(self) -> Iterator[Tuple[float, Array, Array]]:
         return zip(self.time, self.value, self.mask)
 
