@@ -476,33 +476,14 @@ class TrajectoryInterventionEffectEstimator(NeuralODESolver):
                                                      SECOND=shared_dyn.SECOND, DT0=shared_dyn.DT0)
 
 
-class UAInICENODE(InICENODELite):  # Uncertainty-Aware InICENODE
+class InterventionUncertaintyWeightingScheme(eqx.Module):  # Uncertainty-Aware InICENODE
     leading_observable_index: int
     lead_times: Tuple[float, ...]
 
-    @property
-    def f_ua_dyn(self):
-        return TrajectoryInterventionEffectEstimator.from_shared_dyn(self.f_dyn)
-
-    def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: Union[AdmissionEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
-                 leading_observables_index: int,
-                 lead_times: Tuple[float, ...],
-                 dx_codes_size: Optional[int] = None,
-                 icu_inputs_grouping: Optional[GroupingData] = None,
-                 icu_procedures_size: Optional[int] = None,
-                 hosp_procedures_size: Optional[int] = None,
-                 demographic_size: Optional[int] = None,
-                 observables_size: Optional[int] = None, *,
-                 key: "jax.random.PRNGKey"):
-        super().__init__(config=config, embeddings_config=embeddings_config, lead_times=lead_times,
-                         dx_codes_size=dx_codes_size, icu_inputs_grouping=icu_inputs_grouping,
-                         icu_procedures_size=icu_procedures_size, hosp_procedures_size=hosp_procedures_size,
-                         demographic_size=demographic_size, observables_size=observables_size, key=key)
-        self.leading_observable_index = leading_observables_index
-        self.lead_times = lead_times
-
-    def _estimate_intervention_effect(self, timestamp_index, initial_state: jnp.ndarray,
+    def _estimate_intervention_effect(self,
+                                      f_obs_decoder: eqx.nn.MLP,
+                                      f_ua_dyn: TrajectoryInterventionEffectEstimator,
+                                      timestamp_index, initial_state: jnp.ndarray,
                                       admission: SegmentedAdmission,
                                       embdedded_interventions: jnp.ndarray,
                                       embedded_demographic: Optional[jnp.ndarray],
@@ -564,18 +545,18 @@ class UAInICENODE(InICENODELite):  # Uncertainty-Aware InICENODE
             segment_obs_times = SubSaveAt(ts=obs_segment_ts) if len(obs_segment_ts) > 0 else None
 
             saveat = SaveAt(subs=(SubSaveAt(t1=True), segment_obs_times, segment_delay_grid))
-            state, obs_ts_state, delay_ts_state = self.f_ua_dyn(state, t0=state_t, t1=segment_t1, saveat=saveat,
-                                                                u=(intervention_u, no_intervention_u),
-                                                                precomputes=precomputes)
+            state, obs_ts_state, delay_ts_state = f_ua_dyn(state, t0=state_t, t1=segment_t1, saveat=saveat,
+                                                           u=(intervention_u, no_intervention_u),
+                                                           precomputes=precomputes)
             if obs_ts_state:
                 forced_state, _ = obs_ts_state
-                forced_obs_pred = eqx.filter_vmap(self.f_obs_dec)(forced_state)[:, self.leading_observable_index]
+                forced_obs_pred = eqx.filter_vmap(f_obs_decoder)(forced_state)[:, self.leading_observable_index]
                 forced_obs_pred_diff += (forced_obs_pred.squeeze() - obs_values[obs_times][:5],)
 
             for delayed_state_grid in delay_ts_state:
                 forced_state, auto_state = delayed_state_grid
-                forced_delayed_pred = eqx.filter_vmap(self.f_obs_dec)(forced_state)[:, self.leading_observable_index]
-                auto_delayed_pred = eqx.filter_vmap(self.f_obs_dec)(auto_state)[:, self.leading_observable_index]
+                forced_delayed_pred = eqx.filter_vmap(f_obs_decoder)(forced_state)[:, self.leading_observable_index]
+                auto_delayed_pred = eqx.filter_vmap(f_obs_decoder)(auto_state)[:, self.leading_observable_index]
                 grid_max_effect = jnp.max(jnp.abs(forced_delayed_pred - auto_delayed_pred))
                 current_intervention_effect = jnp.maximum(current_intervention_effect, grid_max_effect)
                 predicted_intervention_effect += (current_intervention_effect,)
@@ -592,20 +573,37 @@ class UAInICENODE(InICENODELite):  # Uncertainty-Aware InICENODE
                 len(self.lead_times) - len(predicted_intervention_effect))
         return predicted_intervention_effect, (forced_prediction_n, forced_prediction_l2)
 
-    def __call__(self, admission: SegmentedAdmission,
-                 embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> AdmissionTrajectoryPrediction:
-        prediction = super().__call__(admission, embedded_admission, precomputes)
-        function_trajectory = tuple()
-        for i, (t, value, mask) in enumerate(prediction.leading_observable):
+    def __call__(self,
+                 f_obs_decoder: eqx.nn.MLP,
+                 f_ode_dyn: NeuralODESolver,
+                 initial_states: jnp.ndarray,
+                 admission: SegmentedAdmission,
+                 embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> Tuple[
+        Tuple[float, int], InpatientObservables]:
+        intervention_effect = tuple()
+        forced_prediction_l2 = tuple()
+        f_uncertainty_dyn = TrajectoryInterventionEffectEstimator.from_shared_dyn(f_ode_dyn)
+        assert len(admission.observables.time) == len(initial_states)
+        for i, (_, _, mask) in enumerate(admission.leading_observable):
             if mask.sum() == 0:
-                function_trajectory += ((value * jnp.nan,) * 3,)
+                intervention_effect += ((0.0,) * len(self.lead_times),)
+                forced_prediction_l2 += ((0, 0.0),)
             else:
-                assert t == prediction.trajectory.time[i]
-                initial_state = prediction.trajectory.adjusted_state[i]
-                estimands = self._estimate_intervention_effect(t, initial_state, admission.interventions, precomputes)
-                forecasted_forced_obs, forecasted_autonomous_obs, status_uncertainty = estimands
-
-        return prediction
+                estimands = self._estimate_intervention_effect(f_obs_decoder, f_uncertainty_dyn,
+                                                               i, initial_states[i],
+                                                               admission, embedded_admission.interventions,
+                                                               embedded_admission.demographic,
+                                                               precomputes)
+                intervention_effect += (estimands[0],)
+                forced_prediction_l2 += (estimands[1],)
+        intervention_effect_array = jnp.array(intervention_effect)
+        intervention_effect_struct = InpatientObservables(time=admission.leading_observable.time,
+                                                          value=intervention_effect_array,
+                                                          mask=admission.leading_observable.mask)
+        forced_prediction_l2, n = zip(*forced_prediction_l2)
+        sum_n = sum(n)
+        forced_prediction_l2_mean = sum(l2 * n / sum_n for l2, n in zip(forced_prediction_l2, n))
+        return (forced_prediction_l2_mean, sum_n), intervention_effect_struct
 
 
 class CompiledGRU(eqx.nn.GRUCell):
