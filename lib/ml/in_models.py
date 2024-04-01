@@ -8,7 +8,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController
+from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, SubSaveAt
 from jaxtyping import PyTree
 
 from .artefacts import AdmissionPrediction
@@ -23,7 +23,7 @@ from .model import (InpatientModel, ModelConfig, ModelRegularisation,
 from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
                    LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import GroupingData
-from ..ehr.tvx_concepts import SegmentedAdmission, SegmentedInpatientInterventions
+from ..ehr.tvx_concepts import SegmentedAdmission
 from ..utils import model_params_scaler
 
 LeadPredictorName = Literal['monotonic', 'mlp']
@@ -71,7 +71,7 @@ class NeuralODESolver(eqx.Module):
 
     @eqx.filter_jit
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
-                 u: Optional[jnp.ndarray] = None,
+                 u: Optional[PyTree] = None,
                  precomputes: Optional[Precomputes] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
         sol = diffeqsolve(
             terms=self.ode_term,
@@ -203,45 +203,6 @@ class ICENODEStateTrajectory(InpatientObservables):
 
 class AdmissionTrajectoryPrediction(AdmissionPrediction):
     trajectory: Optional[ICENODEStateTrajectory] = None
-
-
-class LeadingPredictionLayers(InpatientObservables):
-
-    @property
-    def hidden_status_prediction(self):
-        return self.value
-
-    @property
-    def forecasted_forced_observable(self):
-        return self.extra_layers[0]
-
-    @property
-    def forecasted_autonomous_observable(self):
-        return self.extra_layers[1]
-
-    @property
-    def hidden_status_uncertainty(self):
-        return self.extra_layers[2]
-
-    @staticmethod
-    def empty(size: int,
-              time_dtype: Type | str = jnp.float64,
-              value_dtype: Type | str = jnp.float16,
-              mask_dtype: Type | str = bool) -> ICENODEStateTrajectory:
-        traj = InpatientObservables.empty(size, time_dtype, value_dtype, mask_dtype)
-        return eqx.tree_at(lambda x: x.extra_layers, traj, (traj.value,) * 3)
-
-    @staticmethod
-    def compile(time: jnp.ndarray, mask: jnp.ndarray,
-                hidden_status_prediction: Tuple[jnp.ndarray, ...],
-                forecasted_forced_observable: Tuple[jnp.ndarray, ...],
-                forecasted_autonomous_observable: Tuple[jnp.ndarray, ...],
-                hidden_status_uncertainty: Tuple[jnp.ndarray, ...]) -> LeadingPredictionLayers:
-        hidden_status_prediction = jnp.vstack(hidden_status_prediction)
-        extra = tuple(jnp.vstack(x) for x in (
-            forecasted_forced_observable, forecasted_autonomous_observable, hidden_status_uncertainty))
-        return LeadingPredictionLayers(time=time, value=hidden_status_prediction, extra_layers=extra,
-                                       mask=mask)
 
 
 class DirectLeadPredictorWrapper(eqx.Module):
@@ -541,32 +502,95 @@ class UAInICENODE(InICENODELite):  # Uncertainty-Aware InICENODE
         self.leading_observable_index = leading_observables_index
         self.lead_times = lead_times
 
-    def _estimate_intervention_effect(self, t: float, initial_state: jnp.ndarray,
+    def _estimate_intervention_effect(self, timestamp_index, initial_state: jnp.ndarray,
                                       admission: SegmentedAdmission,
                                       embdedded_interventions: jnp.ndarray,
                                       embedded_demographic: Optional[jnp.ndarray],
-                                      precomputes: Precomputes) -> Tuple[jnp.ndarray, ...]:
-        segments_t0 = admission.interventions.t0
-        segments_t1 = admission.interventions.t1
+                                      precomputes: Precomputes) -> Tuple[Tuple[float, ...], Tuple[int, jnp.ndarray]]:
+
+        """
+        Generate supplementary statistics relative to the timestamp_index of the admission observables, which
+        will be used to estimate the intervention effect as an uncertainty proxy for the outcome prediction.
+        The outcome prediction at time t is assumed to match up with the delayed response at
+        admission.leading_observables[timestamp_index], which is a strong assumption due to:
+            - The interventions applied between t and the delayed response time (t + lead_time), can mitigate
+                the delayed response per se, so it will be non-ideal to penalize a positive outcome prediction
+                 as a false positive, while in fact it is a correct prediction of the outcome.
+            - In contrast, the interventions themselves might solely induce the patient's condition, so it
+                will be misleading to penalize the model for negative outcome prediction as false negative,
+                while in fact it is a correct prediction of a missing outcome.
+        So this function will estimate the effect of the interventions by producing:
+            - A maximum absolute difference between (a) the predicted delayed response under interventions
+                (calling it forced observable response) with (b) the predicted delayed response with interventions
+                masked-out (calling it autonomous response). The demographics are not considered in the intervention
+                effect estimation.
+            - The difference between the predicted forced observable response and the ground-truth response. It
+                will be used to improve the model prediction of the intervention effect.
+        """
+        # Current state value/time.
+        state = initial_state
+        state_t = admission.observables.time[timestamp_index]
+
+        # Collect the observable of interest.
+        observables = admission.observables
+        obs_mask = observables.mask[:, self.leading_observable_index]
+        obs_values = observables.value[obs_mask][:, self.leading_observable_index]
+        obs_times = observables.time[obs_mask]
+
+        # Demographics and masked-out interventions.
         demo_e = embedded_demographic or jnp.array([])
         no_intervention_u = jnp.hstack((demo_e, jnp.zeros_like(embdedded_interventions[0])))
 
-        n_segments = admission.observables.n_segments
-        for segment_index in range(n_segments):
-            segment_t1 = segments_t1[segment_index]
-            if t < segment_t1:
+        # the defined delays (t+L) for all L in lead_times.
+        delays = tuple(state_t + lead_time for lead_time in self.lead_times)
+        # grid of delays to probe the intervention max effect.
+        delays_grid = tuple(jnp.linspace(d_t0, d_t1, 10) for d_t0, d_t1 in zip((state_t,) + delays[:-1], delays))
+
+        # timestamps where ground-truth observables are available.
+        obs_times = tuple(t for t in obs_times if state_t < t <= delays[-1])
+        forced_obs_pred_diff = tuple()  # forced observable prediction at obs_times.
+        predicted_intervention_effect = tuple()  # Stores max absolute difference between forced and autonomous preds.
+        current_intervention_effect = 0.0  # Stores the last max absolute difference between forced and autonomous preds.
+        for segment_index in range(observables.n_segments):
+            segment_t1 = admission.interventions.t1[segment_index]
+            if state_t < segment_t1:
                 continue
             segment_interventions = embdedded_interventions[segment_index]
             intervention_u = jnp.hstack((demo_e, segment_interventions))
+            segment_delay_grid = tuple(SubSaveAt(ts=delays_grid) for delay_t, delay_grid in
+                                       zip(delays, delays_grid) if state_t < delay_t <= segment_t1)
+            # Limit to 5, less shape variations, less JITs.
+            obs_segment_ts = tuple(t for t in obs_times if state_t < t <= segment_t1)[:5]
+            segment_obs_times = SubSaveAt(ts=obs_segment_ts) if len(obs_segment_ts) > 0 else None
 
-            # for obs_t, obs_val, obs_mask in segment_obs:
-            #     # if time-diff is more than 1 seconds, we integrate.
-            #     forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
-            #     state = self.f_update(forecasted_state, self.f_obs_dec(state), obs_val, obs_mask)
-            #     state_trajectory += ((forecasted_state, state),)
-            #     t = obs_t
-            # state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes)
-            t = segment_t1
+            saveat = SaveAt(subs=(SubSaveAt(t1=True), segment_obs_times, segment_delay_grid))
+            state, obs_ts_state, delay_ts_state = self.f_ua_dyn(state, t0=state_t, t1=segment_t1, saveat=saveat,
+                                                                u=(intervention_u, no_intervention_u),
+                                                                precomputes=precomputes)
+            if obs_ts_state:
+                forced_state, _ = obs_ts_state
+                forced_obs_pred = eqx.filter_vmap(self.f_obs_dec)(forced_state)[:, self.leading_observable_index]
+                forced_obs_pred_diff += (forced_obs_pred.squeeze() - obs_values[obs_times][:5],)
+
+            for delayed_state_grid in delay_ts_state:
+                forced_state, auto_state = delayed_state_grid
+                forced_delayed_pred = eqx.filter_vmap(self.f_obs_dec)(forced_state)[:, self.leading_observable_index]
+                auto_delayed_pred = eqx.filter_vmap(self.f_obs_dec)(auto_state)[:, self.leading_observable_index]
+                grid_max_effect = jnp.max(jnp.abs(forced_delayed_pred - auto_delayed_pred))
+                current_intervention_effect = jnp.maximum(current_intervention_effect, grid_max_effect)
+                predicted_intervention_effect += (current_intervention_effect,)
+
+            state_t = segment_t1
+            if state_t >= delays[-1]:
+                break
+
+        forced_prediction_l2 = jnp.mean(jnp.hstack(forced_obs_pred_diff) ** 2)
+        forced_prediction_n = sum(map(len, forced_obs_pred_diff))
+
+        assert len(predicted_intervention_effect) <= len(self.lead_times)
+        predicted_intervention_effect += (current_intervention_effect,) * (
+                len(self.lead_times) - len(predicted_intervention_effect))
+        return predicted_intervention_effect, (forced_prediction_n, forced_prediction_l2)
 
     def __call__(self, admission: SegmentedAdmission,
                  embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> AdmissionTrajectoryPrediction:

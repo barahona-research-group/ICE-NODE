@@ -819,34 +819,34 @@ class SegmentedInpatientInterventions(VxData):
             yield (self.hosp_procedures[i] if self.hosp_procedures else None,
                    self.icu_procedures[i] if self.icu_procedures else None,
                    self.icu_inputs[i] if self.icu_inputs else None)
-
-    @staticmethod
-    def extracted_interval_args(t0: float, t1: float, time: Array) -> Tuple[Array, Array]:
-        """
-        Extracts the indices of the segmented interventions within the specified interval.
-
-        Args:
-            t0 (float): the start time of the interval.
-            t1 (float): the end time of the interval.
-            time (Array): the time array.
-
-        Returns:
-            Tuple[Array, Array]: the indices of the segmented interventions within the specified interval.
-        """
-        xnp = np_module(time)
-        mask = (time > t0) & (time <= t1)
-        new_time = xnp.hstack([t0, time[mask], t1]) - t0
-        arg = xnp.flatnonzero(mask)
-        arg = xnp.hstack([arg - 1, arg[-1]])
-        return arg, new_time
-
-    @staticmethod
-    def extract_interval(t0: float, t1: float, time: Array, interventions_array: Array) -> Tuple[Array, Array]:
-
-        assert time.shape[0] == interventions_array.shape[0], "Time and interventions array must have the same length"
-        assert t0 < t1, "Start time must be less than end time"
-        arg, new_time = SegmentedInpatientInterventions.extracted_interval_args(t0, t1, time)
-        return new_time, interventions_array[arg, :]
+    #
+    # @staticmethod
+    # def extracted_interval_args(t0: float, t1: float, time: Array) -> Tuple[Array, Array]:
+    #     """
+    #     Extracts the indices of the segmented interventions within the specified interval.
+    #
+    #     Args:
+    #         t0 (float): the start time of the interval.
+    #         t1 (float): the end time of the interval.
+    #         time (Array): the time array.
+    #
+    #     Returns:
+    #         Tuple[Array, Array]: the indices of the segmented interventions within the specified interval.
+    #     """
+    #     xnp = np_module(time)
+    #     mask = (time > t0) & (time <= t1)
+    #     new_time = xnp.hstack([t0, time[mask], t1]) - t0
+    #     arg = xnp.flatnonzero(mask)
+    #     arg = xnp.hstack([arg - 1, arg[-1]])
+    #     return arg, new_time
+    #
+    # @staticmethod
+    # def extract_interval(t0: float, t1: float, time: Array, interventions_array: Array) -> Tuple[Array, Array]:
+    #
+    #     assert time.shape[0] == interventions_array.shape[0], "Time and interventions array must have the same length"
+    #     assert t0 < t1, "Start time must be less than end time"
+    #     arg, new_time = SegmentedInpatientInterventions.extracted_interval_args(t0, t1, time)
+    #     return new_time, interventions_array[arg, :]
 
     @cached_property
     def t0_padded(self):
