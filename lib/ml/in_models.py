@@ -1,18 +1,19 @@
 """."""
 from __future__ import annotations
 
-from typing import Callable, Tuple, Optional, Literal, Type, Union, Final
+from typing import Tuple, Optional, Literal, Type, Union, Final
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.scipy as jscipy
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, SubSaveAt
 from jaxtyping import PyTree
 
+from ._eig_ad import eig
 from .artefacts import AdmissionPrediction
-from .base_models_koopman import SKELKoopmanOperator, VanillaKoopmanOperator
 from .embeddings import (AdmissionEmbedding, AdmissionEmbeddingsConfig, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          SpecialisedAdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -20,8 +21,7 @@ from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSu
                          EmbeddedDischargeSummary)
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
                     Precomputes)
-from ..ehr import (Admission, InpatientObservables, DatasetScheme, DemographicVectorConfig, CodesVector,
-                   LeadingObservableExtractorConfig)
+from ..ehr import (Admission, InpatientObservables, CodesVector)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission
 from ..utils import model_params_scaler
@@ -735,106 +735,65 @@ class InRETAINConfig(ModelConfig):
     lead_predictor: str = "monotonic"
 
 
+class CompiledLinear(eqx.nn.Linear):
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
+class InRETAINDynamic(eqx.Module):
+    f_gru_a: CompiledGRU
+    f_gru_b: CompiledGRU
+    f_att_a: CompiledLinear
+    f_att_b: CompiledLinear
+    f_step: CompiledGRU
+
+
 class InRETAIN(InGRUJump):
-    f_gru_a: Callable
-    f_gru_b: Callable
-    f_att_a: Callable
-    f_att_b: Callable
-    f_lead_dec: Callable
-    f_obs_dec: Callable
-    f_dx_dec: Callable
-    f_init: Callable
-    f_dym: Callable = None
+    f_dyn: InRETAINDynamic
     config: InRETAINConfig = eqx.static_field()
 
-    def __init__(self, config: InRETAINConfig,
-                 embeddings_config: AdmissionSequentialEmbeddingsConfig,
+    def __init__(self, config: InpatientModelConfig,
+                 embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey"):
+        class InRETAINProxyConfig(InRETAINConfig, InpatientModelConfig):
+            state: int
 
-        keys = jrandom.split(key, 9)
-        f_emb = InGRU._make_embedding(
-            config=embeddings_config,
-            dx_codes_size=dx_codes_size,
-            icu_inputs_grouping=None,
-            icu_procedures_size=None,
-            hosp_procedures_size=None,
-            demographic_size=demographic_size,
-            observables_size=observables_size,
-            key=key)
-        f_dx_dec = self._make_dx_dec(config=config,
-                                     dx_size=len(schemes[1].outcome),
-                                     key=keys[1])
-
-        self.f_lead_dec = InICENODE._make_lead_dec(
-            config=config,
-            input_size=config.emb.sequence,
-            leading_observable_config=leading_observable_config,
-            key=keys[2])
-        self.f_obs_dec = self._make_obs_dec(config=config,
-                                            obs_size=len(schemes[1].obs),
-                                            key=keys[3])
-
-        self.f_gru_a = eqx.nn.GRUCell(config.emb.sequence,
-                                      config.mem_a,
-                                      use_bias=True,
-                                      key=keys[4])
-        self.f_gru_b = eqx.nn.GRUCell(config.emb.sequence,
-                                      config.mem_b,
-                                      use_bias=True,
-                                      key=keys[5])
-
-        self.f_att_a = eqx.nn.Linear(config.mem_a,
-                                     1,
-                                     use_bias=True,
-                                     key=keys[6])
-        self.f_att_b = eqx.nn.Linear(config.mem_b,
-                                     config.emb.sequence,
-                                     use_bias=True,
-                                     key=keys[7])
-
-        self.f_init = self._make_init(config=config, key=keys[8])
-
-        super().__init__(config=config, f_emb=f_emb, f_dx_dec=f_dx_dec)
+        config = InRETAINProxyConfig(state=embeddings_config.summary, **config.as_dict())
+        super().__init__(config=config, embeddings_config=embeddings_config,
+                         lead_times=lead_times,
+                         dx_codes_size=dx_codes_size,
+                         demographic_size=demographic_size, observables_size=observables_size, key=key)
+        self.config = config
 
     @staticmethod
-    def _make_dyn(config, key, **kwargs):
-        return eqx.nn.GRUCell(input_size=config.emb.sequence,
-                              hidden_size=config.state,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+                  key: jrandom.PRNGKey) -> InRETAINDynamic:
+        f_gru_a = CompiledGRU(state_size,
+                              config.mem_a,
+                              use_bias=True,
+                              key=keys[4])
+        f_gru_b = CompiledGRU(state_size,
+                              config.mem_b,
+                              use_bias=True,
+                              key=keys[5])
+
+        f_att_a = eqx.nn.Linear(config.mem_a,
+                                1,
+                                use_bias=True,
+                                key=keys[6])
+        f_att_b = eqx.nn.Linear(config.mem_b,
+                                state_size,
+                                use_bias=True,
+                                key=keys[7])
+
+        return eqx.nn.GRUCell(input_size=state_size,
+                              hidden_size=state_size,
                               key=key)
-
-    @staticmethod
-    def _make_init(config, key):
-        init_input_size = config.emb.demo + config.emb.dx_discharge
-        return eqx.nn.MLP(init_input_size,
-                          config.mem_a + config.mem_b + config.emb.sequence,
-                          (config.mem_a + config.mem_b) * 3,
-                          depth=2,
-                          key=key)
-
-    @staticmethod
-    def _make_dx_dec(config, dx_size, key):
-        return eqx.nn.MLP(config.emb.sequence,
-                          dx_size,
-                          config.emb.dx_discharge * 5,
-                          depth=1,
-                          key=key)
-
-    @staticmethod
-    def _make_obs_dec(config, obs_size, key):
-        return eqx.nn.MLP(config.emb.sequence,
-                          obs_size,
-                          obs_size * 5,
-                          depth=1,
-                          key=key)
-
-    @property
-    def dyn_params_list(self):
-        return self.params_list(
-            (self.f_gru_a, self.f_gru_b, self.f_att_a, self.f_att_b))
 
     @eqx.filter_jit
     def _gru_a(self, x, state):
@@ -947,8 +906,6 @@ class InRETAIN(InGRUJump):
         pred_lead = InpatientObservables(lead.time, jnp.vstack(pred_lead_l),
                                          lead.mask)
 
-        pred_dx = CodesVector(self.f_dx_dec(context),
-                              admission.outcome.scheme)
         return AdmissionPrediction(admission=admission,
                                    outcome=pred_dx,
                                    observables=pred_obs,
@@ -956,138 +913,210 @@ class InRETAIN(InGRUJump):
                                    trajectory=None)
 
 
-class InSKELKoopmanConfig(InICENODELiteConfig):
-    pass
-
-
-class InSKELKoopmanRegularisation(ModelRegularisation):
-    L_rec: float = 1.0
-
-
-class InSKELKoopmanPrecomputes(Precomputes):
+class InKoopmanPrecomputes(Precomputes):
     A: jnp.ndarray
 
 
-class InSKELKoopman(InICENODELite):
+if len(jax.devices()) > 0:
+    _flag_gpu_device = jax.devices()[0].platform == "gpu"
+else:
+    _flag_gpu_device = False
 
-    def __init__(self, config: InSKELKoopmanConfig,
-                 schemes: Tuple[DatasetScheme],
-                 demographic_vector_config: DemographicVectorConfig,
-                 leading_observable_config: LeadingObservableExtractorConfig,
-                 key: "jax.random.PRNGKey"):
-        super().__init__(config=config,
-                         schemes=schemes,
-                         demographic_vector_config=demographic_vector_config,
-                         leading_observable_config=leading_observable_config,
-                         key=key)
 
-    @staticmethod
-    def _make_dyn(config, key):
-        return SKELKoopmanOperator(input_size=config.state,
-                                   control_size=config.emb.inp_proc_demo,
-                                   koopman_size=config.state * 5,
-                                   key=key)
+class KoopmanPhi(eqx.Module):
+    """Koopman embeddings for continuous-time systems."""
+    mlp: eqx.Module
+    C: jnp.ndarray = eqx.static_field()
+    skip: bool = eqx.static_field()
+
+    def __init__(self,
+                 input_size: int,
+                 output_size: int,
+                 key: "jax.random.PRNGKey",
+                 depth: int,
+                 control_size: int = 0,
+                 skip: bool = True):
+        super().__init__()
+        self.skip = skip
+        self.C = jnp.eye(output_size, M=input_size + control_size)
+        self.mlp = eqx.nn.MLP(
+            input_size + control_size,
+            output_size,
+            depth=depth,
+            width_size=(input_size + control_size + output_size) // 2,
+            activation=jnn.relu,
+            use_final_bias=not skip,
+            key=key)
 
     @eqx.filter_jit
-    def _safe_integrate(self, delta, state, int_e, precomputes):
-        second = jnp.array(1 / 3600.0)
-        delta = jnp.where((delta < second) & (delta >= 0.0), second, delta)
-        return self.f_dyn(x=state, t=delta, u=int_e, A=precomputes.A)
+    def __call__(self, x, u=None):
+        if u is not None:
+            x = jnp.hstack((x, u))
+
+        if self.skip:
+            return self.C @ x + self.mlp(x)
+        else:
+            return self.mlp(x)
+
+
+class VanillaKoopmanOperator(eqx.Module):
+    A: jnp.ndarray
+    phi: KoopmanPhi
+    phi_inv: KoopmanPhi
+
+    input_size: int = eqx.static_field()
+    koopman_size: int = eqx.static_field()
+    control_size: int = eqx.static_field()
+    eigen_decomposition: bool = eqx.static_field()
+
+    def __init__(self,
+                 input_size: int,
+                 koopman_size: int,
+                 key: "jax.random.PRNGKey",
+                 control_size: int = 0,
+                 phi_depth: int = 1,
+                 eigen_decomposition: bool = not _flag_gpu_device):
+        super().__init__()
+        self.input_size = input_size
+        self.koopman_size = koopman_size
+        self.control_size = control_size
+        self.eigen_decomposition = eigen_decomposition
+        keys = jrandom.split(key, 3)
+
+        self.A = jrandom.normal(keys[0], (koopman_size, koopman_size),
+                                dtype=jnp.float32)
+        self.phi = KoopmanPhi(input_size,
+                              koopman_size,
+                              control_size=control_size,
+                              depth=phi_depth,
+                              skip=True,
+                              key=keys[1])
+        self.phi_inv = KoopmanPhi(koopman_size,
+                                  input_size,
+                                  depth=phi_depth,
+                                  skip=False,
+                                  key=keys[2])
+
+    @eqx.filter_jit
+    def compute_A(self):
+        if self.eigen_decomposition:
+            lam, V = eig(self.A)
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
+            return self.A, (lam, V, V_inv)
+
+        return self.A
+
+    def compute_K(self, t, A=None):
+        if A is None:
+            A = self.compute_A()
+        if self.eigen_decomposition:
+            _, (lam, V, V_inv) = A
+            return (V @ jnp.diag(jnp.exp(lam * t)) @ V_inv).real
+        else:
+            return jscipy.linalg.expm(A * t, max_squarings=20)
+
+    @eqx.filter_jit
+    def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
+                 u: Optional[PyTree] = None,
+                 precomputes: Optional[InKoopmanPrecomputes] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        if precomputes is None:
+            precomputes = InKoopmanPrecomputes(A=self.compute_A())
+
+        z = self.phi(x0, u=u)
+        K = self.compute_K(t1, A=precomputes.A)
+        z = K @ z
+        return self.phi_inv(z)
+
+    @eqx.filter_jit
+    def compute_phi_loss(self, x, u=None):
+        z = self.phi(x, u=u)
+        diff = x - self.phi_inv(z)
+        return jnp.mean(diff ** 2)
+
+    def compute_A_spectrum(self):
+        if self.eigen_decomposition:
+            _, (lam, _, _) = self.compute_A()
+        else:
+            lam, _ = jnp.linalg.eig(self.compute_A())
+
+        return lam.real, lam.imag
+
+
+class KoopmanOperator(VanillaKoopmanOperator):
+    """Koopman operator for continuous-time systems."""
+    R: jnp.ndarray
+    Q: jnp.ndarray
+    N: jnp.ndarray
+    epsI: jnp.ndarray = eqx.static_field()
+
+    def __init__(self,
+                 input_size: int,
+                 koopman_size: int,
+                 key: "jax.random.PRNGKey",
+                 control_size: int = 0,
+                 phi_depth: int = 3,
+                 eigen_decomposition: bool = not _flag_gpu_device):
+        superkey, key = jrandom.split(key, 2)
+        super().__init__(input_size=input_size,
+                         koopman_size=koopman_size,
+                         key=superkey,
+                         control_size=control_size,
+                         phi_depth=phi_depth,
+                         eigen_decomposition=eigen_decomposition)
+        self.A = None
+        self.eigen_decomposition = eigen_decomposition
+        keys = jrandom.split(key, 3)
+
+        self.R = jrandom.normal(keys[0], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.Q = jrandom.normal(keys[1], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.epsI = 1e-9 * jnp.eye(koopman_size, dtype=jnp.float64)
+
+        assert all(a.dtype == jnp.float64 for a in (self.R, self.Q, self.N)), \
+            "SKELKoopmanOperator requires float64 precision"
+
+    @eqx.filter_jit
+    def compute_A(self):
+        R = self.R
+        Q = self.Q
+        N = self.N
+
+        skew = (R - R.T) / 2
+        F = skew - Q @ Q.T - self.epsI
+        E = N @ N.T + self.epsI
+
+        A = jnp.linalg.solve(E, F)
+
+        if self.eigen_decomposition:
+            lam, V = eig(A)
+            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
+            return A, (lam, V, V_inv)
+
+        return A
+
+
+class InKoopman(InICENODELite):
+    f_dyn: KoopmanOperator
+
+    @staticmethod
+    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+                  key: jrandom.PRNGKey) -> KoopmanOperator:
+        interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
+        demographics_size = embeddings_config.demographic
+        return KoopmanOperator(input_size=state_size,
+                               control_size=interventions_size + demographics_size,
+                               koopman_size=state_size * 5,
+                               key=key)
 
     def precomputes(self, *args, **kwargs):
-        return InSKELKoopmanPrecomputes(A=self.f_dyn.compute_A())
+        return InKoopmanPrecomputes(A=self.f_dyn.compute_A())
 
     @property
     def dyn_params_list(self):
         return self.params_list((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N))
-
-    def step_segment(self, state: jnp.ndarray, int_e: jnp.ndarray,
-                     obs: InpatientObservables, lead: InpatientObservables,
-                     t0: float, t1: float,
-                     sampling_time: Optional[jnp.ndarray],
-                     precomputes: InSKELKoopmanPrecomputes):
-        preds = []
-        lead_preds = []
-        trajectory = []
-        rec_loss = []
-        t = t0
-        for t_obs, val, mask in zip(obs.time, obs.value, obs.mask):
-            # if time-diff is more than 1 seconds, we integrate.
-            rec_loss.append(self.f_dyn.compute_phi_loss(x=state, u=int_e))
-            trajectory.extend(
-                self.sample_state_trajectory(state, int_e, t, t_obs,
-                                             sampling_time, precomputes))
-
-            state = self._safe_integrate(t_obs - t, state, int_e, precomputes)
-            pred_obs = self.f_obs_dec(state)
-            pred_lead = self.f_lead_dec(state)
-            state = self.f_update(state, pred_obs, val, mask)
-            t = t_obs
-            preds.append(pred_obs)
-            lead_preds.append(pred_lead)
-
-        rec_loss.append(self.f_dyn.compute_phi_loss(x=state, u=int_e))
-        trajectory.extend(
-            self.sample_state_trajectory(state, int_e, t, t1, sampling_time,
-                                         precomputes))
-        state = self._safe_integrate(t1 - t, state, int_e, precomputes)
-
-        if len(preds) > 0:
-            pred_obs_val = jnp.vstack(preds)
-            pred_lead_val = jnp.vstack(lead_preds)
-        else:
-            pred_obs_val = jnp.empty_like(obs.value)
-            pred_lead_val = jnp.empty_like(lead.value)
-
-        return state, (InpatientObservables(obs.time, pred_obs_val, obs.mask),
-                       InpatientObservables(lead.time, pred_lead_val,
-                                            lead.mask)), rec_loss, trajectory
-
-    def __call__(
-            self, admission: Admission,
-            embedded_admission: EmbeddedInAdmission, precomputes: Precomputes,
-            regularisation: InSKELKoopmanRegularisation,
-            store_embeddings: Optional[TrajectoryConfig]
-    ) -> AdmissionPrediction:
-        int_e = embedded_admission.inp_proc_demo
-
-        state = self._init_state(int_demo_emb=int_e[0],
-                                 dx0=embedded_admission.dx0)
-
-        obs = admission.observables
-        lead = admission.leading_observable
-        pred_obs_l = []
-        pred_lead_l = []
-        rec_loss = []
-        t0 = admission.interventions.t0
-        t1 = admission.interventions.t1
-        trajectory = [state]
-        if store_embeddings is not None:
-            dt = store_embeddings.sampling_rate
-            sampling_time = jnp.arange(0.0, t1[-1], dt)
-        else:
-            sampling_time = None
-        for i in range(len(t0)):
-            state, pred, rloss, traj = self.step_segment(
-                state, int_e[i], obs[i], lead[i], t0[i], t1[i], sampling_time,
-                precomputes)
-            pred_obs, pred_lead = pred
-            rec_loss.extend(rloss)
-            pred_obs_l.append(pred_obs)
-            pred_lead_l.append(pred_lead)
-            trajectory.extend(traj)
-
-        # if len(trajectory) > 0:
-        #     trajectory = PatientTrajectory(time=sampling_time,
-        #                                    value=jnp.vstack(trajectory))
-        # else:
-        #     trajectory = None
-        # return AdmissionPrediction(admission=admission,
-        #                            outcome=None,
-        #                            observables=pred_obs_l,
-        #                            leading_observable=pred_lead_l,
-        #                            trajectory=trajectory,
-        #                            auxiliary_loss={'L_rec': rec_loss})
 
     @eqx.filter_jit
     def pathwise_params_stats(self):
@@ -1114,25 +1143,3 @@ class InSKELKoopman(InICENODELite):
                 }
             })
         return stats
-
-
-class InVanillaKoopmanConfig(InSKELKoopmanConfig):
-    pass
-
-
-class InVanillaKoopmanRegularisation(InSKELKoopmanRegularisation):
-    pass
-
-
-class InVanillaKoopmanPrecomputes(InSKELKoopmanPrecomputes):
-    pass
-
-
-class InVanillaKoopman(InSKELKoopman):
-
-    @staticmethod
-    def _make_dyn(config, key):
-        return VanillaKoopmanOperator(input_size=config.state,
-                                      control_size=config.emb.inp_proc_demo,
-                                      koopman_size=config.state * 5,
-                                      key=key)
