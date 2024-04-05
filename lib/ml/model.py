@@ -4,20 +4,17 @@ from __future__ import annotations
 
 import zipfile
 from abc import abstractmethod
-from typing import (TYPE_CHECKING, Callable, Optional, Any, Tuple, Self)
+from typing import ( Callable, Optional, Any, Tuple, Self)
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-from .artefacts import AdmissionsPrediction, TrajectoryConfig
+from .artefacts import AdmissionsPrediction
 from .embeddings import (EmbeddedAdmission)
 from ..base import Config, Module, VxData
 from ..ehr import (TVxEHR, Patient, Admission)
 from ..utils import tqdm_constructor, translate_path
-
-if TYPE_CHECKING:
-    import optuna
 
 
 class ModelConfig(Config):
@@ -74,9 +71,7 @@ class AbstractModel(Module):
     def batch_predict(
             self,
             patients: TVxEHR,
-            leave_pbar: bool = False,
-            regularisation: Optional[ModelRegularisation] = None,
-            store_embeddings: Optional[TrajectoryConfig] = None
+            leave_pbar: bool = False
     ) -> AdmissionsPrediction:
         pass
 
@@ -86,7 +81,7 @@ class AbstractModel(Module):
         raise NotImplementedError
 
     @classmethod
-    def sample_model_config(cls, trial: optuna.Trial):
+    def sample_model_config(cls, trial):
         return {}
 
     def weights(self) -> Tuple[jnp.ndarray, ...]:
@@ -186,9 +181,7 @@ class InpatientModel(AbstractModel):
     def batch_predict(
             self,
             inpatients: TVxEHR,
-            leave_pbar: bool = False,
-            regularisation: Optional[ModelRegularisation] = None,
-            store_embeddings: Optional[TrajectoryConfig] = None
+            leave_pbar: bool = False
     ) -> AdmissionsPrediction:
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
@@ -216,8 +209,6 @@ class InpatientModel(AbstractModel):
                                           prediction=self(
                                               admission,
                                               admissions_emb[admission.admission_id],
-                                              regularisation=regularisation,
-                                              store_embeddings=store_embeddings,
                                               precomputes=precomputes))
                     pbar.update(admission.interval_days)
             return results.filter_nans()
@@ -233,17 +224,13 @@ class DischargeSummaryModel(AbstractModel):
     def __call__(self,
                  x: Patient,
                  embedded_x: Tuple[EmbeddedAdmission, ...],
-                 precomputes: Precomputes,
-                 regularisation: Optional[ModelRegularisation] = None,
-                 store_embeddings: Optional[TrajectoryConfig] = None):
+                 precomputes: Precomputes):
         pass
 
     def batch_predict(
             self,
             inpatients: TVxEHR,
-            leave_pbar: bool = False,
-            regularisation: Optional[ModelRegularisation] = None,
-            store_embeddings: Optional[TrajectoryConfig] = None
+            leave_pbar: bool = False
     ) -> AdmissionsPrediction:
         total_int_days = inpatients.d2d_interval_days()
         precomputes = self.precomputes(inpatients)
@@ -269,9 +256,7 @@ class DischargeSummaryModel(AbstractModel):
                 embedded_admissions = inpatients_emb[subject_id]
                 for pred in self(inpatient,
                                  embedded_admissions,
-                                 precomputes=precomputes,
-                                 regularisation=regularisation,
-                                 store_embeddings=store_embeddings):
+                                 precomputes=precomputes):
                     results = results.add(subject_id=subject_id, prediction=pred)
                 pbar.update(inpatient.d2d_interval_days)
             return results.filter_nans()

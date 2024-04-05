@@ -1,6 +1,7 @@
 """."""
 from __future__ import annotations
 
+import logging
 from typing import Tuple, Optional, Literal, Type, Union, Final
 
 import equinox as eqx
@@ -28,6 +29,8 @@ from ..utils import model_params_scaler
 
 LeadPredictorName = Literal['monotonic', 'mlp']
 
+
+## TODO: use Invertible NN for embeddings: https://proceedings.mlr.press/v162/zhi22a/zhi22a.pdf
 
 class CompiledMLP(eqx.nn.MLP):
     # Just an eqx.nn.MLP with a compiled __call__ method.
@@ -319,12 +322,12 @@ class InICENODE(InpatientModel):
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic
-        f_dyn = eqx.nn.MLP(in_size=state_size + interventions_size + demographics_size,
-                           out_size=state_size,
-                           activation=jnn.tanh,
-                           depth=2,
-                           width_size=state_size * 5,
-                           key=key)
+        f_dyn = CompiledMLP(in_size=state_size + interventions_size + demographics_size,
+                            out_size=state_size,
+                            activation=jnn.tanh,
+                            depth=2,
+                            width_size=state_size * 5,
+                            key=key)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
@@ -389,6 +392,10 @@ class InICENODE(InpatientModel):
         int_e = embedded_admission.interventions or jnp.array([[]])
         demo_e = embedded_admission.demographic or jnp.array([])
         obs = admission.observables
+        if len(obs) == 0:
+            logging.warning("No observation to fit.")
+            return prediction
+
         n_segments = obs.n_segments
         t = 0.0
         state_trajectory = tuple()
@@ -662,6 +669,9 @@ class InGRUJump(InICENODELite):
                  precomputes: Precomputes) -> AdmissionPrediction:
         prediction = AdmissionPrediction(admission=admission)
         obs = admission.observables
+        if len(obs) == 0:
+            logging.warning("No observation to fit.")
+            return prediction
         state_trajectory = tuple()
         state = self.f_init(embedded_admission.history_summary)
         for i in range(len(obs.time)):
@@ -711,6 +721,10 @@ class InGRU(InICENODELite):
         emb_demo = embedded_admission.demographic or jnp.array([])
         force = jnp.hstack((emb_dx_history, emb_demo))
         prediction = AdmissionPrediction(admission=admission)
+        if len(embedded_admission.sequence) == 0:
+            logging.warning("No observations to fit.")
+            return prediction
+
         state = self.f_init(force)
         state_trajectory = tuple()
         for seq_e in embedded_admission.sequence:
@@ -730,8 +744,6 @@ class InGRU(InICENODELite):
 
 
 class InRETAINConfig(ModelConfig):
-    mem_a: int = eqx.static_field(default=45)
-    mem_b: int = eqx.static_field(default=45)
     lead_predictor: str = "monotonic"
 
 
@@ -741,17 +753,17 @@ class CompiledLinear(eqx.nn.Linear):
         return super().__call__(x)
 
 
-class InRETAINDynamic(eqx.Module):
-    f_gru_a: CompiledGRU
-    f_gru_b: CompiledGRU
-    f_att_a: CompiledLinear
-    f_att_b: CompiledLinear
-    f_step: CompiledGRU
+class RETAINDynamic(eqx.Module):
+    gru_a: CompiledGRU
+    gru_b: CompiledGRU
+    att_a: CompiledLinear
+    att_b: CompiledLinear
 
 
 class InRETAIN(InGRUJump):
-    f_dyn: InRETAINDynamic
+    f_dyn: RETAINDynamic
     config: InRETAINConfig = eqx.static_field()
+    state_size: int = eqx.static_field()
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
@@ -769,51 +781,44 @@ class InRETAIN(InGRUJump):
                          dx_codes_size=dx_codes_size,
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
         self.config = config
+        self.state_size = embeddings_config.summary
 
     @staticmethod
     def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> InRETAINDynamic:
-        f_gru_a = CompiledGRU(state_size,
-                              config.mem_a,
-                              use_bias=True,
-                              key=keys[4])
-        f_gru_b = CompiledGRU(state_size,
-                              config.mem_b,
-                              use_bias=True,
-                              key=keys[5])
+                  key: jrandom.PRNGKey) -> RETAINDynamic:
+        keys = jrandom.split(key, 4)
+        gru_a = CompiledGRU(state_size,
+                            state_size // 2,
+                            use_bias=True,
+                            key=keys[0])
+        gru_b = CompiledGRU(state_size,
+                            state_size // 2,
+                            use_bias=True,
+                            key=keys[1])
 
-        f_att_a = eqx.nn.Linear(config.mem_a,
-                                1,
-                                use_bias=True,
-                                key=keys[6])
-        f_att_b = eqx.nn.Linear(config.mem_b,
-                                state_size,
-                                use_bias=True,
-                                key=keys[7])
+        att_a = CompiledLinear(state_size // 2,
+                               1,
+                               use_bias=True,
+                               key=keys[2])
+        att_b = CompiledLinear(state_size // 2,
+                               state_size,
+                               use_bias=True,
+                               key=keys[3])
 
-        return eqx.nn.GRUCell(input_size=state_size,
-                              hidden_size=state_size,
-                              key=key)
+        return RETAINDynamic(gru_a=gru_a,
+                             gru_b=gru_b,
+                             att_a=att_a,
+                             att_b=att_b)
 
-    @eqx.filter_jit
-    def _gru_a(self, x, state):
-        return self.f_gru_a(x, state)
-
-    @eqx.filter_jit
-    def _gru_b(self, x, state):
-        return self.f_gru_b(x, state)
-
-    @eqx.filter_jit
-    def _att_a(self, x):
-        return self.f_att_a(x)
-
-    @eqx.filter_jit
-    def _att_b(self, x):
-        return self.f_att_b(x)
-
-    @eqx.filter_jit
-    def _dx_dec(self, x):
-        return self.f_dx_dec(x)
+    @staticmethod
+    def _make_init(embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
+                   state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
+        init_input_size = embeddings_config.demographic + embeddings_config.dx_codes
+        return CompiledMLP(init_input_size,
+                           state_size * 3,
+                           state_size * 3,
+                           depth=1,
+                           key=key)
 
     @eqx.filter_jit
     def _lead_dec(self, x):
@@ -824,44 +829,42 @@ class InRETAIN(InGRUJump):
         return self.f_obs_dec(x)
 
     @eqx.filter_jit
-    def _init_state(self, demo_emb, dx0):
-        state = self.f_init(jnp.hstack((demo_emb, dx0)))
-        splitter = (self.config.mem_a, self.config.mem_a + self.config.mem_b)
+    def _init_state(self, emb_demo, emb_dx_history):
+        force = jnp.hstack((emb_dx_history, emb_demo))
+        state = self.f_init(force)
+        splitter = (self.state_size, 2 * self.state_size)
         state_a, state_b, context = jnp.hsplit(state, splitter)
-        return state_a, state_b, jnp.tanh(self._att_b(state_b)) * context
+        return state_a, state_b, jnp.tanh(self.f_dyn.att_b(state_b)) * context
 
     def __call__(
             self, admission: Admission,
-            embedded_admission: DeepMindEmbeddedAdmission,
-            precomputes: Precomputes, regularisation: ModelRegularisation,
-            store_embeddings: Optional[TrajectoryConfig]
-    ) -> AdmissionPrediction:
+            embedded_admission: EmbeddedAdmissionObsSequence,
+            precomputes: Precomputes) -> AdmissionPrediction:
 
         obs = admission.observables
         lead = admission.leading_observable
+        prediction = AdmissionPrediction(admission=admission)
 
         if len(obs) == 0:
-            pred_obs = InpatientObservables.empty(obs.value.shape[1])
-            pred_lead = InpatientObservables.empty(lead.value.shape[1])
-            pred_dx = CodesVector(jnp.zeros(len(admission.outcome.scheme)),
-                                  admission.outcome.scheme)
-            return AdmissionPrediction(admission=admission,
-                                       outcome=pred_dx,
-                                       observables=pred_obs,
-                                       leading_observable=pred_lead,
-                                       trajectory=None)
-
-        state_a0, state_b0, context = self._init_state(embedded_admission.demo,
-                                                       embedded_admission.dx0)
-
+            logging.warning("No observations to fit.")
+            return prediction
+        state_trajectory = tuple()
+        state_a0, state_b0, context = self._init_state(embedded_admission.demographic,
+                                                       embedded_admission.dx_codes_history)
+        # for seq_e in embedded_admission.sequence:
+        #     forecasted_state = state
+        #     state = self.f_dyn(seq_e, state)
+        #     state_trajectory += ((forecasted_state, state),)
+        #
+        # forecasted_states, adjusted_states = zip(*state_trajectory)
+        # gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
+        #                                                       forecasted_state=forecasted_states,
+        #                                                       adjusted_state=adjusted_states)
         # step 1 @RETAIN paper
 
         # v1, v2, ..., vT
         # Merge controls with embeddings
         cv_seq = embedded_admission.sequence
-
-        pred_obs_l = [self._obs_dec(context)]
-        pred_lead_l = [self._lead_dec(context)]
 
         for i in range(1, len(cv_seq)):
             # e: i, ..., 1
@@ -874,16 +877,15 @@ class InRETAIN(InGRUJump):
             state_b = state_b0
             for j in reversed(range(i)):
                 # step 2 @RETAIN paper
-                state_a = self._gru_a(cv_seq[j], state_a)
-                e_j = self._att_a(state_a)
+                state_a = self.f_dyn.gru_a(cv_seq[j], state_a)
+                e_j = self.f_dyn.att_a(state_a)
                 # After the for-loop apply softmax on e_seq to get
                 # alpha_seq
-
                 e_seq.append(e_j)
 
                 # step 3 @RETAIN paper
-                h_j = state_b = self._gru_b(cv_seq[j], state_b)
-                b_j = self._att_b(h_j)
+                h_j = state_b = self.f_dyn.gru_b(cv_seq[j], state_b)
+                b_j = self.f_dyn.att_b(h_j)
 
                 b_seq.append(jnp.tanh(b_j))
 
@@ -893,24 +895,23 @@ class InRETAIN(InGRUJump):
             # step 4 @RETAIN paper
 
             # v_i, ..., v_1
+            forecasted_state = context
             context = cv_seq[:i][::-1]
             context = sum(a * (b * v)
                           for a, b, v in zip(a_seq, b_seq, context))
-
+            state_trajectory += ((forecasted_state, context),)
             # step 5 @RETAIN paper
-            pred_obs_l.append(self._obs_dec(context))
-            pred_lead_l.append(self._lead_dec(context))
 
-        pred_obs = InpatientObservables(obs.time, jnp.vstack(pred_obs_l),
-                                        obs.mask)
-        pred_lead = InpatientObservables(lead.time, jnp.vstack(pred_lead_l),
-                                         lead.mask)
+        forecasted_states, adjusted_states = zip(*state_trajectory)
+        gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
+                                                              forecasted_state=forecasted_states,
+                                                              adjusted_state=adjusted_states)
+        prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+            admission=admission, state_trajectory=gru_state_trajectory))
+        prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
+            admission=admission, state_trajectory=gru_state_trajectory))
 
-        return AdmissionPrediction(admission=admission,
-                                   outcome=pred_dx,
-                                   observables=pred_obs,
-                                   leading_observable=pred_lead,
-                                   trajectory=None)
+        return prediction
 
 
 class InKoopmanPrecomputes(Precomputes):
@@ -1143,3 +1144,16 @@ class InKoopman(InICENODELite):
                 }
             })
         return stats
+
+
+class InMultiscaleKoopman(InICENODELite):
+    pass
+
+
+# TODO: finish this class
+
+
+class TimestepsKoopmanPrecomputes(Precomputes):
+    pass
+    # Precompute a number of operators for given timesteps. https://www.geeksforgeeks.org/find-minimum-number-of-coins-that-make-a-change/
+    # Use the minimum-number-of-coins-needed principle to determine the matrix-vector multiplication sequence.
