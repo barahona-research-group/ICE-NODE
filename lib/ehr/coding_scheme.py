@@ -1052,8 +1052,8 @@ class GroupingData(VxData):
 
 
 class ReducedCodeMapN1(CodeMap):
-    set_aggregation: FrozenDict11
-    reduced_groups: FrozenDict1N
+    set_aggregation: FrozenDict11 = field(kw_only=True)
+    reduced_groups: FrozenDict1N = field(kw_only=True)
 
     @staticmethod
     def from_data(source_name: str, target_name: str, map_data: FrozenDict1N,
@@ -1105,11 +1105,14 @@ class ReducedCodeMapN1(CodeMap):
 
     @cached_property
     def grouping_data(self) -> GroupingData:
-        return GroupingData(permute=np.array(self.groups_permute, dtype=int),
+        data = GroupingData(permute=np.array(self.groups_permute, dtype=int),
                             split=np.array(self.groups_split, dtype=int),
                             size=np.array(self.groups_size, dtype=int),
                             aggregation=self.groups_aggregation,
-                            source_size=len(self.source_scheme))
+                            source_size=len(self.source_scheme),
+                            target_size=len(self.target_scheme))
+        print('x')
+        return data
 
 
 class IdentityCodeMap(CodeMap):

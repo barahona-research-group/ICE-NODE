@@ -239,7 +239,7 @@ class InpatientObservables(VxData):
 
 
 class SegmentedInpatientObservables(InpatientObservables):
-    indexed_split: Array
+    indexed_split: Array = field(kw_only=True)
 
     # The reason for storing the index split arrays without concretely splitting the observables is to avoid
     # unnecessary computation when the observables are not accessed, inefficient hardly compressed storage of

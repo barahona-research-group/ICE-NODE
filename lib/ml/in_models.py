@@ -247,7 +247,7 @@ class InICENODE(InpatientModel):
     f_outcome_dec: Optional[CompiledMLP] = None
 
     config: InpatientModelConfig = eqx.static_field()
-    regularisation: ModelRegularisation = eqx.static_field(default=ModelRegularisation())
+    regularisation: ModelRegularisation = eqx.static_field(default_factory=ModelRegularisation)
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: SpecialisedAdmissionEmbeddingsConfig,

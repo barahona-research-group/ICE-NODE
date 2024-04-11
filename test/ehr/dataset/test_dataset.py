@@ -10,7 +10,7 @@ import tables as tb
 from lib.ehr.coding_scheme import CodeMap, CodingScheme, CodingSchemesManager, FrozenDict11, FrozenDict1N
 from lib.ehr.dataset import TableConfig, DatasetTablesConfig, DatasetTables, DatasetSchemeConfig, DatasetScheme, \
     Dataset, AbstractDatasetPipeline
-from test.ehr.conftest import NaiveDataset
+from conftest import NaiveDataset
 
 
 @pytest.fixture(params=[('x_id_alias', 'y_id_alias'), tuple()])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import zipfile
 from abc import abstractmethod
+from dataclasses import field
 from typing import ( Callable, Optional, Any, Tuple, Self)
 
 import equinox as eqx
@@ -18,7 +19,7 @@ from ..utils import tqdm_constructor, translate_path
 
 
 class ModelConfig(Config):
-    embedding: Config = Config()
+    embedding: Config = field(default_factory=Config)
 
 
 class ModelRegularisation(Config):

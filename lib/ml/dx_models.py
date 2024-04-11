@@ -1,23 +1,20 @@
 """."""
 from __future__ import annotations
+
 from typing import List, Callable, Tuple, Optional
 
-from absl import logging
+import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import equinox as eqx
-
-from ..utils import model_params_scaler
-from ..ehr import (Patient, DemographicVectorConfig,
-                   DatasetScheme, CodesVector)
-from .artefacts import AdmissionPrediction, AdmissionsPrediction
-from .embeddings import (OutpatientEmbedding, EmbeddedOutAdmission)
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
 from .model import (DischargeSummaryModel, ModelConfig, ModelRegularisation,
                     Precomputes)
+from ..ehr import (Patient, DemographicVectorConfig,
+                   DatasetScheme, CodesVector)
+from ..utils import model_params_scaler
 
 
 class ICENODEConfig(ModelConfig):
@@ -80,11 +77,11 @@ class ICENODE(DischargeSummaryModel):
 
     def join_state_emb(self, state, emb):
         if state is None:
-            state = jnp.zeros((self.config.mem, ))
+            state = jnp.zeros((self.config.mem,))
         return jnp.hstack((state, emb))
 
     def split_state_emb(self, state: jnp.ndarray):
-        return jnp.hsplit(state, (self.config.mem, ))
+        return jnp.hsplit(state, (self.config.mem,))
 
     @eqx.filter_jit
     def _integrate(self, state, delta, ctrl):
@@ -242,7 +239,7 @@ class GRU(DischargeSummaryModel):
                  precomputes: Precomputes, regularisation: ModelRegularisation,
                  store_embeddings: bool):
         adms = patient.admissions
-        state = jnp.zeros((self.config.emb.dx, ))
+        state = jnp.zeros((self.config.emb.dx,))
         preds = []
         for i in range(1, len(adms)):
             adm = adms[i]
@@ -280,7 +277,6 @@ class RETAINConfig(ModelConfig):
 
 
 class RETAIN(DischargeSummaryModel):
-
     _f_gru_a: Callable
     _f_gru_b: Callable
     _f_att_a: Callable

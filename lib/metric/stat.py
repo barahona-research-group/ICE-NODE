@@ -174,10 +174,9 @@ def nan_compute_auc(v_truth, v_preds):
 
 
 class Metric(Module):
-    config: Config = Config()
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config: Config = Config(), **kwargs):
+        super().__init__(config=config, **kwargs)
 
     def estimands(self) -> Tuple[str, ...]:
         return tuple()
@@ -272,7 +271,7 @@ class LossMetricConfig(Config):
 
 
 class LossMetric(Metric):
-    config: LossMetricConfig = LossMetricConfig()
+    config: LossMetricConfig = field(default_factory=lambda:LossMetricConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = PredictionLoss
 
     @cached_property
@@ -297,7 +296,7 @@ class ObsPredictionLossConfig(LossMetricConfig):
 
 
 class ObsPredictionLossMetric(LossMetric):
-    config: ObsPredictionLossConfig = ObsPredictionLossConfig()
+    config: ObsPredictionLossConfig = field(default_factory=lambda:ObsPredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
 
 
@@ -306,7 +305,7 @@ class OutcomePredictionLossConfig(LossMetricConfig):
 
 
 class OutcomePredictionLossMetric(LossMetric):
-    config: OutcomePredictionLossConfig = OutcomePredictionLossConfig()
+    config: OutcomePredictionLossConfig = field(default_factory=lambda:OutcomePredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = OutcomePredictionLoss
 
 
@@ -315,12 +314,12 @@ class LeadPredictionLossConfig(ObsPredictionLossMetric):
 
 
 class LeadPredictionLossMetric(ObsPredictionLossMetric):
-    config: LeadPredictionLossConfig = LeadPredictionLossConfig()
+    config: LeadPredictionLossConfig = field(default_factory=lambda:LeadPredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = LeadPredictionLoss
 
 
 class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
-    aki_stage_code: str
+    aki_stage_code: str = field(kw_only=True)
 
     @staticmethod
     def from_extractor_config(config: LeadingObservableExtractorConfig, aki_stage_code: str):

@@ -14,7 +14,7 @@ from lib.ehr.tvx_ehr import TrainableTransformation, TVxEHR, TVxReport, TVxEHRSa
 from lib.ehr.tvx_transformations import SampleSubjects, CodedValueScaler, ObsAdaptiveScaler, InputScaler, \
     ObsIQROutlierRemover, TVxConcepts, InterventionSegmentation, ObsTimeBinning, LeadingObservableExtraction, \
     ExcludeShortAdmissions
-from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, MAX_STAY_DAYS
+from conftest import BINARY_OBSERVATION_CODE_INDEX, MAX_STAY_DAYS
 
 
 @pytest.fixture

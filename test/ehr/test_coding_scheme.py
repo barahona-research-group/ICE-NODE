@@ -6,7 +6,7 @@ import pytest
 import tables as tb
 
 from lib.ehr import (CodingScheme)
-from lib.ehr.coding_scheme import CodingSchemesManager, FrozenDict11, OutcomeExtractor
+from lib.ehr.coding_scheme import CodingSchemesManager, FrozenDict11, OutcomeExtractor, FrozenDict1N, ReducedCodeMapN1
 from lib.ehr.example_schemes.icd import CCSICDSchemeSelection, setup_standard_icd_ccs, CCSICDOutcomeSelection, \
     setup_icd_schemes, setup_icd_outcomes
 
@@ -231,7 +231,6 @@ class TestFlatScheme:
         assert m1.range_ratio > 0.2
         assert m2.range_ratio > 0.2
 
-
     def test_primitive_scheme_serialization(self, primitive_flat_scheme: CodingScheme, tmpdir: str):
         path = f'{tmpdir}/coding_scheme.h5'
         with tb.open_file(path, 'w') as f:
@@ -275,7 +274,6 @@ class TestFlatScheme:
 
         assert icd_ccs_map_manager.equals(reloaded)
 
-
     @pytest.mark.parametrize("name, codes, desc",
                              [('problematic_codes', [1], {'1': 'one'}),
                               ('problematic_desc', ['1'], {1: 'one'}),
@@ -307,9 +305,6 @@ class TestFlatScheme:
         """
         with pytest.raises((AssertionError, KeyError)):
             CodingScheme(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(desc))
-
-
-
 
     def test_index2code(self, primitive_flat_scheme):
         """
@@ -384,88 +379,58 @@ class TestFlatScheme:
 class TestSchemeManager:
     pass
 
-# class TestCommonCodingSchemes:
-#     def setUp(self):
-#         pass
-#
-#     def test_codes_uniqueness(self):
-#         for scheme in self.scheme_set:
-#             codes = scheme.codes
-#             self.assertCountEqual(codes,
-#                                   set(codes),
-#                                   msg=f'Problematic Scheme: {scheme.name}')
-#
-#     def test_code_index_desc_support(self: TestCase):
-#         for scheme in self.scheme_set:
-#             index = scheme.index
-#             codes = scheme.codes
-#             desc = scheme.desc
-#             msg = f'Problematic Scheme: {scheme.name}'
-#
-#             self.assertTrue(len(codes) > 0, msg=msg)
-#             self.assertCountEqual(codes, index.keys(), msg=msg)
-#             self.assertCountEqual(codes, desc.keys(), msg=msg)
-#             self.assertCountEqual(index.values(),
-#                                   list(range(len(index))),
-#                                   msg=msg)
-#
-#     def test_codes_subsets_dag(self):
-#         for s in self.scheme_set:
-#             if not isinstance(s, HierarchicalScheme):
-#                 continue
-#
-#             self.assertTrue(len(s.codes) <= len(s.dag_codes))
-#             self.assertTrue(
-#                 set(map(s.code2dag.get, s.codes)).issubset(set(s.dag_codes)))
-#             self.assertEqual(list(map(s.code2dag.get, s.codes)),
-#                              s.dag_codes[:len(s.codes)])
-#
-#     def test_bfs_vs_dfs(self):
-#         for s in self.scheme_set:
-#
-#             if not isinstance(s, HierarchicalScheme):
-#                 continue
-#
-#             rng = random.Random(42)
-#             some_codes = rng.sample(s.dag_codes, 15)
-#
-#             for code in some_codes:
-#                 ancestors_bfs = s.code_ancestors_bfs(code)
-#                 ancestors_dfs = s.code_ancestors_dfs(code)
-#
-#                 self.assertCountEqual(ancestors_bfs, ancestors_dfs)
-#
-#                 successors_bfs = s.code_successors_bfs(code)
-#                 successors_dfs = s.code_successors_dfs(code)
-#
-#                 self.assertCountEqual(successors_bfs, successors_dfs)
-#
-#     def test_code_mappers(self):
-#         log_dir = os.path.join(_DIR, 'logs')
-#         Path(log_dir).mkdir(parents=True, exist_ok=True)
-#         for s1 in self.scheme_set:
-#             for s2 in self.scheme_set:
-#
-#                 m = s1.mapper_to(s2)
-#
-#                 if (type(s1),
-#                     type(s2)) not in load_maps and type(s1) != type(s2):
-#                     self.assertTrue(
-#                         m is None,
-#                         msg=
-#                         f"Mapping {s1.name}->{s2.name} actually not included in load_maps dictionary then mapper should be None"
-#                     )
-#
-#                 if m is None: continue
-#
-#                 with self.subTest(f"M: {m}"):
-#                     self.assertTrue(all(type(c) == str for c in m))
-#                     m_range = set().union(*m.values())
-#                     self.assertTrue(all(type(c) == str for c in m_range))
-#                     m.log_unrecognised_domain(
-#                         f'{log_dir}/{m}_unrecognised_domain.json')
-#                     m.log_unrecognised_range(
-#                         f'{log_dir}/{m}_unrecognised_range.json')
-#                     m.log_uncovered_source_codes(
-#                         f'{log_dir}/{m}_uncovered_source.json')
-#
+
+class TestReducedCodeMapN1:
+    @pytest.fixture
+    def codes_n1(self):
+        return {'A1': ['B0', 'B1', 'B2'],
+                'A2': ['B3', 'B5', 'B7'],
+                'A3': ['B6'],
+                'A4': ['B4', 'B8']}  # permute: 0, 1, 2, 3, 5, 7, 6, 4, 8
+
+    @pytest.fixture
+    def aggregation(self):
+        return FrozenDict11.from_dict({'A1': 'w_sum',
+                                       'A2': 'w_sum',
+                                       'A3': 'w_sum',
+                                       'A4': 'w_sum'})
+
+    @pytest.fixture
+    def source_code_scheme(self, codes_n1) -> CodingScheme:
+        codes = tuple(sorted(b for bs in codes_n1.values() for b in bs))
+        desc = FrozenDict11.from_dict({b: b for b in codes})
+        return CodingScheme(name='source', codes=codes, desc=desc)
+
+    @pytest.fixture
+    def target_code_scheme(self, codes_n1) -> CodingScheme:
+        desc = FrozenDict11.from_dict({k: k for k in codes_n1.keys()})
+        return CodingScheme(name='target', codes=tuple(codes_n1.keys()), desc=desc)
+
+    @pytest.fixture
+    def mapping_data(self, codes_n1) -> FrozenDict1N:
+        return FrozenDict1N.from_dict({b: {a} for a, bs in codes_n1.items() for b in bs})
+
+    @pytest.fixture
+    def reduced_code_map(self, source_code_scheme, target_code_scheme, mapping_data,
+                         aggregation) -> ReducedCodeMapN1:
+        manager = CodingSchemesManager().add_scheme(source_code_scheme).add_scheme(target_code_scheme)
+        m = ReducedCodeMapN1.from_data(source_code_scheme.name,
+                                       target_code_scheme.name,
+                                       mapping_data, aggregation)
+        manager = manager.add_map(m)
+        return manager.map[(source_code_scheme.name, target_code_scheme.name)]
+
+    def test_reduced_groups(self, reduced_code_map: ReducedCodeMapN1):
+        assert set(reduced_code_map.reduced_groups.keys()) == {'A1', 'A2', 'A3', 'A4'}
+
+    def test_groups_aggregation(self, reduced_code_map: ReducedCodeMapN1):
+        assert reduced_code_map.groups_aggregation == ('w_sum',) * 4
+
+    def test_groups_size(self, reduced_code_map: ReducedCodeMapN1):
+        assert reduced_code_map.groups_size == (3, 3, 1, 2)
+
+    def test_groups_split(self, reduced_code_map: ReducedCodeMapN1):
+        assert reduced_code_map.groups_split == (3, 6, 7, 9)
+
+    def test_groups_permute(self, reduced_code_map: ReducedCodeMapN1):
+        assert reduced_code_map.groups_permute == (0, 1, 2, 3, 5, 7, 6, 4, 8)

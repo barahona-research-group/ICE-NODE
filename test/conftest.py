@@ -11,7 +11,8 @@ import tables as tb
 
 from lib.ehr import CodingScheme, \
     TVxEHR, TVxEHRConfig, DemographicVectorConfig
-from lib.ehr.coding_scheme import ExcludingOutcomeExtractor, NumericScheme, FrozenDict11, CodingSchemesManager
+from lib.ehr.coding_scheme import ExcludingOutcomeExtractor, NumericScheme, FrozenDict11, CodingSchemesManager, \
+    FrozenDict1N, ReducedCodeMapN1
 from lib.ehr.dataset import StaticTableConfig, AdmissionTableConfig, AdmissionLinkedCodedValueTableConfig, \
     AdmissionIntervalBasedCodedTableConfig, RatedInputTableConfig, AdmissionTimestampedCodedValueTableConfig, \
     DatasetTablesConfig, DatasetSchemeConfig, DatasetTables, Dataset, DatasetConfig, AbstractDatasetPipeline, \
@@ -468,13 +469,18 @@ def dataset_scheme_config(ethnicity_scheme: CodingScheme,
                                hosp_procedures=hosp_proc_scheme.name)
 
 
+@pytest.fixture(params=[('icu_inputs1_target', ['I1_target', 'I2_target'])])
+def icu_inputs_target_scheme(request) -> CodingScheme:
+    return scheme(*request.param)
+
+
 @pytest.fixture
 def tvx_ehr_scheme_config(ethnicity_scheme: CodingScheme,
                           gender_scheme: CodingScheme,
                           dx_scheme: CodingScheme,
                           outcome_extractor: CodingScheme,
                           icu_proc_scheme: CodingScheme,
-                          icu_inputs_scheme: CodingScheme,
+                          icu_inputs_target_scheme: CodingScheme,
                           observation_scheme: CodingScheme,
                           hosp_proc_scheme: CodingScheme) -> DatasetSchemeConfig:
     return TVxEHRSchemeConfig(ethnicity=ethnicity_scheme.name,
@@ -482,9 +488,19 @@ def tvx_ehr_scheme_config(ethnicity_scheme: CodingScheme,
                               dx_discharge=dx_scheme.name,
                               outcome=outcome_extractor.name,
                               icu_procedures=icu_proc_scheme.name,
-                              icu_inputs=icu_inputs_scheme.name,
+                              icu_inputs=icu_inputs_target_scheme.name,
                               obs=observation_scheme.name,
                               hosp_procedures=hosp_proc_scheme.name)
+
+
+@pytest.fixture
+def icu_inputs_aggregation(icu_inputs_target_scheme) -> FrozenDict11:
+    return FrozenDict11.from_dict({c: 'w_sum' for c in icu_inputs_target_scheme.codes})
+
+
+@pytest.fixture
+def icu_inputs_mapping_data(icu_inputs_scheme, icu_inputs_target_scheme) -> FrozenDict1N:
+    return FrozenDict1N.from_dict({c: {random.choice(icu_inputs_target_scheme.codes)} for c in icu_inputs_scheme.codes})
 
 
 @pytest.fixture(autouse=True)
@@ -494,13 +510,20 @@ def dataset_scheme_manager(ethnicity_scheme: CodingScheme,
                            outcome_extractor: ExcludingOutcomeExtractor,
                            icu_proc_scheme: CodingScheme,
                            icu_inputs_scheme: CodingScheme,
+                           icu_inputs_target_scheme: CodingScheme,
+                           icu_inputs_mapping_data: FrozenDict1N,
+                           icu_inputs_aggregation: FrozenDict11,
                            observation_scheme: CodingScheme,
                            hosp_proc_scheme: CodingScheme) -> CodingSchemesManager:
     manager = CodingSchemesManager().add_outcome(outcome_extractor)
-    for scheme in (ethnicity_scheme, gender_scheme, dx_scheme,
+    for scheme in (ethnicity_scheme, gender_scheme, dx_scheme, icu_inputs_target_scheme,
                    icu_proc_scheme, icu_inputs_scheme, observation_scheme, hosp_proc_scheme):
         manager = manager.add_scheme(scheme)
 
+    m = ReducedCodeMapN1.from_data(icu_inputs_scheme.name,
+                                   icu_inputs_target_scheme.name,
+                                   icu_inputs_mapping_data, icu_inputs_aggregation)
+    manager = manager.add_map(m)
     return manager
 
 
@@ -592,7 +615,7 @@ def dataset_config(dataset_scheme_config, dataset_tables_config):
 @pytest.fixture(scope=DATASET_SCOPE)
 def dataset(dataset_config, dataset_tables, dataset_scheme_manager):
     ds = NaiveDataset(scheme_manager=dataset_scheme_manager, config=dataset_config)
-    return dataclasses.replace(ds, tables= dataset_tables)
+    return dataclasses.replace(ds, tables=dataset_tables)
 
 
 @pytest.fixture

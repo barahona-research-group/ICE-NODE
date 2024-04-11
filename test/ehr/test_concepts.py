@@ -16,7 +16,7 @@ from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtract
                                   InpatientInput, InpatientInterventions, SegmentedInpatientInterventions, Admission,
                                   SegmentedAdmission, DemographicVectorConfig, StaticInfo, Patient, AdmissionDates,
                                   SegmentedPatient, SegmentedInpatientObservables)
-from test.ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
+from conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
     NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX
 
 LENGTH_OF_STAY = 10.0

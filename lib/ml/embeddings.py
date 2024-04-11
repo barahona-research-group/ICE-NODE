@@ -127,7 +127,7 @@ class AdmissionEmbeddingsConfig(Config):
     observables: Optional[int] = None
 
 
-class SpecialisedAdmissionEmbeddingsConfig(Config, meta=ABCMeta):
+class SpecialisedAdmissionEmbeddingsConfig(Config, metaclass=ABCMeta):
     @abstractmethod
     def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
         pass

@@ -7,6 +7,7 @@ import pickle
 import random
 import re
 from abc import abstractmethod, ABCMeta
+from dataclasses import field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Any, Dict, Tuple, Union, Optional, Callable
@@ -23,7 +24,7 @@ from .artefacts import AdmissionsPrediction
 from .model import AbstractModel, ModelRegularisation
 from ..base import Config, Module
 from ..ehr import TVxEHR
-from ..metric.loss import BINAR_LOSS, numeric_loss
+from ..metric.loss import BINARY_LOSS, NUMERIC_LOSS
 from ..metric.stat import (MetricsCollection, Metric)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
@@ -644,7 +645,7 @@ class TrainerReporting(Module):
 class WarmupConfig(Config):
     epochs: float = 0.1
     batch_size: int = 16
-    optimizer: OptimizerConfig = OptimizerConfig(reverse_schedule=True)
+    optimizer: OptimizerConfig = field(default_factory=lambda:OptimizerConfig(reverse_schedule=True))
 
     def __init__(self,
                  epochs: float = 0.1,
@@ -665,7 +666,7 @@ class WarmupConfig(Config):
 
 
 class TrainerConfig(Config):
-    optimizer: OptimizerConfig = OptimizerConfig()
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     epochs: int = 100
     batch_size: int = 32
     dx_loss: str = 'balanced_focal_bce'

@@ -68,8 +68,8 @@ class ScalersConfig(Config):
 
 
 class DatasetNumericalProcessorsConfig(Config):
-    scalers: Optional[ScalersConfig] = ScalersConfig()
-    outlier_removers: Optional[OutlierRemoversConfig] = OutlierRemoversConfig()
+    scalers: Optional[ScalersConfig] = field(default_factory=ScalersConfig)
+    outlier_removers: Optional[OutlierRemoversConfig] = field(default_factory=OutlierRemoversConfig)
 
 
 class CodedValueProcessor(Module):
@@ -323,7 +323,7 @@ class TVxEHRConfig(Config):
     demographic: DemographicVectorConfig
     sample: Optional[TVxEHRSampleConfig] = None
     splits: Optional[TVxEHRSplitsConfig] = None
-    numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
+    numerical_processors: DatasetNumericalProcessorsConfig = field(default_factory=DatasetNumericalProcessorsConfig)
     interventions: bool = False
     observables: bool = False
     time_binning: Optional[float] = None
@@ -446,7 +446,7 @@ class TVxEHR(AbstractDatasetRepresentation):
 
     config: TVxEHRConfig = field(kw_only=True)
     dataset: Dataset = field(kw_only=True)
-    numerical_processors: DatasetNumericalProcessors = DatasetNumericalProcessors()
+    numerical_processors: DatasetNumericalProcessors = field(default_factory=DatasetNumericalProcessors)
     splits: Optional[_SplitsType] = None
     subjects: Optional[Dict[str, Patient]] = None
     patient_class: ClassVar[Type[Patient]] = Patient

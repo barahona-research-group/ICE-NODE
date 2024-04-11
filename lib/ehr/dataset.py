@@ -228,7 +228,7 @@ class DatasetTablesConfig(Config):
 
 
 class DatasetTables(Module):
-    config: Config = field(init=False, default=Config())
+    config: Config = field(init=False, default_factory=Config)
 
     static: pd.DataFrame
     admissions: pd.DataFrame
@@ -456,7 +456,7 @@ class Report(Config):
 
 class AbstractDatasetRepresentation(Module):
     config: Config
-    pipeline_report: pd.DataFrame = pd.DataFrame()
+    pipeline_report: pd.DataFrame = field(default_factory=pd.DataFrame)
     report_class: ClassVar[Type[Report]] = Report
 
     @cached_property
@@ -633,7 +633,7 @@ class AbstractDatasetPipelineConfig(Config):
 
 
 class AbstractDatasetPipeline(Module, metaclass=ABCMeta):
-    config: AbstractDatasetPipelineConfig = Config()
+    config: AbstractDatasetPipelineConfig = field(default_factory=Config)
     transformations: List[AbstractTransformation] = field(kw_only=True)
     validator: ClassVar[TransformationsDependency] = TransformationsDependency.empty()
     report_class: ClassVar[Type[Report]] = Report
@@ -689,8 +689,6 @@ class Dataset(AbstractDatasetRepresentation):
             self.tables = self.load_tables(self.config, self.scheme)
 
         self.scheme_manager = self.scheme.context_view._manager
-
-
 
     @classmethod
     @abstractmethod

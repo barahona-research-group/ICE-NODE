@@ -742,8 +742,8 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     resources_dir: str = 'mimiciv'
     selection_subdir: str = 'selection'
     map_subdir: str = 'map'
-    map_files: DatasetSchemeMapsFiles = DatasetSchemeMapsFiles()
-    selection_files: DatasetSchemeSelectionFiles = DatasetSchemeSelectionFiles()
+    map_files: DatasetSchemeMapsFiles = field(default_factory=DatasetSchemeMapsFiles)
+    selection_files: DatasetSchemeSelectionFiles = field(default_factory=DatasetSchemeSelectionFiles)
     icu_inputs_uom_normalization: Optional[Tuple[str]] = ("uom_normalization", "icu_inputs.csv")
     icu_inputs_aggregation_column: Optional[str] = 'aggregation'
 
@@ -1128,8 +1128,8 @@ class MIMICIVDatasetPipelineConfig(AbstractDatasetPipelineConfig):
 
 class MIMICIVDatasetConfig(MIMICIVSQLConfig):
     tables: MIMICIVSQLTablesConfig = field(default_factory=MIMICIVSQLTablesConfig, kw_only=True)
-    pipeline: MIMICIVDatasetPipelineConfig = MIMICIVDatasetPipelineConfig()
-    scheme: MIMICIVDatasetSchemeConfig = MIMICIVDatasetSchemeConfig()
+    pipeline: MIMICIVDatasetPipelineConfig = field(default_factory=MIMICIVDatasetPipelineConfig)
+    scheme: MIMICIVDatasetSchemeConfig = field(default_factory=MIMICIVDatasetSchemeConfig)
 
 
 class MIMICIVDataset(Dataset):

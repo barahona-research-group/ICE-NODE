@@ -27,9 +27,9 @@ DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG: Final[AKIMIMICIVDatasetSchemeConfig] 
 
 
 class AKIMIMICIVDatasetConfig(MIMICIVDatasetConfig):
-    scheme: AKIMIMICIVDatasetSchemeConfig = DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG
+    scheme: AKIMIMICIVDatasetSchemeConfig = field(default_factory=lambda: DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG)
     overlapping_admissions: Literal["merge", "remove"] = "merge"
-    filter_subjects_with_observation: str = OBSERVABLE_AKI_TARGET_CODE
+    filter_subjects_with_observation: str = field(default_factory=lambda: OBSERVABLE_AKI_TARGET_CODE)
 
 
 DEFAULT_AKI_MIMICIV_DATASET_CONFIG: Final[AKIMIMICIVDatasetConfig] = AKIMIMICIVDatasetConfig()
@@ -86,14 +86,16 @@ DEFAULT_TVX_AKI_MIMICIV_DATASET_SCHEME_CONFIG: Final[TVxAKIMIMICIVDatasetSchemeC
 
 
 class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
-    scheme: TVxAKIMIMICIVDatasetSchemeConfig = field(default=DEFAULT_TVX_AKI_MIMICIV_DATASET_SCHEME_CONFIG,
-                                                     kw_only=True)
-    demographic: DemographicVectorConfig = field(default=DEFAULT_AKI_DEMOGRAPHIC, kw_only=True)
+    scheme: TVxAKIMIMICIVDatasetSchemeConfig = field(
+        default_factory=lambda: DEFAULT_TVX_AKI_MIMICIV_DATASET_SCHEME_CONFIG,
+        kw_only=True)
+    demographic: DemographicVectorConfig = field(default_factory=lambda: DEFAULT_AKI_DEMOGRAPHIC, kw_only=True)
     leading_observable: LeadingObservableExtractorConfig = field(default_factory=DEFAULT_AKI_LEAD_EXTRACTION_FACTORY,
                                                                  kw_only=True)
     sample: Optional[TVxEHRSampleConfig] = field(default=None, kw_only=True)
     splits: Optional[TVxEHRSplitsConfig] = field(default=None, kw_only=True)
-    numerical_processors: DatasetNumericalProcessorsConfig = DatasetNumericalProcessorsConfig()
+    numerical_processors: DatasetNumericalProcessorsConfig = field(
+        default_factory=lambda: DatasetNumericalProcessorsConfig)
     interventions: bool = True
     observables: bool = True
     time_binning: Optional[float] = None
