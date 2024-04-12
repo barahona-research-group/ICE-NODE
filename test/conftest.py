@@ -469,7 +469,7 @@ def dataset_scheme_config(ethnicity_scheme: CodingScheme,
                                hosp_procedures=hosp_proc_scheme.name)
 
 
-@pytest.fixture(params=[('icu_inputs1_target', ['I1_target', 'I2_target'])])
+@pytest.fixture(params=[('icu_inputs1_target', ['I1_target', 'I2_target', 'I3_target', 'I4_target', 'I5_target'])])
 def icu_inputs_target_scheme(request) -> CodingScheme:
     return scheme(*request.param)
 
@@ -503,7 +503,7 @@ def icu_inputs_mapping_data(icu_inputs_scheme, icu_inputs_target_scheme) -> Froz
     return FrozenDict1N.from_dict({c: {random.choice(icu_inputs_target_scheme.codes)} for c in icu_inputs_scheme.codes})
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def dataset_scheme_manager(ethnicity_scheme: CodingScheme,
                            gender_scheme: CodingScheme,
                            dx_scheme: CodingScheme,
@@ -514,7 +514,8 @@ def dataset_scheme_manager(ethnicity_scheme: CodingScheme,
                            icu_inputs_mapping_data: FrozenDict1N,
                            icu_inputs_aggregation: FrozenDict11,
                            observation_scheme: CodingScheme,
-                           hosp_proc_scheme: CodingScheme) -> CodingSchemesManager:
+                           hosp_proc_scheme: CodingScheme
+                           ) -> CodingSchemesManager:
     manager = CodingSchemesManager().add_outcome(outcome_extractor)
     for scheme in (ethnicity_scheme, gender_scheme, dx_scheme, icu_inputs_target_scheme,
                    icu_proc_scheme, icu_inputs_scheme, observation_scheme, hosp_proc_scheme):
@@ -612,7 +613,7 @@ def dataset_config(dataset_scheme_config, dataset_tables_config):
     return DatasetConfig(scheme=dataset_scheme_config, tables=dataset_tables_config)
 
 
-@pytest.fixture(scope=DATASET_SCOPE)
+@pytest.fixture
 def dataset(dataset_config, dataset_tables, dataset_scheme_manager):
     ds = NaiveDataset(scheme_manager=dataset_scheme_manager, config=dataset_config)
     return dataclasses.replace(ds, tables=dataset_tables)

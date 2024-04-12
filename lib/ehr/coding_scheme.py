@@ -174,6 +174,10 @@ class SchemesContextManaged(VxData):
     def set_context_view(self, context_view: SchemeManagerView):
         return dataclasses.replace(self, context_view=context_view)
 
+    def __repr__(self):
+        return eqx.tree_pformat(eqx.tree_at(lambda x: x.context_view, self, None,
+                                            is_leaf=lambda x: x is None))
+
 
 class CodingScheme(SchemesContextManaged):
     name: str = field(kw_only=True)
@@ -1047,8 +1051,7 @@ class GroupingData(VxData):
     split: np.ndarray
     size: np.ndarray
     aggregation: Tuple[AggregationLiteral, ...]
-    source_size: int
-    target_size: int
+    scheme_size: np.ndarray[int, int]
 
 
 class ReducedCodeMapN1(CodeMap):
@@ -1105,14 +1108,11 @@ class ReducedCodeMapN1(CodeMap):
 
     @cached_property
     def grouping_data(self) -> GroupingData:
-        data = GroupingData(permute=np.array(self.groups_permute, dtype=int),
+        return GroupingData(permute=np.array(self.groups_permute, dtype=int),
                             split=np.array(self.groups_split, dtype=int),
                             size=np.array(self.groups_size, dtype=int),
                             aggregation=self.groups_aggregation,
-                            source_size=len(self.source_scheme),
-                            target_size=len(self.target_scheme))
-        print('x')
-        return data
+                            scheme_size=np.array((len(self.source_scheme), len(self.target_scheme))))
 
 
 class IdentityCodeMap(CodeMap):
@@ -1311,6 +1311,9 @@ class CodingSchemesManager(VxData):
     schemes: Tuple[CodingScheme, ...] = field(default_factory=tuple)
     maps: Tuple[CodeMap, ...] = field(default_factory=tuple)
     outcomes: Tuple[OutcomeExtractor, ...] = field(default_factory=tuple)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.schemes}, {self.maps}, {self.outcomes})"
 
     def __post_init__(self):
         super().__post_init__()
