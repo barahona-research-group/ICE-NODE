@@ -17,6 +17,7 @@ from ..ehr.tvx_concepts import SegmentedInpatientInterventions, InpatientObserva
 
 class GroupEmbedding(eqx.Module):
     grouping_data: GroupingData = eqx.static_field()
+    groups_aggregation: Tuple[Callable, ...]
     linear: eqx.nn.Linear
 
     @staticmethod
@@ -32,6 +33,7 @@ class GroupEmbedding(eqx.Module):
     def __init__(self, grouping_data: GroupingData, embeddings_size: int, key: jrandom.PRNGKey):
         linear_key, aggregation_key = jrandom.split(key, 2)
         n_groups = len(grouping_data.aggregation)
+        self.grouping_data = grouping_data
         self.groups_aggregation = tuple(map(self.group_function,
                                             grouping_data.aggregation,
                                             grouping_data.size,
@@ -40,7 +42,7 @@ class GroupEmbedding(eqx.Module):
         self.linear = eqx.nn.Linear(n_groups, embeddings_size, use_bias=False, key=linear_key)
 
     def split_source_array(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, ...]:
-        assert x.ndim == 1 and len(x) == self.grouping_data.source_size
+        assert x.ndim == 1 and len(x) == self.grouping_data.scheme_size[0]
         y = x[self.grouping_data.permute]
         return tuple(jnp.hsplit(y, self.grouping_data.split)[:-1])
 
@@ -60,10 +62,6 @@ class InterventionsEmbeddingsConfig(Config):
 NullEmbeddingFunction = Callable[[jnp.ndarray], jnp.ndarray]
 
 
-def null_embedding(x: jnp.ndarray) -> jnp.ndarray:
-    return jnp.array([])
-
-
 class InterventionsEmbeddings(Module):
     """
     Embeds an inpatient admission into fixed vectors:
@@ -72,12 +70,16 @@ class InterventionsEmbeddings(Module):
             and demographic information.
     """
     config: InterventionsEmbeddingsConfig = eqx.static_field()
-    f_icu_inputs_emb: GroupEmbedding | NullEmbeddingFunction = null_embedding
-    f_icu_procedures_emb: eqx.nn.Linear | NullEmbeddingFunction = null_embedding
-    f_hosp_procedures_emb: eqx.nn.Linear | NullEmbeddingFunction = null_embedding
+    f_icu_inputs_emb: GroupEmbedding | NullEmbeddingFunction
+    f_icu_procedures_emb: eqx.nn.Linear | NullEmbeddingFunction
+    f_hosp_procedures_emb: eqx.nn.Linear | NullEmbeddingFunction
     f_emb: eqx.nn.Linear
     activation: Callable
     final_activation: Callable
+
+    @staticmethod
+    def null_embedding(x: jnp.ndarray) -> jnp.ndarray:
+        return jnp.array([])
 
     def __init__(self, config: InterventionsEmbeddingsConfig,
                  icu_inputs_grouping: Optional[GroupingData] = None,
@@ -92,20 +94,31 @@ class InterventionsEmbeddings(Module):
         self.final_activation = final_activation
         (icu_inputs_key, icu_procedures_key, hosp_procedures_key, interventions_key) = jrandom.split(key, 4)
 
+        intervention_input_size = 0
         if icu_inputs_grouping and config.icu_inputs:
+            intervention_input_size += config.icu_inputs
             self.f_icu_inputs_emb = GroupEmbedding(icu_inputs_grouping, config.icu_inputs, icu_inputs_key)
+        else:
+            self.f_icu_inputs_emb = self.null_embedding
 
         if icu_procedures_size and config.icu_procedures:
+            intervention_input_size += config.icu_procedures
             self.f_icu_procedures_emb = eqx.nn.Linear(icu_procedures_size,
                                                       config.icu_procedures,
                                                       use_bias=False,
                                                       key=icu_procedures_key)
+        else:
+            self.f_icu_procedures_emb = self.null_embedding
+
         if hosp_procedures_size and config.hosp_procedures:
+            intervention_input_size += config.hosp_procedures
             self.f_hosp_procedures_emb = eqx.nn.Linear(hosp_procedures_size,
                                                        config.hosp_procedures,
                                                        use_bias=False,
                                                        key=hosp_procedures_key)
-        self.f_emb = eqx.nn.Linear(config.icu_inputs + config.icu_procedures + config.hosp_procedures,
+        else:
+            self.f_hosp_procedures_emb = self.null_embedding
+        self.f_emb = eqx.nn.Linear(intervention_input_size,
                                    config.interventions,
                                    use_bias=False,
                                    key=interventions_key)
@@ -113,9 +126,10 @@ class InterventionsEmbeddings(Module):
     def __call__(self, icu_inputs: Optional[jnp.ndarray] = None,
                  icu_procedures: Optional[jnp.ndarray] = None,
                  hosp_procedures: Optional[jnp.ndarray] = None) -> jnp.ndarray:
-        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs)
-        y_icu_procedures = self.f_icu_procedures_emb(icu_procedures)
-        y_hosp_procedures = self.f_hosp_procedures_emb(hosp_procedures)
+        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs) if icu_inputs is not None else jnp.array([])
+        y_icu_procedures = self.f_icu_procedures_emb(icu_procedures) if icu_procedures is not None else jnp.array([])
+        y_hosp_procedures = self.f_hosp_procedures_emb(hosp_procedures) if hosp_procedures is not None else jnp.array(
+            [])
         y = jnp.hstack((y_icu_inputs, y_icu_procedures, y_hosp_procedures))
         return self.final_activation(self.f_emb(self.activation(y)))
 
@@ -151,7 +165,7 @@ class EmbeddedAdmission(VxData):
     interventions: Optional[jnp.ndarray] = None  # (n_segments, config.interventions)
     demographic: Optional[jnp.ndarray] = None  # (config.demographic, )
     observables: Union[
-        Tuple[jnp.ndarray, ...], jnp.ndarray] = None  # Tuple[n_segments](n_segment_timestamps, config.observation)
+        Tuple[jnp.ndarray, ...], jnp.ndarray] = tuple()  # Tuple[n_segments](n_segment_timestamps, config.observation)
 
 
 class AdmissionEmbedding(Module):
@@ -174,10 +188,10 @@ class AdmissionEmbedding(Module):
                                hosp_procedures_size: Optional[int],
                                key: jrandom.PRNGKey) -> Tuple[InterventionsEmbeddings, jrandom.PRNGKey]:
         key, interventions_key = jrandom.split(key)
-        return InterventionsEmbeddings(interventions_config,
-                                       icu_inputs_grouping,
-                                       icu_procedures_size,
-                                       hosp_procedures_size,
+        return InterventionsEmbeddings(config=interventions_config,
+                                       icu_inputs_grouping=icu_inputs_grouping,
+                                       icu_procedures_size=icu_procedures_size,
+                                       hosp_procedures_size=hosp_procedures_size,
                                        key=interventions_key), key
 
     @staticmethod
@@ -260,7 +274,7 @@ class AdmissionEmbedding(Module):
             return EmbeddedAdmission()
 
         segments = [self.f_interventions_emb(icu_inputs, icu_procedures, hosp_procedures)
-                    for icu_inputs, icu_procedures, hosp_procedures in interventions.iter_tuples()]
+                    for hosp_procedures, icu_procedures, icu_inputs in interventions.iter_tuples()]
         return EmbeddedAdmission(interventions=jnp.vstack(segments))
 
     @eqx.filter_jit
@@ -296,10 +310,10 @@ class AdmissionEmbedding(Module):
             assert self.f_interventions_emb is None, "Interventions embedding is " \
                                                      "not supported for (unsegmented) admission."
 
-        return eqx.combine(self.embed_observables(admission.observables),
-                           self.embed_demographic(demographic_input),
+        return eqx.combine(self.embed_observables(admission.observables), self.embed_demographic(demographic_input),
                            self.embed_interventions(admission.interventions),
-                           self.embed_dx_codes(admission.dx_codes, admission.dx_codes_history))
+                           self.embed_dx_codes(admission.dx_codes, admission.dx_codes_history),
+                           is_leaf=lambda x: x is None or isinstance(x, tuple))
 
 
 class AdmissionSequentialEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):

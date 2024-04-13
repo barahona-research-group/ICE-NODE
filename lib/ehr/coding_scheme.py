@@ -1053,6 +1053,9 @@ class GroupingData(VxData):
     aggregation: Tuple[AggregationLiteral, ...]
     scheme_size: np.ndarray[int, int]
 
+    def __len__(self):
+        return 1
+
 
 class ReducedCodeMapN1(CodeMap):
     set_aggregation: FrozenDict11 = field(kw_only=True)
@@ -1454,6 +1457,9 @@ class CodingSchemesManager(VxData):
 
 class SchemeManagerView(VxDataView):
     _manager: CodingSchemesManager
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}"
 
     @cached_property
     def scheme(self) -> Dict[str, CodingScheme]:

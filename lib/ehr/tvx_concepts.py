@@ -815,10 +815,10 @@ class SegmentedInpatientInterventions(VxData):
         Yields:
             Tuple: a tuple containing the time and intervention data.
         """
-        for i in enumerate(self.time[:-1]):
-            yield (self.hosp_procedures[i] if self.hosp_procedures else None,
-                   self.icu_procedures[i] if self.icu_procedures else None,
-                   self.icu_inputs[i] if self.icu_inputs else None)
+        for i in range(self.time.shape[0] - 1):
+            yield (self.hosp_procedures[i] if self.hosp_procedures is not None else None,
+                   self.icu_procedures[i] if self.icu_procedures is not None else None,
+                   self.icu_inputs[i] if self.icu_inputs is not None else None)
 
     @cached_property
     def t0_padded(self):
