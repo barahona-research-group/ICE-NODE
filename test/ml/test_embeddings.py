@@ -149,6 +149,8 @@ class TestAdmissionEmbedding:
     def embedded_admission(self, admission_embedding, segmented_admission) -> EmbeddedAdmission:
         return admission_embedding(segmented_admission, None)
 
+    @pytest.mark.expensive_test
+    @pytest.mark.serial_test
     def test_embedded_admission(self, embedded_admission, segmented_admission, admission_embedding_config):
 
         if embedded_admission.dx_codes is not None or admission_embedding_config.dx_codes:
