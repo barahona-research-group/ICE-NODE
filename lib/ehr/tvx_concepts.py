@@ -340,7 +340,7 @@ class LeadingObservableExtractor(Module):
         code2index (Dict[str, int]): a dictionary mapping code to index.
     """
     config: LeadingObservableExtractorConfig
-    context_view: SchemeManagerView
+    observable_scheme: NumericScheme
 
     def __post_init__(self):
         assert self.type_hint in ('B', 'O'), (
@@ -359,19 +359,8 @@ class LeadingObservableExtractor(Module):
         Returns:
             int: the index of the observable code.
         """
-        return self.scheme_object.index[self.config.observable_code]
+        return self.observable_scheme.index[self.config.observable_code]
 
-    @cached_property
-    def scheme_object(self) -> NumericScheme:
-        """
-        Returns the scheme object based on the scheme name.
-
-        Returns:
-            NumericScheme: the scheme object.
-        """
-        scheme = self.context_view.scheme[self.config.scheme]
-        assert isinstance(scheme, NumericScheme), f"scheme must be numeric"
-        return scheme
 
     @cached_property
     def type_hint(self) -> NumericalTypeHint:
@@ -381,7 +370,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             NumericalTypeHint: the type hint for the observable.
         """
-        return self.scheme_object.type_hint[self.config.observable_code]
+        return self.observable_scheme.type_hint[self.config.observable_code]
 
     @cached_property
     def aggregation_name(self) -> str:
@@ -415,7 +404,7 @@ class LeadingObservableExtractor(Module):
         Returns:
             Dict[int, str]: the mapping of index to code.
         """
-        desc = self.scheme_object.desc[self.config.observable_code]
+        desc = self.observable_scheme.desc[self.config.observable_code]
         return dict(
             zip(range(len(self.config.leading_hours)),
                 [f'{desc}_next_{h}hrs' for h in self.config.leading_hours]))

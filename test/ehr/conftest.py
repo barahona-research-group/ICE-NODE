@@ -776,6 +776,7 @@ class NaiveEHR(TVxEHR):
     def __repr__(self):
         return 'NaiveEHR'
 
+
 NaiveEHR.register()
 
 
@@ -867,13 +868,14 @@ def dx_codes_history(dx_codes: CodesVector):
     return _dx_codes_history(dx_codes)
 
 
-def _outcome(outcome_extractor_: OutcomeExtractor, dx_codes: CodesVector):
-    return outcome_extractor_.map_vector(dx_codes)
+def _outcome(outcome_extractor_: OutcomeExtractor, dataset_scheme_manager: CodingSchemesManager,
+             dx_codes: CodesVector):
+    return outcome_extractor_.map_vector(dataset_scheme_manager, dx_codes)
 
 
 @pytest.fixture
 def outcome(dx_codes: CodesVector, outcome_extractor: OutcomeExtractor, dataset_scheme_manager):
-    return _outcome(outcome_extractor, dx_codes)
+    return _outcome(outcome_extractor, dataset_scheme_manager, dx_codes)
 
 
 def _inpatient_observables(observation_scheme: CodingScheme, n_timestamps: int):
@@ -964,7 +966,6 @@ def segmented_inpatient_interventions(inpatient_interventions: InpatientInterven
 
 
 def leading_observables_extractor(observation_scheme: NumericScheme,
-                                  dataset_scheme_manager: CodingSchemesManager,
                                   leading_hours: List[float] = (1.0,),
                                   entry_neglect_window: float = 0.0,
                                   recovery_window: float = 0.0,
@@ -976,15 +977,14 @@ def leading_observables_extractor(observation_scheme: NumericScheme,
                                               recovery_window=recovery_window,
                                               minimum_acquisitions=minimum_acquisitions,
                                               leading_hours=leading_hours)
-    return LeadingObservableExtractor(config=config, context_view=dataset_scheme_manager.view())
+    return LeadingObservableExtractor(config=config, observable_scheme=observation_scheme)
 
 
 @pytest.fixture
 def leading_observable(observation_scheme: NumericScheme,
                        inpatient_observables: InpatientObservables,
                        dataset_scheme_manager) -> InpatientObservables:
-    return leading_observables_extractor(observation_scheme=observation_scheme,
-                                         dataset_scheme_manager=dataset_scheme_manager)(inpatient_observables)
+    return leading_observables_extractor(observation_scheme=observation_scheme)(inpatient_observables)
 
 
 def _admission(admission_id: str, admission_date: pd.Timestamp,
@@ -1038,8 +1038,7 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
     for i in range(n_admissions):
         dx_codes = _dx_codes(dx_scheme)
         obs = _inpatient_observables(observation_scheme, n_timestamps=nrand.randint(0, 100))
-        lead = leading_observables_extractor(observation_scheme=observation_scheme,
-                                             dataset_scheme_manager=dataset_scheme_manager)(obs)
+        lead = leading_observables_extractor(observation_scheme=observation_scheme)(obs)
         icu_proc = _proc(icu_proc_scheme, n_timestamps=nrand.randint(0, 50))
         hosp_proc = _proc(hosp_proc_scheme, n_timestamps=nrand.randint(0, 50))
         icu_inputs = _icu_inputs(icu_inputs_scheme, n_timestamps=nrand.randint(0, 50))
@@ -1047,7 +1046,7 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
         admissions.append(_admission(admission_id=f'test_{i}', admission_date=pd.to_datetime('now'),
                                      dx_codes=dx_codes,
                                      dx_codes_history=_dx_codes_history(dx_codes),
-                                     outcome=_outcome(outcome_extractor_, dx_codes),
+                                     outcome=_outcome(outcome_extractor_, dataset_scheme_manager, dx_codes),
                                      observables=obs,
                                      interventions=_inpatient_interventions(hosp_proc=hosp_proc, icu_proc=icu_proc,
                                                                             icu_inputs=icu_inputs),
@@ -1058,13 +1057,13 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
 @pytest.fixture(params=[0, 1, 50])
 def patient(request, static_info: StaticInfo,
             dx_scheme: CodingScheme,
-            outcome_extractor: OutcomeExtractor, observation_scheme: CodingScheme,
+            outcome_extractor: OutcomeExtractor, observation_scheme: NumericScheme,
             icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
             hosp_proc_scheme: CodingScheme,
             dataset_scheme_manager: CodingSchemesManager) -> List[Patient]:
     admissions = _admissions(n_admissions=request.param, dx_scheme=dx_scheme,
                              outcome_extractor_=outcome_extractor, observation_scheme=observation_scheme,
-                             dataset_scheme_manager=dataset_scheme_manager,
                              icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
-                             hosp_proc_scheme=hosp_proc_scheme)
+                             hosp_proc_scheme=hosp_proc_scheme,
+                             dataset_scheme_manager=dataset_scheme_manager)
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)

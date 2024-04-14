@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 import tables as tbl
 
-from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint, CodingSchemesManager, SchemeManagerView)
+from .coding_scheme import (CodingScheme, OutcomeExtractor, NumericalTypeHint, CodingSchemesManager, SchemeManagerView,
+                            NumericScheme)
 from ..base import Config, Module
 from ..utils import write_config, load_config, tqdm_constructor
 
@@ -364,7 +365,7 @@ class DatasetScheme(Module):
         return self._scheme(self.config.dx_discharge)
 
     @cached_property
-    def obs(self) -> Optional[CodingScheme]:
+    def obs(self) -> Optional[NumericScheme]:
         return self._scheme(self.config.obs)
 
     @cached_property
@@ -724,7 +725,7 @@ class Dataset(AbstractDatasetRepresentation):
                 return cls.load(store.root)
         h5file = store._v_file
         config, classname = cls.load_config(Path(h5file.filename), key='dataset')
-        scheme_manager = CodingSchemesManager.from_hdf_group(store.schemes).sync()
+        scheme_manager = CodingSchemesManager.from_hdf_group(store.schemes)
         dataset = Module.import_module(config=config,
                                        classname=classname,
                                        tables=DatasetTables.load(store.tables),

@@ -1,5 +1,4 @@
 from copy import deepcopy
-from copy import deepcopy
 from typing import List, Callable
 from unittest import mock
 
@@ -8,9 +7,9 @@ import numpy as np
 import pytest
 import tables as tb
 
-from conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
-    NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX, leading_observables_extractor, \
-    inpatient_binary_input, LENGTH_OF_STAY
+from ehr.conftest import BINARY_OBSERVATION_CODE_INDEX, CATEGORICAL_OBSERVATION_CODE_INDEX, \
+    NUMERIC_OBSERVATION_CODE_INDEX, ORDINAL_OBSERVATION_CODE_INDEX, \
+    inpatient_binary_input, LENGTH_OF_STAY, leading_observables_extractor
 from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import NumericalTypeHint, NumericScheme
 from lib.ehr.tvx_concepts import (InpatientObservables, LeadingObservableExtractor,
@@ -190,7 +189,6 @@ class TestLeadingObservableExtractor:
     @pytest.mark.parametrize("leading_hours", [[1.0], [2.0], [1.0, 2.0], [1.0, 2.0, 3.0]])
     def test_len(self, observation_scheme: NumericScheme, leading_hours: List[float], dataset_scheme_manager):
         extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                  dataset_scheme_manager=dataset_scheme_manager,
                                                   leading_hours=leading_hours)
         assert len(extractor) == len(leading_hours)
 
@@ -207,7 +205,6 @@ class TestLeadingObservableExtractor:
         with pytest.raises(AssertionError):
             # leading hours must be sorted
             leading_observables_extractor(observation_scheme=observation_scheme,
-                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=list(reversed(leading_hours)),
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -217,7 +214,6 @@ class TestLeadingObservableExtractor:
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
             leading_observables_extractor(observation_scheme=observation_scheme,
-                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -227,7 +223,6 @@ class TestLeadingObservableExtractor:
         with pytest.raises(AssertionError):
             # categorical and numerical codes are not supported, yet.
             leading_observables_extractor(observation_scheme=observation_scheme,
-                                          dataset_scheme_manager=dataset_scheme_manager,
                                           leading_hours=leading_hours,
                                           entry_neglect_window=entry_neglect_window,
                                           recovery_window=recovery_window,
@@ -248,7 +243,6 @@ class TestLeadingObservableExtractor:
     def test_empty(self, observation_scheme: NumericScheme, leading_hours: List[float], code_index: int,
                    dataset_scheme_manager):
         extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                  dataset_scheme_manager=dataset_scheme_manager,
                                                   leading_hours=leading_hours,
                                                   code_index=code_index)
         empty = extractor.empty()
@@ -297,7 +291,6 @@ class TestLeadingObservableExtractor:
                                        minimum_acquisitions: int,
                                        dataset_scheme_manager):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        minimum_acquisitions=minimum_acquisitions)
         m = lead_extractor.filter_first_acquisitions(len(inpatient_observables), minimum_acquisitions)
         n_affected = min(minimum_acquisitions, len(inpatient_observables))
@@ -310,7 +303,6 @@ class TestLeadingObservableExtractor:
                                              entry_neglect_window: int,
                                              dataset_scheme_manager):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        entry_neglect_window=entry_neglect_window)
         t = inpatient_observables.time
         m = lead_extractor.filter_entry_neglect_window(t, entry_neglect_window)
@@ -327,7 +319,6 @@ class TestLeadingObservableExtractor:
             pytest.skip("No observations to test")
 
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        entry_neglect_window=recovery_window)
         x = inpatient_observables.value[:, lead_extractor.code_index]
         t = inpatient_observables.time
@@ -358,7 +349,6 @@ class TestLeadingObservableExtractor:
                                      entry_neglect_window: int,
                                      recovery_window: float):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        minimum_acquisitions=minimum_acquisitions,
                                                        entry_neglect_window=entry_neglect_window,
                                                        recovery_window=recovery_window)
@@ -379,7 +369,6 @@ class TestLeadingObservableExtractor:
     def test_extract_leading_window(self, inpatient_observables: InpatientObservables,
                                     observation_scheme: NumericScheme, dataset_scheme_manager, code_index: int):
         lead_extractor = leading_observables_extractor(observation_scheme=observation_scheme,
-                                                       dataset_scheme_manager=dataset_scheme_manager,
                                                        code_index=code_index)
         x = inpatient_observables.value[:, lead_extractor.code_index]
         m = inpatient_observables.mask[:, lead_extractor.code_index]

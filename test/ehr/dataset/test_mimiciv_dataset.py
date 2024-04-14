@@ -7,7 +7,7 @@ import pytest
 
 from lib.ehr.dataset import Report, Dataset
 from lib.ehr.transformations import ICUInputRateUnitConversion, FilterInvalidInputRatesSubjects
-from conftest import MockMIMICIVDataset
+from ehr.conftest import MockMIMICIVDataset
 
 
 class TestUnitConversionAndFilterInvalidInputRates:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import field
-from typing import Dict, Tuple, List, Final, Type, Set
+from typing import Dict, Tuple, List, Final, Type, Set, Hashable
 
 import dask.dataframe as dd
 import equinox as eqx
@@ -12,7 +12,7 @@ import pandas as pd
 
 from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables, \
     LeadingObservableExtractor, Admission, Patient
-from .coding_scheme import CodeMap
+from .coding_scheme import CodeMap, CodingSchemesManager
 from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport, \
@@ -404,7 +404,7 @@ class LeadingObservableExtraction(AbstractTVxTransformation):
     @classmethod
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[TVxEHR, TVxReport]:
         extractor = LeadingObservableExtractor(tv_ehr.config.leading_observable,
-                                               context_view=tv_ehr.dataset.scheme_manager.view())
+                                               observable_scheme=tv_ehr.dataset.scheme.obs)
 
         if tv_ehr.config.leading_observable is None:
             return cls.skip(tv_ehr, report)
@@ -440,7 +440,7 @@ class TVxConcepts(AbstractTVxTransformation):
 
     @classmethod
     def _static_info(cls, tvx_ehr: TVxEHR, report: TVxReport) -> Tuple[Dict[str, StaticInfo], TVxReport]:
-
+        scheme_manager = tvx_ehr.dataset.scheme_manager
         static = tvx_ehr.dataset.tables.static
         static_config = tvx_ehr.dataset.config.tables.static
         config = tvx_ehr.config.demographic
@@ -458,11 +458,12 @@ class TVxConcepts(AbstractTVxTransformation):
             dob = static[c_date_of_birth].to_dict()
         if tvx_ehr.scheme.gender is not None and config.gender:
             gender_m = tvx_ehr.gender_mapper
-            gender = {k: gender_m.codeset2vec({c}) for k, c in static[c_gender].to_dict().items()}
+            gender = {k: gender_m.codeset2vec(scheme_manager, {c}) for k, c in static[c_gender].to_dict().items()}
 
         if tvx_ehr.scheme.ethnicity is not None and config.ethnicity:
             ethnicity_m = tvx_ehr.ethnicity_mapper
-            ethnicity = {k: ethnicity_m.codeset2vec({c}) for k, c in static[c_ethnicity].to_dict().items()}
+            ethnicity = {k: ethnicity_m.codeset2vec(scheme_manager, {c}) for k, c in
+                         static[c_ethnicity].to_dict().items()}
 
         static_info = {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
                                               ethnicity=ethnicity.get(subject_id),
@@ -475,12 +476,13 @@ class TVxConcepts(AbstractTVxTransformation):
 
     @staticmethod
     def _dx_discharge(tvx_ehr: TVxEHR) -> Dict[str, CodesVector]:
+        scheme_manager = tvx_ehr.dataset.scheme_manager
         c_adm_id = tvx_ehr.dataset.config.tables.dx_discharge.admission_id_alias
         c_code = tvx_ehr.dataset.config.tables.dx_discharge.code_alias
         dx_discharge = tvx_ehr.dataset.tables.dx_discharge
         dx_codes_set = dx_discharge.groupby(c_adm_id)[c_code].apply(set).to_dict()
         dx_mapper = tvx_ehr.dx_mapper
-        return {adm_id: dx_mapper.codeset2vec(dx_codes_set.get(adm_id, set())) for adm_id in
+        return {adm_id: dx_mapper.codeset2vec(scheme_manager, dx_codes_set.get(adm_id, set())) for adm_id in
                 tvx_ehr.admission_ids}
 
     @staticmethod
@@ -500,8 +502,10 @@ class TVxConcepts(AbstractTVxTransformation):
 
     @staticmethod
     def _outcome(tvx_ehr: TVxEHR, dx_discharge: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
+        scheme_manager = tvx_ehr.dataset.scheme_manager
         outcome_extractor = tvx_ehr.scheme.outcome
-        return {adm_id: outcome_extractor.map_vector(code_vec) for adm_id, code_vec in dx_discharge.items()}
+        return {adm_id: outcome_extractor.map_vector(scheme_manager, code_vec) for adm_id, code_vec in
+                dx_discharge.items()}
 
     @staticmethod
     def _icu_inputs(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
@@ -515,8 +519,7 @@ class TVxConcepts(AbstractTVxTransformation):
         # Here we avoid deep copy, and we can still replace
         # a new column without affecting the original table.
         table = tvx_ehr.dataset.tables.icu_inputs.iloc[:, :]
-
-        table[c_code] = table[c_code].map(tvx_ehr.scheme.icu_inputs.index)
+        table[c_code] = table[c_code].map(tvx_ehr.dataset.scheme.icu_inputs.index)
 
         def group_fun(x):
             return pd.Series({
@@ -534,17 +537,16 @@ class TVxConcepts(AbstractTVxTransformation):
                 for adm_id, (codes, rates, start, end) in admission_icu_inputs.iterrows()}
 
     @staticmethod
-    def _procedures(table: pd.DataFrame, config: AdmissionIntervalBasedCodedTableConfig,
-                    code_map: CodeMap) -> Dict[str, InpatientInput]:
+    def _procedures(scheme_manager: CodingSchemesManager,
+                    table: pd.DataFrame, config: AdmissionIntervalBasedCodedTableConfig,
+                    code_map: CodeMap) -> Dict[str | Hashable, InpatientInput]:
         c_admission_id = config.admission_id_alias
         c_code = config.code_alias
         c_start_time = config.start_time_alias
         c_end_time = config.end_time_alias
-
-        # Here we avoid deep copy, and we can still replace
-        # a new column without affecting the original table.
-        table = table.iloc[:, :]
-        table[c_code] = table[c_code].map(code_map.source_to_target_index)
+        table = code_map.map_dataframe(table, c_code)
+        target_index = code_map.target_index(scheme_manager)
+        table[c_code] = table[c_code].map(target_index)
         assert not table[c_code].isnull().any(), 'Some codes are not in the target scheme.'
 
         def group_fun(x):
@@ -563,13 +565,15 @@ class TVxConcepts(AbstractTVxTransformation):
 
     @staticmethod
     def _hosp_procedures(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
-        return TVxConcepts._procedures(tvx_ehr.dataset.tables.hosp_procedures,
+        return TVxConcepts._procedures(tvx_ehr.dataset.scheme_manager,
+                                       tvx_ehr.dataset.tables.hosp_procedures,
                                        tvx_ehr.dataset.config.tables.hosp_procedures,
                                        tvx_ehr.hosp_procedures_mapper)
 
     @staticmethod
     def _icu_procedures(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
-        return TVxConcepts._procedures(tvx_ehr.dataset.tables.icu_procedures,
+        return TVxConcepts._procedures(tvx_ehr.dataset.scheme_manager,
+                                       tvx_ehr.dataset.tables.icu_procedures,
                                        tvx_ehr.dataset.config.tables.icu_procedures,
                                        tvx_ehr.icu_procedures_mapper)
 

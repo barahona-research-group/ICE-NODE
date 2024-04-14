@@ -222,14 +222,14 @@ class TestFlatScheme:
         assert m1.target_name == b
         assert m2.source_name == b
         assert m2.target_name == a
-        assert m1.source_scheme.name == a
-        assert m1.target_scheme.name == b
-        assert m2.source_scheme.name == b
-        assert m2.target_scheme.name == a
-        assert m1.support_ratio > 0.2
-        assert m2.support_ratio > 0.2
-        assert m1.range_ratio > 0.2
-        assert m2.range_ratio > 0.2
+        assert m1.source_name == a
+        assert m1.target_name == b
+        assert m2.source_name == b
+        assert m2.target_name == a
+        assert m1.support_ratio(icd_ccs_map_manager) > 0.2
+        assert m2.support_ratio(icd_ccs_map_manager) > 0.2
+        assert m1.range_ratio(icd_ccs_map_manager) > 0.2
+        assert m2.range_ratio(icd_ccs_map_manager) > 0.2
 
     def test_primitive_scheme_serialization(self, primitive_flat_scheme: CodingScheme, tmpdir: str):
         path = f'{tmpdir}/coding_scheme.h5'
@@ -259,7 +259,7 @@ class TestFlatScheme:
             icd_ccs_outcome_manager.to_hdf_group(f.create_group('/', 'context_view'))
 
         with tb.open_file(path, 'r') as f:
-            reloaded = CodingSchemesManager.from_hdf_group(f.root.context_view).sync()
+            reloaded = CodingSchemesManager.from_hdf_group(f.root.context_view)
 
         assert icd_ccs_outcome_manager.equals(reloaded)
 
@@ -406,6 +406,7 @@ class TestReducedCodeMapN1:
         desc = FrozenDict11.from_dict({k: k for k in codes_n1.keys()})
         return CodingScheme(name='target', codes=tuple(codes_n1.keys()), desc=desc)
 
+
     @pytest.fixture
     def mapping_data(self, codes_n1) -> FrozenDict1N:
         return FrozenDict1N.from_dict({b: {a} for a, bs in codes_n1.items() for b in bs})
@@ -413,24 +414,25 @@ class TestReducedCodeMapN1:
     @pytest.fixture
     def reduced_code_map(self, source_code_scheme, target_code_scheme, mapping_data,
                          aggregation) -> ReducedCodeMapN1:
-        manager = CodingSchemesManager().add_scheme(source_code_scheme).add_scheme(target_code_scheme)
-        m = ReducedCodeMapN1.from_data(source_code_scheme.name,
+        return ReducedCodeMapN1.from_data(source_code_scheme.name,
                                        target_code_scheme.name,
                                        mapping_data, aggregation)
-        manager = manager.add_map(m)
-        return manager.map[(source_code_scheme.name, target_code_scheme.name)]
+    @pytest.fixture
+    def scheme_manager(self, source_code_scheme, target_code_scheme, reduced_code_map):
+        return CodingSchemesManager().add_scheme(source_code_scheme).add_scheme(target_code_scheme).add_map(reduced_code_map)
+
 
     def test_reduced_groups(self, reduced_code_map: ReducedCodeMapN1):
-        assert set(reduced_code_map.reduced_groups.keys()) == {'A1', 'A2', 'A3', 'A4'}
+        assert set(reduced_code_map.reduced_groups.data.keys()) == {'A1', 'A2', 'A3', 'A4'}
 
     def test_groups_aggregation(self, reduced_code_map: ReducedCodeMapN1):
         assert reduced_code_map.groups_aggregation == ('w_sum',) * 4
 
-    def test_groups_size(self, reduced_code_map: ReducedCodeMapN1):
-        assert reduced_code_map.groups_size == (3, 3, 1, 2)
+    def test_groups_size(self, reduced_code_map: ReducedCodeMapN1, scheme_manager: CodingSchemesManager):
+        assert reduced_code_map.groups_size(scheme_manager) == (3, 3, 1, 2)
 
-    def test_groups_split(self, reduced_code_map: ReducedCodeMapN1):
-        assert reduced_code_map.groups_split == (3, 6, 7, 9)
+    def test_groups_split(self, reduced_code_map: ReducedCodeMapN1, scheme_manager: CodingSchemesManager):
+        assert reduced_code_map.groups_split(scheme_manager) == (3, 6, 7, 9)
 
-    def test_groups_permute(self, reduced_code_map: ReducedCodeMapN1):
-        assert reduced_code_map.groups_permute == (0, 1, 2, 3, 5, 7, 6, 4, 8)
+    def test_groups_permute(self, reduced_code_map: ReducedCodeMapN1, scheme_manager: CodingSchemesManager):
+        assert reduced_code_map.groups_permute(scheme_manager) == (0, 1, 2, 3, 5, 7, 6, 4, 8)

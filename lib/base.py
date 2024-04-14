@@ -2,7 +2,7 @@ import dataclasses
 import json
 from abc import ABCMeta
 from types import MappingProxyType
-from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple
+from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, Self, Literal
 
 # TODO: update to Python 3.11, then use typing.Self
 import equinox as eqx
@@ -116,7 +116,7 @@ class Config(eqx.Module):
     def to_dict(self) -> Dict[str, Any]:
         return self.map_config_to_dict(Config.as_typed_dict, self)
 
-    def update(self, other: Union['Config', Dict[str, Any]]) -> 'Config':
+    def update(self, other: Union['Config', Dict[str, Any]]) -> Self:
         if isinstance(other, Config):
             other = other.as_dict()
         return Config.from_dict(self.to_dict() | other)
@@ -125,7 +125,7 @@ class Config(eqx.Module):
         return len(self.as_dict())
 
     @classmethod
-    def from_dict(cls, config: Dict[str, Any]) -> "Config":
+    def from_dict(cls, config: Dict[str, Any]) -> Self:
         def _map_dict_to_config(x):
             if cls._is_typed_dict(x):
                 config_class = cls.config_class(x.pop("_type"))
@@ -150,7 +150,7 @@ class Config(eqx.Module):
     def register(cls):
         Config._class_registry[cls.__name__] = cls
 
-    def path_update(self, path, value):
+    def path_update(self, path, value) -> Self:
         nesting = path.split(".")
 
         def _get(x):
@@ -494,7 +494,7 @@ class VxData(eqx.Module):
                                                                                                      attribute_names)
 
 
-def np_module(a: Array) -> Any:
+def np_module(a: Array) -> Union[np, jnp]:
     if isinstance(a, np.ndarray):
         return np
     elif isinstance(a, (jnp.ndarray, jax.Array)):

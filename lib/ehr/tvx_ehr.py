@@ -14,7 +14,7 @@ import pandas as pd
 import tables as tbl
 
 from . import OutcomeExtractor
-from .coding_scheme import CodesVector
+from .coding_scheme import CodesVector, CodingSchemesManager, CodeMap
 from .dataset import Dataset, DatasetScheme, DatasetSchemeConfig, ReportAttributes, \
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
@@ -257,21 +257,20 @@ class TVxEHRScheme(DatasetScheme):
         return self.context_view.outcome[self.config.outcome] if self.config.outcome else None
 
     @staticmethod
-    def validate_outcome_scheme(outcome_scheme: OutcomeExtractor, dx_discharge: str) -> bool:
-        context = outcome_scheme.context_view
-        return context.supported_outcome(outcome_scheme.name, dx_discharge)
+    def validate_outcome_scheme(coding_scheme_manager: CodingSchemesManager, outcome_scheme: OutcomeExtractor,
+                                dx_discharge: str) -> bool:
+        return coding_scheme_manager.supported_outcome(outcome_scheme.name, dx_discharge)
 
     @staticmethod
-    def validate_mapping(source: DatasetScheme, target: TVxEHRScheme):
+    def validate_mapping(coding_scheme_manager: CodingSchemesManager, source: DatasetScheme, target: TVxEHRScheme):
         target_schemes = target.scheme_dict
         for key, source_scheme in source.scheme_dict.items():
-            assert source_scheme.mapper_to(
-                target_schemes[key].name
-            ), f"Cannot map {key} from {source_scheme.name} to {target_schemes[key].name}"
+            assert coding_scheme_manager.map[(source_scheme.name, target_schemes[key].name)] is not None, \
+                f"Cannot map {key} from {source_scheme.name} to {target_schemes[key].name}"
 
         if target.outcome is not None:
             assert TVxEHRScheme.validate_outcome_scheme(
-                target.outcome, target.dx_discharge.name
+                coding_scheme_manager, target.outcome, target.dx_discharge.name
             ), f"Outcome {target.outcome.name} not supported for {target.dx_discharge.name}"
 
     def demographic_vector_size(self, demographic_vector_config: DemographicVectorConfig):
@@ -284,28 +283,33 @@ class TVxEHRScheme(DatasetScheme):
             size += len(self.ethnicity)
         return size
 
-    def dx_mapper(self, source_scheme: DatasetScheme):
-        return source_scheme.dx_discharge.mapper_to(self.dx_discharge.name)
+    def mapper(self, source_scheme: DatasetScheme, key: str) -> Optional[CodeMap]:
+        pair = (getattr(source_scheme, key).name, getattr(self, key).name)
+        return self.context_view.map[pair] if pair in self.context_view.map else None
 
-    def ethnicity_mapper(self, source_scheme: DatasetScheme):
-        return source_scheme.ethnicity.mapper_to(self.ethnicity.name)
+    def dx_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
+        return self.mapper(source_scheme, 'dx_discharge')
 
-    def gender_mapper(self, source_scheme: DatasetScheme):
-        return source_scheme.gender.mapper_to(self.gender.name)
+    def ethnicity_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
+        return self.mapper(source_scheme, 'ethnicity')
 
-    def icu_procedures_mapper(self, source_scheme: DatasetScheme):
-        return source_scheme.icu_procedures.mapper_to(self.icu_procedures.name)
+    def gender_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
+        return self.mapper(source_scheme, 'gender')
 
-    def hosp_procedures_mapper(self, source_scheme: DatasetScheme):
-        return source_scheme.hosp_procedures.mapper_to(self.hosp_procedures.name)
+    def icu_procedures_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
+        return self.mapper(source_scheme, 'icu_procedures')
+
+    def hosp_procedures_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
+        return self.mapper(source_scheme, 'hosp_procedures')
 
     @staticmethod
-    def check_target_scheme_support(dataset_scheme: DatasetScheme) -> Dict[str, Tuple[str, ...]]:
+    def check_target_scheme_support(scheme_manager: CodingSchemesManager, dataset_scheme: DatasetScheme) -> Dict[
+        str, Tuple[str, ...]]:
         supported_attr_targets = {
-            k: v.supported_targets
+            k: v.supported_targets(scheme_manager)
             for k, v in dataset_scheme.scheme_dict.items()
         }
-        supported_outcomes = dataset_scheme.context_view.supported_outcomes(dataset_scheme.dx_discharge.name)
+        supported_outcomes = scheme_manager.supported_outcomes(dataset_scheme.dx_discharge.name)
         return supported_attr_targets | {'outcome': supported_outcomes}
 
 
@@ -474,7 +478,7 @@ class TVxEHR(AbstractDatasetRepresentation):
     def scheme(self):
         """Get the scheme."""
         scheme = TVxEHRScheme(config=self.config.scheme, context_view=self.dataset.scheme_manager.view())
-        TVxEHRScheme.validate_mapping(self.dataset.scheme, scheme)
+        TVxEHRScheme.validate_mapping(self.dataset.scheme_manager, self.dataset.scheme, scheme)
         return scheme
 
     @cached_property

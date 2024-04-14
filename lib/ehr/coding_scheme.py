@@ -3,7 +3,6 @@ data structures to support conversion between CCS and ICD9."""
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import math
 import os
@@ -16,7 +15,6 @@ from types import MappingProxyType
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Tuple, Any, Literal, ItemsView, Iterator, \
     Iterable, Mapping
 
-import equinox as eqx
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -168,18 +166,7 @@ class CodesVector(VxData):
         return CodesVector(self.vec | other.vec, self.scheme)
 
 
-class SchemesContextManaged(VxData):
-    context_view: Optional[SchemeManagerView] = eqx.field(default=None, static=True)
-
-    def set_context_view(self, context_view: SchemeManagerView):
-        return dataclasses.replace(self, context_view=context_view)
-
-    def __repr__(self):
-        return eqx.tree_pformat(eqx.tree_at(lambda x: x.context_view, self, None,
-                                            is_leaf=lambda x: x is None))
-
-
-class CodingScheme(SchemesContextManaged):
+class CodingScheme(VxData):
     name: str = field(kw_only=True)
     codes: Tuple[str, ...] = field(kw_only=True)
     desc: FrozenDict11 = field(kw_only=True)
@@ -273,12 +260,6 @@ class CodingScheme(SchemesContextManaged):
         """
         return set(filter(lambda c: re.findall(query, self.desc[c], flags=regex_flags), self.codes))
 
-    def mapper_to(self, target_scheme: str):
-        """
-        Returns a mapper between the current scheme and the target scheme.
-        """
-        return self.context_view.map[(self.name, target_scheme)]
-
     def wrap_vector(self, vec: np.ndarray) -> "CodingScheme.vector_cls":
         """
         Wrap a numpy array as a vector representation of the current scheme.
@@ -311,9 +292,8 @@ class CodingScheme(SchemesContextManaged):
 
         return CodingScheme.vector_cls(vec, self.name)
 
-    @property
-    def supported_targets(self) -> Tuple[str, ...]:
-        return tuple(t for s, t in self.context_view.map.keys() if s == self.name)
+    def supported_targets(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+        return tuple(t for s, t in scheme_manager.map.keys() if s == self.name)
 
     def as_dataframe(self) -> pd.DataFrame:
         """
@@ -734,41 +714,7 @@ class UnsupportedMapping(ValueError):
     pass
 
 
-class CodeMap(SchemesContextManaged):
-    """
-    Represents a mapping between two coding schemes.
-
-    Attributes:
-        config (CodeMapConfig): the configuration of the CodeMap.
-        _source_scheme (Union[CodingScheme, HierarchicalScheme]): the source coding scheme.
-        _target_scheme (Union[CodingScheme, HierarchicalScheme]): the target coding scheme.
-        _data (Dict[str, Set[str]]): the mapping data.
-
-    Class Variables:
-        _maps (Dict[Tuple[str, str], CodeMap]): a class-attribute dictionary of registered CodeMaps.
-        _load_maps (Dict[Tuple[str, str], Callable]): a class-attribute dictionary of lazy-loaded CodeMaps.
-        _maps_lock (Dict[Tuple[str, str], Lock]): a class-attribute dictionary of locks for thread safety.
-
-    Methods:
-        __init__(self, config: CodeMapConfig, data: Dict[str, Set[str]]): initializes a CodeMap instance.
-        __str__(self): returns a string representation of the CodeMap.
-        __hash__(self): returns the hash value of the CodeMap.
-        __bool__(self): returns True if the CodeMap is not empty, False otherwise.
-        target_index(self): returns the target coding scheme index.
-        target_desc(self): returns the target coding scheme description.
-        source_index(self): returns the source coding scheme index.
-        source_scheme(self): returns the source coding scheme.
-        target_scheme(self): returns the target coding scheme.
-        mapped_to_dag_space(self): returns True if the CodeMap is mapped to DAG space, False otherwise.
-        __getitem__(self, item): returns the mapped codes for the given item.
-        __contains__(self, item): returns True if the given item is mapped to the target coding scheme, False otherwise.
-        keys(self): returns the supported codes in the source coding scheme that can be mapped to the target scheme.
-        map_codeset(self, codeset: Set[str]): maps a codeset to the target coding scheme.
-        target_code_ancestors(self, t_code: str, include_itself=True): returns the ancestors of a target code.
-        codeset2vec(self, codeset: Set[str]): converts a codeset to a binary vector representation.
-        codeset2dagset(self, codeset: Set[str]): converts a codeset to a DAG set representation.
-        codeset2dagvec(self, codeset: Set[str]): converts a codeset to a DAG vector representation.
-    """
+class CodeMap(VxData):
     source_name: str = field(kw_only=True)
     target_name: str = field(kw_only=True)
     data: FrozenDict1N = field(kw_only=True)
@@ -776,72 +722,50 @@ class CodeMap(SchemesContextManaged):
     def __post_init__(self):
         assert isinstance(self.data, FrozenDict1N), "Data should be a FrozenDict1N."
 
-    @cached_property
-    def mapped_to_dag_space(self) -> bool:
+    def mapped_to_dag_space(self, scheme_manager: CodingSchemesManager) -> bool:
         """
         Returns True if the CodeMap is mapped to DAG space, False otherwise.
 
         Returns:
             bool: True if the CodeMap is mapped to DAG space, False otherwise.
         """
-        scheme = self.target_scheme
+        scheme = scheme_manager.scheme[self.target_name]
         if not isinstance(scheme, HierarchicalScheme) or scheme.dag_codes is scheme.codes:
             return False
         map_target_codes = set.union(*self.data.values())
-        target_codes = set(self.target_scheme.codes)
-        target_dag_codes = set(self.target_scheme.dag_codes)
+        target_codes = set(scheme.codes)
+        target_dag_codes = set(scheme.dag_codes)
         is_code_subset = map_target_codes.issubset(target_codes)
         is_dag_subset = map_target_codes.issubset(target_dag_codes)
         assert is_code_subset != is_dag_subset, "The target codes are not a subset " \
                                                 "of the target codes or the DAG codes."
         return is_dag_subset
 
-    @cached_property
-    def support_ratio(self) -> float:
+    def support_ratio(self, scheme_manager: CodingSchemesManager) -> float:
         """
         Returns the ratio between the source scheme codes covered by the mapping and the total source scheme codes.
 
         Returns:
             float: the support ratio of the CodeMap.
         """
-        return len(set(self.data.keys()) & set(self.source_scheme.codes)) / len(self.source_scheme.codes)
+        source_scheme = scheme_manager.scheme[self.source_name]
+        return len(set(self.data.keys()) & set(source_scheme.codes)) / len(source_scheme.codes)
 
-    @cached_property
-    def range_ratio(self) -> float:
+    def range_ratio(self, scheme_manager: CodingSchemesManager) -> float:
         """
         Returns the ratio between the target scheme codes covered by the mapping and the total target scheme codes.
 
         Returns:
             float: the range ratio of the CodeMap.
         """
-        return len(set.union(*self.data.values()) & set(self.target_scheme.codes)) / len(self.target_scheme.codes)
+        target_scheme = scheme_manager.scheme[self.target_name]
+        return len(set.union(*self.data.values()) & set(target_scheme.codes)) / len(target_scheme.codes)
 
-    @cached_property
-    def log_ratios(self) -> float:
+    def log_ratios(self, scheme_manager: CodingSchemesManager) -> float:
         """
         Returns the score of mapping between schemes as the logarithm of support ratio multiplied by range ratio.
         """
-        return math.log(self.support_ratio) + math.log(self.range_ratio)
-
-    @cached_property
-    def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        """
-        Returns the source coding scheme.
-
-        Returns:
-            Union[CodingScheme, HierarchicalScheme]: the source coding scheme.
-        """
-        return self.context_view.scheme[self.source_name]
-
-    @cached_property
-    def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        """
-        Returns the target coding scheme.
-
-        Returns:
-            Union[CodingScheme, HierarchicalScheme]: the target coding scheme.
-        """
-        return self.context_view.scheme[self.target_name]
+        return math.log(self.support_ratio(scheme_manager)) + math.log(self.range_ratio(scheme_manager))
 
     def __str__(self):
         """
@@ -850,7 +774,7 @@ class CodeMap(SchemesContextManaged):
         Returns:
             str: the string representation of the CodeMap.
         """
-        return f'{self.source_scheme.name}->{self.target_scheme.name}'
+        return f'{self.source_name}->{self.target_name}'
 
     def __hash__(self):
         """
@@ -879,49 +803,38 @@ class CodeMap(SchemesContextManaged):
         """
         return len(self.data)
 
-    @property
-    def target_index(self):
+    def target_index(self, scheme_manager: CodingSchemesManager):
         """
         Returns the target coding scheme index.
 
         Returns:
             dict: the target coding scheme index.
         """
-        if self.mapped_to_dag_space and self.source_scheme.name != self.target_scheme.name:
-            return self.target_scheme.dag_index
-        return self.target_scheme.index
+        target_scheme = scheme_manager.scheme[self.target_name]
+        if self.mapped_to_dag_space and self.source_name != self.target_name:
+            return target_scheme.dag_index
+        return target_scheme.index
 
-    @property
-    def target_desc(self):
+    def target_desc(self, scheme_manager: CodingSchemesManager):
         """
         Returns the target coding scheme description.
 
         Returns:
             dict: the target coding scheme description.
         """
-        if self.mapped_to_dag_space and self.source_scheme.name != self.target_scheme.name:
-            return self.target_scheme.dag_desc
-        return self.target_scheme.desc
+        target_scheme = scheme_manager.scheme[self.target_name]
+        if self.mapped_to_dag_space and self.source_name != self.target_name:
+            return target_scheme.dag_desc
+        return target_scheme.desc
 
-    @property
-    def source_index(self) -> dict:
+    def source_index(self, scheme_manager: CodingSchemesManager) -> dict:
         """
         Returns the source coding scheme index.
 
         Returns:
             dict: the source coding scheme index.
         """
-        return self.source_scheme.index
-
-    @property
-    def source_to_target_index(self) -> Dict[str, int]:
-        """
-        Returns a dictionary mapping source codes to their indices in the target coding scheme.
-
-        Returns:
-            Dict[str, int]: a dictionary mapping source codes to their indices in the target coding scheme.
-        """
-        return {c: self.target_index[c] for c in self.keys()}
+        return scheme_manager.scheme[self.source_name].index
 
     def __getitem__(self, item):
         """
@@ -947,15 +860,6 @@ class CodeMap(SchemesContextManaged):
         """
         return item in self.data
 
-    def keys(self):
-        """
-        Returns the codes in the source coding scheme that have a mapping to the target coding scheme.
-
-        Returns:
-            List[str]: the codes in the source coding scheme that have a mapping to the target coding scheme.
-        """
-        return self.data.keys()
-
     def map_codeset(self, codeset: Set[str]):
         """
         Maps a codeset to the target coding scheme.
@@ -968,7 +872,14 @@ class CodeMap(SchemesContextManaged):
         """
         return set().union(*[self[c] for c in codeset])
 
-    def target_code_ancestors(self, t_code: str, include_itself=True):
+    def map_dataframe(self, df: pd.DataFrame, code_column: str) -> pd.DataFrame:
+        df = df.iloc[:, :]
+        code2list = {k: list(v) if len(v) > 1 else next(iter(v)) for k, v in self.data.items()}
+        df[code_column] = df[code_column].map(code2list)
+        assert df[code_column].isna().sum() == 0, "Some codes are not mapped."
+        return df.explode(code_column)
+
+    def target_code_ancestors(self, scheme_manager: CodingSchemesManager, t_code: str, include_itself=True):
         """
         Returns the ancestors of a target code.
 
@@ -979,11 +890,12 @@ class CodeMap(SchemesContextManaged):
         Returns:
             List[str]: The ancestors of the target code.
         """
+        target_scheme = scheme_manager.scheme[self.target_name]
         if not self.mapped_to_dag_space:
-            t_code = self.target_scheme.code2dag[t_code]
-        return self.target_scheme.code_ancestors_bfs(t_code, include_itself=include_itself)
+            t_code = target_scheme.code2dag[t_code]
+        return target_scheme.code_ancestors_bfs(t_code, include_itself=include_itself)
 
-    def codeset2vec(self, codeset: Set[str]):
+    def codeset2vec(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
         """
         Converts a codeset to a multi-hot vector representation.
 
@@ -993,7 +905,7 @@ class CodeMap(SchemesContextManaged):
         Returns:
             CodesVector: the binary vector representation of the codeset.
         """
-        index = self.target_index
+        index = self.target_index(scheme_manager)
         vec = np.zeros(len(index), dtype=bool)
         try:
             for c in codeset:
@@ -1003,7 +915,7 @@ class CodeMap(SchemesContextManaged):
 
         return CodesVector(vec, self.target_name)
 
-    def codeset2dagset(self, codeset: Set[str]):
+    def codeset2dagset(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
         """
         Converts a codeset to a DAG set representation.
 
@@ -1013,12 +925,13 @@ class CodeMap(SchemesContextManaged):
         Returns:
             Set[str]: the DAG set representation of the codeset.
         """
+        target_scheme = scheme_manager.scheme[self.target_name]
         if not self.mapped_to_dag_space:
-            return set(self.target_scheme.code2dag[c] for c in codeset)
+            return set(target_scheme.code2dag[c] for c in codeset)
         else:
             return codeset
 
-    def codeset2dagvec(self, codeset: Set[str]):
+    def codeset2dagvec(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
         """
         Converts a codeset to a DAG vector representation.
 
@@ -1028,11 +941,12 @@ class CodeMap(SchemesContextManaged):
         Returns:
             np.ndarray: the DAG vector representation of the codeset.
         """
+        target_scheme = scheme_manager.scheme[self.target_name]
         if not self.mapped_to_dag_space:
-            codeset = set(self.target_scheme.code2dag[c] for c in codeset)
-            index = self.target_scheme.dag_index
+            codeset = set(target_scheme.code2dag[c] for c in codeset)
+            index = target_scheme.dag_index
         else:
-            index = self.target_scheme
+            index = target_scheme
         vec = np.zeros(len(index), dtype=bool)
         try:
             for c in codeset:
@@ -1074,9 +988,8 @@ class ReducedCodeMapN1(CodeMap):
                                 set_aggregation=set_aggregation,
                                 reduced_groups=FrozenDict1N.from_dict(new_map))
 
-    @cached_property
-    def groups(self) -> Tuple[Tuple[str, ...], ...]:
-        source_index = self.source_index
+    def groups(self, scheme_manager: CodingSchemesManager) -> Tuple[Tuple[str, ...], ...]:
+        source_index = self.source_index(scheme_manager)
         target_codes = tuple(sorted(self.reduced_groups.keys()))
         return tuple(tuple(sorted(self.reduced_groups[t], key=source_index.get)) for t in target_codes)
 
@@ -1092,98 +1005,50 @@ class ReducedCodeMapN1(CodeMap):
         aggregation = tuple(self.set_aggregation[g] for g in sorted(self.reduced_groups.keys()))
         return tuple(self._validate_aggregation(a) for a in aggregation)
 
-    @cached_property
-    def groups_size(self) -> Tuple[int, ...]:
-        return tuple(len(g) for g in self.groups)
+    def groups_size(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+        return tuple(len(g) for g in self.groups(scheme_manager))
 
-    @cached_property
-    def groups_split(self) -> Tuple[int, ...]:
-        return tuple(np.cumsum(self.groups_size).tolist())
+    def groups_split(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+        return tuple(np.cumsum(self.groups_size(scheme_manager)).tolist())
 
-    @cached_property
-    def groups_permute(self) -> Tuple[int, ...]:
-        source_index = self.source_index
-        permutes = sum((tuple(map(source_index.get, g)) for g in self.groups), tuple())
+    def groups_permute(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+        source_index = self.source_index(scheme_manager)
+        permutes = sum((tuple(map(source_index.get, g)) for g in self.groups(scheme_manager)), tuple())
         if len(permutes) == len(source_index):
             return permutes
         else:
             return permutes + tuple(set(source_index.keys()) - set(permutes))
 
-    @cached_property
-    def grouping_data(self) -> GroupingData:
-        return GroupingData(permute=np.array(self.groups_permute, dtype=int),
-                            split=np.array(self.groups_split, dtype=int),
-                            size=np.array(self.groups_size, dtype=int),
+    def grouping_data(self, scheme_manager: CodingSchemesManager) -> GroupingData:
+        source_scheme = scheme_manager.scheme[self.source_name]
+        target_scheme = scheme_manager.scheme[self.target_name]
+        return GroupingData(permute=np.array(self.groups_permute(scheme_manager), dtype=int),
+                            split=np.array(self.groups_split(scheme_manager), dtype=int),
+                            size=np.array(self.groups_size(scheme_manager), dtype=int),
                             aggregation=self.groups_aggregation,
-                            scheme_size=np.array((len(self.source_scheme), len(self.target_scheme))))
+                            scheme_size=np.array((len(source_scheme), len(target_scheme))))
 
 
-class IdentityCodeMap(CodeMap):
-    """
-    A code mapping class that maps codes to themselves.
-
-    This class inherits from the `CodeMap` base class and provides a simple
-    implementation of the `map_codeset` method that returns the input codeset
-    unchanged.
-
-    """
-    data: FrozenDict1N = FrozenDict1N.from_dict({})
-
-    @property
-    def mapped_to_dag_space(self) -> bool:
-        return False
-
-    @cached_property
-    def source_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        return self.context_view.scheme[self.source_name]
-
-    @cached_property
-    def target_scheme(self) -> Union[CodingScheme, HierarchicalScheme]:
-        return self.context_view.scheme[self.target_name]
-
-    def map_codeset(self, codeset):
-        return codeset
-
-    def __getitem__(self, item):
-        if item in self.source_scheme:
-            return {item}
-        raise KeyError(f'{item} is not in the source scheme.')
-
-    def __contains__(self, item):
-        return item in self.source_scheme
-
-    def __len__(self):
-        return len(self.source_scheme)
-
-    def keys(self):
-        return self.source_scheme.codes
-
-
-class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
+class OutcomeExtractor(VxData, metaclass=ABCMeta):
     name: str = field(kw_only=True)
 
     def __len__(self):
-        return len(self.codes)
+        return 1
 
-    @property
     @abstractmethod
-    def base_scheme(self) -> CodingScheme:
+    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
         pass
 
-    @cached_property
-    def codes(self) -> Tuple[str, ...]:
+    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
         raise NotImplementedError
 
-    @cached_property
-    def desc(self) -> FrozenDict11:
+    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
         raise NotImplementedError
 
-    @cached_property
-    def index(self) -> Dict[str, int]:
-        return {c: i for i, c in enumerate(self.codes)}
+    def index(self, scheme_manager: CodingSchemesManager) -> Dict[str, int]:
+        return {c: i for i, c in enumerate(self.codes(scheme_manager))}
 
-    @property
-    def outcome_dim(self):
+    def outcome_dim(self, scheme_manager: CodingSchemesManager):
         """
         Gets the dimension of the outcome.
 
@@ -1192,9 +1057,9 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
 
         """
 
-        return len(self.index)
+        return len(self.index(scheme_manager))
 
-    def _map_codeset(self, codeset: Set[str], base_scheme: str) -> Set[str]:
+    def _map_codeset(self, scheme_manager: CodingSchemesManager, codeset: Set[str], base_scheme: str) -> Set[str]:
         """
         Maps a codeset to the base coding scheme.
 
@@ -1206,17 +1071,18 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
             Set[str]: the mapped codeset.
 
         """
+        m = scheme_manager.map[(base_scheme, base_scheme)]
+        target_scheme = scheme_manager.scheme[base_scheme]
 
-        m = self.context_view.map[(base_scheme, self.base_scheme.name)]
         codeset = m.map_codeset(codeset)
 
-        if m.mapped_to_dag_space:
-            codeset &= set(m.target_scheme.dag2code)
-            codeset = set(m.target_scheme.dag2code[c] for c in codeset)
+        if m.mapped_to_dag_space(scheme_manager):
+            codeset &= set(target_scheme.dag2code)
+            codeset = set(target_scheme.dag2code[c] for c in codeset)
 
-        return codeset & set(self.codes)
+        return codeset & set(self.codes(scheme_manager))
 
-    def map_vector(self, codes: CodesVector) -> CodesVector:
+    def map_vector(self, scheme_manager: CodingSchemesManager, codes: CodesVector) -> CodesVector:
         """
         Extract outcomes from a codes vector into a new codes vector.
 
@@ -1227,10 +1093,11 @@ class OutcomeExtractor(SchemesContextManaged, metaclass=ABCMeta):
             CodesVector: the extracted outcomes represented by a codes vector.
 
         """
+        index = self.index(scheme_manager)
 
-        vec = np.zeros(len(self.index), dtype=bool)
-        for c in self._map_codeset(codes.to_codeset(self.context_view), codes.scheme):
-            vec[self.index[c]] = True
+        vec = np.zeros(len(index), dtype=bool)
+        for c in self._map_codeset(scheme_manager, codes.to_codeset(scheme_manager), codes.scheme):
+            vec[index[c]] = True
         return CodesVector(np.array(vec), self.name)
 
 
@@ -1238,45 +1105,41 @@ class ExcludingOutcomeExtractor(OutcomeExtractor):
     exclude_codes: Tuple[str, ...] = field(kw_only=True)
     base_name: str = field(kw_only=True, default=None)
 
-    @cached_property
-    def codes(self) -> Tuple[str, ...]:
-        return tuple(c for c in self.base_scheme.codes if c not in self.exclude_codes)
+    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+        return tuple(c for c in self.base_scheme(scheme_manager).codes if c not in self.exclude_codes)
 
-    @cached_property
-    def desc(self) -> FrozenDict11:
-        return FrozenDict11({c: self.base_scheme.desc[c] for c in self.codes})
+    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
+        desc = self.base_scheme(scheme_manager).desc
+        return FrozenDict11({c: desc[c] for c in self.codes(scheme_manager)})
 
-    @cached_property
-    def base_scheme(self) -> CodingScheme:
-        return self.context_view.scheme[self.base_name]
+    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
+        return scheme_manager.scheme[self.base_name]
 
 
 class FileBasedOutcomeExtractor(OutcomeExtractor):
     spec_file: str = field(kw_only=True)
-    exclude_codes: Optional[Tuple[str, ...]] = field(kw_only=True, default=None)
     name: Optional[str] = field(kw_only=True, default=None)
 
     def __post_init__(self):
-        if self.exclude_codes is None and self.context_view is not None:
-            self.exclude_codes = tuple(self.specs['exclude_codes'])
-
         if self.name is None:
             self.name = self.spec_file.split('.')[0]
 
-    @cached_property
-    def codes(self) -> Tuple[str, ...]:
-        return tuple(c for c in sorted(self.base_scheme.codes) if c not in self.specs['exclude_codes'])
+    def exclude_codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+        return self.specs(scheme_manager)['exclude_codes']
 
-    @cached_property
-    def desc(self) -> FrozenDict11:
-        return FrozenDict11.from_dict({c: self.base_scheme.desc[c] for c in self.codes})
+    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+        excluded = self.exclude_codes(scheme_manager)
+        base_codes = self.base_scheme(scheme_manager).codes
+        return tuple(c for c in sorted(base_codes) if c not in excluded)
 
-    @cached_property
-    def specs(self) -> Dict[str, Any]:
-        return self.spec_from_json(self.context_view, self.spec_file)
+    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
+        desc = self.base_scheme(scheme_manager).desc
+        return FrozenDict11.from_dict({c: desc[c] for c in self.codes(scheme_manager)})
 
-    @cached_property
-    def base_scheme(self) -> CodingScheme:
+    def specs(self, scheme_manager: CodingSchemesManager) -> Dict[str, Any]:
+        return self.spec_from_json(scheme_manager, self.spec_file)
+
+    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
         """
         Gets the base coding scheme used for outcome extraction.
 
@@ -1284,7 +1147,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
             CodingScheme: the base coding scheme.
 
         """
-        return self.context_view.scheme[self.specs['code_scheme']]
+        return scheme_manager.scheme[self.specs(scheme_manager)['code_scheme']]
 
     @staticmethod
     def spec_from_json(manager: Union[SchemeManagerView, CodingSchemesManager], json_file: str):
@@ -1324,12 +1187,6 @@ class CodingSchemesManager(VxData):
     def __len__(self):
         return len(self.schemes) + len(self.maps) + len(self.outcomes)
 
-    def sync(self) -> CodingSchemesManager:
-        schemes = tuple(s.set_context_view(self.view()) for s in self.schemes)
-        maps = tuple(m.set_context_view(self.view()) for m in self.maps)
-        outcomes = tuple(o.set_context_view(self.view()) for o in self.outcomes)
-        return CodingSchemesManager(schemes=schemes, maps=maps, outcomes=outcomes)
-
     def view(self) -> SchemeManagerView:
         return SchemeManagerView(_manager=self)
 
@@ -1338,25 +1195,25 @@ class CodingSchemesManager(VxData):
         if scheme.name in self.scheme:
             logging.warning(f'Scheme {scheme.name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes + (scheme,), maps=self.maps, outcomes=self.outcomes).sync()
+        return CodingSchemesManager(schemes=self.schemes + (scheme,), maps=self.maps, outcomes=self.outcomes)
 
     def add_map(self, map: CodeMap) -> CodingSchemesManager:
         assert isinstance(map, CodeMap), f"{map} is not a CodeMap."
         if (map.source_name, map.target_name) in self.map:
             logging.warning(f'Map {map.source_name}->{map.target_name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes, maps=self.maps + (map,), outcomes=self.outcomes).sync()
+        return CodingSchemesManager(schemes=self.schemes, maps=self.maps + (map,), outcomes=self.outcomes)
 
     def add_outcome(self, outcome: OutcomeExtractor) -> CodingSchemesManager:
         assert isinstance(outcome, OutcomeExtractor), f"{outcome} is not an OutcomeExtractor."
         if outcome.name in self.outcome:
             logging.warning(f'Outcome {outcome.name} already exists')
             return self
-        return CodingSchemesManager(schemes=self.schemes, maps=self.maps, outcomes=self.outcomes + (outcome,)).sync()
+        return CodingSchemesManager(schemes=self.schemes, maps=self.maps, outcomes=self.outcomes + (outcome,))
 
     def supported_outcome(self, outcome_name: str, supporting_scheme: str) -> bool:
         return outcome_name in self.outcome and (
-            supporting_scheme, self.outcome[outcome_name].base_scheme.name) in self.map
+            supporting_scheme, self.outcome[outcome_name].base_scheme(self).name) in self.map
 
     def supported_outcomes(self, supporting_scheme: str) -> Tuple[str, ...]:
         return tuple(o for o in self.outcome if self.supported_outcome(o, supporting_scheme))
@@ -1377,8 +1234,9 @@ class CodingSchemesManager(VxData):
         return {s.name: s for s in self.schemes}
 
     @cached_property
-    def identity_maps(self) -> Dict[Tuple[str, str], IdentityCodeMap]:
-        return {(s, s): IdentityCodeMap(source_name=s, target_name=s).set_context_view(self.view()) for s in
+    def identity_maps(self) -> Dict[Tuple[str, str], CodeMap]:
+        return {(s, s): CodeMap(source_name=s, target_name=s,
+                                data=FrozenDict1N.from_dict({c: {c} for c in self.scheme[s].codes})) for s in
                 self.scheme.keys()}
 
     @cached_property
@@ -1402,6 +1260,8 @@ class CodingSchemesManager(VxData):
             inter_scheme (str): the intermediate coding scheme.
             t_scheme (str): the target coding scheme.
         """
+        assert len({s_scheme, inter_scheme, t_scheme}) == 3, "The schemes should be different."
+
         map1 = self.map[(s_scheme, inter_scheme)]
         map2 = self.map[(inter_scheme, t_scheme)]
         assert not map1.mapped_to_dag_space
@@ -1411,7 +1271,7 @@ class CodingSchemesManager(VxData):
         s_scheme_object = self.scheme[s_scheme]
 
         # Supported codes in the new map are the intersection of the source codes and the source codes of the first map
-        new_source_codes = set(s_scheme_object.codes) & set(map1.keys())
+        new_source_codes = set(s_scheme_object.codes) & set(map1.data.keys())
         data = FrozenDict1N.from_dict({c: bridge(c) for c in new_source_codes})
         return self.add_map(CodeMap(source_name=s_scheme, target_name=t_scheme, data=data))
 
