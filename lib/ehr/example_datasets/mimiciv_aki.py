@@ -95,7 +95,7 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
     sample: Optional[TVxEHRSampleConfig] = field(default=None, kw_only=True)
     splits: Optional[TVxEHRSplitsConfig] = field(default=None, kw_only=True)
     numerical_processors: DatasetNumericalProcessorsConfig = field(
-        default_factory=lambda: DatasetNumericalProcessorsConfig)
+        default_factory=DatasetNumericalProcessorsConfig)
     interventions: bool = True
     observables: bool = True
     time_binning: Optional[float] = None

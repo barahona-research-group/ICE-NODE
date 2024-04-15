@@ -14,9 +14,9 @@ if __name__ == '__main__':
     parser.add_argument('--tvx-config-override', type=str, required=False, default="")
     args = parser.parse_args()
 
-    config = load_config(translate_path(args.config))
-    config = {'dataset': Config.from_dict(config['dataset']),
-              'tvx_ehr': Config.from_dict(config['tvx_ehr'])}
+    config_dict = load_config(translate_path(args.config))
+    config_dict = {'dataset': Config.from_dict(config_dict['dataset']),
+                   'tvx_ehr': Config.from_dict(config_dict['tvx_ehr'])}
     logging.warning(args)
 
     for k, override in [('dataset', args.dataset_config_override), ('tvx', args.tvx_config_override)]:
@@ -32,8 +32,8 @@ if __name__ == '__main__':
 
             for override_item in override.split(delimiter):
                 key, value = override_item.split('=')
-                config[k] = config[k].path_update(key, value)
+                config_dict[k] = config_dict[k].path_update(key, value)
 
-    dataset = AKIMIMICIVDataset(config=config['dataset']).execute_pipeline()
-    tvx = TVxAKIMIMICIVDataset(config=config['tvx_ehr'], dataset=dataset).execute_pipeline()
+    dataset = AKIMIMICIVDataset(config=config_dict['dataset']).execute_pipeline()
+    tvx = TVxAKIMIMICIVDataset(config=config_dict['tvx_ehr'], dataset=dataset).execute_pipeline()
     tvx.save(translate_path(args.tvx_path), overwrite=True)

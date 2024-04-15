@@ -76,14 +76,11 @@ class ICDScheme(CodingScheme):
 
 
 class ICDFlatScheme(ICDScheme, CodingScheme):
-    def __init__(self, *args, **kwargs):
-        CodingScheme.__init__(self, *args, **kwargs)
+    pass
 
 
 class ICDHierarchicalScheme(ICDScheme, HierarchicalScheme):
-
-    def __init__(self, *args, **kwargs):
-        HierarchicalScheme.__init__(self, *args, **kwargs)
+    pass
 
 
 class ICDMapOps:
@@ -108,8 +105,8 @@ class ICDMapOps:
         conversion_table = df[valid_target & valid_source]
 
         return conversion_table, {"conversion_filename": conversion_filename,
-                                  "unrecognised_target": set(df[~valid_target]["target"]),
-                                  "unrecognised_source": set(df[~valid_source]["source"])}
+                                  "unrecognised_target": set(df.loc[~valid_target, "target"]),
+                                  "unrecognised_source": set(df.loc[~valid_source, "source"])}
 
     @staticmethod
     def conversion_status(conversion_table: pd.DataFrame) -> Dict[str, str]:
@@ -455,7 +452,7 @@ class CCSMapOps:
         cols['ICD'] = df[icd_cname].tolist()
 
         return cols, {
-            "unrecognised_icd9": set(df[~valid_icd][icd_cname]),
+            "unrecognised_icd9": set(df.loc[~valid_icd, icd_cname]),
             "conversion_filename": cls.SCHEME_FILE
         }
 
@@ -594,7 +591,7 @@ class FlatCCSMapOps:
         df = df[valid_icd9]
         df = df.rename(columns={icd9_cname: 'icd9', cat_cname: 'code', desc_cname: 'desc'})
         return df[['code', 'icd9', 'desc']], {
-            'unrecognised_icd9': set(df[~valid_icd9]['icd9']),
+            'unrecognised_icd9': set(df.loc[~valid_icd9, 'icd9']),
             'conversion_filename': cls.SCHEME_FILE
         }
 
@@ -670,6 +667,11 @@ class CCSICDSchemeSelection(Flags):
     dx_flat_ccs: bool = False
     pr_flat_ccs: bool = False
 
+    @staticmethod
+    def all() -> CCSICDSchemeSelection:
+        return CCSICDSchemeSelection(dx_icd9=True, dx_icd10=True, pr_icd9=True, dx_flat_icd10=True,
+                                     pr_flat_icd10=True, dx_ccs=True, pr_ccs=True, dx_flat_ccs=True, pr_flat_ccs=True)
+
 
 icd_ccs_schemes = {
     'dx_icd9': DxHierarchicalICD9,
@@ -690,6 +692,11 @@ class CCSICDOutcomeSelection(Flags):
     dx_icd9_v3_groups: bool = False
     dx_flat_ccs_mlhc_groups: bool = False
     dx_flat_ccs_v1: bool = False
+
+    @staticmethod
+    def all() -> CCSICDOutcomeSelection:
+        return CCSICDOutcomeSelection(dx_icd9_v1=True, dx_icd9_v2_groups=True, dx_icd9_v3_groups=True,
+                                      dx_flat_ccs_mlhc_groups=True, dx_flat_ccs_v1=True)
 
 
 def setup_icd_schemes(manager: CodingSchemesManager, scheme_selection: CCSICDSchemeSelection) -> CodingSchemesManager:
