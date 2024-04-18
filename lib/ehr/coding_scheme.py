@@ -1285,7 +1285,7 @@ class CodingSchemesManager(VxData):
         target_codes = tuple(sorted(map_table[c_target_code].drop_duplicates().astype(str).tolist()))
         # drop=False in case c_target_code == c_target_desc.
         target_desc = map_table.set_index(c_target_code, drop=False)[c_target_desc].to_dict()
-        target_scheme = CodingScheme(name=target_name, codes=target_codes, desc=target_desc)
+        target_scheme = CodingScheme(name=target_name, codes=target_codes, desc=FrozenDict11.from_dict(target_desc))
         updated = self.add_scheme(target_scheme)
         source_scheme = self.scheme[source_name]
         map_table = map_table[[c_code, c_target_code]].astype(str)
@@ -1311,7 +1311,7 @@ class CodingSchemesManager(VxData):
         desc = supported_space.set_index(c_code, drop=False)[c_desc].to_dict()
         scheme = CodingScheme(name=name,
                               codes=tuple(sorted(code_selection)),
-                              desc={k: v for k, v in desc.items() if k in code_selection})
+                              desc=FrozenDict11.from_dict({k: v for k, v in desc.items() if k in code_selection}))
         return self.add_scheme(scheme)
 
 

@@ -16,7 +16,7 @@ import tables as tbl
 from . import OutcomeExtractor
 from .coding_scheme import CodesVector, CodingSchemesManager, CodeMap
 from .dataset import Dataset, DatasetScheme, DatasetSchemeConfig, ReportAttributes, \
-    AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report
+    AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report, SplitLiteral
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
                            InpatientInterventions, DemographicVectorConfig,
                            LeadingObservableExtractorConfig, SegmentedPatient, StaticInfo, InpatientInput,
@@ -36,7 +36,7 @@ class CodedValueScalerConfig(CodedValueProcessorConfig):
 class TVxEHRSplitsConfig(Config):
     split_quantiles: List[float]
     seed: int = 0
-    balance: str = 'subjects'
+    balance: SplitLiteral = 'subjects'
     discount_first_admission: bool = False
 
 
@@ -59,12 +59,12 @@ class ScalerConfig(Config):
 
 
 class OutlierRemoversConfig(Config):
-    obs: Optional[IQROutlierRemoverConfig] = None
+    obs: Optional[IQROutlierRemoverConfig] = field(kw_only=True, default_factory=IQROutlierRemoverConfig)
 
 
 class ScalersConfig(Config):
-    obs: Optional[ScalerConfig] = None
-    icu_inputs: Optional[ScalerConfig] = None
+    obs: Optional[ScalerConfig] = field(kw_only=True, default_factory=lambda: ScalerConfig(use_float16=True))
+    icu_inputs: Optional[ScalerConfig] = field(kw_only=True, default_factory=lambda: ScalerConfig(use_float16=True))
 
 
 class DatasetNumericalProcessorsConfig(Config):

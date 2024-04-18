@@ -13,7 +13,8 @@ from lib.ehr.transformations import SetIndex, CastTimestamps, \
 from lib.ehr.tvx_ehr import TVxEHRSchemeConfig, TVxEHRSampleConfig, TVxEHRSplitsConfig, \
     DatasetNumericalProcessorsConfig, AbstractTVxPipeline
 from lib.ehr.tvx_transformations import SampleSubjects, ObsIQROutlierRemover, RandomSplits, ObsAdaptiveScaler, \
-    InputScaler, ObsTimeBinning, TVxConcepts, InterventionSegmentation, ExcludeShortAdmissions
+    InputScaler, ObsTimeBinning, TVxConcepts, InterventionSegmentation, ExcludeShortAdmissions, \
+    LeadingObservableExtraction
 
 OBSERVABLE_AKI_TARGET_CODE: Final[str] = 'renal_aki.aki_binary'
 
@@ -84,6 +85,10 @@ class TVxAKIMIMICIVDatasetSchemeConfig(TVxEHRSchemeConfig):
 DEFAULT_TVX_AKI_MIMICIV_DATASET_SCHEME_CONFIG: Final[TVxAKIMIMICIVDatasetSchemeConfig] = \
     TVxAKIMIMICIVDatasetSchemeConfig.from_mimiciv_dataset_scheme_config(DEFAULT_AKI_MIMICIV_DATASET_SCHEME_CONFIG)
 
+DEFAULT_TVX_AKI_SPLITS: Final[TVxEHRSplitsConfig] = TVxEHRSplitsConfig(split_quantiles=[0.6, 0.7, 0.8], seed=0,
+                                                                       discount_first_admission=False,
+                                                                       balance='admissions')
+
 
 class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
     scheme: TVxAKIMIMICIVDatasetSchemeConfig = field(
@@ -93,9 +98,8 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
     leading_observable: LeadingObservableExtractorConfig = field(default_factory=DEFAULT_AKI_LEAD_EXTRACTION_FACTORY,
                                                                  kw_only=True)
     sample: Optional[TVxEHRSampleConfig] = field(default=None, kw_only=True)
-    splits: Optional[TVxEHRSplitsConfig] = field(default=None, kw_only=True)
-    numerical_processors: DatasetNumericalProcessorsConfig = field(
-        default_factory=DatasetNumericalProcessorsConfig)
+    splits: Optional[TVxEHRSplitsConfig] = field(default_factory=lambda: DEFAULT_TVX_AKI_SPLITS, kw_only=True)
+    numerical_processors: DatasetNumericalProcessorsConfig = field(default_factory=DatasetNumericalProcessorsConfig)
     interventions: bool = True
     observables: bool = True
     time_binning: Optional[float] = None
@@ -146,7 +150,7 @@ class TVxAKIMIMICIVDataset(TVxEHR):
             TVxConcepts(),
             ExcludeShortAdmissions(),
             ObsTimeBinning(),
-            LeadingObservableExtractorConfig(),
+            LeadingObservableExtraction(),
             InterventionSegmentation(),
         ]
         return AbstractTVxPipeline(transformations=pipeline)

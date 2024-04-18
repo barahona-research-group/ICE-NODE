@@ -28,6 +28,9 @@ class SampleSubjects(AbstractTVxTransformation):
         c_subject_id = tv_ehr.dataset.config.tables.static.subject_id_alias
         assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
         config = tv_ehr.config.sample
+        if config is None:
+            return cls.skip(tv_ehr, report)
+
         rng = random.Random(config.seed)
         subjects = static.index.unique().tolist()
         rng.shuffle(subjects)
@@ -49,6 +52,10 @@ class RandomSplits(AbstractTVxTransformation):
     def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[
         TVxEHR, TVxReport]:
         config = tv_ehr.config.splits
+
+        if config is None:
+            return cls.skip(tv_ehr, report)
+
         splits = tv_ehr.dataset.random_splits(splits=config.split_quantiles,
                                               random_seed=config.seed,
                                               balance=config.balance,
@@ -59,7 +66,7 @@ class RandomSplits(AbstractTVxTransformation):
                             operation=f'TVxEHR.splits<-TVxEHR.dataset.random_splits(TVxEHR.config.splits)',
                             before=(len(tv_ehr.dataset.tables.static),),
                             after=tuple(len(x) for x in splits))
-        tv_ehr = eqx.tree_at(lambda x: x.splits, tv_ehr, splits)
+        tv_ehr = eqx.tree_at(lambda x: x.splits, tv_ehr, splits, is_leaf=lambda x: x is None)
         return tv_ehr, report
 
 

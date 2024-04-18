@@ -1,13 +1,11 @@
 import logging
-from collections import defaultdict
 from dataclasses import field
-from functools import cached_property
 from typing import Dict, Self
 
 import pandas as pd
 
 from lib.ehr.coding_scheme import FrozenDict11, FrozenDict1N, CodingScheme, CodingSchemesManager, \
-    CodeMap, NumericScheme, ReducedCodeMapN1
+    CodeMap, NumericScheme, ReducedCodeMapN1, SchemeManagerView
 from lib.ehr.example_schemes.icd import ICDScheme
 
 
@@ -51,9 +49,8 @@ class MixedICDScheme(CodingScheme):
     icd_version_schemes: FrozenDict11
     sep: str = ':'
 
-    @cached_property
-    def icd_schemes(self) -> Dict[str, ICDScheme]:
-        return {k: self.context_view.scheme[v] for k, v in self.icd_version_schemes.items()}
+    def icd_schemes(self, manager: SchemeManagerView | CodingSchemesManager) -> Dict[str, ICDScheme]:
+        return {k: manager.scheme[v] for k, v in self.icd_version_schemes.items()}
 
     @staticmethod
     def fix_dots(df: pd.DataFrame, c_icd_code: str, c_icd_version: str,
@@ -95,7 +92,7 @@ class MixedICDScheme(CodingScheme):
                               icd_version_schemes=icd_version_schemes,
                               sep=sep)
 
-    def mixedcode_format_table(self, table: pd.DataFrame, icd_code_alias: str,
+    def mixedcode_format_table(self, manager: SchemeManagerView , table: pd.DataFrame, icd_code_alias: str,
                                icd_version_alias: str, code_alias: str) -> pd.DataFrame:
         # TODO: test this method.
         """
@@ -103,13 +100,14 @@ class MixedICDScheme(CodingScheme):
         """
         assert icd_version_alias in table.columns, f"Column {icd_version_alias} not found."
         assert icd_code_alias in table.columns, f"Column {icd_code_alias} not found."
-        assert table[icd_version_alias].isin(self.icd_schemes).all(), \
-            f"Only ICD version {list(self.icd_schemes.keys())} are expected."
+        icd_schemes = self.icd_schemes(manager)
+        assert table[icd_version_alias].isin(icd_schemes).all(), \
+            f"Only ICD version {list(icd_schemes.keys())} are expected."
 
-        table = self.fix_dots(table, icd_code_alias, icd_version_alias, self.icd_schemes)
+        table = self.fix_dots(table, icd_code_alias, icd_version_alias, icd_schemes)
 
         # the version:icd_code format.
-        table[code_alias] = table[icd_version_alias] + self._sep + table[icd_code_alias]
+        table[code_alias] = table[icd_version_alias] + self.sep + table[icd_code_alias]
 
         # filter out codes that are not in the scheme.
         return table[table[code_alias].isin(self.codes)].reset_index(drop=True)
@@ -122,44 +120,39 @@ class MixedICDScheme(CodingScheme):
         This assumes that the current runtime has already registered mappings
         between the individual ICD schemes.
         """
-
-        # mixed2pure_maps has the form {icd_version: {mixed_code: {icd}}}.
-        mixed2pure_maps: Dict[str, FrozenDict1N] = {}
-        lost_codes = []
         dataframe = self.as_dataframe()
-        for pure_version, pure_scheme in self.icd_schemes.items():
+        icd_schemes = self.icd_schemes(manager)
+        for standard_version, standard_scheme in icd_schemes.items():
             # mixed2pure has the form {mixed_code: {icd}}.
-            mixed2pure = defaultdict(set)
+            mixed2standard = {}
             for mixed_version, mixed_version_df in dataframe.groupby('icd_version'):
-                icd2mixed = mixed_version_df.set_index('icd_code')['code'].to_dict()
-                icd2mixed = {icd: mixed_code for icd, mixed_code in icd2mixed.items() if icd in pure_scheme.codes}
-                assert len(icd2mixed) > 0, "No mapping between the mixed and pure ICD schemes was found."
-                if mixed_version == pure_version:
-                    mixed2pure.update({c: {icd} for icd, c in icd2mixed.items()})
+                mixed_format_to_standard_icd = mixed_version_df.set_index('code')['icd_code'].to_dict()
+                if mixed_version == standard_version:
+                    update = {c: {icd} for c, icd in mixed_format_to_standard_icd.items() if icd in standard_scheme}
                 else:
                     # if mixed_version != pure_version, then retrieve
                     # the mapping between ICD-{mixed_version} and ICD-{pure_version}
-                    pure_map = manager.map[
-                        (self.icd_schemes[mixed_version].name, self.icd_schemes[pure_version].name)]
+                    icd_map = manager.map[(icd_schemes[mixed_version].name, icd_schemes[standard_version].name)]
+                    update = {c: icd_map[icd] for c, icd in mixed_format_to_standard_icd.items() if icd in icd_map}
+                assert len(update) > 0, f"No mapping between ICD-{mixed_version} and ICD-{standard_version} was found."
+                mixed2standard.update(update)
 
-                    for icd, mixed_code in icd2mixed.items():
-                        if icd in pure_map:
-                            mixed2pure[mixed_code].update(pure_map[icd])
-                        else:
-                            lost_codes.append(mixed_code)
+            # register the mapping between the mixed and pure ICD schemes.
+            manager = manager.add_map(CodeMap(source_name=self.name, target_name=standard_scheme.name,
+                                              data=FrozenDict1N.from_dict(mixed2standard)))
 
-            mixed2pure = FrozenDict1N.from_dict(mixed2pure)
-            mixed2pure_maps[pure_version] = mixed2pure
-        # register the mapping between the mixed and pure ICD schemes.
-        for pure_version, mixed2pure in mixed2pure_maps.items():
-            pure_scheme = self.icd_schemes[pure_version]
-            manager = manager.add_map(CodeMap(source_name=self.name, target_name=pure_scheme.name, data=mixed2pure))
-
-        lost_df = dataframe[dataframe['code'].isin(lost_codes)]
-        if len(lost_df) > 0:
-            logging.warning(f"Lost {len(lost_df)} codes when generating the mapping between the Mixed ICD"
-                            "scheme and the individual ICD scheme.")
-            logging.warning(lost_df.to_string().replace('\n', '\n\t'))
+            lost_df = dataframe[~dataframe['code'].isin(mixed2standard)]
+            if len(lost_df) > 0:
+                n_lost = len(lost_df)
+                n_lost_version = {v: (lost_df['icd_version'] == v).sum() for v in icd_schemes}
+                n_version = {v: (dataframe['icd_version'] == v).sum() for v in icd_schemes}
+                stats0 = map(lambda v: f'v{v} {n_lost_version[v]} ({n_lost_version[v] / n_lost:.2f})', n_version.keys())
+                stats1 = map(lambda v: f'v{v} {n_lost_version[v] / n_version[v]: .2f}', n_version.keys())
+                logging.warning(f"Lost {n_lost} codes when generating the mapping between the Mixed ICD "
+                                f"({self.name}) and the standard ({standard_scheme.name}). "
+                                f"Loss stats: {', '.join(stats0)}; "
+                                f"Loss ratios: {', '.join(stats1)}.")
+                logging.warning(lost_df.to_string().replace('\n', '\n\t'))
 
         return manager
 
@@ -170,8 +163,8 @@ class MixedICDScheme(CodingScheme):
         Register a mapping between the current Mixed ICD scheme and a target scheme.
         """
         # TODO: test this method.
-        mapping = self.fix_dots(mapping.astype(str), c_icd_code, c_icd_version, self._icd_schemes)
-        mapping[c_code] = (mapping[c_icd_version] + self._sep + mapping[c_icd_code]).tolist()
+        mapping = self.fix_dots(mapping.astype(str), c_icd_code, c_icd_version, self.icd_schemes(manager))
+        mapping[c_code] = (mapping[c_icd_version] + self.sep + mapping[c_icd_code]).tolist()
         mapping = mapping[mapping[c_code].isin(self.codes)]
         assert len(mapping) > 0, "No mapping between the Mixed ICD scheme and the target scheme was found."
         target_codes = tuple(sorted(mapping[c_target_code].drop_duplicates().tolist()))
@@ -185,7 +178,7 @@ class MixedICDScheme(CodingScheme):
 
     def as_dataframe(self):
         columns = ['code', 'desc', 'code_index', 'icd_version', 'icd_code']
-        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split(self._sep)) for c in self.codes],
+        return pd.DataFrame([(c, self.desc[c], self.index[c], *c.split(self.sep)) for c in self.codes],
                             columns=columns)
 
 

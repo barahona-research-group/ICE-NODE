@@ -12,7 +12,7 @@ import sqlalchemy
 from sqlalchemy import Engine
 
 from lib.base import Module, Config
-from lib.ehr.coding_scheme import (CodingScheme, resources_dir, CodingSchemesManager, FrozenDict11)
+from lib.ehr.coding_scheme import (CodingScheme, resources_dir, CodingSchemesManager, FrozenDict11, SchemeManagerView)
 from lib.ehr.dataset import (DatasetScheme, StaticTableConfig,
                              AdmissionTimestampedMultiColumnTableConfig, AdmissionIntervalBasedCodedTableConfig,
                              AdmissionTimestampedCodedValueTableConfig, AdmissionLinkedCodedValueTableConfig,
@@ -532,6 +532,7 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
         for k in ('gender', 'ethnicity', 'dx_discharge', 'obs', 'icu_inputs', 'icu_procedures', 'hosp_procedures'):
             setattr(self, k, self._scheme_name(k))
 
+
     @property
     def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
         return pd.read_csv(resources_dir(self.resources_dir, *self.icu_inputs_uom_normalization)).astype(str)
@@ -825,12 +826,13 @@ class MIMICIVSQLTablesInterface(Module):
         table = SQLTable(self.config.admissions)
         return table(engine)
 
-    def _extract_dx_discharge_table(self, engine: Engine, dx_discharge_scheme: MixedICDScheme) -> pd.DataFrame:
+    def _extract_dx_discharge_table(self, engine: Engine, manager: SchemeManagerView,
+                                    dx_discharge_scheme: MixedICDScheme) -> pd.DataFrame:
         table = MixedICDSQLTable(self.config.dx_discharge)
         dataframe = table(engine)
         c_icd_version = self.config.dx_discharge.icd_version_alias
         c_icd_code = self.config.dx_discharge.icd_code_alias
-        return dx_discharge_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version,
+        return dx_discharge_scheme.mixedcode_format_table(manager, dataframe, c_icd_code, c_icd_version,
                                                           table.config.code_alias)
 
     def _extract_obs_table(self, engine: Engine, obs_scheme: ObservableMIMICScheme) -> pd.DataFrame:
@@ -851,14 +853,15 @@ class MIMICIVSQLTablesInterface(Module):
         dataframe = dataframe[dataframe[c_code].isin(icu_input_scheme.codes)]
         return dataframe.reset_index(drop=True)
 
-    def _extract_hosp_procedures_table(self, engine: Engine,
+    def _extract_hosp_procedures_table(self,
+                                       engine: Engine, manager: SchemeManagerView,
                                        procedure_icd_scheme: MixedICDScheme) -> pd.DataFrame:
         table = MixedICDSQLTable(self.config.hosp_procedures)
         c_icd_code = self.config.hosp_procedures.icd_code_alias
         c_icd_version = self.config.hosp_procedures.icd_version_alias
         c_code = self.config.hosp_procedures.code_alias
         dataframe = table(engine)
-        return procedure_icd_scheme.mixedcode_format_table(dataframe, c_icd_code, c_icd_version, c_code)
+        return procedure_icd_scheme.mixedcode_format_table(manager, dataframe, c_icd_code, c_icd_version, c_code)
 
     def dataset_scheme_manager_from_selection(self, config: MIMICIVDatasetSchemeConfig) -> CodingSchemesManager:
         """
@@ -882,6 +885,7 @@ class MIMICIVSQLTablesInterface(Module):
     def load_tables(self, dataset_scheme: DatasetScheme) -> DatasetTables:
         if dataset_scheme.hosp_procedures is not None:
             hosp_procedures = self._extract_hosp_procedures_table(self.create_engine(),
+                                                                  dataset_scheme.context_view,
                                                                   dataset_scheme.hosp_procedures)
         else:
             hosp_procedures = None
@@ -902,7 +906,8 @@ class MIMICIVSQLTablesInterface(Module):
 
         static = self._extract_static_table(self.create_engine())
         admissions = self._extract_admissions_table(self.create_engine())
-        dx_discharge = self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.dx_discharge)
+        dx_discharge = self._extract_dx_discharge_table(self.create_engine(), dataset_scheme.context_view,
+                                                        dataset_scheme.dx_discharge)
         return DatasetTables(
             static=static,
             admissions=admissions,

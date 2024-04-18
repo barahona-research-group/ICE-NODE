@@ -321,6 +321,15 @@ class DatasetSchemeConfig(Config):
     hosp_procedures: Optional[str] = None
     icu_inputs: Optional[str] = None
 
+    def scheme_fields(self) -> Dict[str, str]:
+        return {'gender': self.gender,
+                'ethnicity': self.ethnicity,
+                'dx_discharge': self.dx_discharge,
+                'obs': self.obs,
+                'icu_inputs': self.icu_inputs,
+                'icu_procedures': self.icu_procedures,
+                'hosp_procedures': self.hosp_procedures}
+
 
 class DatasetScheme(Module):
     """
@@ -384,7 +393,7 @@ class DatasetScheme(Module):
     def scheme_dict(self):
         return {
             k: self._scheme(v)
-            for k, v in self.config.as_dict().items() if self._scheme(v) is not None
+            for k, v in self.config.scheme_fields().items() if self._scheme(v) is not None
         }
 
 
@@ -663,6 +672,9 @@ class DatasetConfig(Config):
     filter_subjects_with_observation: Optional[str] = None
 
 
+SplitLiteral = Literal['subjects', 'admissions', 'admissions_intervals']
+
+
 class Dataset(AbstractDatasetRepresentation):
     """
     A class representing a dataset.
@@ -771,7 +783,7 @@ class Dataset(AbstractDatasetRepresentation):
                       splits: List[float],
                       subject_ids: Optional[List[str]] = None,
                       random_seed: int = 42,
-                      balance: str = 'subjects',
+                      balance: SplitLiteral = 'subjects',
                       discount_first_admission: bool = False):
         assert len(splits) > 0, "Split quantiles must be non-empty."
         assert list(splits) == sorted(splits), "Splits must be sorted."
@@ -821,7 +833,7 @@ class Dataset(AbstractDatasetRepresentation):
 #  - [x] SQLTableConfig to inherit from DatasetTablesConfig
 #  - [x] Assert functions to check the consistency of subject_id, admission_id in all tables.
 #  - [x] List the three main test cases for merge_overlapping_admissions.
-#  - [ ] Interface Structure: Controls (icu_inputs, icu_procedures, hosp_procedures), InitObs (dx_codes or dx_history), Obs (obs), Lead(lead(obs))
+#  - [x] Interface Structure: Controls (icu_inputs, icu_procedures, hosp_procedures), InitObs (dx_codes or dx_history), Obs (obs), Lead(lead(obs))
 #  - [x] Move Predictions/AdmissionPredictions to lib.ml.
 #  - [x] Plan a week of refactoring/testing/documentation/ship the lib.ehr separately.
 #  - [ ] Publish Website for lib.ehr: decide on the lib name, decide on the website name.
