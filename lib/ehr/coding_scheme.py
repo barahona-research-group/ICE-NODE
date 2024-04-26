@@ -177,6 +177,9 @@ class CodingScheme(VxData):
     # vector representation class
     vector_cls: ClassVar[Type[CodesVector]] = CodesVector
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.name}, codes({len(self.codes)}), desc({len(self.desc)}))"
+
     def __post_init__(self):
         self._check_types()
 
@@ -776,6 +779,9 @@ class CodeMap(VxData):
         """
         return f'{self.source_name}->{self.target_name}'
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.source_name}->{self.target_name}, {len(self.data)} mappings)"
+
     def __hash__(self):
         """
         Returns the hash value of the CodeMap.
@@ -1034,6 +1040,9 @@ class OutcomeExtractor(VxData, metaclass=ABCMeta):
 
     def __len__(self):
         return 1
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.name})"
 
     @abstractmethod
     def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
