@@ -73,12 +73,12 @@ class TVxAKIMIMICIVDatasetSchemeConfig(TVxEHRSchemeConfig):
     def from_mimiciv_dataset_scheme_config(config: AKIMIMICIVDatasetSchemeConfig) -> 'TVxAKIMIMICIVDatasetSchemeConfig':
         return TVxAKIMIMICIVDatasetSchemeConfig(
             gender=config.gender,
-            ethnicity=config.propose_target_scheme_name('ethnicity'),
+            ethnicity=config.propose_target_scheme_name(config.suffixes.ethnicity),
             dx_discharge='dx_icd9',
             obs=config.obs,
-            icu_inputs=config.propose_target_scheme_name('icu_inputs'),
-            icu_procedures=config.propose_target_scheme_name('icu_procedures'),
-            hosp_procedures=config.propose_target_scheme_name('hosp_procedures'),
+            icu_inputs=config.propose_target_scheme_name(config.suffixes.icu_inputs),
+            icu_procedures=config.propose_target_scheme_name(config.suffixes.icu_procedures),
+            hosp_procedures=config.propose_target_scheme_name(config.suffixes.hosp_procedures),
             outcome='dx_icd9_v1')
 
 

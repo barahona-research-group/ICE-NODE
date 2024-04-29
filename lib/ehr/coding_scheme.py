@@ -13,7 +13,7 @@ from dataclasses import field
 from functools import cached_property
 from types import MappingProxyType
 from typing import Set, Dict, Type, Optional, List, Union, ClassVar, Tuple, Any, Literal, ItemsView, Iterator, \
-    Iterable, Mapping
+    Iterable, Mapping, Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -817,7 +817,8 @@ class CodeMap(VxData):
             dict: the target coding scheme index.
         """
         target_scheme = scheme_manager.scheme[self.target_name]
-        if self.mapped_to_dag_space and self.source_name != self.target_name:
+        if self.mapped_to_dag_space(scheme_manager) and self.source_name != self.target_name and hasattr(target_scheme,
+                                                                                                         'dag_index'):
             return target_scheme.dag_index
         return target_scheme.index
 
@@ -829,7 +830,8 @@ class CodeMap(VxData):
             dict: the target coding scheme description.
         """
         target_scheme = scheme_manager.scheme[self.target_name]
-        if self.mapped_to_dag_space and self.source_name != self.target_name:
+        if self.mapped_to_dag_space(scheme_manager) and self.source_name != self.target_name and hasattr(target_scheme,
+                                                                                                         'dag_desc'):
             return target_scheme.dag_desc
         return target_scheme.desc
 
@@ -882,7 +884,12 @@ class CodeMap(VxData):
         df = df.iloc[:, :]
         code2list = {k: list(v) if len(v) > 1 else next(iter(v)) for k, v in self.data.items()}
         df[code_column] = df[code_column].map(code2list)
-        assert df[code_column].isna().sum() == 0, "Some codes are not mapped."
+
+        if df[code_column].isna().sum() > 0:
+            logging.warning(
+                f"Some codes are not mapped to the target scheme: {df[code_column].isna().sum()} / {len(df)}")
+            # TODO: Add to the report the conversion misses.
+            df = df[~df[code_column].isna()]
         return df.explode(code_column)
 
     def target_code_ancestors(self, scheme_manager: CodingSchemesManager, t_code: str, include_itself=True):
@@ -897,70 +904,9 @@ class CodeMap(VxData):
             List[str]: The ancestors of the target code.
         """
         target_scheme = scheme_manager.scheme[self.target_name]
-        if not self.mapped_to_dag_space:
+        if not self.mapped_to_dag_space(scheme_manager):
             t_code = target_scheme.code2dag[t_code]
         return target_scheme.code_ancestors_bfs(t_code, include_itself=include_itself)
-
-    def codeset2vec(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
-        """
-        Converts a codeset to a multi-hot vector representation.
-
-        Args:
-            codeset (Set[str]): the codeset to convert.
-
-        Returns:
-            CodesVector: the binary vector representation of the codeset.
-        """
-        index = self.target_index(scheme_manager)
-        vec = np.zeros(len(index), dtype=bool)
-        try:
-            for c in codeset:
-                vec[index[c]] = True
-        except KeyError as missing:
-            logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
-
-        return CodesVector(vec, self.target_name)
-
-    def codeset2dagset(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
-        """
-        Converts a codeset to a DAG set representation.
-
-        Args:
-            codeset (Set[str]): the codeset to convert.
-
-        Returns:
-            Set[str]: the DAG set representation of the codeset.
-        """
-        target_scheme = scheme_manager.scheme[self.target_name]
-        if not self.mapped_to_dag_space:
-            return set(target_scheme.code2dag[c] for c in codeset)
-        else:
-            return codeset
-
-    def codeset2dagvec(self, scheme_manager: CodingSchemesManager, codeset: Set[str]):
-        """
-        Converts a codeset to a DAG vector representation.
-
-        Args:
-            codeset (Set[str]): the codeset to convert.
-
-        Returns:
-            np.ndarray: the DAG vector representation of the codeset.
-        """
-        target_scheme = scheme_manager.scheme[self.target_name]
-        if not self.mapped_to_dag_space:
-            codeset = set(target_scheme.code2dag[c] for c in codeset)
-            index = target_scheme.dag_index
-        else:
-            index = target_scheme
-        vec = np.zeros(len(index), dtype=bool)
-        try:
-            for c in codeset:
-                vec[index[c]] = True
-        except KeyError as missing:
-            logging.error(f'Code {missing} is missing. Accepted keys: {index.keys()}')
-
-        return vec
 
 
 AggregationLiteral = Literal['sum', 'or', 'w_sum']
@@ -1068,46 +1014,22 @@ class OutcomeExtractor(VxData, metaclass=ABCMeta):
 
         return len(self.index(scheme_manager))
 
-    def _map_codeset(self, scheme_manager: CodingSchemesManager, codeset: Set[str], base_scheme: str) -> Set[str]:
-        """
-        Maps a codeset to the base coding scheme.
+    def codemap(self, scheme_manager: CodingSchemesManager, source_scheme: str) -> CodeMap:
+        return scheme_manager.map[(source_scheme, self.base_scheme(scheme_manager).name)]
 
-        Args:
-            codeset (Set[str]): the codeset to map.
-            base_scheme (str): the base coding scheme.
-
-        Returns:
-            Set[str]: the mapped codeset.
-
-        """
-        m = scheme_manager.map[(base_scheme, base_scheme)]
-        target_scheme = scheme_manager.scheme[base_scheme]
-
-        codeset = m.map_codeset(codeset)
-
-        if m.mapped_to_dag_space(scheme_manager):
-            codeset &= set(target_scheme.dag2code)
-            codeset = set(target_scheme.dag2code[c] for c in codeset)
-
-        return codeset & set(self.codes(scheme_manager))
-
-    def map_vector(self, scheme_manager: CodingSchemesManager, codes: CodesVector) -> CodesVector:
-        """
-        Extract outcomes from a codes vector into a new codes vector.
-
-        Args:
-            codes (CodesVector): the codes vector to extract.
-
-        Returns:
-            CodesVector: the extracted outcomes represented by a codes vector.
-
-        """
+    def codeset2vec_extractor(self, scheme_manager: CodingSchemesManager, source_scheme: str) -> Callable[
+        [Set[str]], CodesVector]:
+        codemap = self.codemap(scheme_manager, source_scheme)
+        codes = set(self.codes(scheme_manager))
         index = self.index(scheme_manager)
+        def _apply(codeset: Set[str]):
+            codeset = codemap.map_codeset(codeset) & codes
+            vec = np.zeros(len(codes), dtype=bool)
+            for c in codeset:
+                vec[index[c]] = True
+            return CodesVector(vec, self.name)
 
-        vec = np.zeros(len(index), dtype=bool)
-        for c in self._map_codeset(scheme_manager, codes.to_codeset(scheme_manager), codes.scheme):
-            vec[index[c]] = True
-        return CodesVector(np.array(vec), self.name)
+        return _apply
 
 
 class ExcludingOutcomeExtractor(OutcomeExtractor):
@@ -1273,8 +1195,8 @@ class CodingSchemesManager(VxData):
 
         map1 = self.map[(s_scheme, inter_scheme)]
         map2 = self.map[(inter_scheme, t_scheme)]
-        assert not map1.mapped_to_dag_space
-        assert not map2.mapped_to_dag_space
+        assert not map1.mapped_to_dag_space(self)
+        assert not map2.mapped_to_dag_space(self)
 
         bridge = lambda x: set.union(*[map2[c] for c in map1[x]])
         s_scheme_object = self.scheme[s_scheme]

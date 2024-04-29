@@ -465,12 +465,19 @@ class TVxConcepts(AbstractTVxTransformation):
             dob = static[c_date_of_birth].to_dict()
         if tvx_ehr.scheme.gender is not None and config.gender:
             gender_m = tvx_ehr.gender_mapper
-            gender = {k: gender_m.codeset2vec(scheme_manager, {c}) for k, c in static[c_gender].to_dict().items()}
+            target_scheme = scheme_manager.scheme[gender_m.target_name]
+            gender_dict = static[c_gender].to_dict()
+            gender_dict = {subject_id: gender_m.map_codeset({c}) for subject_id, c in
+                           gender_dict.items()}
+            gender = {subject_id: target_scheme.codeset2vec(codes) for subject_id, codes in gender_dict.items()}
 
         if tvx_ehr.scheme.ethnicity is not None and config.ethnicity:
             ethnicity_m = tvx_ehr.ethnicity_mapper
-            ethnicity = {k: ethnicity_m.codeset2vec(scheme_manager, {c}) for k, c in
-                         static[c_ethnicity].to_dict().items()}
+            target_scheme = scheme_manager.scheme[ethnicity_m.target_name]
+            ethnicity_dict = static[c_ethnicity].to_dict()
+            ethnicity_dict = {subject_id: ethnicity_m.map_codeset({c}) for subject_id, c in ethnicity_dict.items()}
+            ethnicity = {subject_id: target_scheme.codeset2vec(codes) for subject_id, codes in
+                         ethnicity_dict.items()}
 
         static_info = {subject_id: StaticInfo(date_of_birth=dob.get(subject_id),
                                               ethnicity=ethnicity.get(subject_id),
@@ -482,15 +489,26 @@ class TVxConcepts(AbstractTVxTransformation):
         return static_info, report
 
     @staticmethod
-    def _dx_discharge(tvx_ehr: TVxEHR) -> Dict[str, CodesVector]:
+    def _dx_discharge(tvx_ehr: TVxEHR) -> Tuple[Dict[str, CodesVector], Dict[str, Set[str]]]:
         scheme_manager = tvx_ehr.dataset.scheme_manager
         c_adm_id = tvx_ehr.dataset.config.tables.dx_discharge.admission_id_alias
         c_code = tvx_ehr.dataset.config.tables.dx_discharge.code_alias
         dx_discharge = tvx_ehr.dataset.tables.dx_discharge
-        dx_codes_set = dx_discharge.groupby(c_adm_id)[c_code].apply(set).to_dict()
         dx_mapper = tvx_ehr.dx_mapper
-        return {adm_id: dx_mapper.codeset2vec(scheme_manager, dx_codes_set.get(adm_id, set())) for adm_id in
-                tvx_ehr.admission_ids}
+        target_scheme = scheme_manager.scheme[dx_mapper.target_name]
+        n1 = len(dx_discharge)
+        dx_discharge = dx_discharge[dx_discharge[c_code].isin(dx_mapper.data)]
+        n2 = len(dx_discharge)
+        if n1 != n2:
+            logging.warning(f'Some codes are not in the target scheme. {n1 - n2} / {n1} codes were removed.')
+            # TODO: report removed codes.
+
+        dx_codes_set = dx_discharge.groupby(c_adm_id)[c_code].apply(set).to_dict()
+        dx_codes_set = {k: dx_mapper.map_codeset(v) for k, v in dx_codes_set.items()}
+        dx_codes_set = {adm_id: dx_codes_set.get(adm_id, set()) for adm_id in tvx_ehr.admission_ids}
+
+        return {adm_id: target_scheme.codeset2vec(dx_codes_set.get(adm_id, set())) for adm_id, codeset in
+                dx_codes_set.items()}, dx_codes_set
 
     @staticmethod
     def _dx_discharge_history(tvx_ehr: TVxEHR, dx_discharge: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
@@ -508,11 +526,11 @@ class TVxConcepts(AbstractTVxTransformation):
         return dx_discharge_history
 
     @staticmethod
-    def _outcome(tvx_ehr: TVxEHR, dx_discharge: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
+    def _outcome(tvx_ehr: TVxEHR, dx_discharge: Dict[str, Set[str]]) -> Dict[str, CodesVector]:
         scheme_manager = tvx_ehr.dataset.scheme_manager
-        outcome_extractor = tvx_ehr.scheme.outcome
-        return {adm_id: outcome_extractor.map_vector(scheme_manager, code_vec) for adm_id, code_vec in
-                dx_discharge.items()}
+        target_dx_scheme = tvx_ehr.scheme.dx_discharge.name
+        outcome_extractor = tvx_ehr.scheme.outcome.codeset2vec_extractor(scheme_manager, target_dx_scheme)
+        return {adm_id: outcome_extractor(codeset) for adm_id, codeset in dx_discharge.items()}
 
     @staticmethod
     def _icu_inputs(tvx_ehr: TVxEHR) -> Dict[str, InpatientInput]:
@@ -527,6 +545,7 @@ class TVxConcepts(AbstractTVxTransformation):
         # a new column without affecting the original table.
         table = tvx_ehr.dataset.tables.icu_inputs.iloc[:, :]
         table[c_code] = table[c_code].map(tvx_ehr.dataset.scheme.icu_inputs.index)
+        assert not table[c_code].isnull().any(), 'Some codes are not in the target scheme.'
 
         def group_fun(x):
             return pd.Series({
@@ -697,9 +716,9 @@ class TVxConcepts(AbstractTVxTransformation):
         subject_admissions = tvx_ehr.subjects_sorted_admission_ids
         static_info, report = cls._static_info(tvx_ehr, report)
 
-        dx_discharge = cls._dx_discharge(tvx_ehr)
+        dx_discharge, dx_discharge_codeset = cls._dx_discharge(tvx_ehr)
         dx_discharge_history = cls._dx_discharge_history(tvx_ehr, dx_discharge)
-        outcome = cls._outcome(tvx_ehr, dx_discharge)
+        outcome = cls._outcome(tvx_ehr, dx_discharge_codeset)
         if tvx_ehr.config.interventions:
             interventions, report = cls._interventions(tvx_ehr, report)
         else:

@@ -313,9 +313,9 @@ class DatasetTables(Module):
 
 
 class DatasetSchemeConfig(Config):
-    ethnicity: str
-    gender: str
-    dx_discharge: Optional[str]
+    ethnicity: Optional[str] = None
+    gender: Optional[str] = None
+    dx_discharge: Optional[str] = None
     obs: Optional[str] = None
     icu_procedures: Optional[str] = None
     hosp_procedures: Optional[str] = None

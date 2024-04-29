@@ -2,7 +2,7 @@ import dataclasses
 import json
 from abc import ABCMeta
 from types import MappingProxyType
-from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, Self, Literal
+from typing import Dict, Any, ClassVar, Union, Type, Callable, Tuple, Self
 
 # TODO: update to Python 3.11, then use typing.Self
 import equinox as eqx
@@ -38,6 +38,9 @@ class NumpyEncoder(json.JSONEncoder):
 
         elif isinstance(obj, (np.void)):
             return None
+
+        elif dataclasses.is_dataclass(obj):
+            return dataclasses.asdict(obj)
 
         return json.JSONEncoder.default(self, obj)
 

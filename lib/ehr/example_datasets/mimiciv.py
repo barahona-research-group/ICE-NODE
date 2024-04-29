@@ -1,6 +1,7 @@
 """."""
 from __future__ import annotations
 
+import dataclasses
 import os
 import warnings
 from dataclasses import field
@@ -419,7 +420,7 @@ class StaticSQLTable(SQLTable):
         if scheme_config.gender_map is not None:
             manager = manager.register_target_scheme(
                 scheme_config.gender,
-                scheme_config.propose_target_scheme_name(scheme_config.gender),
+                scheme_config.propose_target_scheme_name(scheme_config.suffixes.gender),
                 scheme_config.gender_map,
                 c_code=self.config.gender_alias,
                 c_target_code=scheme_config.target_column_name(self.config.gender_alias),
@@ -436,7 +437,8 @@ class StaticSQLTable(SQLTable):
                                                          c_desc=self.config.race_alias)
         if scheme_config.ethnicity_map is not None:
             manager = manager.register_target_scheme(scheme_config.ethnicity,
-                                                     scheme_config.propose_target_scheme_name(scheme_config.ethnicity),
+                                                     scheme_config.propose_target_scheme_name(
+                                                         scheme_config.suffixes.ethnicity),
                                                      scheme_config.ethnicity_map,
                                                      c_code=self.config.race_alias,
                                                      c_target_code=scheme_config.target_column_name(
@@ -509,7 +511,8 @@ class DatasetSchemeSelectionFiles(Config):
     dx_discharge: Optional[str] = 'dx_discharge.csv'
 
 
-class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
+@dataclasses.dataclass
+class MIMICIVDatasetSchemeSuffixes:
     gender: str = 'fm_gender'
     ethnicity: str = 'ethnicity'
     dx_discharge: str = 'dx_mixed_icd'
@@ -517,6 +520,10 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     icu_inputs: str = 'icu_inputs'
     icu_procedures: str = 'icu_procedures'
     hosp_procedures: str = 'pr_mixed_icd'
+
+
+class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
+    suffixes: MIMICIVDatasetSchemeSuffixes = field(default_factory=MIMICIVDatasetSchemeSuffixes)
 
     name_separator: str = '.'
     name_prefix: str = 'mimiciv'
@@ -529,9 +536,8 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
     icu_inputs_aggregation_column: Optional[str] = 'aggregation'
 
     def __post_init__(self):
-        for k in ('gender', 'ethnicity', 'dx_discharge', 'obs', 'icu_inputs', 'icu_procedures', 'hosp_procedures'):
-            setattr(self, k, self._scheme_name(k))
-
+        for k in dataclasses.fields(self.suffixes):
+            setattr(self, k.name, self._scheme_name(k.name))
 
     @property
     def icu_inputs_uom_normalization_table(self) -> pd.DataFrame:
@@ -558,11 +564,11 @@ class MIMICIVDatasetSchemeConfig(DatasetSchemeConfig):
         except FileNotFoundError:
             return None
 
-    def _scheme_name(self, key: str) -> str:
-        return f'{self.name_prefix}{self.name_separator}{key}'
+    def _scheme_name(self, suffix: str) -> str:
+        return f'{self.name_prefix}{self.name_separator}{suffix}'
 
-    def propose_target_scheme_name(self, key: str) -> str:
-        return self._scheme_name(f'target_{key}')
+    def propose_target_scheme_name(self, suffix: str) -> str:
+        return self._scheme_name(f'target_{suffix}')
 
     def target_column_name(self, key: str) -> str:
         return f'target_{key}'
@@ -689,7 +695,7 @@ class MIMICIVSQLTablesInterface(Module):
             source_scheme = manager.scheme[config.icu_inputs]
             manager = AggregatedICUInputsScheme.register_aggregated_scheme(
                 manager=manager, scheme=source_scheme,
-                target_scheme_name=config.propose_target_scheme_name(source_scheme.name),
+                target_scheme_name=config.propose_target_scheme_name(config.suffixes.icu_inputs),
                 code_column=self.config.icu_inputs.code_alias,
                 target_code_column=config.target_column_name(self.config.icu_inputs.code_alias),
                 target_desc_column=config.target_column_name(self.config.icu_inputs.description_alias),
@@ -721,7 +727,8 @@ class MIMICIVSQLTablesInterface(Module):
             c_target_code = config.target_column_name(self.config.icu_procedures.code_alias)
             c_target_desc = config.target_column_name(self.config.icu_procedures.description_alias)
             manager = manager.register_target_scheme(config.icu_procedures,
-                                                     config.propose_target_scheme_name(config.icu_procedures), mapping,
+                                                     config.propose_target_scheme_name(config.suffixes.icu_procedures),
+                                                     mapping,
                                                      c_code=self.config.icu_procedures.code_alias,
                                                      c_target_code=c_target_code,
                                                      c_target_desc=c_target_desc)
@@ -749,7 +756,7 @@ class MIMICIVSQLTablesInterface(Module):
                                      engine=self.create_engine(),
                                      icd_version_schemes=icd_version_schemes,
                                      icd_version_selection=config.hosp_procedures_selection,
-                                     target_name=config.propose_target_scheme_name(config.hosp_procedures),
+                                     target_name=config.propose_target_scheme_name(config.suffixes.hosp_procedures),
                                      c_target_code=config.target_column_name(self.config.hosp_procedures.code_alias),
                                      c_target_desc=config.target_column_name(
                                          self.config.hosp_procedures.description_alias),
