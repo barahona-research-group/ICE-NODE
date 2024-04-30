@@ -39,9 +39,6 @@ class NumpyEncoder(json.JSONEncoder):
         elif isinstance(obj, (np.void)):
             return None
 
-        elif dataclasses.is_dataclass(obj):
-            return dataclasses.asdict(obj)
-
         return json.JSONEncoder.default(self, obj)
 
 

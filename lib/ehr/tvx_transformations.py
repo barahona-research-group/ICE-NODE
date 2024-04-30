@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import field
-from typing import Dict, Tuple, List, Final, Type, Set, Hashable
+from typing import Dict, Tuple, List, Final, Type, Set, Hashable, Optional
 
 import dask.dataframe as dd
 import equinox as eqx
@@ -13,7 +13,8 @@ import pandas as pd
 from . import TVxEHR, StaticInfo, CodesVector, InpatientInput, InpatientInterventions, InpatientObservables, \
     LeadingObservableExtractor, Admission, Patient
 from .coding_scheme import CodeMap, CodingSchemesManager
-from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig
+from .dataset import Dataset, TransformationsDependency, AbstractTransformation, AdmissionIntervalBasedCodedTableConfig, \
+    Report, SplitLiteral
 from .transformations import CastTimestamps, SetIndex, DatasetTransformation
 from .tvx_ehr import TVxReportAttributes, TrainableTransformation, AbstractTVxTransformation, TVxReport, \
     CodedValueScaler, CodedValueProcessor, IQROutlierRemoverConfig, SegmentedTVxEHR
@@ -68,6 +69,45 @@ class RandomSplits(AbstractTVxTransformation):
                             after=tuple(len(x) for x in splits))
         tv_ehr = eqx.tree_at(lambda x: x.splits, tv_ehr, splits, is_leaf=lambda x: x is None)
         return tv_ehr, report
+
+
+class TrainingSplitGroups(AbstractTVxTransformation):
+
+    @classmethod
+    def sync_dataset(cls, dataset: Dataset, subject_ids: Tuple[str, ...]) -> Dataset:
+        static = dataset.tables.static
+        c_subject_id = dataset.config.tables.static.subject_id_alias
+        assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
+        static = static.loc[subject_ids]
+        dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
+        return DatasetTransformation.synchronize_subjects(dataset, Report())[0]
+
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[
+        TVxEHR, TVxReport]:
+        raise NotImplementedError('Use TrainingSplitGroups.apply()')
+
+    @classmethod
+    def __call__(cls, tv_ehr: TVxEHR, n_groups: int, seed: int = 0, split_balance: Optional[SplitLiteral] = None) -> \
+            Tuple[TVxEHR, ...]:
+        assert tv_ehr.config.splits is not None and tv_ehr.splits is not None, 'splits is None'
+        training_split = tv_ehr.splits[0]
+        dataset = cls.sync_dataset(tv_ehr.dataset, training_split)
+        split_quantiles = np.linspace(0, 1, n_groups + 1)[1:-1]
+        groups = dataset.random_splits(splits=split_quantiles.tolist(),
+                                       random_seed=seed,
+                                       balance=split_balance or tv_ehr.config.splits.balance,
+                                       discount_first_admission=tv_ehr.config.splits.discount_first_admission)
+        tvx_list = []
+        for group in groups:
+            group_dataset = cls.sync_dataset(tv_ehr.dataset, group)
+            group_subjects = {subject_id: subject for subject_id, subject in tv_ehr.subjects.items() if
+                              subject_id in group}
+            tvx = eqx.tree_at(lambda x: x.dataset, tv_ehr, group_dataset)
+            tvx = eqx.tree_at(lambda x: x.subjects, tvx, group_subjects)
+            tvx = eqx.tree_at(lambda x: x.splits, tvx, None, is_leaf=lambda x: x is None)
+            tvx_list.append(tvx)
+
+        return tuple(tvx_list)
 
 
 class ZScoreScaler(CodedValueScaler):

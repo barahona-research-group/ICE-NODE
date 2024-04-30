@@ -511,8 +511,7 @@ class DatasetSchemeSelectionFiles(Config):
     dx_discharge: Optional[str] = 'dx_discharge.csv'
 
 
-@dataclasses.dataclass
-class MIMICIVDatasetSchemeSuffixes:
+class MIMICIVDatasetSchemeSuffixes(Config):
     gender: str = 'fm_gender'
     ethnicity: str = 'ethnicity'
     dx_discharge: str = 'dx_mixed_icd'

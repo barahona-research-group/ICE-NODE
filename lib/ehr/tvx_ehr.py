@@ -425,7 +425,6 @@ class TVxEHR(AbstractDatasetRepresentation):
         subject_ids: returns a sorted list of subject IDs.
         scheme: returns the target scheme for the dataset.
         schemes: returns a tuple containing the dataset scheme and the target scheme.
-        random_splits: generates random splits of the dataset.
         __len__: returns the number of patients in the dataset.
         equal_config: checks if the given configuration is equal to the cached configuration.
         save: saves the Patients object to disk.
