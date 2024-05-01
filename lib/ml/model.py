@@ -36,7 +36,6 @@ class Precomputes(VxData):
 
 class AbstractModel(Module):
     config: ModelConfig = eqx.static_field()
-    f_emb: Callable[[Admission, Optional[jnp.ndarray]], EmbeddedAdmission]
     regularisation: Optional[ModelRegularisation] = None
 
     @property

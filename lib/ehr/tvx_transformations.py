@@ -78,7 +78,7 @@ class TrainingSplitGroups(AbstractTVxTransformation):
         static = dataset.tables.static
         c_subject_id = dataset.config.tables.static.subject_id_alias
         assert c_subject_id in static.index.names, f'Index name must be {c_subject_id}'
-        static = static.loc[subject_ids]
+        static = static.loc[list(subject_ids)]
         dataset = eqx.tree_at(lambda x: x.tables.static, dataset, static)
         return DatasetTransformation.synchronize_subjects(dataset, Report())[0]
 

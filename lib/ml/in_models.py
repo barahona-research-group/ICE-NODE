@@ -15,9 +15,9 @@ from jaxtyping import PyTree
 
 from ._eig_ad import eig
 from .artefacts import AdmissionPrediction
-from .embeddings import (AdmissionEmbedding, AdmissionEmbeddingsConfig, EmbeddedAdmission)
+from .embeddings import (AdmissionEmbedding, AdmissionGenericEmbeddingsConfig, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
-                         SpecialisedAdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
+                         AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
 from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSummarySequentialEmbedding,
                          EmbeddedDischargeSummary)
 from .model import (InpatientModel, ModelConfig, ModelRegularisation,
@@ -250,7 +250,7 @@ class InICENODE(InpatientModel):
     regularisation: ModelRegularisation = eqx.static_field(default_factory=ModelRegularisation)
 
     def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: SpecialisedAdmissionEmbeddingsConfig,
+                 embeddings_config: AdmissionEmbeddingsConfig,
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  outcome_size: Optional[int] = None,
@@ -298,7 +298,7 @@ class InICENODE(InpatientModel):
                                               key=lead_key, **lead_mlp_kwargs)
 
     @staticmethod
-    def _make_init(embeddings_config: Union[AdmissionEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
+    def _make_init(embeddings_config: Union[AdmissionGenericEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
                    state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
         dx_codes_size = embeddings_config.dx_codes or 0
         demographic_size = embeddings_config.demographic or 0
@@ -318,7 +318,7 @@ class InICENODE(InpatientModel):
         return DirectLeadPredictorWrapper(input_size, lead_times, predictor, key, **mlp_kwargs)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic
@@ -354,7 +354,7 @@ class InICENODE(InpatientModel):
                            key=key)
 
     @staticmethod
-    def _make_embedding(config: AdmissionEmbeddingsConfig,
+    def _make_embedding(config: AdmissionGenericEmbeddingsConfig,
                         dx_codes_size: Optional[int],
                         icu_inputs_grouping: Optional[GroupingData],
                         icu_procedures_size: Optional[int],
@@ -437,7 +437,7 @@ class InICENODE(InpatientModel):
 class InICENODELite(InICENODE):
     # Same as InICENODE but without discharge summary outcome predictions.
     def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: Union[AdmissionEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
+                 embeddings_config: Union[AdmissionGenericEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  icu_inputs_grouping: Optional[GroupingData] = None,
@@ -784,7 +784,7 @@ class InRETAIN(InGRUJump):
         self.state_size = embeddings_config.summary
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> RETAINDynamic:
         keys = jrandom.split(key, 4)
         gru_a = CompiledGRU(state_size,
@@ -1103,7 +1103,7 @@ class InKoopman(InICENODELite):
     f_dyn: KoopmanOperator
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> KoopmanOperator:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic

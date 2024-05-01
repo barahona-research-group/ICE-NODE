@@ -957,13 +957,13 @@ class ReducedCodeMapN1(CodeMap):
         aggregation = tuple(self.set_aggregation[g] for g in sorted(self.reduced_groups.keys()))
         return tuple(self._validate_aggregation(a) for a in aggregation)
 
-    def groups_size(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+    def groups_size(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[int, ...]:
         return tuple(len(g) for g in self.groups(scheme_manager))
 
-    def groups_split(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+    def groups_split(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[int, ...]:
         return tuple(np.cumsum(self.groups_size(scheme_manager)).tolist())
 
-    def groups_permute(self, scheme_manager: CodingSchemesManager) -> Tuple[int, ...]:
+    def groups_permute(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[int, ...]:
         source_index = self.source_index(scheme_manager)
         permutes = sum((tuple(map(source_index.get, g)) for g in self.groups(scheme_manager)), tuple())
         if len(permutes) == len(source_index):
@@ -971,7 +971,7 @@ class ReducedCodeMapN1(CodeMap):
         else:
             return permutes + tuple(set(source_index.keys()) - set(permutes))
 
-    def grouping_data(self, scheme_manager: CodingSchemesManager) -> GroupingData:
+    def grouping_data(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> GroupingData:
         source_scheme = scheme_manager.scheme[self.source_name]
         target_scheme = scheme_manager.scheme[self.target_name]
         return GroupingData(permute=np.array(self.groups_permute(scheme_manager), dtype=int),
@@ -1022,6 +1022,7 @@ class OutcomeExtractor(VxData, metaclass=ABCMeta):
         codemap = self.codemap(scheme_manager, source_scheme)
         codes = set(self.codes(scheme_manager))
         index = self.index(scheme_manager)
+
         def _apply(codeset: Set[str]):
             codeset = codemap.map_codeset(codeset) & codes
             vec = np.zeros(len(codes), dtype=bool)

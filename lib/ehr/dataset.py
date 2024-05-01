@@ -784,7 +784,7 @@ class Dataset(AbstractDatasetRepresentation):
                       subject_ids: Optional[List[str]] = None,
                       random_seed: int = 42,
                       balance: SplitLiteral = 'subjects',
-                      discount_first_admission: bool = False):
+                      discount_first_admission: bool = False) -> Tuple[Tuple[str, ...], ...]:
         assert len(splits) > 0, "Split quantiles must be non-empty."
         assert list(splits) == sorted(splits), "Splits must be sorted."
         assert balance in ('subjects', 'admissions',
@@ -827,7 +827,8 @@ class Dataset(AbstractDatasetRepresentation):
                 splits[i] = splits[i] + 1e-6
 
         splits = np.searchsorted(probs, splits)
-        return [a.tolist() for a in np.split(subject_ids, splits)]
+        return tuple(tuple(a.tolist()) for a in np.split(subject_ids, splits))
+
 # TODO: 31 Jan 2024:
 #  - [x] change from_fit to __init__().fit()
 #  - [x] SQLTableConfig to inherit from DatasetTablesConfig

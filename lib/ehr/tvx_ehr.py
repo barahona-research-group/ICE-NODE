@@ -14,7 +14,7 @@ import pandas as pd
 import tables as tbl
 
 from . import OutcomeExtractor
-from .coding_scheme import CodesVector, CodingSchemesManager, CodeMap
+from .coding_scheme import CodesVector, CodingSchemesManager, CodeMap, ReducedCodeMapN1, GroupingData
 from .dataset import Dataset, DatasetScheme, DatasetSchemeConfig, ReportAttributes, \
     AbstractTransformation, AbstractDatasetPipeline, AbstractDatasetRepresentation, Report, SplitLiteral
 from .tvx_concepts import (Admission, Patient, InpatientObservables,
@@ -203,7 +203,7 @@ class OutlierRemovers(eqx.Module):
     obs: Optional[CodedValueProcessor] = None
 
     def equals(self, other: OutlierRemovers) -> bool:
-        return self.obs is None and other.obs is None or self.obs.equals(other.obs)
+        return ((self.obs is None) == (other.obs is None)) or (self.obs is not None and self.obs.equals(other.obs))
 
 
 class Scalers(eqx.Module):
@@ -301,6 +301,13 @@ class TVxEHRScheme(DatasetScheme):
 
     def hosp_procedures_mapper(self, source_scheme: DatasetScheme) -> Optional[CodeMap]:
         return self.mapper(source_scheme, 'hosp_procedures')
+
+    def icu_inputs_mapper(self, source_scheme: DatasetScheme) -> Optional[ReducedCodeMapN1]:
+        return self.mapper(source_scheme, 'icu_inputs')
+
+    def icu_inputs_grouping(self, source_scheme: DatasetScheme) -> Optional[GroupingData]:
+        mapper = self.icu_inputs_mapper(source_scheme)
+        return mapper.grouping_data(self.context_view)
 
     @staticmethod
     def check_target_scheme_support(scheme_manager: CodingSchemesManager, dataset_scheme: DatasetScheme) -> Dict[
@@ -466,39 +473,47 @@ class TVxEHR(AbstractDatasetRepresentation):
             h1['numerical_processors'].equals(h2['numerical_processors']) and h1['subjects_list'] == h2['subjects_list']
 
     @property
-    def subject_ids(self):
+    def subject_ids(self) -> List[str]:
         """Get the list of subject IDs."""
         return sorted(self.subjects.keys()) if self.subjects is not None else []
 
-    def equals(self, other: 'TVxEHR'):
+    def equals(self, other: 'TVxEHR') -> bool:
         return self.equal_header(other) and self.dataset.equals(other.dataset) and self.subjects == other.subjects
 
     @cached_property
-    def scheme(self):
+    def scheme(self) -> TVxEHRScheme:
         """Get the scheme."""
         scheme = TVxEHRScheme(config=self.config.scheme, context_view=self.dataset.scheme_manager.view())
         TVxEHRScheme.validate_mapping(self.dataset.scheme_manager, self.dataset.scheme, scheme)
         return scheme
 
     @cached_property
-    def gender_mapper(self):
+    def gender_mapper(self) -> Optional[CodeMap]:
         return self.scheme.gender_mapper(self.dataset.scheme)
 
     @cached_property
-    def ethnicity_mapper(self):
+    def ethnicity_mapper(self) -> Optional[CodeMap]:
         return self.scheme.ethnicity_mapper(self.dataset.scheme)
 
     @cached_property
-    def dx_mapper(self):
+    def dx_mapper(self) -> Optional[CodeMap]:
         return self.scheme.dx_mapper(self.dataset.scheme)
 
     @cached_property
-    def icu_procedures_mapper(self):
+    def icu_procedures_mapper(self) -> Optional[CodeMap]:
         return self.scheme.icu_procedures_mapper(self.dataset.scheme)
 
     @cached_property
-    def hosp_procedures_mapper(self):
+    def hosp_procedures_mapper(self) -> Optional[CodeMap]:
         return self.scheme.hosp_procedures_mapper(self.dataset.scheme)
+
+    @cached_property
+    def icu_inputs_grouping(self) -> Optional[GroupingData]:
+        return self.scheme.icu_inputs_grouping(self.dataset.scheme)
+
+    @cached_property
+    def demographic_vector_size(self) -> int:
+        return self.scheme.demographic_vector_size(self.config.demographic)
 
     @cached_property
     def subjects_sorted_admission_ids(self) -> Dict[str, List[str]]:

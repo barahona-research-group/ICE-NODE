@@ -1,18 +1,17 @@
 import random
-from typing import List
+from typing import List, Callable
 
-import random
-from typing import List
-
+import jax
 import numpy as np
 import numpy.random as nrand
 import pandas as pd
 import pytest
 
+from ehr.conftest import leading_observables_extractor
 from lib.ehr import CodingScheme, \
     DemographicVectorConfig, InpatientObservables
-from lib.ehr.coding_scheme import ExcludingOutcomeExtractor, NumericScheme, FrozenDict11, CodingSchemesManager, \
-    FrozenDict1N, CodesVector, OutcomeExtractor
+from lib.ehr.coding_scheme import NumericScheme, FrozenDict11, FrozenDict1N, CodesVector, ReducedCodeMapN1, \
+    CodingSchemesManager, GroupingData
 from lib.ehr.dataset import DatasetSchemeConfig
 from lib.ehr.tvx_concepts import SegmentedAdmission, InpatientInterventions, AdmissionDates, Admission, \
     SegmentedInpatientInterventions, InpatientInput, \
@@ -20,6 +19,7 @@ from lib.ehr.tvx_concepts import SegmentedAdmission, InpatientInterventions, Adm
 
 DATASET_SCOPE = "function"
 MAX_STAY_DAYS = 356
+jax.config.update('jax_platform_name', 'cpu')
 
 
 def scheme(name: str, codes: List[str]) -> CodingScheme:
@@ -75,15 +75,20 @@ def observation_scheme(request) -> CodingScheme:
 
 
 @pytest.fixture
-def outcome_extractor(dx_scheme: CodingScheme) -> ExcludingOutcomeExtractor:
+def outcome_extractor(dx_scheme: CodingScheme) -> Callable[[CodesVector], CodesVector]:
     name = f'{dx_scheme.name}_outcome'
     k = max(3, len(dx_scheme.codes) - 1)
     random.seed(0)
     excluded = random.sample(dx_scheme.codes, k=k)
-    manager = CodingSchemesManager().add_scheme(dx_scheme).add_outcome(ExcludingOutcomeExtractor(name=name,
-                                                                                                 base_name=dx_scheme.name,
-                                                                                                 exclude_codes=excluded))
-    return manager.outcome[name]
+    codes = set(dx_scheme.codes) - set(excluded)
+    outcome = CodingScheme(name=name, codes=tuple(sorted(codes)), desc=FrozenDict11.from_dict(dict(zip(codes, codes))))
+
+    def _extractor(dx_codes: CodesVector) -> CodesVector:
+        codeset = {dx_scheme.index2code[i] for i in np.flatnonzero(dx_codes.vec)}
+        codeset = codeset - set(excluded)
+        return outcome.codeset2vec(codeset)
+
+    return _extractor
 
 
 @pytest.fixture
@@ -116,6 +121,29 @@ def icu_inputs_aggregation(icu_inputs_target_scheme) -> FrozenDict11:
 @pytest.fixture
 def icu_inputs_mapping_data(icu_inputs_scheme, icu_inputs_target_scheme) -> FrozenDict1N:
     return FrozenDict1N.from_dict({c: {random.choice(icu_inputs_target_scheme.codes)} for c in icu_inputs_scheme.codes})
+
+
+@pytest.fixture
+def icu_inputs_map(icu_inputs_scheme, icu_inputs_target_scheme, icu_inputs_aggregation,
+                   icu_inputs_mapping_data) -> ReducedCodeMapN1:
+    m = ReducedCodeMapN1.from_data(icu_inputs_scheme.name,
+                                   icu_inputs_target_scheme.name,
+                                   icu_inputs_mapping_data, icu_inputs_aggregation)
+    return m
+
+
+@pytest.fixture
+def icu_inputs_scheme_manager(icu_inputs_scheme: CodingScheme, icu_inputs_target_scheme: CodingScheme,
+                              icu_inputs_map: ReducedCodeMapN1) -> CodingSchemesManager:
+    manager = CodingSchemesManager().add_scheme(icu_inputs_scheme).add_scheme(icu_inputs_target_scheme)
+    manager = manager.add_map(icu_inputs_map)
+    return manager
+
+
+@pytest.fixture
+def icu_inputs_grouping_data(icu_inputs_scheme_manager: CodingSchemesManager,
+                             icu_inputs_map: ReducedCodeMapN1) -> GroupingData:
+    return icu_inputs_map.grouping_data(icu_inputs_scheme_manager)
 
 
 LENGTH_OF_STAY = 10.0
@@ -174,13 +202,9 @@ def dx_codes_history(dx_codes: CodesVector):
     return _dx_codes_history(dx_codes)
 
 
-def _outcome(outcome_extractor_: OutcomeExtractor, dx_codes: CodesVector):
-    return outcome_extractor_.map_vector(dx_codes)
-
-
 @pytest.fixture
-def outcome(dx_codes: CodesVector, outcome_extractor: OutcomeExtractor, dataset_scheme_manager):
-    return _outcome(outcome_extractor, dx_codes)
+def outcome(outcome_extractor: Callable[[CodesVector], CodesVector], dx_codes: CodesVector) -> CodesVector:
+    return outcome_extractor(dx_codes)
 
 
 def _inpatient_observables(observation_scheme: CodingScheme, n_timestamps: int):
@@ -272,8 +296,7 @@ def segmented_inpatient_interventions(inpatient_interventions: InpatientInterven
 
 @pytest.fixture
 def leading_observable(observation_scheme: NumericScheme,
-                       inpatient_observables: InpatientObservables,
-                       dataset_scheme_manager) -> InpatientObservables:
+                       inpatient_observables: InpatientObservables) -> InpatientObservables:
     return leading_observables_extractor(observation_scheme=observation_scheme)(inpatient_observables)
 
 
@@ -319,17 +342,15 @@ def segmented_patient(patient: Patient, icu_inputs_scheme: CodingScheme, icu_pro
                                          hosp_procedures_size=len(hosp_proc_scheme))
 
 
-def _admissions(n_admissions, dx_scheme: CodingScheme,
-                outcome_extractor_: OutcomeExtractor, observation_scheme: NumericScheme,
+def _admissions(n_admissions, dx_scheme: CodingScheme, observation_scheme: NumericScheme,
                 icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
-                hosp_proc_scheme: CodingScheme,
-                dataset_scheme_manager: CodingSchemesManager) -> List[Admission]:
+                hosp_proc_scheme: CodingScheme, outcome_extractor: Callable[[CodesVector], CodesVector]) -> List[
+    Admission]:
     admissions = []
     for i in range(n_admissions):
         dx_codes = _dx_codes(dx_scheme)
         obs = _inpatient_observables(observation_scheme, n_timestamps=nrand.randint(0, 100))
-        lead = leading_observables_extractor(observation_scheme=observation_scheme,
-                                             dataset_scheme_manager=dataset_scheme_manager)(obs)
+        lead = leading_observables_extractor(observation_scheme=observation_scheme)(obs)
         icu_proc = _proc(icu_proc_scheme, n_timestamps=nrand.randint(0, 50))
         hosp_proc = _proc(hosp_proc_scheme, n_timestamps=nrand.randint(0, 50))
         icu_inputs = _icu_inputs(icu_inputs_scheme, n_timestamps=nrand.randint(0, 50))
@@ -337,7 +358,7 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
         admissions.append(_admission(admission_id=f'test_{i}', admission_date=pd.to_datetime('now'),
                                      dx_codes=dx_codes,
                                      dx_codes_history=_dx_codes_history(dx_codes),
-                                     outcome=_outcome(outcome_extractor_, dx_codes),
+                                     outcome=outcome_extractor(dx_codes),
                                      observables=obs,
                                      interventions=_inpatient_interventions(hosp_proc=hosp_proc, icu_proc=icu_proc,
                                                                             icu_inputs=icu_inputs),
@@ -348,13 +369,11 @@ def _admissions(n_admissions, dx_scheme: CodingScheme,
 @pytest.fixture(params=[0, 1, 50])
 def patient(request, static_info: StaticInfo,
             dx_scheme: CodingScheme,
-            outcome_extractor: OutcomeExtractor, observation_scheme: CodingScheme,
+            outcome_extractor: Callable[[CodesVector], CodesVector], observation_scheme: NumericScheme,
             icu_inputs_scheme: CodingScheme, icu_proc_scheme: CodingScheme,
-            hosp_proc_scheme: CodingScheme,
-            dataset_scheme_manager: CodingSchemesManager) -> List[Patient]:
-    admissions = _admissions(n_admissions=request.param, dx_scheme=dx_scheme,
-                             outcome_extractor_=outcome_extractor, observation_scheme=observation_scheme,
-                             dataset_scheme_manager=dataset_scheme_manager,
+            hosp_proc_scheme: CodingScheme) -> Patient:
+    admissions = _admissions(n_admissions=request.param, dx_scheme=dx_scheme, observation_scheme=observation_scheme,
                              icu_inputs_scheme=icu_inputs_scheme, icu_proc_scheme=icu_proc_scheme,
+                             outcome_extractor=outcome_extractor,
                              hosp_proc_scheme=hosp_proc_scheme)
     return Patient(subject_id='test', admissions=admissions, static_info=static_info)

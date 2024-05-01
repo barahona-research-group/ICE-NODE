@@ -134,29 +134,29 @@ class InterventionsEmbeddings(Module):
         return self.final_activation(self.f_emb(self.activation(y)))
 
 
-class AdmissionEmbeddingsConfig(Config):
+class AdmissionGenericEmbeddingsConfig(Config):
     dx_codes: Optional[int] = None
     interventions: Optional[InterventionsEmbeddingsConfig] = None
     demographic: Optional[int] = None
     observables: Optional[int] = None
 
 
-class SpecialisedAdmissionEmbeddingsConfig(Config, metaclass=ABCMeta):
+class AdmissionEmbeddingsConfig(Config, metaclass=ABCMeta):
     @abstractmethod
-    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
+    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
         pass
 
 
-class InICENODEEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
+class InICENODEEmbeddingsConfig(AdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     interventions: Optional[InterventionsEmbeddingsConfig] = None
 
-    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
-        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
-                                         interventions=self.interventions,
-                                         demographic=self.demographic,
-                                         observables=None)
+    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
+        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
+                                                interventions=self.interventions,
+                                                demographic=self.demographic,
+                                                observables=None)
 
 
 class EmbeddedAdmission(VxData):
@@ -175,7 +175,7 @@ class AdmissionEmbedding(Module):
         - A sequence of embedded vectors each fusing the input, procedure \
             and demographic information.
     """
-    config: AdmissionEmbeddingsConfig
+    config: AdmissionGenericEmbeddingsConfig
     f_dx_codes_emb: eqx.nn.MLP | None = None
     f_interventions_emb: InterventionsEmbeddings | None = None
     f_demographic_emb: eqx.nn.MLP | None = None
@@ -226,7 +226,7 @@ class AdmissionEmbedding(Module):
                           final_activation=jnp.tanh,
                           key=obs_emb_key), key
 
-    def __init__(self, config: AdmissionEmbeddingsConfig,
+    def __init__(self, config: AdmissionGenericEmbeddingsConfig,
                  dx_codes_size: Optional[int],
                  icu_inputs_grouping: Optional[GroupingData],
                  icu_procedures_size: Optional[int],
@@ -316,17 +316,17 @@ class AdmissionEmbedding(Module):
                            is_leaf=lambda x: x is None or isinstance(x, tuple))
 
 
-class AdmissionSequentialEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
+class AdmissionSequentialEmbeddingsConfig(AdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     observables: int = 0
     sequence: int = 50
 
-    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
-        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
-                                         interventions=None,
-                                         demographic=self.demographic,
-                                         observables=self.observables)
+    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
+        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
+                                                interventions=None,
+                                                demographic=self.demographic,
+                                                observables=self.observables)
 
 
 class EmbeddedAdmissionObsSequence(VxData):
@@ -379,16 +379,16 @@ class AdmissionSequentialObsEmbedding(eqx.Module):
                                             demographic=demo_emb)
 
 
-class DischargeSummarySequentialEmbeddingsConfig(SpecialisedAdmissionEmbeddingsConfig):
+class DischargeSummarySequentialEmbeddingsConfig(AdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     summary: int = 50
 
-    def to_admission_embeddings_config(self) -> AdmissionEmbeddingsConfig:
-        return AdmissionEmbeddingsConfig(dx_codes=self.dx_codes,
-                                         interventions=None,
-                                         demographic=self.demographic,
-                                         observables=None)
+    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
+        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
+                                                interventions=None,
+                                                demographic=self.demographic,
+                                                observables=None)
 
 
 class EmbeddedDischargeSummary(VxData):

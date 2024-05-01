@@ -870,7 +870,8 @@ def dx_codes_history(dx_codes: CodesVector):
 
 def _outcome(outcome_extractor_: OutcomeExtractor, dataset_scheme_manager: CodingSchemesManager,
              dx_codes: CodesVector):
-    return outcome_extractor_.map_vector(dataset_scheme_manager, dx_codes)
+    extractor = outcome_extractor_.codeset2vec_extractor(dataset_scheme_manager, dx_codes.scheme)
+    return extractor(dx_codes.to_codeset(dataset_scheme_manager))
 
 
 @pytest.fixture

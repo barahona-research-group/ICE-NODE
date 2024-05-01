@@ -1,8 +1,9 @@
-from typing import Type, List, Dict
-import tables as tb
+from typing import Type, List, Dict, Set
+
 import equinox as eqx
 import numpy as np
 import pytest
+import tables as tb
 
 from lib.ehr import Dataset, CodesVector, InpatientInput, InpatientObservables, DemographicVectorConfig, StaticInfo, \
     InpatientInterventions
@@ -255,7 +256,11 @@ class TestTVxConcepts:
 
     @pytest.fixture
     def admission_dx_codes(self, tvx_ehr_with_dx: TVxEHR) -> Dict[str, CodesVector]:
-        return TVxConcepts._dx_discharge(tvx_ehr_with_dx)
+        return TVxConcepts._dx_discharge(tvx_ehr_with_dx)[0]
+
+    @pytest.fixture
+    def admission_dx_codeset(self, tvx_ehr_with_dx: TVxEHR) -> Dict[str, Set[str]]:
+        return TVxConcepts._dx_discharge(tvx_ehr_with_dx)[1]
 
     def test_admission_dx_codes(self, tvx_ehr_with_dx: TVxEHR, admission_dx_codes: Dict[str, CodesVector]):
         assert set(admission_dx_codes.keys()) == set(tvx_ehr_with_dx.admission_ids)
@@ -290,8 +295,8 @@ class TestTVxConcepts:
 
     @pytest.fixture
     def admission_outcome(self, tvx_ehr_with_dx: TVxEHR,
-                          admission_dx_codes: Dict[str, CodesVector]) -> Dict[str, CodesVector]:
-        return TVxConcepts._outcome(tvx_ehr_with_dx, admission_dx_codes)
+                          admission_dx_codeset: Dict[str, Set[str]]) -> Dict[str, CodesVector]:
+        return TVxConcepts._outcome(tvx_ehr_with_dx, admission_dx_codeset)
 
     def test_admission_outcome(self, tvx_ehr_with_dx: TVxEHR,
                                admission_dx_codes: Dict[str, CodesVector],
