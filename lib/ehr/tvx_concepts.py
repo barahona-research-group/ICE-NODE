@@ -267,7 +267,7 @@ class SegmentedInpatientObservables(InpatientObservables):
         return np.searchsorted(time, time_split)
 
     @cached_property
-    def _segments(self) -> Tuple[InpatientObservables, ...]:
+    def segments(self) -> Tuple[InpatientObservables, ...]:
         """
         Splits the InpatientObservables object into multiple segments based on the given time points.
 
@@ -289,13 +289,13 @@ class SegmentedInpatientObservables(InpatientObservables):
 
     @property
     def n_segments(self) -> int:
-        return len(self._segments)
+        return len(self.segments)
 
     def __getitem__(self, item: int) -> InpatientObservables:
-        return self._segments[item]
+        return self.segments[item]
 
     def __iter__(self):
-        return iter(self._segments)
+        return iter((t, v, m) for t, v, m in zip(self.time, self.value, self.mask))
 
 
 class LeadingObservableExtractorConfig(Config):

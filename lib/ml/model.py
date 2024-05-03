@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import zipfile
 from abc import abstractmethod
-from dataclasses import field
-from typing import ( Callable, Optional, Any, Tuple, Self)
+from typing import (Optional, Any, Tuple, Self)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,7 +18,7 @@ from ..utils import tqdm_constructor, translate_path
 
 
 class ModelConfig(Config):
-    embedding: Config = field(default_factory=Config)
+    pass
 
 
 class ModelRegularisation(Config):
@@ -29,9 +28,6 @@ class ModelRegularisation(Config):
 
 class Precomputes(VxData):
     pass
-
-
-
 
 
 class AbstractModel(Module):
@@ -183,35 +179,7 @@ class InpatientModel(AbstractModel):
             inpatients: TVxEHR,
             leave_pbar: bool = False
     ) -> AdmissionsPrediction:
-        total_int_days = inpatients.interval_days()
-        precomputes = self.precomputes(inpatients)
-        admissions_emb = {
-            admission.admission_id: self.f_emb(admission, inpatients.admission_demographics[admission.admission_id])
-            for i, subject in tqdm_constructor(inpatients.subjects.items(),
-                                               desc="Embedding",
-                                               unit='subject',
-                                               leave=leave_pbar) for admission in subject.admissions
-        }
-
-        r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
-        bar_format = '{l_bar}{bar}' + r_bar
-        with tqdm_constructor(total=total_int_days,
-                              bar_format=bar_format,
-                              unit='longitudinal-days',
-                              leave=leave_pbar) as pbar:
-            results = AdmissionsPrediction()
-            for i, subject_id in enumerate(inpatients.subjects.keys()):
-                pbar.set_description(
-                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
-                inpatient = inpatients.subjects[subject_id]
-                for admission in inpatient.admissions:
-                    results = results.add(subject_id=subject_id,
-                                          prediction=self(
-                                              admission,
-                                              admissions_emb[admission.admission_id],
-                                              precomputes=precomputes))
-                    pbar.update(admission.interval_days)
-            return results.filter_nans()
+        pass
 
 
 class DischargeSummaryModel(AbstractModel):

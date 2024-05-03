@@ -19,8 +19,13 @@ from lib.ehr.tvx_concepts import SegmentedAdmission, InpatientInterventions, Adm
 
 DATASET_SCOPE = "function"
 MAX_STAY_DAYS = 356
-jax.config.update('jax_platform_name', 'cpu')
 
+@pytest.fixture
+def jax_cpu_execution():
+    jax.config.update("jax_platform_name", "cpu")
+    with jax.disable_jit():
+        with jax.default_device(jax.devices("cpu")[0]):
+            yield
 
 def scheme(name: str, codes: List[str]) -> CodingScheme:
     return CodingScheme(name=name, codes=tuple(sorted(codes)),
@@ -216,7 +221,7 @@ def _inpatient_observables(observation_scheme: CodingScheme, n_timestamps: int):
     return InpatientObservables(t, v, mask)
 
 
-@pytest.fixture(params=[0, 1, 501])
+@pytest.fixture(params=[501, 0, 1])
 def inpatient_observables(observation_scheme: CodingScheme, request):
     n_timestamps = request.param
     return _inpatient_observables(observation_scheme, n_timestamps)

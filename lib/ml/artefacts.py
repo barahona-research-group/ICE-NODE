@@ -32,7 +32,10 @@ class AdmissionPrediction(VxData):
     model_behavioural_metrics: Optional[ModelBehaviouralMetrics] = None
 
     def add(self, **kwargs) -> AdmissionPrediction:
-        return eqx.combine(self, AdmissionPrediction(admission=None, **kwargs))
+        return eqx.combine(self, type(self)(admission=None, **kwargs),
+                           is_leaf=lambda x: x is None or isinstance(x, (Admission,
+                                                                         InpatientObservables, CodesVector,
+                                                                         ModelBehaviouralMetrics)))
 
     def has_nans(self):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))

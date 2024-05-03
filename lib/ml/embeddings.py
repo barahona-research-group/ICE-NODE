@@ -15,6 +15,10 @@ from ..ehr.tvx_concepts import SegmentedInpatientInterventions, InpatientObserva
     SegmentedAdmission, Admission
 
 
+def empty_if_none(x: Optional[jnp.ndarray]) -> jnp.ndarray:
+    return x if x is not None else jnp.array([])
+
+
 class GroupEmbedding(eqx.Module):
     grouping_data: GroupingData = eqx.static_field()
     groups_aggregation: Tuple[Callable, ...]
@@ -123,13 +127,28 @@ class InterventionsEmbeddings(Module):
                                    use_bias=False,
                                    key=interventions_key)
 
+    @property
+    def zero_icu_procedures(self) -> jnp.ndarray:
+        return jnp.zeros((self.f_icu_procedures_emb.in_features,)) if self.config.icu_procedures else jnp.array([])
+
+    @property
+    def zero_icu_inputs(self) -> jnp.ndarray:
+        size = self.f_icu_inputs_emb.grouping_data.scheme_size[
+            0] if self.f_icu_inputs_emb is not self.null_embedding else 0
+        return jnp.zeros((size,)) if self.config.icu_inputs else jnp.array([])
+
+    @property
+    def zero_hosp_procedures(self) -> jnp.ndarray:
+        return jnp.zeros((self.f_hosp_procedures_emb.in_features,)) if self.config.hosp_procedures else jnp.array([])
+
     def __call__(self, icu_inputs: Optional[jnp.ndarray] = None,
                  icu_procedures: Optional[jnp.ndarray] = None,
                  hosp_procedures: Optional[jnp.ndarray] = None) -> jnp.ndarray:
-        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs) if icu_inputs is not None else jnp.array([])
-        y_icu_procedures = self.f_icu_procedures_emb(icu_procedures) if icu_procedures is not None else jnp.array([])
-        y_hosp_procedures = self.f_hosp_procedures_emb(hosp_procedures) if hosp_procedures is not None else jnp.array(
-            [])
+        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs if icu_inputs is not None else self.zero_icu_inputs)
+        y_icu_procedures = self.f_icu_procedures_emb(
+            icu_procedures if icu_procedures is not None else self.zero_icu_procedures)
+        y_hosp_procedures = self.f_hosp_procedures_emb(
+            hosp_procedures if hosp_procedures is not None else self.zero_hosp_procedures)
         y = jnp.hstack((y_icu_inputs, y_icu_procedures, y_hosp_procedures))
         return self.final_activation(self.f_emb(self.activation(y)))
 
@@ -278,8 +297,8 @@ class AdmissionEmbedding(Module):
         return EmbeddedAdmission(interventions=jnp.vstack(segments))
 
     @eqx.filter_jit
-    def embed_demographic(self, demographic: jnp.ndarray) -> EmbeddedAdmission:
-        if self.f_demographic_emb is None:
+    def embed_demographic(self, demographic: Optional[jnp.ndarray]) -> EmbeddedAdmission:
+        if demographic is None or self.f_demographic_emb is None:
             return EmbeddedAdmission()
         return EmbeddedAdmission(demographic=self.f_demographic_emb(demographic))
 
@@ -291,7 +310,7 @@ class AdmissionEmbedding(Module):
             return EmbeddedAdmission()
 
         if isinstance(observables, SegmentedInpatientObservables):
-            segments = [jnp.concatenate((obs.value, obs.mask), axis=1) for obs in observables]
+            segments = [jnp.concatenate((obs.value, obs.mask), axis=1) for obs in observables.segments]
             return EmbeddedAdmission(observables=tuple(self._embed_observables_segment(s) for s in segments))
 
         elif isinstance(observables, InpatientObservables):

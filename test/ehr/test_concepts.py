@@ -108,7 +108,7 @@ class TestInpatientObservables:
 
     def test_segmentation_concat(self, inpatient_observables: InpatientObservables,
                                  segmented_inpatient_observables: SegmentedInpatientObservables, sep: np.array):
-        seg = segmented_inpatient_observables._segments
+        seg = segmented_inpatient_observables.segments
         assert len(seg) == len(sep) + 1
         assert sum(len(s) for s in seg) == len(inpatient_observables)
         assert sum(s.time.size + s.value.size + s.mask.size for s in seg) == (inpatient_observables.time.size +
@@ -530,9 +530,9 @@ class TestSegmentedAdmission:
         assert segmented_admission.dx_codes_history == admission.dx_codes_history
         assert segmented_admission.outcome == admission.outcome
         if admission.observables is not None:
-            assert InpatientObservables.concat(segmented_admission.observables._segments).equals(admission.observables)
+            assert InpatientObservables.concat(segmented_admission.observables.segments).equals(admission.observables)
         if admission.leading_observable is not None:
-            assert InpatientObservables.concat(segmented_admission.leading_observable._segments).equals(
+            assert InpatientObservables.concat(segmented_admission.leading_observable.segments).equals(
                 admission.leading_observable)
         if admission.interventions is None:
             return

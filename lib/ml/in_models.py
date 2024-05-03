@@ -14,7 +14,7 @@ from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODET
 from jaxtyping import PyTree
 
 from ._eig_ad import eig
-from .artefacts import AdmissionPrediction
+from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .embeddings import (AdmissionEmbedding, AdmissionGenericEmbeddingsConfig, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -25,9 +25,14 @@ from .model import (InpatientModel, ModelConfig, ModelRegularisation,
 from ..ehr import (Admission, InpatientObservables, CodesVector)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission
-from ..utils import model_params_scaler
+from ..ehr.tvx_ehr import SegmentedTVxEHR
+from ..utils import model_params_scaler, tqdm_constructor
 
 LeadPredictorName = Literal['monotonic', 'mlp']
+
+
+def empty_if_none(x):
+    return x if x is not None else jnp.array([])
 
 
 ## TODO: use Invertible NN for embeddings: https://proceedings.mlr.press/v162/zhi22a/zhi22a.pdf
@@ -92,7 +97,7 @@ class NeuralODESolver(eqx.Module):
         return self.get_solution(sol)
 
     def get_args(self, x0: jnp.ndarray, u: Optional[jnp.ndarray], precomputes: Optional[Precomputes]) -> PyTree:
-        return u or self.zero_force
+        return u if u is not None else self.zero_force
 
     def get_aug_x0(self, x0: jnp.ndarray, precomputes: Precomputes) -> PyTree:
         return x0
@@ -174,7 +179,7 @@ class InICENODEStateAdjust(eqx.Module):
                  true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
         error = jnp.where(observables_mask, forecasted_observables - true_observables, 0.0)
         projected_error = self.f_project_error(error)
-        return self.f_update(jnp.hstack(observables_mask, projected_error), forecasted_state)
+        return self.f_update(jnp.hstack((observables_mask, projected_error)), forecasted_state)
 
 
 class ICENODEStateTrajectory(InpatientObservables):
@@ -224,7 +229,7 @@ class DirectLeadPredictorWrapper(eqx.Module):
             raise ValueError(f"Unknown leading predictor type: {predictor}")
 
     def __call__(self, trajectory: ICENODEStateTrajectory, **kwargs) -> InpatientObservables:
-        leading_values = eqx.filter_vmap(self.predictor)(trajectory.forecasted_state)
+        leading_values = eqx.filter_vmap(self.predictor)(trajectory.adjusted_state)
         return InpatientObservables(time=trajectory.time, value=leading_values,
                                     mask=jnp.ones_like(leading_values, dtype=bool))
 
@@ -274,7 +279,6 @@ class InICENODE(InpatientModel):
                                           observables_size=observables_size,
                                           key=key)
         self.f_init = self._make_init(embeddings_config=emb_config,
-
                                       state_size=config.state,
                                       key=emb_key)
         self.f_outcome_dec = self._make_outcome_dec(state_size=config.state,
@@ -321,7 +325,7 @@ class InICENODE(InpatientModel):
     def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
-        demographics_size = embeddings_config.demographic
+        demographics_size = embeddings_config.demographic or 0
         f_dyn = CompiledMLP(in_size=state_size + interventions_size + demographics_size,
                             out_size=state_size,
                             activation=jnn.tanh,
@@ -378,19 +382,14 @@ class InICENODE(InpatientModel):
         pred_obs = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.forecasted_state)
         return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
 
-    def decode_state_trajectory_leading_observables(self,
-                                                    admission: SegmentedAdmission | Admission,
-                                                    state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
-        pred_lead = eqx.filter_vmap(self.f_lead_dec)(state_trajectory.adjusted_state)
-        return InpatientObservables(time=state_trajectory.time, value=pred_lead, mask=admission.leading_observable.mask)
 
     def __call__(
             self, admission: SegmentedAdmission,
             embedded_admission: EmbeddedAdmission, precomputes: Precomputes
     ) -> AdmissionTrajectoryPrediction:
         prediction = AdmissionTrajectoryPrediction(admission=admission)
-        int_e = embedded_admission.interventions or jnp.array([[]])
-        demo_e = embedded_admission.demographic or jnp.array([])
+        int_e = empty_if_none(embedded_admission.interventions)
+        demo_e = empty_if_none(embedded_admission.demographic)
         obs = admission.observables
         if len(obs) == 0:
             logging.warning("No observation to fit.")
@@ -399,7 +398,7 @@ class InICENODE(InpatientModel):
         n_segments = obs.n_segments
         t = 0.0
         state_trajectory = tuple()
-        state = self.f_init(jnp.hstack(embedded_admission.dx_codes_history, embedded_admission.demographic))
+        state = self.f_init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
         segments_t1 = admission.interventions.t1
         for segment_index in range(n_segments):
             segment_t1 = segments_t1[segment_index]
@@ -410,10 +409,11 @@ class InICENODE(InpatientModel):
             for obs_t, obs_val, obs_mask in segment_obs:
                 # if time-diff is more than 1 seconds, we integrate.
                 forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
+                forecasted_state = forecasted_state.squeeze()
                 state = self.f_update(forecasted_state, self.f_obs_dec(state), obs_val, obs_mask)
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
-            state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes)
+            state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes).squeeze()
             t = segment_t1
 
         if self.f_outcome_dec is not None:
@@ -425,9 +425,39 @@ class InICENODE(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
-            prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
-                admission=admission, state_trajectory=icenode_state_trajectory))
+            prediction = prediction.add(leading_observable=self.f_lead_dec(icenode_state_trajectory))
         return prediction
+
+    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
+        total_int_days = inpatients.interval_days()
+        precomputes = self.precomputes(inpatients)
+        admissions_emb = {
+            admission.admission_id: self.f_emb(admission, inpatients.admission_demographics[admission.admission_id])
+            for i, subject in tqdm_constructor(inpatients.subjects.items(),
+                                               desc="Embedding",
+                                               unit='subject',
+                                               leave=leave_pbar) for admission in subject.admissions
+        }
+
+        r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+        bar_format = '{l_bar}{bar}' + r_bar
+        with tqdm_constructor(total=total_int_days,
+                              bar_format=bar_format,
+                              unit='longitudinal-days',
+                              leave=leave_pbar) as pbar:
+            results = AdmissionsPrediction()
+            for i, subject_id in enumerate(inpatients.subjects.keys()):
+                pbar.set_description(
+                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
+                inpatient = inpatients.subjects[subject_id]
+                for admission in inpatient.admissions:
+                    results = results.add(subject_id=subject_id,
+                                          prediction=self(
+                                              admission,
+                                              admissions_emb[admission.admission_id],
+                                              precomputes=precomputes))
+                    pbar.update(admission.interval_days)
+            return results.filter_nans()
 
     @property
     def dyn_params_list(self):
@@ -500,7 +530,7 @@ class InterventionUncertaintyWeightingScheme(eqx.Module):  # Uncertainty-Aware I
         Generate supplementary statistics relative to the timestamp_index of the admission observables, which
         will be used to estimate the intervention effect as an uncertainty proxy for the outcome prediction.
         The outcome prediction at time t is assumed to match up with the delayed response at
-        admission.leading_observables[timestamp_index], which is a strong assumption due to:
+        admission.leading_observable[timestamp_index], which is a strong assumption due to:
             - The interventions applied between t and the delayed response time (t + lead_time), can mitigate
                 the delayed response per se, so it will be non-ideal to penalize a positive outcome prediction
                  as a false positive, while in fact it is a correct prediction of the outcome.
@@ -526,7 +556,7 @@ class InterventionUncertaintyWeightingScheme(eqx.Module):  # Uncertainty-Aware I
         obs_times = observables.time[obs_mask]
 
         # Demographics and masked-out interventions.
-        demo_e = embedded_demographic or jnp.array([])
+        demo_e = empty_if_none(embedded_demographic)
         no_intervention_u = jnp.hstack((demo_e, jnp.zeros_like(embdedded_interventions[0])))
 
         # the defined delays (t+L) for all L in lead_times.
@@ -684,8 +714,7 @@ class InGRUJump(InICENODELite):
                                                               adjusted_state=adjusted_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
-        prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
-            admission=admission, state_trajectory=gru_state_trajectory))
+        prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
         return prediction
 
 
@@ -717,8 +746,8 @@ class InGRU(InICENODELite):
     def __call__(
             self, admission: Admission,
             embedded_admission: EmbeddedAdmissionObsSequence, precomputes: Precomputes) -> AdmissionPrediction:
-        emb_dx_history = embedded_admission.dx_codes_history or jnp.array([])
-        emb_demo = embedded_admission.demographic or jnp.array([])
+        emb_dx_history = empty_if_none(embedded_admission.dx_codes_history)
+        emb_demo = empty_if_none(embedded_admission.demographic)
         force = jnp.hstack((emb_dx_history, emb_demo))
         prediction = AdmissionPrediction(admission=admission)
         if len(embedded_admission.sequence) == 0:
@@ -738,8 +767,7 @@ class InGRU(InICENODELite):
                                                               adjusted_state=adjusted_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
-        prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
-            admission=admission, state_trajectory=gru_state_trajectory))
+        prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
         return prediction
 
 
@@ -849,7 +877,7 @@ class InRETAIN(InGRUJump):
             logging.warning("No observations to fit.")
             return prediction
         state_trajectory = tuple()
-        state_a0, state_b0, context = self._init_state(embedded_admission.demographic,
+        state_a0, state_b0, context = self._init_state(empty_if_none(embedded_admission.demographic),
                                                        embedded_admission.dx_codes_history)
         # for seq_e in embedded_admission.sequence:
         #     forecasted_state = state
@@ -908,8 +936,7 @@ class InRETAIN(InGRUJump):
                                                               adjusted_state=adjusted_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
-        prediction = prediction.add(leading_observables=self.decode_state_trajectory_leading_observables(
-            admission=admission, state_trajectory=gru_state_trajectory))
+        prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
 
         return prediction
 

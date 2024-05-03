@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import pytest
@@ -7,6 +8,8 @@ import pytest
 from lib.ehr.coding_scheme import GroupingData, CodingScheme, ReducedCodeMapN1, CodingSchemesManager, NumericScheme
 from lib.ml.embeddings import GroupEmbedding, InterventionsEmbeddingsConfig, InterventionsEmbeddings, \
     AdmissionGenericEmbeddingsConfig, AdmissionEmbedding, EmbeddedAdmission
+
+
 
 
 @pytest.fixture
@@ -28,12 +31,12 @@ def icu_inputs_sample(icu_inputs_grouping_data, request):
 
 @pytest.fixture
 def icu_procedures_sample(icu_procedures_target_size):
-    return jrandom.binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(icu_procedures_target_size,))
+    return jrandom. binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(icu_procedures_target_size,) )
 
 
 @pytest.fixture
 def hosp_procedures_sample(hosp_procedures_target_size):
-    return jrandom.binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(hosp_procedures_target_size,))
+    return jrandom. binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(hosp_procedures_target_size,))
 
 
 def test_grouping_data(icu_inputs_grouping_data: GroupingData,
@@ -72,12 +75,14 @@ class TestGroupEmbedding:
     def split_source_array(self, icu_inputs_sample, icu_inputs_embedding):
         return icu_inputs_embedding.split_source_array(icu_inputs_sample)
 
+    @pytest.mark.usefixtures('jax_cpu_execution')
     @pytest.mark.serial_test
     def test_split_source_array(self, icu_inputs_sample, group_indexes, split_source_array):
         for array, indexes in zip(split_source_array, group_indexes):
             assert array.shape == (len(indexes),)
             assert jnp.array_equal(array, icu_inputs_sample[jnp.array(indexes)])
 
+    @pytest.mark.usefixtures('jax_cpu_execution')
     @pytest.mark.serial_test
     def test_apply(self, icu_inputs_sample, embeddings_size, icu_inputs_embedding):
         y = icu_inputs_embedding(icu_inputs_sample)
@@ -90,13 +95,16 @@ class TestInterventionsEmbeddings:
         return InterventionsEmbeddingsConfig(icu_inputs=10, icu_procedures=5, hosp_procedures=10, interventions=25)
 
     @pytest.fixture
-    def interventions_embedding(self, icu_inputs_grouping_data, interventions_embeddings_config, icu_procedures_target_size,
+    def interventions_embedding(self, icu_inputs_grouping_data, interventions_embeddings_config,
+                                icu_procedures_target_size,
                                 hosp_procedures_target_size):
-        return InterventionsEmbeddings(config=interventions_embeddings_config, icu_inputs_grouping=icu_inputs_grouping_data,
+        return InterventionsEmbeddings(config=interventions_embeddings_config,
+                                       icu_inputs_grouping=icu_inputs_grouping_data,
                                        icu_procedures_size=icu_procedures_target_size,
                                        hosp_procedures_size=hosp_procedures_target_size,
                                        key=jrandom.PRNGKey(0))
 
+    @pytest.mark.usefixtures('jax_cpu_execution')
     @pytest.mark.serial_test
     def test_apply(self, interventions_embedding, icu_inputs_sample, icu_procedures_sample, hosp_procedures_sample,
                    interventions_embeddings_config):
@@ -143,7 +151,7 @@ class TestAdmissionEmbedding:
     def embedded_admission(self, admission_embedding, segmented_admission) -> EmbeddedAdmission:
         return admission_embedding(segmented_admission, None)
 
-    @pytest.mark.expensive_test
+    @pytest.mark.usefixtures('jax_cpu_execution')
     @pytest.mark.serial_test
     def test_embedded_admission(self, embedded_admission, segmented_admission, admission_embedding_config):
 
