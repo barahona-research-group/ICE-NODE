@@ -1,13 +1,18 @@
+from typing import Tuple
+
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrandom
 import pytest
 
 from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import NumericScheme
-from lib.ehr.tvx_concepts import SegmentedAdmission
+from lib.ehr.tvx_concepts import SegmentedAdmission, InpatientObservables
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
-from lib.ml.in_models import InICENODE, LeadPredictorName, InpatientModelConfig, AdmissionTrajectoryPrediction
+from lib.ml.in_models import InICENODE, LeadPredictorName, InpatientModelConfig, AdmissionTrajectoryPrediction, \
+    InterventionUncertaintyWeightingScheme
 from lib.ml.model import Precomputes
+from lib.utils import tree_hasnan
 
 
 @pytest.fixture
@@ -52,12 +57,62 @@ def inicenode_model(inicenode_model_config: InpatientModelConfig,
 
 
 @pytest.fixture
-def embedded_admission(inicenode_model : InICENODE, segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
-    return inicenode_model.f_emb(segmented_admission, None )
+def embedded_admission(inicenode_model: InICENODE, segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
+    return inicenode_model.f_emb(segmented_admission, None)
+
+
+@pytest.fixture
+@pytest.mark.usefixtures('jax_cpu_execution')
+def inicenode_predictions(inicenode_model: InICENODE, segmented_admission: SegmentedAdmission,
+                          embedded_admission: EmbeddedAdmission):
+    return inicenode_model(admission=segmented_admission, embedded_admission=embedded_admission,
+                           precomputes=Precomputes())
 
 
 @pytest.mark.serial_test
 @pytest.mark.usefixtures('jax_cpu_execution')
-def test_model_apply(inicenode_model: InICENODE, segmented_admission: SegmentedAdmission, embedded_admission: EmbeddedAdmission):
-    v = inicenode_model(admission=segmented_admission, embedded_admission=embedded_admission, precomputes=Precomputes())
-    assert isinstance(v, AdmissionTrajectoryPrediction   )
+def test_inicenode_predictions(inicenode_predictions):
+    assert isinstance(inicenode_predictions, AdmissionTrajectoryPrediction)
+    assert inicenode_predictions.leading_observable.value.shape == inicenode_predictions.admission.leading_observable.value.shape
+
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_model_grad_apply(inicenode_model: InICENODE, segmented_admission: SegmentedAdmission,
+                          embedded_admission: EmbeddedAdmission):
+    if len(segmented_admission.leading_observable) == 0:
+        pytest.skip("No leading observable")
+
+    def forward(model: InICENODE) -> jnp.ndarray:
+        p = model(admission=segmented_admission, embedded_admission=embedded_admission, precomputes=Precomputes())
+        return jnp.mean(p.leading_observable.value.mean())
+
+    grad = eqx.filter_grad(forward)(inicenode_model)
+    assert not tree_hasnan(grad)
+
+
+@pytest.fixture
+def intervention_uncertainty_weighting() -> InterventionUncertaintyWeightingScheme:
+    return InterventionUncertaintyWeightingScheme(lead_times=(1.,), leading_observable_index=0)
+
+
+@pytest.mark.usefixtures('jax_cpu_execution')
+@pytest.fixture
+def intervention_uncertainty_weighting_out(inicenode_model: InICENODE,
+                                           inicenode_predictions: AdmissionTrajectoryPrediction,
+                                           intervention_uncertainty_weighting: InterventionUncertaintyWeightingScheme,
+                                           segmented_admission: SegmentedAdmission,
+                                           embedded_admission: EmbeddedAdmission) -> Tuple[
+    Tuple[float, int], InpatientObservables]:
+    init_state = inicenode_predictions.trajectory.adjusted_state
+    return intervention_uncertainty_weighting(f_obs_decoder=inicenode_model.f_obs_dec,
+                                              f_ode_dyn=inicenode_model.f_dyn,
+                                              initial_states=init_state,
+                                              admission=segmented_admission,
+                                              embedded_admission=embedded_admission,
+                                              precomputes=Precomputes())
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_intervention_uncertainty_weighting_out(intervention_uncertainty_weighting_out):
+    assert len(intervention_uncertainty_weighting_out) == 2

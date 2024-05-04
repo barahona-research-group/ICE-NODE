@@ -89,7 +89,8 @@ class NeuralODESolver(eqx.Module):
             dt0=self.DT0 * self.SECOND,
             y0=self.get_aug_x0(x0, precomputes),
             args=self.get_args(x0, u, precomputes),
-            adjoint=RecursiveCheckpointAdjoint(),
+            adjoint=RecursiveCheckpointAdjoint(checkpoints=20),
+            # TODO: investigate the difference between checkpoints, max_steps, and BacksolveAdjoint.
             saveat=saveat or SaveAt(t1=True),
             stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
             throw=False,

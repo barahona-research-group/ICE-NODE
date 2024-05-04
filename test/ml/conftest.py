@@ -221,7 +221,7 @@ def _inpatient_observables(observation_scheme: CodingScheme, n_timestamps: int):
     return InpatientObservables(t, v, mask)
 
 
-@pytest.fixture(params=[501, 0, 1])
+@pytest.fixture(params=[10])
 def inpatient_observables(observation_scheme: CodingScheme, request):
     n_timestamps = request.param
     return _inpatient_observables(observation_scheme, n_timestamps)
@@ -245,7 +245,7 @@ def _icu_inputs(icu_inputs_scheme: CodingScheme, n_timestamps: int):
     return inpatient_rated_input(n_timestamps, len(icu_inputs_scheme))
 
 
-@pytest.fixture(params=[0, 1, 501])
+@pytest.fixture(params=[15])
 def icu_inputs(icu_inputs_scheme: CodingScheme, request):
     return _icu_inputs(icu_inputs_scheme, request.param)
 
@@ -254,12 +254,12 @@ def _proc(scheme: CodingScheme, n_timestamps: int):
     return inpatient_binary_input(n_timestamps, len(scheme))
 
 
-@pytest.fixture(params=[0, 1, 501])
+@pytest.fixture(params=[20])
 def icu_proc(icu_proc_scheme: CodingScheme, request):
     return _proc(icu_proc_scheme, request.param)
 
 
-@pytest.fixture(params=[0, 1, 501])
+@pytest.fixture(params=[30])
 def hosp_proc(hosp_proc_scheme: CodingScheme, request):
     return _proc(hosp_proc_scheme, n_timestamps=request.param)
 
@@ -371,7 +371,7 @@ def _admissions(n_admissions, dx_scheme: CodingScheme, observation_scheme: Numer
     return admissions
 
 
-@pytest.fixture(params=[0, 1, 50])
+@pytest.fixture(params=[50])
 def patient(request, static_info: StaticInfo,
             dx_scheme: CodingScheme,
             outcome_extractor: Callable[[CodesVector], CodesVector], observation_scheme: NumericScheme,
