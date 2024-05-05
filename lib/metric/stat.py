@@ -20,13 +20,10 @@ from .loss import (NUMERIC_LOSS, NumericLossLiteral, BINARY_LOSS, BinaryLossLite
 from ..base import Module, Config, Array, VxDataItem
 from ..ehr import (TVxEHR, InpatientObservables, CodesVector, LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import SchemeManagerView
-from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction
-
-PredictionAttributeLiteral = Literal['outcome', 'observables', 'leading_observable']
-
+from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction, PredictionAttribute
 
 class PredictionLoss(Module, metaclass=ABCMeta):
-    prediction_attribute: ClassVar[PredictionAttributeLiteral] = None
+    prediction_attribute: ClassVar[PredictionAttribute] = None
 
     @abstractmethod
     def item_loss(self, ground_truth: VxDataItem, prediction: VxDataItem) -> Array:
@@ -61,16 +58,16 @@ class NumericPredictionLoss(PredictionLoss):
 
 
 class LeadPredictionLoss(NumericPredictionLoss):
-    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'leading_observable'
+    prediction_attribute: ClassVar[PredictionAttribute] = 'leading_observable'
 
 
 class ObsPredictionLoss(NumericPredictionLoss):
-    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'observables'
+    prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
 
 
 class OutcomePredictionLoss(PredictionLoss):
     loss_key: BinaryLossLiteral = field(default=None, kw_only=True)
-    prediction_attribute: ClassVar[PredictionAttributeLiteral] = 'outcome'
+    prediction_attribute: ClassVar[PredictionAttribute] = 'outcome'
 
     @cached_property
     def raw_loss(self) -> Callable[[Array, Array], Array]:

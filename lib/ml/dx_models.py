@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import (DischargeSummaryModel, ModelConfig, ModelRegularisation,
+from .model import (DischargeSummaryModel, ModelConfig, LossMixer,
                     Precomputes)
 from ..ehr import (Patient, DemographicVectorConfig,
                    DatasetScheme, CodesVector)
@@ -21,7 +21,7 @@ class ICENODEConfig(ModelConfig):
     mem: int = 15
 
 
-class ICENODERegularisation(ModelRegularisation):
+class ICENODERegularisation(LossMixer):
     L_taylor: float = 0.0
     taylor_order: int = 0
 
@@ -236,7 +236,7 @@ class GRU(DischargeSummaryModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 precomputes: Precomputes, regularisation: ModelRegularisation,
+                 precomputes: Precomputes, regularisation: LossMixer,
                  store_embeddings: bool):
         adms = patient.admissions
         state = jnp.zeros((self.config.emb.dx,))
@@ -343,7 +343,7 @@ class RETAIN(DischargeSummaryModel):
 
     def __call__(self, patient: Patient,
                  embedded_admissions: List[EmbeddedOutAdmission],
-                 precomputes: Precomputes, regularisation: ModelRegularisation,
+                 precomputes: Precomputes, regularisation: LossMixer,
                  store_embeddings: bool):
         adms = patient.admissions
         state_a0 = jnp.zeros(self.config.mem_a)

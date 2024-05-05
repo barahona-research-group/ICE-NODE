@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Tuple, Optional, Literal, Type, Union, Final
+from typing import Tuple, Optional, Literal, Type, Union, Final, Self
 
 import equinox as eqx
 import jax
@@ -20,9 +20,9 @@ from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentia
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
 from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSummarySequentialEmbedding,
                          EmbeddedDischargeSummary)
-from .model import (InpatientModel, ModelConfig, ModelRegularisation,
+from .model import (InpatientModel, ModelConfig, LossMixer,
                     Precomputes)
-from ..ehr import (Admission, InpatientObservables, CodesVector)
+from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission
 from ..ehr.tvx_ehr import SegmentedTVxEHR
@@ -253,7 +253,7 @@ class InICENODE(InpatientModel):
     f_outcome_dec: Optional[CompiledMLP] = None
 
     config: InpatientModelConfig = eqx.static_field()
-    regularisation: ModelRegularisation = eqx.static_field(default_factory=ModelRegularisation)
+    regularisation: LossMixer = eqx.static_field(default_factory=LossMixer)
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: AdmissionEmbeddingsConfig,
@@ -301,6 +301,22 @@ class InICENODE(InpatientModel):
                                               lead_times=lead_times,
                                               predictor=config.lead_predictor,
                                               key=lead_key, **lead_mlp_kwargs)
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+                     embeddings_config: AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=model_config,
+                   embeddings_config=embeddings_config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
+                   outcome_size=tvx_ehr.scheme.outcome_size,
+                   icu_inputs_grouping=tvx_ehr.icu_inputs_grouping,
+                   icu_procedures_size=len(tvx_ehr.scheme.icu_procedures),
+                   hosp_procedures_size=len(tvx_ehr.scheme.hosp_procedures),
+                   demographic_size=tvx_ehr.demographic_vector_size,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
 
     @staticmethod
     def _make_init(embeddings_config: Union[AdmissionGenericEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
@@ -382,7 +398,6 @@ class InICENODE(InpatientModel):
                                             state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
         pred_obs = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.forecasted_state)
         return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
-
 
     def __call__(
             self, admission: SegmentedAdmission,
@@ -468,7 +483,7 @@ class InICENODE(InpatientModel):
 class InICENODELite(InICENODE):
     # Same as InICENODE but without discharge summary outcome predictions.
     def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: Union[AdmissionGenericEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
+                 embeddings_config: AdmissionGenericEmbeddingsConfig | AdmissionSequentialEmbeddingsConfig,
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  icu_inputs_grouping: Optional[GroupingData] = None,
@@ -481,6 +496,21 @@ class InICENODELite(InICENODE):
                          dx_codes_size=dx_codes_size, outcome_size=None, icu_inputs_grouping=icu_inputs_grouping,
                          icu_procedures_size=icu_procedures_size, hosp_procedures_size=hosp_procedures_size,
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+                     embeddings_config: AdmissionGenericEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=model_config,
+                   embeddings_config=embeddings_config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
+                   icu_inputs_grouping=tvx_ehr.icu_inputs_grouping,
+                   icu_procedures_size=len(tvx_ehr.scheme.icu_procedures),
+                   hosp_procedures_size=len(tvx_ehr.scheme.hosp_procedures),
+                   demographic_size=tvx_ehr.demographic_vector_size,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
 
 
 class AugmentedForcedVectorField(ForcedVectorField):
@@ -670,6 +700,18 @@ class InGRUJump(InICENODELite):
                          icu_procedures_size=None, hosp_procedures_size=None,
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
 
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+                     embeddings_config: DischargeSummarySequentialEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=model_config,
+                   embeddings_config=embeddings_config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
+                   demographic_size=tvx_ehr.demographic_vector_size,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
+
     @staticmethod
     def _make_init(embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
                    state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
@@ -736,6 +778,18 @@ class InGRU(InICENODELite):
                          dx_codes_size=dx_codes_size, icu_inputs_grouping=None,
                          icu_procedures_size=None, hosp_procedures_size=None,
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+                     embeddings_config: AdmissionSequentialEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=model_config,
+                   embeddings_config=embeddings_config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
+                   demographic_size=tvx_ehr.demographic_vector_size,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
 
     @staticmethod
     def _make_dyn(state_size: int, embeddings_config: AdmissionSequentialEmbeddingsConfig,
@@ -811,6 +865,18 @@ class InRETAIN(InGRUJump):
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
         self.config = config
         self.state_size = embeddings_config.summary
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+                     embeddings_config: DischargeSummarySequentialEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=model_config,
+                   embeddings_config=embeddings_config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
+                   demographic_size=tvx_ehr.demographic_vector_size,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
 
     @staticmethod
     def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,

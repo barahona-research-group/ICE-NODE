@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from .artefacts import AdmissionsPrediction
-from .embeddings import (EmbeddedAdmission)
+from .embeddings import (EmbeddedAdmission, AdmissionEmbeddingsConfig)
 from ..base import Config, Module, VxData
 from ..ehr import (TVxEHR, Patient, Admission)
 from ..utils import tqdm_constructor, translate_path
@@ -21,9 +21,7 @@ class ModelConfig(Config):
     pass
 
 
-class ModelRegularisation(Config):
-    L_l1: float = 0.0
-    L_l2: float = 0.0
+
 
 
 class Precomputes(VxData):
@@ -32,16 +30,11 @@ class Precomputes(VxData):
 
 class AbstractModel(Module):
     config: ModelConfig = eqx.static_field()
-    regularisation: Optional[ModelRegularisation] = None
 
     @property
     @abstractmethod
     def dyn_params_list(self):
         pass
-
-    def regularised(self, regularisation: Optional[ModelRegularisation]) -> Self:
-        return eqx.tree_at(lambda m: m.regularisation, self, regularisation,
-                           is_leaf=lambda x: x is None)
 
     def params_list(self, pytree: Optional[Any] = None):
         if pytree is None:
@@ -159,6 +152,10 @@ class AbstractModel(Module):
             }
             for k, v in params.items()
         }
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR,  model_config: ModelConfig, embeddings_config:  AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
+        raise NotImplementedError
 
 
 class InpatientModel(AbstractModel):

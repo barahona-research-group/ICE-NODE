@@ -256,6 +256,10 @@ class TVxEHRScheme(DatasetScheme):
     def outcome(self) -> Optional[OutcomeExtractor]:
         return self.context_view.outcome[self.config.outcome] if self.config.outcome else None
 
+    @cached_property
+    def outcome_size(self) -> int | None:
+        return len(self.outcome.codes(self.context_view)) if self.outcome else None
+
     @staticmethod
     def validate_outcome_scheme(coding_scheme_manager: CodingSchemesManager, outcome_scheme: OutcomeExtractor,
                                 dx_discharge: str) -> bool:

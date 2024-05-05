@@ -9,6 +9,7 @@ import re
 from abc import abstractmethod, ABCMeta
 from dataclasses import field
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from typing import List, Any, Dict, Tuple, Union, Optional, Callable
 
@@ -21,11 +22,11 @@ import pandas as pd
 from blinker import signal
 
 from .artefacts import AdmissionsPrediction
-from .model import AbstractModel, ModelRegularisation
+from .model import AbstractModel, LossMixer
 from ..base import Config, Module
 from ..ehr import TVxEHR
-from ..metric.loss import BINARY_LOSS, NUMERIC_LOSS
-from ..metric.stat import (MetricsCollection, Metric)
+from ..metric.loss import BinaryLossLiteral, NumericLossLiteral
+from ..metric.stat import (MetricsCollection, Metric, OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 
@@ -645,7 +646,7 @@ class TrainerReporting(Module):
 class WarmupConfig(Config):
     epochs: float = 0.1
     batch_size: int = 16
-    optimizer: OptimizerConfig = field(default_factory=lambda:OptimizerConfig(reverse_schedule=True))
+    optimizer: OptimizerConfig = field(default_factory=lambda: OptimizerConfig(reverse_schedule=True))
 
     def __init__(self,
                  epochs: float = 0.1,
@@ -669,54 +670,53 @@ class TrainerConfig(Config):
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     epochs: int = 100
     batch_size: int = 32
-    dx_loss: str = 'balanced_focal_bce'
-    obs_loss: str = 'mse'
-    lead_loss: str = 'mse'
+    outcome_loss: Optional[BinaryLossLiteral] = None
+    obs_loss: Optional[NumericLossLiteral] = None
+    lead_loss: Optional[NumericLossLiteral] = None
+
+
+class LossMixer(Config):
+    l1: float = 0.0
+    l2: float = 0.0
+    outcome: float = 1.0
+    observables: float = 1.0
+    leading_observable: float = 1.0
 
 
 class Trainer(Module):
     config: TrainerConfig
-    reg_hyperparams: ModelRegularisation
-    _dx_loss: Callable
-    _obs_loss: Callable
-    _lead_loss: Callable
+    loss_mixer: LossMixer = field(default_factory=LossMixer)
 
-    def __init__(self,
-                 config: TrainerConfig,
-                 reg_hyperparams: ModelRegularisation = ModelRegularisation):
-        super().__init__(config=config)
-        if reg_hyperparams is None:
-            reg_hyperparams = ModelRegularisation()
-        self.config = config
-        self.reg_hyperparams = reg_hyperparams
-        self._dx_loss = BINAR_LOSS[config.dx_loss]
-        self._obs_loss = numeric_loss[config.obs_loss]
-        self._lead_loss = numeric_loss[config.lead_loss]
+    @cached_property
+    def outcome_loss(self) -> OutcomePredictionLoss | Callable[[AdmissionsPrediction], float]:
+        if self.config.outcome_loss is None:
+            return lambda p: 0.0
+        return OutcomePredictionLoss(loss_key=self.config.outcome_loss)
 
-    @classmethod
-    def external_argnames(cls):
-        return ['reg_hyperparams']
+    @cached_property
+    def obs_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
+        if self.config.obs_loss is None:
+            return lambda p: 0.0
+        return ObsPredictionLoss(loss_key=self.config.obs_loss)
+
+    @cached_property
+    def lead_loss(self) -> LeadPredictionLoss | Callable[[AdmissionsPrediction], float]:
+        if self.config.lead_loss is None:
+            return lambda p: 0.0
+        return LeadPredictionLoss(loss_key=self.config.lead_loss)
 
     def batch_predict(self, model: AbstractModel, patients: TVxEHR):
-        return model.batch_predict(patients,
-                                   leave_pbar=False,
-                                   regularisation=self.reg_hyperparams)
+        return model.batch_predict(patients, leave_pbar=False)
 
     def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
-        loss = predictions.prediction_dx_loss(dx_loss=self._dx_loss)
-        hps = self.reg_hyperparams.as_dict()
-        if hps.get('L_l1', 0.0) != 0.0:
-            loss += model.l1() * hps['L_l1']
-            hps.pop('L_l1')
-        if hps.pop('L_l2', 0.0) != 0.0:
-            loss += model.l2() * hps['L_l2']
-            hps.pop('L_l2')
-        if len(hps) > 0:
-            loss += self.prediction_auxiliary_loss(predictions)
+        loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
+                self.loss_mixer.observables * self.obs_loss(predictions) +
+                self.loss_mixer.leading_observable * self.lead_loss(predictions))
+        if self.loss_mixer.l1 != 0.0:
+            loss += model.l1() * self.loss_mixer.l1
+        if self.loss_mixer.l2 != 0.0:
+            loss += model.l2() * self.loss_mixer.l2
         return loss
-
-    def prediction_auxiliary_loss(self, predictions: AdmissionsPrediction):
-        return predictions.associative_regularisation(self.reg_hyperparams)
 
     def loss(self, model: AbstractModel, patients: TVxEHR):
         preds = self.batch_predict(model, patients)
@@ -737,7 +737,7 @@ class Trainer(Module):
     def __call__(self,
                  model: AbstractModel,
                  patients: TVxEHR,
-                 splits: Tuple[List[int], ...],
+                 splits: Optional[Tuple[List[int], ...]],
                  model_snapshot_frequency: int = 0,
                  n_evals=100,
                  reporting: TrainerReporting = TrainerReporting(),
@@ -793,7 +793,7 @@ class Trainer(Module):
                 warmup_config: WarmupConfig):
 
         conf = self.config.update(warmup_config)
-        trainer = type(self)(conf, reg_hyperparams=self.reg_hyperparams)
+        trainer = type(self)(config=conf, loss_mixer=self.loss_mixer)
         return trainer._train(model=model,
                               patients=patients,
                               splits=(splits[0], [], []),
@@ -808,7 +808,7 @@ class Trainer(Module):
     def _train(self,
                model: AbstractModel,
                patients: TVxEHR,
-               splits: Tuple[List[int], ...],
+               splits: Optional[Tuple[List[int], ...]],
                model_snapshot_frequency: int,
                n_evals: int,
                continue_training: bool,
@@ -816,19 +816,23 @@ class Trainer(Module):
                trial_terminate_time,
                history: TrainingHistory,
                signals: TrainerSignals,
-               exported_config: Any = {}):
+               exported_config: Dict[str, Any]):
 
-        train_ids, valid_ids, test_ids = splits
+        if exported_config is None:
+            exported_config = {}
+        if splits is not None:
+            assert len(splits) == 3, "Expected splits to be a tuple of 3 lists"
+            train_ids, valid_ids, test_ids = splits
+        else:
+            train_ids, valid_ids, test_ids = patients.subject_ids, [], []
+
         if self.config.epochs > 0 and self.config.epochs < 1:
             epochs = 1
-            train_ids = train_ids[:int(self.config.epochs * len(train_ids)) +
-                                   1]
+            train_ids = train_ids[:int(self.config.epochs * len(train_ids)) + 1]
         else:
             epochs = self.config.epochs
 
-        n_train_admissions = patients.n_admissions(
-            train_ids,
-            ignore_first_admission=model.discount_first_admission)
+        n_train_admissions = patients.n_admissions(train_ids, ignore_first_admission=model.discount_first_admission)
 
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
@@ -868,13 +872,9 @@ class Trainer(Module):
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=False, unit='Epoch'):
             pyrng.shuffle(train_ids)
-            epoch_splits = patients.epoch_splits(
-                train_ids,
-                batch_n_admissions=batch_size,
-                ignore_first_admission=model.discount_first_admission)
-            split_gen = tqdm_constructor(epoch_splits,
-                                         leave=False,
-                                         unit='Batch')
+            epoch_splits = patients.epoch_splits(train_ids, batch_n_admissions=batch_size,
+                                                 discount_first_admission=model.discount_first_admission)
+            split_gen = tqdm_constructor(epoch_splits, leave=False, unit='Batch')
 
             timenow = datetime.now()
             for batch_split in split_gen:
@@ -921,15 +921,14 @@ class Trainer(Module):
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
-                if step in eval_steps:
+                if step in eval_steps and len(valid_ids) > 0:
                     elapsed_time = (datetime.now() - timenow).total_seconds()
                     timenow = datetime.now()
 
                     split_gen.set_description('Evaluating (Train) (A)...')
                     preds = model.batch_predict(batch, leave_pbar=False)
                     split_gen.set_description('Evaluating (Train) (B)...')
-                    history.append_train_preds(step, preds, elapsed_time,
-                                               timenow)
+                    history.append_train_preds(step, preds, elapsed_time, timenow)
 
                     if len(valid_ids) > 0:
                         timenow = datetime.now()
@@ -937,8 +936,7 @@ class Trainer(Module):
                         preds = model.batch_predict(val_batch,
                                                     leave_pbar=False)
                         split_gen.set_description('Evaluating (Val) (B)...')
-                        history.append_val_preds(step, preds, elapsed_time,
-                                                 timenow)
+                        history.append_val_preds(step, preds, elapsed_time, timenow)
                     signals.end_evaluation.send(self,
                                                 step=step,
                                                 model=model,
@@ -962,28 +960,19 @@ class Trainer(Module):
         return model
 
 
-class LassoNetTrainer(Trainer):
+# class LassoNetTrainer(Trainer):
+#
+#     def _post_update_params(self, model):
+#         if self.reg_hyperparams:
+#             return model.prox_map()(model, self.reg_hyperparams)
+#         else:
+#             return model
 
-    def _post_update_params(self, model):
-        if self.reg_hyperparams:
-            return model.prox_map()(model, self.reg_hyperparams)
-        else:
-            return model
 
-
-class InTrainer(Trainer):
+class KoopmanTrainer(Trainer):
+    @cached_property
+    def reconstruction_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
+        raise NotImplementedError
 
     def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
-        loss = super().loss_term(model, predictions)
-        obs_loss = predictions.prediction_obs_loss(obs_loss=self._obs_loss)
-        lead_loss = predictions.prediction_lead_loss(lead_loss=self._lead_loss)
-        return loss + obs_loss + lead_loss
-
-
-class InSKELKoopmanTrainer(InTrainer):
-
-    def prediction_auxiliary_loss(self, predictions: AdmissionsPrediction):
-        preds = predictions.get_predictions()
-        loss = sum((p.auxiliary_loss['L_rec'] for p in preds), [])
-        alpha_rec = self.reg_hyperparams.L_rec
-        return alpha_rec * sum(loss) / len(loss)
+        raise NotImplementedError

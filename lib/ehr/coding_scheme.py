@@ -991,19 +991,19 @@ class OutcomeExtractor(VxData, metaclass=ABCMeta):
         return f"{self.__class__.__name__}({self.name})"
 
     @abstractmethod
-    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
+    def base_scheme(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> CodingScheme:
         pass
 
-    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+    def codes(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[str, ...]:
         raise NotImplementedError
 
-    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
+    def desc(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> FrozenDict11:
         raise NotImplementedError
 
-    def index(self, scheme_manager: CodingSchemesManager) -> Dict[str, int]:
+    def index(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Dict[str, int]:
         return {c: i for i, c in enumerate(self.codes(scheme_manager))}
 
-    def outcome_dim(self, scheme_manager: CodingSchemesManager):
+    def outcome_dim(self, scheme_manager: CodingSchemesManager | SchemeManagerView):
         """
         Gets the dimension of the outcome.
 
@@ -1037,14 +1037,14 @@ class ExcludingOutcomeExtractor(OutcomeExtractor):
     exclude_codes: Tuple[str, ...] = field(kw_only=True)
     base_name: str = field(kw_only=True, default=None)
 
-    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+    def codes(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[str, ...]:
         return tuple(c for c in self.base_scheme(scheme_manager).codes if c not in self.exclude_codes)
 
-    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
+    def desc(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> FrozenDict11:
         desc = self.base_scheme(scheme_manager).desc
         return FrozenDict11({c: desc[c] for c in self.codes(scheme_manager)})
 
-    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
+    def base_scheme(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> CodingScheme:
         return scheme_manager.scheme[self.base_name]
 
 
@@ -1056,22 +1056,22 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         if self.name is None:
             self.name = self.spec_file.split('.')[0]
 
-    def exclude_codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+    def exclude_codes(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[str, ...]:
         return self.specs(scheme_manager)['exclude_codes']
 
-    def codes(self, scheme_manager: CodingSchemesManager) -> Tuple[str, ...]:
+    def codes(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Tuple[str, ...]:
         excluded = self.exclude_codes(scheme_manager)
         base_codes = self.base_scheme(scheme_manager).codes
         return tuple(c for c in sorted(base_codes) if c not in excluded)
 
-    def desc(self, scheme_manager: CodingSchemesManager) -> FrozenDict11:
+    def desc(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> FrozenDict11:
         desc = self.base_scheme(scheme_manager).desc
         return FrozenDict11.from_dict({c: desc[c] for c in self.codes(scheme_manager)})
 
-    def specs(self, scheme_manager: CodingSchemesManager) -> Dict[str, Any]:
+    def specs(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> Dict[str, Any]:
         return self.spec_from_json(scheme_manager, self.spec_file)
 
-    def base_scheme(self, scheme_manager: CodingSchemesManager) -> CodingScheme:
+    def base_scheme(self, scheme_manager: CodingSchemesManager | SchemeManagerView) -> CodingScheme:
         """
         Gets the base coding scheme used for outcome extraction.
 
@@ -1082,7 +1082,7 @@ class FileBasedOutcomeExtractor(OutcomeExtractor):
         return scheme_manager.scheme[self.specs(scheme_manager)['code_scheme']]
 
     @staticmethod
-    def spec_from_json(manager: Union[SchemeManagerView, CodingSchemesManager], json_file: str):
+    def spec_from_json(manager: SchemeManagerView | CodingSchemesManager, json_file: str):
         conf = load_config(json_file, relative_to=resources_dir('outcome_filters'))
 
         if 'exclude_branches' in conf:
