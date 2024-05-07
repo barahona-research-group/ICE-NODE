@@ -127,30 +127,32 @@ class InterventionsEmbeddings(Module):
                                    use_bias=False,
                                    key=interventions_key)
 
-    @property
-    def zero_icu_procedures(self) -> jnp.ndarray:
-        return jnp.zeros((self.f_icu_procedures_emb.in_features,)) if self.config.icu_procedures else jnp.array([])
-
-    @property
-    def zero_icu_inputs(self) -> jnp.ndarray:
-        size = self.f_icu_inputs_emb.grouping_data.scheme_size[
-            0] if self.f_icu_inputs_emb is not self.null_embedding else 0
-        return jnp.zeros((size,)) if self.config.icu_inputs else jnp.array([])
-
-    @property
-    def zero_hosp_procedures(self) -> jnp.ndarray:
-        return jnp.zeros((self.f_hosp_procedures_emb.in_features,)) if self.config.hosp_procedures else jnp.array([])
-
-    def __call__(self, icu_inputs: Optional[jnp.ndarray] = None,
-                 icu_procedures: Optional[jnp.ndarray] = None,
-                 hosp_procedures: Optional[jnp.ndarray] = None) -> jnp.ndarray:
-        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs if icu_inputs is not None else self.zero_icu_inputs)
-        y_icu_procedures = self.f_icu_procedures_emb(
-            icu_procedures if icu_procedures is not None else self.zero_icu_procedures)
-        y_hosp_procedures = self.f_hosp_procedures_emb(
-            hosp_procedures if hosp_procedures is not None else self.zero_hosp_procedures)
+    @eqx.filter_jit
+    def __call__(self, icu_inputs: jnp.ndarray,
+                 icu_procedures: jnp.ndarray,
+                 hosp_procedures: jnp.ndarray) -> jnp.ndarray:
+        y_icu_inputs = self.f_icu_inputs_emb(icu_inputs)
+        y_icu_procedures = self.f_icu_procedures_emb(icu_procedures)
+        y_hosp_procedures = self.f_hosp_procedures_emb(hosp_procedures)
         y = jnp.hstack((y_icu_inputs, y_icu_procedures, y_hosp_procedures))
         return self.final_activation(self.f_emb(self.activation(y)))
+
+
+    @eqx.filter_jit
+    def zero_icu_procedures(self, length: int) -> jnp.ndarray:
+        size = self.f_icu_procedures_emb.in_features if self.config.icu_procedures else 0
+        return jnp.zeros((length, size))
+
+    @eqx.filter_jit
+    def zero_icu_inputs(self, length: int) -> jnp.ndarray:
+        size = self.f_icu_inputs_emb.grouping_data.scheme_size[
+            0] if self.f_icu_inputs_emb is not self.null_embedding else 0
+        return jnp.zeros((length, size)) if self.config.icu_inputs else jnp.array([])
+
+    @eqx.filter_jit
+    def zero_hosp_procedures(self, length: int) -> jnp.ndarray:
+        size = self.f_hosp_procedures_emb.in_features if self.config.hosp_procedures else 0
+        return jnp.zeros((length, size))
 
 
 class AdmissionGenericEmbeddingsConfig(Config):
@@ -287,14 +289,25 @@ class AdmissionEmbedding(Module):
         dx_codes_history_emb = self.f_dx_codes_emb(dx_codes_history.vec)
         return EmbeddedAdmission(dx_codes=dx_codes_emb, dx_codes_history=dx_codes_history_emb)
 
-    @eqx.filter_jit
+
     def embed_interventions(self, interventions: SegmentedInpatientInterventions) -> EmbeddedAdmission:
         if self.f_interventions_emb is None:
             return EmbeddedAdmission()
-
-        segments = [self.f_interventions_emb(icu_inputs, icu_procedures, hosp_procedures)
-                    for hosp_procedures, icu_procedures, icu_inputs in interventions.iter_tuples()]
-        return EmbeddedAdmission(interventions=jnp.vstack(segments))
+        length = interventions.time.shape[0] - 1
+        if interventions.icu_procedures is None:
+            icu_procedures = self.f_interventions_emb.zero_icu_procedures(length)
+        else:
+            icu_procedures = interventions.icu_procedures
+        if interventions.icu_inputs is None:
+            icu_inputs = self.f_interventions_emb.zero_icu_inputs(length)
+        else:
+            icu_inputs = interventions.icu_inputs
+        if interventions.hosp_procedures is None:
+            hosp_procedures = self.f_interventions_emb.zero_hosp_procedures(length)
+        else:
+            hosp_procedures = interventions.hosp_procedures
+        interventions_e = eqx.filter_vmap(self.f_interventions_emb)(icu_inputs, icu_procedures, hosp_procedures)
+        return EmbeddedAdmission(interventions=interventions_e)
 
     @eqx.filter_jit
     def embed_demographic(self, demographic: Optional[jnp.ndarray]) -> EmbeddedAdmission:

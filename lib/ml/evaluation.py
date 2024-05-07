@@ -13,7 +13,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .experiment import InpatientExperiment
+from .experiment import Experiment
 from ..base import Config, Module
 from ..db.models import (Experiment as ExperimentModel, EvaluationRun as
 EvaluationRunModel, EvaluationStatus as
@@ -158,7 +158,7 @@ class Evaluation(Module):
                 session.add(result)
 
     def get_experiment(self, exp: str):
-        return InpatientExperiment(config=self.experiment_config[exp])
+        return Experiment(config=self.experiment_config[exp])
 
     def evaluate(self, exp: str, snapshot: str):
         experiment = self.get_experiment(exp)

@@ -660,6 +660,12 @@ class TVxEHR(AbstractDatasetRepresentation):
         }
         return eqx.tree_at(lambda x: x.subjects, self, subjects)
 
+    def replace_nans(self):
+        """Replace NaNs with zeros in the observables."""
+        subjects = {k: v.replace_nans() for k, v in self.subjects.items()}
+        return eqx.tree_at(lambda x: x.subjects, self, subjects)
+
+
     def epoch_splits(self,
                      subject_ids: Optional[List[str]],
                      batch_n_admissions: int,

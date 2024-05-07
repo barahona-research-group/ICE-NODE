@@ -10,6 +10,7 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.scipy as jscipy
+import jax.tree_util as jtu
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, SubSaveAt
 from jaxtyping import PyTree
 
@@ -20,7 +21,7 @@ from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentia
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
 from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSummarySequentialEmbedding,
                          EmbeddedDischargeSummary)
-from .model import (InpatientModel, ModelConfig, LossMixer,
+from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
@@ -89,11 +90,11 @@ class NeuralODESolver(eqx.Module):
             dt0=self.DT0 * self.SECOND,
             y0=self.get_aug_x0(x0, precomputes),
             args=self.get_args(x0, u, precomputes),
-            adjoint=RecursiveCheckpointAdjoint(checkpoints=20),
+            adjoint=RecursiveCheckpointAdjoint(checkpoints=10),
             # TODO: investigate the difference between checkpoints, max_steps, and BacksolveAdjoint.
             saveat=saveat or SaveAt(t1=True),
             stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
-            throw=False,
+            throw=True,
             max_steps=None)
         return self.get_solution(sol)
 
@@ -253,7 +254,6 @@ class InICENODE(InpatientModel):
     f_outcome_dec: Optional[CompiledMLP] = None
 
     config: InpatientModelConfig = eqx.static_field()
-    regularisation: LossMixer = eqx.static_field(default_factory=LossMixer)
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: AdmissionEmbeddingsConfig,
@@ -302,11 +302,15 @@ class InICENODE(InpatientModel):
                                               predictor=config.lead_predictor,
                                               key=lead_key, **lead_mlp_kwargs)
 
+    @property
+    def dyn_params_list(self):
+        return jtu.tree_leaves(eqx.filter(self.f_dyn, eqx.is_inexact_array))
+
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
                      embeddings_config: AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
-        return cls(config=model_config,
+        return cls(config=config,
                    embeddings_config=embeddings_config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
@@ -408,7 +412,7 @@ class InICENODE(InpatientModel):
         demo_e = empty_if_none(embedded_admission.demographic)
         obs = admission.observables
         if len(obs) == 0:
-            logging.warning("No observation to fit.")
+            logging.debug("No observation to fit.")
             return prediction
 
         n_segments = obs.n_segments
@@ -433,7 +437,7 @@ class InICENODE(InpatientModel):
             t = segment_t1
 
         if self.f_outcome_dec is not None:
-            prediction = prediction.add(outcome=CodesVector(self.f_dx_dec(state), admission.outcome.scheme))
+            prediction = prediction.add(outcome=CodesVector(self.f_outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
             forecasted_states, adjusted_states = zip(*state_trajectory)
             icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
@@ -474,10 +478,6 @@ class InICENODE(InpatientModel):
                                               precomputes=precomputes))
                     pbar.update(admission.interval_days)
             return results.filter_nans()
-
-    @property
-    def dyn_params_list(self):
-        return self.params_list(self.f_dyn)
 
 
 class InICENODELite(InICENODE):
@@ -743,7 +743,7 @@ class InGRUJump(InICENODELite):
         prediction = AdmissionPrediction(admission=admission)
         obs = admission.observables
         if len(obs) == 0:
-            logging.warning("No observation to fit.")
+            logging.debug("No observation to fit.")
             return prediction
         state_trajectory = tuple()
         state = self.f_init(embedded_admission.history_summary)
@@ -806,7 +806,7 @@ class InGRU(InICENODELite):
         force = jnp.hstack((emb_dx_history, emb_demo))
         prediction = AdmissionPrediction(admission=admission)
         if len(embedded_admission.sequence) == 0:
-            logging.warning("No observations to fit.")
+            logging.debug("No observations to fit.")
             return prediction
 
         state = self.f_init(force)
@@ -941,7 +941,7 @@ class InRETAIN(InGRUJump):
         prediction = AdmissionPrediction(admission=admission)
 
         if len(obs) == 0:
-            logging.warning("No observations to fit.")
+            logging.debug("No observations to fit.")
             return prediction
         state_trajectory = tuple()
         state_a0, state_b0, context = self._init_state(empty_if_none(embedded_admission.demographic),
@@ -1211,7 +1211,7 @@ class InKoopman(InICENODELite):
 
     @property
     def dyn_params_list(self):
-        return self.params_list((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N))
+        return jtu.tree_leaves(eqx.filter((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N), eqx.is_inexact_array))
 
     @eqx.filter_jit
     def pathwise_params_stats(self):

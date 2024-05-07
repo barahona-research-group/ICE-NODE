@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import tables as tb
 
+from lib.utils import tree_hasnan
+
 
 class NumpyEncoder(json.JSONEncoder):
     """ Custom encoder for numpy data types """
@@ -210,7 +212,7 @@ class Module(eqx.Module, metaclass=ABCMeta):
         return self.config.to_dict()
 
     @staticmethod
-    def module_class(label: str):
+    def module_class(label: str) -> Type['Module']:
         return Module._class_registry[label]
 
     @classmethod
@@ -309,6 +311,14 @@ class VxData(eqx.Module):
         arrs, others = eqx.partition(self, eqx.is_array)
         arrs = jtu.tree_map(lambda a: jnp.array(a), arrs)
         return eqx.combine(arrs, others)
+
+    def replace_nans(self):
+        arrs, others = eqx.partition(self, eqx.is_array)
+        arrs = jtu.tree_map(lambda a: np_module(a).nan_to_num(a), arrs)
+        return eqx.combine(arrs, others)
+
+    def has_nans(self):
+        return tree_hasnan(self)
 
     def __len__(self) -> int:
         raise NotImplementedError

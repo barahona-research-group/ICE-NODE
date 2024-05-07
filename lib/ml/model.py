@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import zipfile
 from abc import abstractmethod
-from typing import (Optional, Any, Tuple, Self)
+from typing import (Tuple, Self)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,9 +21,6 @@ class ModelConfig(Config):
     pass
 
 
-
-
-
 class Precomputes(VxData):
     pass
 
@@ -36,17 +33,16 @@ class AbstractModel(Module):
     def dyn_params_list(self):
         pass
 
-    def params_list(self, pytree: Optional[Any] = None):
-        if pytree is None:
-            pytree = self
-        return jtu.tree_leaves(eqx.filter(pytree, eqx.is_inexact_array))
+    @property
+    def params_list(self):
+        return jtu.tree_leaves(eqx.filter(self, eqx.is_inexact_array))
 
     def params_list_mask(self, pytree):
         assert isinstance(pytree, dict) and 'dyn' in pytree and len(
             pytree) == 2, 'Expected a "dyn" label in Dict'
         (other_key,) = set(pytree.keys()) - {'dyn'}
 
-        params_list = self.params_list()
+        params_list = jtu.tree_leaves(eqx.filter(self, eqx.is_inexact_array))
         dyn_params = self.dyn_params_list
         is_dyn_param = lambda x: any(x is y for y in dyn_params)
         mask = {'dyn': [is_dyn_param(x) for x in params_list]}
@@ -154,7 +150,8 @@ class AbstractModel(Module):
         }
 
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR,  model_config: ModelConfig, embeddings_config:  AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: ModelConfig, embeddings_config: AdmissionEmbeddingsConfig,
+                     seed: int = 0) -> Self:
         raise NotImplementedError
 
 

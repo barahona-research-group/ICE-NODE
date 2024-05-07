@@ -728,6 +728,7 @@ class SegmentedInpatientInterventions(VxData):
     icu_procedures: Optional[Array] = None
     hosp_procedures: Optional[Array] = None
 
+
     def __len__(self):
         return sum(1 for o in [self.hosp_procedures, self.icu_procedures, self.icu_inputs] if o is not None)
 
@@ -797,17 +798,6 @@ class SegmentedInpatientInterventions(VxData):
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
 
-    def iter_tuples(self) -> Iterator[Tuple[Optional[Array], Optional[Array], Optional[Array]]]:
-        """
-        Iterates over the segmented interventions and yields the time and intervention data.
-
-        Yields:
-            Tuple: a tuple containing the time and intervention data.
-        """
-        for i in range(self.time.shape[0] - 1):
-            yield (self.hosp_procedures[i] if self.hosp_procedures is not None else None,
-                   self.icu_procedures[i] if self.icu_procedures is not None else None,
-                   self.icu_inputs[i] if self.icu_inputs is not None else None)
 
     @cached_property
     def t0_padded(self):

@@ -8,9 +8,9 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-
+import jax.tree_util as jtu
 from .base_models import (StateUpdate, NeuralODE_JAX)
-from .model import (DischargeSummaryModel, ModelConfig, LossMixer,
+from .model import (DischargeSummaryModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Patient, DemographicVectorConfig,
                    DatasetScheme, CodesVector)
@@ -21,9 +21,6 @@ class ICENODEConfig(ModelConfig):
     mem: int = 15
 
 
-class ICENODERegularisation(LossMixer):
-    L_taylor: float = 0.0
-    taylor_order: int = 0
 
 
 #     @classmethod
@@ -73,7 +70,7 @@ class ICENODE(DischargeSummaryModel):
 
     @property
     def dyn_params_list(self):
-        return self.params_list(self._f_dyn)
+        return jtu.tree_leaves(eqx.filter(self._f_dyn, eqx.is_inexact_array))
 
     def join_state_emb(self, state, emb):
         if state is None:

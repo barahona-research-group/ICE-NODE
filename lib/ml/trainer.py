@@ -22,7 +22,7 @@ import pandas as pd
 from blinker import signal
 
 from .artefacts import AdmissionsPrediction
-from .model import AbstractModel, LossMixer
+from .model import AbstractModel
 from ..base import Config, Module
 from ..ehr import TVxEHR
 from ..metric.loss import BinaryLossLiteral, NumericLossLiteral
@@ -48,8 +48,8 @@ class StudyHalted(Exception):
 
 class TrainingHistory:
 
-    def __init__(self, metrics: Callable[[int, AdmissionsPrediction], pd.DataFrame]):
-        self.metrics = metrics
+    def __init__(self, metrics: Tuple[Metric, ...]):
+        self.metrics = MetricsCollection(metrics)
         self._train_df = None
         self._val_df = None
         self._test_df = None
@@ -80,7 +80,7 @@ class TrainingHistory:
 
     def append_train_preds(self, step: int, res: AdmissionsPrediction,
                            elapsed_time: float, eval_time: float):
-        row_df = self.metrics(step, res)
+        row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -88,7 +88,7 @@ class TrainingHistory:
 
     def append_val_preds(self, step: int, res: AdmissionsPrediction,
                          elapsed_time: float, eval_time: float):
-        row_df = self.metrics(step, res)
+        row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -96,7 +96,7 @@ class TrainingHistory:
 
     def append_test_preds(self, step: int, res: AdmissionsPrediction,
                           elapsed_time: float, eval_time: float):
-        row_df = self.metrics(step, res)
+        row_df = self.metrics.to_df(step, res)
         row_df['timenow'] = datetime.now()
         row_df['elapsed_time'] = elapsed_time
         row_df['eval_time'] = (datetime.now() - eval_time).total_seconds()
@@ -389,7 +389,7 @@ class Optimizer(Module):
         opt_init, self.opt_update, self.get_params = _opts[config.opt](lr)
 
         if optstate is None and model is not None:
-            self.optstate = opt_init(model.params_list())
+            self.optstate = opt_init(model.params_list)
         elif optstate is not None:
             self.optstate = optstate
         else:
@@ -468,9 +468,8 @@ class MultiLearningRateOptimizer(Optimizer):
             if grads_filter is None:
                 self.grads_filter = model.params_list_mask(config.lr)
             if optstate is None:
-                params_list = model.params_list()
                 for k, lr in self.lr_schedule(config, iters).items():
-                    params = eqx.filter(params_list, self.grads_filter[k])
+                    params = eqx.filter(model.params_list, self.grads_filter[k])
                     opt_init, self.opt_update[k], self.get_params[k] = opt(lr)
                     self.optstate[k] = opt_init(params)
 
@@ -482,10 +481,6 @@ class MultiLearningRateOptimizer(Optimizer):
         else:
             raise ValueError(
                 'Either (optstate AND grads_filter) or model must be provided')
-
-    @classmethod
-    def external_argnames(cls):
-        return ['iters', 'optstate', 'model', 'grads_filter']
 
     def step(self, step, grads):
         grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
@@ -582,65 +577,50 @@ class ReportingConfig(Config):
 
 
 class TrainerReporting(Module):
-    config: ReportingConfig
-    _reporters: List[AbstractReporter]
-    _metrics: MetricsCollection
+    config: ReportingConfig = field(default_factory=ReportingConfig)
+    metrics: Tuple[Metric, ...] = field(default_factory=tuple)
 
-    def __init__(
-            self,
-            config: ReportingConfig = ReportingConfig(),
-            metrics: Optional[List[Metric]] = None,
-            # optuna_trial: Optional[optuna.Trial] = None,
-            # optuna_objective: Optional[Callable] = None
-    ):
-        super().__init__(config=config)
+    def __post_init__(self):
+        if (self.config.config_json or len(self.metrics) > 0
+                or self.config.parameter_snapshots or self.config.model_stats):
+            assert self.config.output_dir is not None, 'output_dir must be provided'
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def output_dir(self):
+        return translate_path(self.config.output_dir)
+
+    @cached_property
+    def reporters(self) -> List[AbstractReporter]:
         reporters = []
-        if (config.config_json or metrics is not None
-                or config.parameter_snapshots or config.model_stats):
-            assert config.output_dir is not None, 'output_dir must be provided'
-            output_dir = translate_path(config.output_dir)
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        if config.console:
+        if self.config.console:
             reporters.append(ConsoleReporter())
 
-        if config.parameter_snapshots:
-            reporters.append(ParamsDiskWriter(output_dir))
+        if self.config.parameter_snapshots:
+            reporters.append(ParamsDiskWriter(self.output_dir))
 
-        if metrics is not None and len(metrics) > 0:
-            reporters.append(EvaluationDiskWriter(output_dir))
+        if self.metrics is not None and len(self.metrics) > 0:
+            reporters.append(EvaluationDiskWriter(self.output_dir))
 
-        if config.config_json:
-            reporters.append(ConfigDiskWriter(output_dir))
+        if self.config.config_json:
+            reporters.append(ConfigDiskWriter(self.output_dir))
 
-        if config.model_stats:
-            reporters.append(ModelStatsDiskWriter(output_dir))
+        if self.config.model_stats:
+            reporters.append(ModelStatsDiskWriter(self.output_dir))
 
-        #         if optuna_trial is not None:
-        #             assert optuna_objective is not None, ('optuna_objective must '
-        #                                                   'be provided')
-        #             reporters.append(OptunaReporter(optuna_trial, optuna_objective))
-
-        self._reporters = reporters
-        self._metrics = MetricsCollection(metrics or [])
-
-    @classmethod
-    def external_argnames(cls):
-        return ['metrics']
+        return reporters
 
     def new_training_history(self):
-        return TrainingHistory(self._metrics)
+        return TrainingHistory(self.metrics or tuple())
 
     @property
     def supports_continue_training(self):
-        return any([isinstance(r, ParamsDiskWriter) for r in self._reporters])
+        return any([isinstance(r, ParamsDiskWriter) for r in self.reporters])
 
     def connections(self, trainer_signals: TrainerSignals):
-        return [
-            signal.connected_to(slot) for r in self._reporters
-            for signal, slot in r.signal_slot_pairs(trainer_signals)
-        ]
+        return [signal.connected_to(slot) for r in self.reporters for signal, slot in
+                r.signal_slot_pairs(trainer_signals)]
 
 
 class WarmupConfig(Config):
@@ -737,9 +717,10 @@ class Trainer(Module):
     def __call__(self,
                  model: AbstractModel,
                  patients: TVxEHR,
-                 splits: Optional[Tuple[List[int], ...]],
                  model_snapshot_frequency: int = 0,
                  n_evals=100,
+                 train_split: Optional[Tuple[str, ...]] = None,
+                 val_split: Optional[Tuple[str, ...]] = None,
                  reporting: TrainerReporting = TrainerReporting(),
                  warmup_config: Optional[WarmupConfig] = None,
                  continue_training: bool = False,
@@ -756,7 +737,7 @@ class Trainer(Module):
             logging.info('Warming up...')
             model = self._warmup(model=model,
                                  patients=patients,
-                                 splits=splits,
+                                 train_split=train_split,
                                  prng_seed=prng_seed,
                                  trial_terminate_time=trial_terminate_time,
                                  history=reporting.new_training_history(),
@@ -777,7 +758,8 @@ class Trainer(Module):
             return self._train(
                 model=model,
                 patients=patients,
-                splits=splits,
+                train_split=train_split,
+                val_split=val_split,
                 model_snapshot_frequency=model_snapshot_frequency,
                 n_evals=n_evals,
                 continue_training=continue_training,
@@ -788,7 +770,7 @@ class Trainer(Module):
                 exported_config=exported_config)
 
     def _warmup(self, model: AbstractModel, patients: TVxEHR,
-                splits: Tuple[List[int], ...], prng_seed, trial_terminate_time,
+                train_split: Tuple[str, ...], prng_seed, trial_terminate_time,
                 history: TrainingHistory, signals: TrainerSignals,
                 warmup_config: WarmupConfig):
 
@@ -796,7 +778,7 @@ class Trainer(Module):
         trainer = type(self)(config=conf, loss_mixer=self.loss_mixer)
         return trainer._train(model=model,
                               patients=patients,
-                              splits=(splits[0], [], []),
+                              train_split=train_split,
                               n_evals=0,
                               model_snapshot_frequency=0,
                               continue_training=False,
@@ -808,7 +790,8 @@ class Trainer(Module):
     def _train(self,
                model: AbstractModel,
                patients: TVxEHR,
-               splits: Optional[Tuple[List[int], ...]],
+               train_split: Optional[Tuple[str, ...]],
+               val_split: Optional[Tuple[str, ...]],
                model_snapshot_frequency: int,
                n_evals: int,
                continue_training: bool,
@@ -820,19 +803,21 @@ class Trainer(Module):
 
         if exported_config is None:
             exported_config = {}
-        if splits is not None:
-            assert len(splits) == 3, "Expected splits to be a tuple of 3 lists"
-            train_ids, valid_ids, test_ids = splits
+        if train_split is None:
+            train_split = patients.subject_ids
         else:
-            train_ids, valid_ids, test_ids = patients.subject_ids, [], []
+            train_split = list(train_split)
+
+        if val_split is None:
+            val_split = []
 
         if self.config.epochs > 0 and self.config.epochs < 1:
             epochs = 1
-            train_ids = train_ids[:int(self.config.epochs * len(train_ids)) + 1]
+            train_split = train_split[:int(self.config.epochs * len(train_split)) + 1]
         else:
             epochs = self.config.epochs
 
-        n_train_admissions = patients.n_admissions(train_ids, ignore_first_admission=model.discount_first_admission)
+        n_train_admissions = patients.n_admissions(train_split, ignore_first_admission=model.discount_first_admission)
 
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
@@ -868,11 +853,11 @@ class Trainer(Module):
                                     params_size=params_size(model),
                                     n_iters=iters,
                                     config=exported_config)
-        val_batch = patients.device_batch(valid_ids)
+        val_batch = patients.device_batch(val_split)
         step = 0
         for _ in tqdm_constructor(range(epochs), leave=False, unit='Epoch'):
-            pyrng.shuffle(train_ids)
-            epoch_splits = patients.epoch_splits(train_ids, batch_n_admissions=batch_size,
+            pyrng.shuffle(train_split)
+            epoch_splits = patients.epoch_splits(train_split, batch_n_admissions=batch_size,
                                                  discount_first_admission=model.discount_first_admission)
             split_gen = tqdm_constructor(epoch_splits, leave=False, unit='Batch')
 
@@ -921,7 +906,7 @@ class Trainer(Module):
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
-                if step in eval_steps and len(valid_ids) > 0:
+                if step in eval_steps and len(val_split) > 0:
                     elapsed_time = (datetime.now() - timenow).total_seconds()
                     timenow = datetime.now()
 
@@ -930,7 +915,7 @@ class Trainer(Module):
                     split_gen.set_description('Evaluating (Train) (B)...')
                     history.append_train_preds(step, preds, elapsed_time, timenow)
 
-                    if len(valid_ids) > 0:
+                    if len(val_split) > 0:
                         timenow = datetime.now()
                         split_gen.set_description('Evaluating (Val) (A)...')
                         preds = model.batch_predict(val_batch,
@@ -944,18 +929,6 @@ class Trainer(Module):
                                                 history=history)
                     timenow = datetime.now()
             split_gen.close()
-
-        if len(test_ids) > 0 and first_step < step:
-            test_batch = patients.device_batch(test_ids)
-            timenow = datetime.now()
-            preds = model.batch_predict(test_batch, leave_pbar=False)
-            history.append_test_preds(step, preds, 0.0, timenow)
-            signals.end_evaluation.send(self,
-                                        step=step,
-                                        model=model,
-                                        optimizer=optimizer,
-                                        history=history)
-
         signals.exit_training.send(self, history=history)
         return model
 

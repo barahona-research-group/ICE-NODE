@@ -5,7 +5,7 @@ from abc import abstractmethod, ABCMeta
 from dataclasses import field, dataclass
 from datetime import datetime
 from functools import cached_property
-from typing import Dict, Optional, List, Tuple, Any, Callable, ClassVar, Type, Literal
+from typing import Dict, Optional, List, Tuple, Any, Callable, ClassVar, Type
 
 import jax
 import jax.numpy as jnp
@@ -17,12 +17,14 @@ from tqdm import tqdm
 
 from .delong import FastDeLongTest
 from .loss import (NUMERIC_LOSS, NumericLossLiteral, BINARY_LOSS, BinaryLossLiteral)
-from ..base import Module, Config, Array, VxDataItem
+from ..base import Module, Config, Array, VxDataItem, np_module
 from ..ehr import (TVxEHR, InpatientObservables, CodesVector, LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import SchemeManagerView
 from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction, PredictionAttribute
 
+
 class PredictionLoss(Module, metaclass=ABCMeta):
+    config: Config = field(default_factory=Config)
     prediction_attribute: ClassVar[PredictionAttribute] = None
 
     @abstractmethod
@@ -33,9 +35,12 @@ class PredictionLoss(Module, metaclass=ABCMeta):
         return 1.0
 
     def __call__(self, predictions: AdmissionsPrediction) -> Array | float:
-        losses = jnp.array([self.item_loss(gt, pred) for gt, pred in predictions.iter_attr(self.prediction_attribute)])
-        weights = jnp.array([self.item_weight(gt) for gt in predictions.list_attr(self.prediction_attribute)[0]])
-        loss = jnp.nansum(losses * (weights / jnp.sum(weights)))
+        weights = [self.item_weight(gt) for gt in predictions.list_attr(self.prediction_attribute)[0]]
+        weights = [w / sum(weights) for w in weights]
+
+        losses = jnp.array([(self.item_loss(gt, pred) * w if w > 0. else 0.) for (gt, pred), w in
+                            zip(predictions.iter_attr(self.prediction_attribute), weights)])
+        loss = jnp.nansum(losses)
 
         if jnp.isnan(loss):
             logging.warning('NaN obs loss detected')
@@ -51,7 +56,8 @@ class NumericPredictionLoss(PredictionLoss):
         return NUMERIC_LOSS[self.loss_key]
 
     def item_loss(self, ground_truth: InpatientObservables, prediction: InpatientObservables) -> Array:
-        return self.raw_loss(ground_truth.value, prediction.value, ground_truth.mask)
+        ground_truth_val = np_module(ground_truth.value).nan_to_num(ground_truth.value, nan=0.0)
+        return self.raw_loss(ground_truth_val, prediction.value, ground_truth.mask)
 
     def item_weight(self, ground_truth: InpatientObservables) -> float:
         return ground_truth.mask.sum()
@@ -268,7 +274,7 @@ class LossMetricConfig(Config):
 
 
 class LossMetric(Metric):
-    config: LossMetricConfig = field(default_factory=lambda:LossMetricConfig)
+    config: LossMetricConfig = field(default_factory=lambda: LossMetricConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = PredictionLoss
 
     @cached_property
@@ -293,7 +299,7 @@ class ObsPredictionLossConfig(LossMetricConfig):
 
 
 class ObsPredictionLossMetric(LossMetric):
-    config: ObsPredictionLossConfig = field(default_factory=lambda:ObsPredictionLossConfig)
+    config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
 
 
@@ -302,7 +308,7 @@ class OutcomePredictionLossConfig(LossMetricConfig):
 
 
 class OutcomePredictionLossMetric(LossMetric):
-    config: OutcomePredictionLossConfig = field(default_factory=lambda:OutcomePredictionLossConfig)
+    config: OutcomePredictionLossConfig = field(default_factory=lambda: OutcomePredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = OutcomePredictionLoss
 
 
@@ -311,7 +317,7 @@ class LeadPredictionLossConfig(ObsPredictionLossMetric):
 
 
 class LeadPredictionLossMetric(ObsPredictionLossMetric):
-    config: LeadPredictionLossConfig = field(default_factory=lambda:LeadPredictionLossConfig)
+    config: LeadPredictionLossConfig = field(default_factory=lambda: LeadPredictionLossConfig)
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = LeadPredictionLoss
 
 
@@ -984,7 +990,7 @@ class CodeGroupTopAlarmAccuracy(Metric):
 
 @dataclass
 class MetricsCollection:
-    metrics: List[Metric] = field(default_factory=list)
+    metrics: Tuple[Metric, ...] = field(default_factory=tuple)
 
     def columns(self):
         return tuple(sum([m.column_names for m in self.metrics], ()))
