@@ -20,13 +20,6 @@
 		"examples": ["Cv0.2.25"],
 		"type": "str"
 	},
-	"cache_path":
-	{
-		"env": "CACHE_PATH",
-		"desc": "Path (absolute or relative) to the cache directory.",
-		"examples": ["~/GP/ICE-NODE/cache"],
-		"type": "path"
-	},
 	"output_path":
 	{
 		"env": "OUTPUT_PATH",

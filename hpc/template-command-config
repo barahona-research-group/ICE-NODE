@@ -2,5 +2,4 @@ $HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
 --config $env_config_path \
 --output-path $env_output_path \
 --dataset-path $env_dataset_path \
---cache-path $env_cache_path \
 --override $env_override
