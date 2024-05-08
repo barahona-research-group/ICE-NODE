@@ -24,11 +24,11 @@ $temp_io_dirs
 
 export JAX_PLATFORM_NAME=$temp_platform
 
-if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
-    export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
-else
-    export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
-fi
+# if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
+#     export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+# else
+#     export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
+# fi
 
 $temp_command
 

@@ -17,7 +17,7 @@ export MLFLOW_STORE="file://${STORE}/mlflow-store"
 # $CACHE_PATH: Path (absolute or relative) to the cache directory. Example: ~/GP/ICE-NODE/cache
 # $OUTPUT_PATH: Path (absolute or relative) to the output directory. Example: ~/GP/ICE-NODE/output
 # $DATASET_PATH: Path (absolute or relative) to the dataset directory. Example: ~/GP/ehr-data/dataset
-# $OVERRIDE: Override existing configuration. Example: model.emb.dx_discharge=10,model.mem=5
+# $OVERRIDE: Override existing configuration. Example: model.emb.dx=10,model.mem=5
 
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
@@ -34,7 +34,7 @@ source /vol/cuda/11.4.120-cudnn8.2.4/setup.sh
 
 
 
-$PY_BIN_DIR/python -m lib.cli.run_config \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
 --output-path $OUTPUT_PATH \
 --dataset-path $DATASET_PATH \

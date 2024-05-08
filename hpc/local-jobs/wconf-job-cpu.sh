@@ -6,7 +6,7 @@
 # $CACHE_PATH: Path (absolute or relative) to the cache directory. Example: ~/GP/ICE-NODE/cache
 # $OUTPUT_PATH: Path (absolute or relative) to the output directory. Example: ~/GP/ICE-NODE/output
 # $DATASET_PATH: Path (absolute or relative) to the dataset directory. Example: ~/GP/ehr-data/dataset
-# $OVERRIDE: Override existing configuration. Example: model.emb.dx_discharge=10,model.mem=5
+# $OVERRIDE: Override existing configuration. Example: model.emb.dx=10,model.mem=5
 
 if [[ -v STUDY_TAG ]]; then 
   git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
@@ -23,7 +23,7 @@ export JAX_PLATFORM_NAME="cpu"
 
 MLFLOW_STORE="file://${HOME}/GP/ehr-data/mlflow-store"
 
-$PY_BIN_DIR/python -m lib.cli.run_config \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
 --output-path $OUTPUT_PATH \
 --dataset-path $DATASET_PATH \
