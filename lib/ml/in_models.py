@@ -498,10 +498,10 @@ class InICENODELite(InICENODE):
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
 
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
                      embeddings_config: AdmissionGenericEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
-        return cls(config=model_config,
+        return cls(config=config,
                    embeddings_config=embeddings_config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
@@ -701,10 +701,10 @@ class InGRUJump(InICENODELite):
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
 
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
                      embeddings_config: DischargeSummarySequentialEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
-        return cls(config=model_config,
+        return cls(config=config,
                    embeddings_config=embeddings_config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
@@ -780,10 +780,10 @@ class InGRU(InICENODELite):
                          demographic_size=demographic_size, observables_size=observables_size, key=key)
 
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
                      embeddings_config: AdmissionSequentialEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
-        return cls(config=model_config,
+        return cls(config=config,
                    embeddings_config=embeddings_config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
@@ -867,10 +867,10 @@ class InRETAIN(InGRUJump):
         self.state_size = embeddings_config.summary
 
     @classmethod
-    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, model_config: InpatientModelConfig,
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
                      embeddings_config: DischargeSummarySequentialEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
-        return cls(config=model_config,
+        return cls(config=config,
                    embeddings_config=embeddings_config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    dx_codes_size=len(tvx_ehr.scheme.dx_discharge),
