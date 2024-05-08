@@ -1,17 +1,14 @@
-from typing import (AbstractSet, Any, Callable, Dict, Iterable, List, Mapping,
-                    Optional, Tuple, Union)
+from typing import (Callable, Tuple)
 
+import equinox as eqx
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.tree_util as jtu
+from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, RecursiveCheckpointAdjoint)
 from jax.experimental.jet import jet
 from jax.experimental.ode import odeint
-import jax.nn as jnn
-import jax.tree_util as jtu
-import equinox as eqx
-
-from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, BacksolveAdjoint,
-                     RecursiveCheckpointAdjoint)
 
 
 class GRUDynamics(eqx.Module):
@@ -111,9 +108,9 @@ class TaylorAugmented(eqx.Module):
 
         t_x = jnp.concatenate((jnp.array([t]), jnp.ravel(x)))
 
-        (y0, [*yns]) = jet(g, (t_x, ), ((jnp.ones_like(t_x), ), ))
+        (y0, [*yns]) = jet(g, (t_x,), ((jnp.ones_like(t_x),),))
         for _ in range(self.order - 1):
-            (y0, [*yns]) = jet(g, (t_x, ), ((y0, *yns), ))
+            (y0, [*yns]) = jet(g, (t_x,), ((y0, *yns),))
 
         return (jnp.reshape(y0[1:],
                             x_shape), jnp.reshape(yns[-2][1:], x_shape))
@@ -123,7 +120,7 @@ class TaylorAugmented(eqx.Module):
 
         dydt, drdt = self.sol_recursive(t, x, args)
 
-        return dydt, jnp.mean(drdt**2)
+        return dydt, jnp.mean(drdt ** 2)
 
 
 class ControlledDynamics(eqx.Module):
@@ -204,7 +201,7 @@ class NeuralODE(eqx.Module):
             adjoint=RecursiveCheckpointAdjoint(),
             saveat=SaveAt(ts=t),
             throw=False,
-            max_steps=2**20)
+            max_steps=2 ** 20)
 
     def get_x0(self, x0, args):
         if args.get('tay_reg', 0) > 0:
@@ -247,12 +244,9 @@ class NeuralODE(eqx.Module):
 
         h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
                        jnp.maximum(1e-6, h0 * 1e-3),
-                       (0.01 / jnp.max(d1 + d2))**(1. / (order + 1.)))
+                       (0.01 / jnp.max(d1 + d2)) ** (1. / (order + 1.)))
 
         return jnp.minimum(100. * h0, h1)
-
-
-
 
 
 class StateUpdate(eqx.Module):
@@ -278,7 +272,6 @@ class StateUpdate(eqx.Module):
 
     def __call__(self, state: jnp.ndarray, predicted_emb: jnp.ndarray,
                  nominal_emb: jnp.ndarray) -> jnp.ndarray:
-
         projected_error = self.f_project_error(
             jnp.hstack((predicted_emb, nominal_emb)))
 

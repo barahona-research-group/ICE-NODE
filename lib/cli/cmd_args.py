@@ -1,12 +1,9 @@
-import os
 import argparse
-from typing import List
+import os
 from pydoc import locate
+from typing import List
 
 from ..utils import load_config
-from .. import ml
-from .. import ehr
-from .. import embeddings as E
 
 _DIR = os.path.dirname(__file__)
 
@@ -34,6 +31,6 @@ def forward_cmd_args(args, exclude=[]):
     l = []
     for k, v in vars(args).items():
         if k not in exclude and v is not None:
-            l.append(f"--{k.replace('_','-')}")
+            l.append(f"--{k.replace('_', '-')}")
             l.append(str(v))
     return l

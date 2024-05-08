@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any, Type, Tuple
+from typing import Optional, Type, Tuple
 
 from .embeddings import AdmissionEmbeddingsConfig
 from .in_models import InpatientModelConfig
@@ -24,15 +24,13 @@ class ExperimentConfig(Config):
 
 class Experiment(Module):
     config: ExperimentConfig
-    tvx_ehr_path: str
-    prng_seed: int = 42
 
-    def load_model(self, interface: TVxEHR) -> InpatientModel:
+    def load_model(self, interface: TVxEHR, prng_seed: int) -> InpatientModel:
         model_class: Type[InpatientModel] = Module.module_class(self.config.model_classname)
         return model_class.from_tvx_ehr(interface,
                                         config=self.config.model,
                                         embeddings_config=self.config.embeddings,
-                                        seed=self.prng_seed)
+                                        seed=prng_seed)
 
     def load_trainer(self) -> Trainer:
         trainer_class: Type[Trainer] = Module.module_class(self.config.trainer_classname)
@@ -50,18 +48,16 @@ class Experiment(Module):
             return tuple()
         return tvx_ehr.splits[1]
 
-    def run(self):
+    def run(self, tvx_ehr_path: str, prng_seed: int) -> InpatientModel:
         # Load interface
-        tvx_ehr = TVxEHR.load(self.tvx_ehr_path)
-
-        # Load model
-        model = self.load_model(tvx_ehr)
+        tvx_ehr = TVxEHR.load(tvx_ehr_path)
 
         # Load trainer
         trainer = self.load_trainer()
 
         return trainer(
-            model=model,
+            # Load model
+            model=self.load_model(tvx_ehr, prng_seed),
             patients=tvx_ehr,
             train_split=self.train_split(tvx_ehr),
             val_split=self.eval_split(tvx_ehr),
@@ -70,4 +66,4 @@ class Experiment(Module):
             model_snapshot_frequency=self.config.model_snapshot_frequency,
             continue_training=self.config.continue_training,
             exported_config=self.config.to_dict(),
-            prng_seed=self.prng_seed)
+            prng_seed=prng_seed)
