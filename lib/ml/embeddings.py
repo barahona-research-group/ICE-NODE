@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import abstractmethod, ABCMeta
+from types import NoneType
 from typing import (Callable, Optional, Tuple, Union)
 
 import equinox as eqx
@@ -137,7 +137,6 @@ class InterventionsEmbeddings(Module):
         y = jnp.hstack((y_icu_inputs, y_icu_procedures, y_hosp_procedures))
         return self.final_activation(self.f_emb(self.activation(y)))
 
-
     @eqx.filter_jit
     def zero_icu_procedures(self, length: int) -> jnp.ndarray:
         size = self.f_icu_procedures_emb.in_features if self.config.icu_procedures else 0
@@ -155,29 +154,18 @@ class InterventionsEmbeddings(Module):
         return jnp.zeros((length, size))
 
 
-class AdmissionGenericEmbeddingsConfig(Config):
+class AdmissionEmbeddingsConfig(Config):
     dx_codes: Optional[int] = None
     interventions: Optional[InterventionsEmbeddingsConfig] = None
     demographic: Optional[int] = None
     observables: Optional[int] = None
 
 
-class AdmissionEmbeddingsConfig(Config, metaclass=ABCMeta):
-    @abstractmethod
-    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
-        pass
-
-
 class InICENODEEmbeddingsConfig(AdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     interventions: Optional[InterventionsEmbeddingsConfig] = None
-
-    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
-        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
-                                                interventions=self.interventions,
-                                                demographic=self.demographic,
-                                                observables=None)
+    observables: Optional[int] = None
 
 
 class EmbeddedAdmission(VxData):
@@ -196,7 +184,7 @@ class AdmissionEmbedding(Module):
         - A sequence of embedded vectors each fusing the input, procedure \
             and demographic information.
     """
-    config: AdmissionGenericEmbeddingsConfig
+    config: AdmissionEmbeddingsConfig
     f_dx_codes_emb: eqx.nn.MLP | None = None
     f_interventions_emb: InterventionsEmbeddings | None = None
     f_demographic_emb: eqx.nn.MLP | None = None
@@ -247,7 +235,7 @@ class AdmissionEmbedding(Module):
                           final_activation=jnp.tanh,
                           key=obs_emb_key), key
 
-    def __init__(self, config: AdmissionGenericEmbeddingsConfig,
+    def __init__(self, config: AdmissionEmbeddingsConfig,
                  dx_codes_size: Optional[int],
                  icu_inputs_grouping: Optional[GroupingData],
                  icu_procedures_size: Optional[int],
@@ -288,7 +276,6 @@ class AdmissionEmbedding(Module):
         dx_codes_emb = self.f_dx_codes_emb(dx_codes.vec)
         dx_codes_history_emb = self.f_dx_codes_emb(dx_codes_history.vec)
         return EmbeddedAdmission(dx_codes=dx_codes_emb, dx_codes_history=dx_codes_history_emb)
-
 
     def embed_interventions(self, interventions: SegmentedInpatientInterventions) -> EmbeddedAdmission:
         if self.f_interventions_emb is None:
@@ -353,12 +340,7 @@ class AdmissionSequentialEmbeddingsConfig(AdmissionEmbeddingsConfig):
     demographic: int = 0
     observables: int = 0
     sequence: int = 50
-
-    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
-        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
-                                                interventions=None,
-                                                demographic=self.demographic,
-                                                observables=self.observables)
+    interventions: NoneType = None
 
 
 class EmbeddedAdmissionObsSequence(VxData):
@@ -415,12 +397,8 @@ class DischargeSummarySequentialEmbeddingsConfig(AdmissionEmbeddingsConfig):
     dx_codes: int = 0
     demographic: int = 0
     summary: int = 50
-
-    def to_admission_embeddings_config(self) -> AdmissionGenericEmbeddingsConfig:
-        return AdmissionGenericEmbeddingsConfig(dx_codes=self.dx_codes,
-                                                interventions=None,
-                                                demographic=self.demographic,
-                                                observables=None)
+    observables: NoneType = None
+    interventions = NoneType = None
 
 
 class EmbeddedDischargeSummary(VxData):

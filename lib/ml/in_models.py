@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 
 from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction
-from .embeddings import (AdmissionEmbedding, AdmissionGenericEmbeddingsConfig, EmbeddedAdmission)
+from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
 from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSummarySequentialEmbedding,
@@ -267,11 +267,10 @@ class InICENODE(InpatientModel):
                  observables_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey", **lead_mlp_kwargs):
         super().__init__(config=config)
-        emb_config = embeddings_config.to_admission_embeddings_config()
 
         (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key,
          update_key) = jrandom.split(key, 6)
-        self.f_emb = self._make_embedding(config=emb_config,
+        self.f_emb = self._make_embedding(config=embeddings_config,
                                           dx_codes_size=dx_codes_size,
                                           icu_inputs_grouping=icu_inputs_grouping,
                                           icu_procedures_size=icu_procedures_size,
@@ -279,7 +278,7 @@ class InICENODE(InpatientModel):
                                           demographic_size=demographic_size,
                                           observables_size=observables_size,
                                           key=key)
-        self.f_init = self._make_init(embeddings_config=emb_config,
+        self.f_init = self._make_init(embeddings_config=embeddings_config,
                                       state_size=config.state,
                                       key=emb_key)
         self.f_outcome_dec = self._make_outcome_dec(state_size=config.state,
@@ -290,7 +289,7 @@ class InICENODE(InpatientModel):
                                             observables_size=observables_size,
                                             key=obs_dec_key)
         self.f_dyn = self._make_dyn(state_size=config.state,
-                                    embeddings_config=emb_config,
+                                    embeddings_config=embeddings_config,
                                     key=dyn_key)
 
         self.f_update = self._make_update(state_size=config.state,
@@ -323,7 +322,7 @@ class InICENODE(InpatientModel):
                    key=key)
 
     @staticmethod
-    def _make_init(embeddings_config: Union[AdmissionGenericEmbeddingsConfig, AdmissionSequentialEmbeddingsConfig],
+    def _make_init(embeddings_config: AdmissionEmbeddingsConfig,
                    state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
         dx_codes_size = embeddings_config.dx_codes or 0
         demographic_size = embeddings_config.demographic or 0
@@ -343,7 +342,7 @@ class InICENODE(InpatientModel):
         return DirectLeadPredictorWrapper(input_size, lead_times, predictor, key, **mlp_kwargs)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
@@ -379,7 +378,7 @@ class InICENODE(InpatientModel):
                            key=key)
 
     @staticmethod
-    def _make_embedding(config: AdmissionGenericEmbeddingsConfig,
+    def _make_embedding(config: AdmissionEmbeddingsConfig,
                         dx_codes_size: Optional[int],
                         icu_inputs_grouping: Optional[GroupingData],
                         icu_procedures_size: Optional[int],
@@ -483,7 +482,7 @@ class InICENODE(InpatientModel):
 class InICENODELite(InICENODE):
     # Same as InICENODE but without discharge summary outcome predictions.
     def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: AdmissionGenericEmbeddingsConfig | AdmissionSequentialEmbeddingsConfig,
+                 embeddings_config: AdmissionEmbeddingsConfig,
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  icu_inputs_grouping: Optional[GroupingData] = None,
@@ -499,7 +498,7 @@ class InICENODELite(InICENODE):
 
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
-                     embeddings_config: AdmissionGenericEmbeddingsConfig, seed: int = 0) -> Self:
+                     embeddings_config: AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
         return cls(config=config,
                    embeddings_config=embeddings_config,
@@ -694,7 +693,7 @@ class InGRUJump(InICENODELite):
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey"):
-        super().__init__(config=config, embeddings_config=embeddings_config.to_admission_embeddings_config(),
+        super().__init__(config=config, embeddings_config=embeddings_config,
                          lead_times=lead_times,
                          dx_codes_size=dx_codes_size, icu_inputs_grouping=None,
                          icu_procedures_size=None, hosp_procedures_size=None,
@@ -773,7 +772,7 @@ class InGRU(InICENODELite):
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey"):
-        super().__init__(config=config, embeddings_config=embeddings_config.to_admission_embeddings_config(),
+        super().__init__(config=config, embeddings_config=embeddings_config,
                          lead_times=lead_times,
                          dx_codes_size=dx_codes_size, icu_inputs_grouping=None,
                          icu_procedures_size=None, hosp_procedures_size=None,
@@ -879,7 +878,7 @@ class InRETAIN(InGRUJump):
                    key=key)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> RETAINDynamic:
         keys = jrandom.split(key, 4)
         gru_a = CompiledGRU(state_size,
@@ -1019,6 +1018,7 @@ try:
         _flag_gpu_device = False
 except RuntimeError:
     _flag_gpu_device = False
+
 
 class KoopmanPhi(eqx.Module):
     """Koopman embeddings for continuous-time systems."""
@@ -1199,7 +1199,7 @@ class InKoopman(InICENODELite):
     f_dyn: KoopmanOperator
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionGenericEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> KoopmanOperator:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic
