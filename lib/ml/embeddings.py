@@ -360,7 +360,7 @@ class AdmissionSequentialObsEmbedding(eqx.Module):
                  key: jrandom.PRNGKey):
         (components_emb_key, sequence_emb_key) = jrandom.split(key, )
 
-        self.f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
+        self.f_components_emb = AdmissionEmbedding(config=config,
                                                    dx_codes_size=dx_codes_size,
                                                    icu_inputs_grouping=None,
                                                    icu_procedures_size=None,
@@ -418,7 +418,7 @@ class DischargeSummarySequentialEmbedding(eqx.Module):
                  key: jrandom.PRNGKey):
         (components_emb_key, sequence_emb_key) = jrandom.split(key, )
 
-        self.f_components_emb = AdmissionEmbedding(config=config.to_admission_embeddings_config(),
+        self.f_components_emb = AdmissionEmbedding(config=config,
                                                    dx_codes_size=dx_codes_size,
                                                    icu_inputs_grouping=None,
                                                    icu_procedures_size=None,
