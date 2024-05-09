@@ -1012,11 +1012,13 @@ class InKoopmanPrecomputes(Precomputes):
     A: jnp.ndarray
 
 
-if len(jax.devices()) > 0:
-    _flag_gpu_device = jax.devices()[0].platform == "gpu"
-else:
+try:
+    if len(jax.devices()) > 0:
+        _flag_gpu_device = jax.devices()[0].platform == "gpu"
+    else:
+        _flag_gpu_device = False
+except RuntimeError:
     _flag_gpu_device = False
-
 
 class KoopmanPhi(eqx.Module):
     """Koopman embeddings for continuous-time systems."""
