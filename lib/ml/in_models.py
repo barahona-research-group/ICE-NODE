@@ -19,8 +19,7 @@ from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
-from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, DischargeSummarySequentialEmbedding,
-                         EmbeddedDischargeSummary)
+from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, EmbeddedDischargeSummary)
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
@@ -682,12 +681,12 @@ class CompiledGRU(eqx.nn.GRUCell):
 class InGRUJump(InICENODELite):
     # TODO: as for the original paper, use multi-layer embeddings with skip
     # connections.
-    f_emb: DischargeSummarySequentialEmbedding
+    f_emb: AdmissionSequentialEmbeddingsConfig
     # GRU. Alternatives: SRU, LSTM, ..
     f_dyn: CompiledGRU
 
     def __init__(self, config: InpatientModelConfig,
-                 embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
+                 embeddings_config: AdmissionSequentialEmbeddingsConfig,
                  lead_times: Tuple[float, ...],
                  dx_codes_size: Optional[int] = None,
                  demographic_size: Optional[int] = None,
@@ -701,7 +700,7 @@ class InGRUJump(InICENODELite):
 
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InpatientModelConfig,
-                     embeddings_config: DischargeSummarySequentialEmbeddingsConfig, seed: int = 0) -> Self:
+                     embeddings_config: AdmissionSequentialEmbeddingsConfig, seed: int = 0) -> Self:
         key = jrandom.PRNGKey(seed)
         return cls(config=config,
                    embeddings_config=embeddings_config,
@@ -712,28 +711,31 @@ class InGRUJump(InICENODELite):
                    key=key)
 
     @staticmethod
-    def _make_init(embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
+    def _make_init(embeddings_config: AdmissionSequentialEmbeddingsConfig,
                    state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
-        return CompiledMLP(embeddings_config.summary,
+        return CompiledMLP(embeddings_config.sequence,
                            state_size,
                            state_size * 3,
                            depth=2,
                            key=key)
 
     @staticmethod
-    def _make_embedding(config: DischargeSummarySequentialEmbeddingsConfig,
-                        dx_codes_size: Optional[int] = None,
-                        demographic_size: Optional[int] = None, *,
-                        key: jrandom.PRNGKey, **kwargs) -> DischargeSummarySequentialEmbedding:
-        return DischargeSummarySequentialEmbedding(config=config,
-                                                   dx_codes_size=dx_codes_size,
-                                                   demographic_size=demographic_size,
-                                                   key=key)
+    def _make_embedding(config: AdmissionSequentialEmbeddingsConfig,
+                        dx_codes_size: Optional[int],
+                        demographic_size: Optional[int],
+                        observables_size=Optional[int],
+                        *,
+                        key: jrandom.PRNGKey, **kwargs) -> AdmissionSequentialObsEmbedding:
+        return AdmissionSequentialObsEmbedding(config=config,
+                                               dx_codes_size=dx_codes_size,
+                                               demographic_size=demographic_size,
+                                               observables_size=observables_size,
+                                               key=key)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
+    def _make_dyn(state_size: int, embeddings_config: AdmissionSequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> CompiledGRU:
-        return CompiledGRU(input_size=embeddings_config.summary,
+        return CompiledGRU(input_size=embeddings_config.sequence,
                            hidden_size=state_size,
                            key=key)
 
@@ -792,12 +794,14 @@ class InGRU(InICENODELite):
 
     @staticmethod
     def _make_embedding(config: DischargeSummarySequentialEmbeddingsConfig,
-                        dx_codes_size: Optional[int] = None,
-                        demographic_size: Optional[int] = None, *,
-                        key: jrandom.PRNGKey, **kwargs) -> DischargeSummarySequentialEmbedding:
+                        dx_codes_size: Optional[int],
+                        demographic_size: Optional[int],
+                        observables_size: Optional[int], *,
+                        key: jrandom.PRNGKey, **kwargs) -> AdmissionSequentialObsEmbedding:
         return InGRUJump._make_embedding(config=config,
                                          dx_codes_size=dx_codes_size,
                                          demographic_size=demographic_size,
+                                         observables_size=observables_size,
                                          key=key)
 
     @staticmethod
