@@ -791,6 +791,16 @@ class InGRU(InICENODELite):
                    key=key)
 
     @staticmethod
+    def _make_embedding(config: DischargeSummarySequentialEmbeddingsConfig,
+                        dx_codes_size: Optional[int] = None,
+                        demographic_size: Optional[int] = None, *,
+                        key: jrandom.PRNGKey, **kwargs) -> DischargeSummarySequentialEmbedding:
+        return InGRUJump._make_embedding(config=config,
+                                         dx_codes_size=dx_codes_size,
+                                         demographic_size=demographic_size,
+                                         key=key)
+
+    @staticmethod
     def _make_dyn(state_size: int, embeddings_config: AdmissionSequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> CompiledGRU:
         return CompiledGRU(input_size=embeddings_config.sequence,

@@ -1,15 +1,12 @@
 from typing import Tuple
 
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import pytest
 
 from lib.ehr.coding_scheme import GroupingData, CodingScheme, ReducedCodeMapN1, CodingSchemesManager, NumericScheme
 from lib.ml.embeddings import GroupEmbedding, InterventionsEmbeddingsConfig, InterventionsEmbeddings, \
-    AdmissionGenericEmbeddingsConfig, AdmissionEmbedding, EmbeddedAdmission
-
-
+    AdmissionEmbedding, EmbeddedAdmission, AdmissionEmbeddingsConfig
 
 
 @pytest.fixture
@@ -31,12 +28,12 @@ def icu_inputs_sample(icu_inputs_grouping_data, request):
 
 @pytest.fixture
 def icu_procedures_sample(icu_procedures_target_size):
-    return jrandom. binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(icu_procedures_target_size,) )
+    return jrandom.binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(icu_procedures_target_size,))
 
 
 @pytest.fixture
 def hosp_procedures_sample(hosp_procedures_target_size):
-    return jrandom. binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(hosp_procedures_target_size,))
+    return jrandom.binomial(jrandom.PRNGKey(0), n=1, p=0.5, shape=(hosp_procedures_target_size,))
 
 
 def test_grouping_data(icu_inputs_grouping_data: GroupingData,
@@ -114,17 +111,17 @@ class TestInterventionsEmbeddings:
 
 class TestAdmissionEmbedding:
     @pytest.fixture
-    def admission_embedding_config(self, inpatient_interventions) -> AdmissionGenericEmbeddingsConfig:
+    def admission_embedding_config(self, inpatient_interventions) -> AdmissionEmbeddingsConfig:
         interventions = InterventionsEmbeddingsConfig(
             icu_inputs=10 if inpatient_interventions.icu_inputs is not None else None,
             hosp_procedures=10 if inpatient_interventions.hosp_procedures is not None else None,
             icu_procedures=5 if inpatient_interventions.icu_procedures is not None else None,
             interventions=5)
 
-        return AdmissionGenericEmbeddingsConfig(dx_codes=10,
-                                                interventions=interventions,
-                                                demographic=0,
-                                                observables=13)
+        return AdmissionEmbeddingsConfig(dx_codes=10,
+                                         interventions=interventions,
+                                         demographic=0,
+                                         observables=13)
 
     @pytest.fixture
     def observables_size(self, observation_scheme: NumericScheme) -> int:

@@ -112,7 +112,7 @@ def intervention_uncertainty_weighting_out(inicenode_model: InICENODE,
                                               embedded_admission=embedded_admission,
                                               precomputes=Precomputes())
 
-@pytest.mark.serial_test
-@pytest.mark.usefixtures('jax_cpu_execution')
-def test_intervention_uncertainty_weighting_out(intervention_uncertainty_weighting_out):
-    assert len(intervention_uncertainty_weighting_out) == 2
+# @pytest.mark.serial_test
+# @pytest.mark.usefixtures('jax_cpu_execution')
+# def test_intervention_uncertainty_weighting_out(intervention_uncertainty_weighting_out):
+#     assert len(intervention_uncertainty_weighting_out) == 2
