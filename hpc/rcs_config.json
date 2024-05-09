@@ -59,7 +59,7 @@
 		"platform": "gpu",
 		"n_trials": 30,
 		"training_time_limit" : 48,
-		"load_modules": ["cudnn/8.2.4", "cuda/11.4.2"]
+		"load_modules": ["CUDA/12.3.0"]
 	},
 	"debug":
 	{

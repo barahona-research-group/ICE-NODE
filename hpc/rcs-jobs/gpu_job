@@ -16,8 +16,7 @@ git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TA
 cd $TMPDIR/ICE-NODE
 
 # Load modules
-module load cudnn/8.2.4
-module load cuda/11.4.2
+module load CUDA/12.3.0
 
 # Input data and output configuration
 
