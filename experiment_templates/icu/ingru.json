@@ -21,7 +21,7 @@
         "lead_predictor": "monotonic",
         "state": 50
     },
-    "model_classname": "InICENODE",
+    "model_classname": "InGRU",
     "model_snapshot_frequency": 10,
     "reporting": {
         "_type": "ReportingConfig",
