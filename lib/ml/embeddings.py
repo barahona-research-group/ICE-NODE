@@ -140,18 +140,18 @@ class InterventionsEmbeddings(Module):
     @eqx.filter_jit
     def zero_icu_procedures(self, length: int) -> jnp.ndarray:
         size = self.f_icu_procedures_emb.in_features if self.config.icu_procedures else 0
-        return jnp.zeros((length, size))
+        return jnp.zeros((length, max(size, 1)))
 
     @eqx.filter_jit
     def zero_icu_inputs(self, length: int) -> jnp.ndarray:
         size = self.f_icu_inputs_emb.grouping_data.scheme_size[
-            0] if self.f_icu_inputs_emb is not self.null_embedding else 0
-        return jnp.zeros((length, size)) if self.config.icu_inputs else jnp.array([])
+            0] if self.f_icu_inputs_emb is not self.null_embedding and self.config.icu_inputs else 0
+        return jnp.zeros((length, max(size, 1)))
 
     @eqx.filter_jit
     def zero_hosp_procedures(self, length: int) -> jnp.ndarray:
         size = self.f_hosp_procedures_emb.in_features if self.config.hosp_procedures else 0
-        return jnp.zeros((length, size))
+        return jnp.zeros((length, max(size, 1)))
 
 
 class AdmissionEmbeddingsConfig(Config):
