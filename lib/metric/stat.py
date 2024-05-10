@@ -69,7 +69,7 @@ class LeadPredictionLoss(NumericPredictionLoss):
 
     @cached_property
     def raw_loss(self) -> Callable[[Array, Array, Array], Array]:
-        if self.loss_key in LOGITS_BINARY_LOSS:
+        if self.loss_key in PROB_BINARY_LOSS:
             return PROB_BINARY_LOSS[self.loss_key]
         else:
             return NUMERIC_LOSS[self.loss_key]
