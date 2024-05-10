@@ -652,7 +652,7 @@ class TrainerConfig(Config):
     batch_size: int = 32
     outcome_loss: Optional[BinaryLossLiteral] = None
     obs_loss: Optional[NumericLossLiteral] = None
-    lead_loss: Optional[NumericLossLiteral] = None
+    lead_loss: Optional[NumericLossLiteral | BinaryLossLiteral] = None
 
 
 class LossMixer(Config):

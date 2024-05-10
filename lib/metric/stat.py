@@ -16,7 +16,7 @@ from sklearn import metrics
 from tqdm import tqdm
 
 from .delong import FastDeLongTest
-from .loss import (NUMERIC_LOSS, NumericLossLiteral, BINARY_LOSS, BinaryLossLiteral)
+from .loss import (NUMERIC_LOSS, NumericLossLiteral, LOGITS_BINARY_LOSS, PROB_BINARY_LOSS, BinaryLossLiteral)
 from ..base import Module, Config, Array, VxDataItem, np_module
 from ..ehr import (TVxEHR, InpatientObservables, CodesVector, LeadingObservableExtractorConfig)
 from ..ehr.coding_scheme import SchemeManagerView
@@ -64,7 +64,15 @@ class NumericPredictionLoss(PredictionLoss):
 
 
 class LeadPredictionLoss(NumericPredictionLoss):
+    loss_key: NumericLossLiteral | BinaryLossLiteral = field(default=None, kw_only=True)
     prediction_attribute: ClassVar[PredictionAttribute] = 'leading_observable'
+
+    @cached_property
+    def raw_loss(self) -> Callable[[Array, Array, Array], Array]:
+        if self.loss_key in LOGITS_BINARY_LOSS:
+            return PROB_BINARY_LOSS[self.loss_key]
+        else:
+            return NUMERIC_LOSS[self.loss_key]
 
 
 class ObsPredictionLoss(NumericPredictionLoss):
@@ -77,7 +85,7 @@ class OutcomePredictionLoss(PredictionLoss):
 
     @cached_property
     def raw_loss(self) -> Callable[[Array, Array], Array]:
-        return BINARY_LOSS[self.loss_key]
+        return LOGITS_BINARY_LOSS[self.loss_key]
 
     def item_loss(self, ground_truth: CodesVector, prediction: CodesVector) -> Array:
         return self.raw_loss(ground_truth.vec, prediction.vec)

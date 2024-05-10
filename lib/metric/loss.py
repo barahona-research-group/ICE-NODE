@@ -39,6 +39,24 @@ def bce(y: jnp.ndarray, logits: jnp.ndarray, mask: Optional[jnp.ndarray] = None,
 
 
 @eqx.filter_jit
+def prob_bce(y: jnp.ndarray, p: jnp.ndarray, mask: Optional[jnp.ndarray] = None,
+             axis: Optional[int] = None) -> jnp.ndarray:
+    """Binary cross-entropy loss, averaged,
+    vectorized (multi-label classification).
+    The function takes two inputs:
+      - The ground-truth `y` is a vector, where each
+        element is an integer in :math:`\{0, 1\}`.
+      - The predictions `p`, after applying the Sigmoid function, where
+        each element is a float in :math:`(0, 1)`.
+    """
+    # For numerical stability.
+    p = jnp.where(p < 1e-7, p + 1e-7, p)
+    p = jnp.where(p > 1 - 1e-7, p - 1e-7, p)
+    terms = y * jnp.log(p) + (1 - y) * jnp.log(1 - p)
+    return -jnp.nanmean(terms, where=mask, axis=axis)
+
+
+@eqx.filter_jit
 def softmax_bce(y: jnp.ndarray,
                 logits: jnp.ndarray,
                 mask: Optional[jnp.ndarray] = None,
@@ -242,12 +260,12 @@ def r2(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, a
 
 BinaryLossLiteral = Literal[
     'softmax_bce', 'balanced_focal_softmax_bce', 'balanced_focal_bce', 'allpairs_hard_rank',
-    'allpairs_exp_rank', 'allpairs_sigmoid_rank']
+    'allpairs_exp_rank', 'allpairs_sigmoid_rank', 'bce']
 
 NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
 LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
 
-BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
+LOGITS_BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
     'balanced_focal_bce': balanced_focal_bce,
@@ -255,6 +273,9 @@ BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
     'allpairs_exp_rank': allpairs_exp_rank,
     'allpairs_sigmoid_rank': allpairs_sigmoid_rank
 }
+
+PROB_BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
+    'bce': prob_bce}
 
 NUMERIC_LOSS: Final[Dict[NumericLossLiteral, LossSignature]] = {
     'mse': mse,
