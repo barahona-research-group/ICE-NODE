@@ -400,7 +400,10 @@ TVX_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDepend
 class InterventionSegmentation(AbstractTVxTransformation):
 
     @classmethod
-    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[SegmentedTVxEHR, TVxReport]:
+    def apply(cls, tv_ehr: TVxEHR, report: TVxReport) -> Tuple[SegmentedTVxEHR | TVxEHR, TVxReport]:
+        if not tv_ehr.config.interventions_segmentation or not tv_ehr.config.interventions:
+            return cls.skip(tv_ehr, report)
+
         maximum_padding = 100
         segmented_tv_ehr = SegmentedTVxEHR.from_tvx_ehr(tv_ehr, maximum_padding=maximum_padding)
         tvx_concept_path = TVxReportAttributes.admission_attribute_prefix('observables',

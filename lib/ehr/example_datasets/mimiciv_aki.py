@@ -1,5 +1,5 @@
 from dataclasses import field
-from typing import Literal, Final, Optional, List, Callable
+from typing import Literal, Final, Optional, Callable
 
 from lib import Config
 from lib.ehr import TVxEHR, TVxEHRConfig, DemographicVectorConfig, LeadingObservableExtractorConfig
@@ -103,36 +103,7 @@ class TVxAKIMIMICIVDatasetConfig(TVxEHRConfig):
     interventions: bool = True
     observables: bool = True
     time_binning: Optional[float] = None
-    interventions_segmentation: bool = False
-
-    @staticmethod
-    def compile_default_from_arguments(
-            seed: int = 0,
-            extract_interventions: bool = True,
-            extract_observables: bool = True,
-            interventions_segmentation: bool = True,
-            admission_minimum_los: Optional[float] = 12.0,
-            time_binning: Optional[float] = None,
-            sample_n_subjects: Optional[int] = None,
-            sample_offset: Optional[int] = None,
-            split_balance_discount_first_admission: Optional[bool] = None,
-            split_balance: Optional[str] = None, split_quantiles: Optional[List[float]] = None):
-        sample_kwargs = dict(n_subjects=sample_n_subjects, offset=sample_offset, seed=seed)
-        sample_kwargs = {k: v for k, v in sample_kwargs.items() if v is not None}
-        split_kwargs = dict(balance_discount_first_admission=split_balance_discount_first_admission,
-                            balance=split_balance, quantiles=split_quantiles, seed=seed)
-        split_kwargs = {k: v for k, v in split_kwargs.items() if v is not None}
-        sample = TVxEHRSampleConfig(**sample_kwargs) if len(sample_kwargs) > 0 else None
-        splits = TVxEHRSplitsConfig(**split_kwargs) if len(split_kwargs) > 0 else None
-
-        return TVxAKIMIMICIVDatasetConfig(
-            sample=sample,
-            splits=splits,
-            interventions=extract_interventions,
-            observables=extract_observables,
-            interventions_segmentation=interventions_segmentation,
-            time_binning=time_binning,
-            admission_minimum_los=admission_minimum_los)
+    interventions_segmentation: bool = True
 
 
 class TVxAKIMIMICIVDataset(TVxEHR):
