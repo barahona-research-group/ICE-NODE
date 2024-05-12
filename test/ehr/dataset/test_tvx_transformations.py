@@ -484,6 +484,7 @@ class TestInterventionSegmentation:
 
     @pytest.fixture
     def tvx_ehr_segmented(self, tvx_ehr_concept: TVxEHR) -> SegmentedTVxEHR:
+        tvx_ehr_concept = eqx.tree_at(lambda x: x.config.interventions_segmentation, tvx_ehr_concept, True)
         return tvx_ehr_concept.execute_external_transformations([InterventionSegmentation()])
 
     def test_segmentation(self, tvx_ehr_concept: TVxEHR, tvx_ehr_segmented: SegmentedTVxEHR):

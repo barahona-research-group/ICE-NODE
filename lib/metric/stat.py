@@ -57,6 +57,8 @@ class NumericPredictionLoss(PredictionLoss):
 
     def item_loss(self, ground_truth: InpatientObservables, prediction: InpatientObservables) -> Array:
         ground_truth_val = np_module(ground_truth.value).nan_to_num(ground_truth.value, nan=0.0)
+        if ground_truth_val.dtype == bool:
+            ground_truth_val = ground_truth_val.astype(float)
         return self.raw_loss(ground_truth_val, prediction.value, ground_truth.mask)
 
     def item_weight(self, ground_truth: InpatientObservables) -> float:
@@ -88,7 +90,10 @@ class OutcomePredictionLoss(PredictionLoss):
         return LOGITS_BINARY_LOSS[self.loss_key]
 
     def item_loss(self, ground_truth: CodesVector, prediction: CodesVector) -> Array:
-        return self.raw_loss(ground_truth.vec, prediction.vec)
+        ground_truth_vec = ground_truth.vec
+        if ground_truth_vec.dtype == bool:
+            ground_truth_vec = ground_truth_vec.astype(float)
+        return self.raw_loss(ground_truth_vec, prediction.vec)
 
 
 def safe_nan_func(func, x, axis):
@@ -186,9 +191,6 @@ def nan_compute_auc(v_truth, v_preds):
 
 class Metric(Module):
 
-    def __init__(self, config: Config = Config(), **kwargs):
-        super().__init__(config=config, **kwargs)
-
     def estimands(self) -> Tuple[str, ...]:
         return tuple()
 
@@ -282,7 +284,7 @@ class LossMetricConfig(Config):
 
 
 class LossMetric(Metric):
-    config: LossMetricConfig = field(default_factory=lambda: LossMetricConfig)
+    config: LossMetricConfig = field(default_factory=lambda: LossMetricConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = PredictionLoss
 
     @cached_property
@@ -307,7 +309,7 @@ class ObsPredictionLossConfig(LossMetricConfig):
 
 
 class ObsPredictionLossMetric(LossMetric):
-    config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig)
+    config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
 
 
@@ -316,16 +318,16 @@ class OutcomePredictionLossConfig(LossMetricConfig):
 
 
 class OutcomePredictionLossMetric(LossMetric):
-    config: OutcomePredictionLossConfig = field(default_factory=lambda: OutcomePredictionLossConfig)
+    config: OutcomePredictionLossConfig = field(default_factory=lambda: OutcomePredictionLossConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = OutcomePredictionLoss
 
 
-class LeadPredictionLossConfig(ObsPredictionLossMetric):
+class LeadPredictionLossConfig(ObsPredictionLossConfig):
     pass
 
 
 class LeadPredictionLossMetric(ObsPredictionLossMetric):
-    config: LeadPredictionLossConfig = field(default_factory=lambda: LeadPredictionLossConfig)
+    config: LeadPredictionLossConfig = field(default_factory=lambda: LeadPredictionLossConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = LeadPredictionLoss
 
 

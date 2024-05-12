@@ -266,6 +266,7 @@ NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
 LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
 
 LOGITS_BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
+    'bce': bce,
     'softmax_bce': softmax_bce,
     'balanced_focal_softmax_bce': softmax_balanced_focal_bce,
     'balanced_focal_bce': balanced_focal_bce,
