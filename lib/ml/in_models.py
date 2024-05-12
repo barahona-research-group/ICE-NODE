@@ -351,7 +351,7 @@ class InICENODE(InpatientModel):
                             depth=2,
                             width_size=state_size * 5,
                             key=key)
-        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        # f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
     @staticmethod
