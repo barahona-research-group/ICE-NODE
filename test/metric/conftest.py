@@ -5,6 +5,7 @@ import pytest
 from lib.ehr import CodesVector, InpatientObservables, Admission
 from lib.ml.artefacts import AdmissionPrediction, AdmissionsPrediction
 
+LEADING_OBS_INDEX = 0
 
 @pytest.fixture(params=[1, 5])
 def outcome_size(request):
@@ -16,7 +17,7 @@ def obs_size(request):
     return request.param
 
 
-@pytest.fixture(params=[1, 5])
+@pytest.fixture(params=[1, 5], ids=['lead_times_1', 'lead_times_5'])
 def lead_times(request):
     return request.param
 
@@ -27,9 +28,10 @@ def _gen_admission(admission_id: str, obs_size: int, n_timestamps: int, outcome_
     time = np.array(sorted(time))
 
     outcome = np.random.binomial(n=1, p=0.5, size=(outcome_size,)).astype(bool)
-    obs_mask = np.random.binomial(n=1, p=0.5, size=(n_timestamps, obs_size)).astype(bool)
+    obs_mask = np.random.binomial(n=1, p=0.8, size=(n_timestamps, obs_size)).astype(bool)
     lead_mask = np.random.binomial(n=1, p=0.5, size=(n_timestamps, lead_times)).astype(bool)
     obs = np.random.normal(size=(n_timestamps, obs_size))
+    obs[:, LEADING_OBS_INDEX] = np.random.binomial(n=1, p=0.5, size=(n_timestamps,))
     leading_obs = np.random.normal(size=(n_timestamps, lead_times))
 
     outcome = CodesVector(vec=outcome, scheme='test')

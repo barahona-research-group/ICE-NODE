@@ -190,6 +190,7 @@ def nan_compute_auc(v_truth, v_preds):
 
 
 class Metric(Module):
+    config: Config = field(default_factory=Config)
 
     def estimands(self) -> Tuple[str, ...]:
         return tuple()
@@ -332,30 +333,18 @@ class LeadPredictionLossMetric(ObsPredictionLossMetric):
 
 
 class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
-    aki_stage_code: str = field(kw_only=True)
+    aki_binary_index: int = field(kw_only=True)
 
-    @staticmethod
-    def from_extractor_config(config: LeadingObservableExtractorConfig, aki_stage_code: str):
-        return LeadingPredictionAccuracyConfig(**config.as_dict(), aki_stage_code=aki_stage_code)
 
 
 class LeadingAKIPredictionAccuracy(Metric):
     config: LeadingPredictionAccuracyConfig
-    context_view: SchemeManagerView
 
     @property
     def lead_extractor(self):
         return dict(
             zip(range(len(self.config.leading_hours)),
                 [f'{self.config.observable_code}_next_{h}hrs' for h in self.config.leading_hours]))
-
-    @property
-    def aki_stage_index(self) -> int:
-        return self.context_view.scheme[self.config.scheme].index[self.config.aki_stage_code]
-
-    @property
-    def aki_binary_index(self):
-        return self.context_view.scheme[self.config.scheme].index[self.config.observable_code]
 
     def _annotate_lead_predictions(self, prediction: pd.DataFrame,
                                    ground_truth: pd.DataFrame):
@@ -433,8 +422,7 @@ class LeadingAKIPredictionAccuracy(Metric):
 
         # criterion (1) - minimum acquisitions
         lead_time = lead_prediction.time[self.config.minimum_acquisitions:]
-        lead_critical_val = onp.nanmax(
-            lead_prediction.value, axis=1)[self.config.minimum_acquisitions:]
+        lead_critical_val = onp.nanmax(lead_prediction.value, axis=1)[self.config.minimum_acquisitions:]
 
         # criterion (2) - entry neglect window, early skip function.
         entry_neglect_mask = (lead_time > self.config.entry_neglect_window)
@@ -446,7 +434,7 @@ class LeadingAKIPredictionAccuracy(Metric):
 
         obs_ground_truth = prediction.admission.observables.to_cpu()
 
-        obs_index = self.aki_binary_index
+        obs_index = self.config.aki_binary_index
         mask = obs_ground_truth.mask[:, obs_index]
         # criterion (3) - no valid AKI measured, early skip function.
         if mask.sum() == 0:
@@ -479,11 +467,8 @@ class LeadingAKIPredictionAccuracy(Metric):
         prediction_df = self._annotate_lead_predictions(
             prediction_df, ground_truth_df)
 
-        # criterion (4) & (5)- recovery neglect window and no recovery since
-        # last occurrence.
-        prediction_df = prediction_df[(prediction_df['time']
-                                       > (prediction_df['last_recovery_time'] +
-                                          self.config.recovery_window))]
+        # criterion (4) & (5)- recovery neglect window and no recovery since last occurrence.
+        prediction_df = prediction_df[(prediction_df['time'] > (prediction_df['last_recovery_time'] + self.config.recovery_window))]
 
         if len(prediction_df) == 0:
             return None
@@ -492,11 +477,10 @@ class LeadingAKIPredictionAccuracy(Metric):
 
     def _lead_dataframes(self, predictions: AdmissionsPrediction):
         dataframes = []
-        for patient_predictions in predictions.values():
-            for prediction in patient_predictions.values():
-                df = self._lead_dataframe(prediction)
-                if df is not None:
-                    dataframes.append(self._lead_dataframe(prediction))
+        for prediction in predictions.sorted_predictions:
+            df = self._lead_dataframe(prediction)
+            if df is not None:
+                dataframes.append(df)
         return pd.concat(dataframes)
 
     def _classify_timestamps(self, prediction_df: pd.DataFrame):
@@ -539,7 +523,7 @@ class LeadingAKIPredictionAccuracy(Metric):
     def estimands(self):
         timestamp_class = [
             'negative', 'unknown', 'first_pre_emergence',
-            'later_pre_emergence', 'recovery_window'
+            'later_pre_emergence', 'recovery_window', 'recovered'
         ]
 
         fields = [f'n_timestamps_{c}' for c in timestamp_class]
@@ -610,7 +594,6 @@ class CodeLevelMetricConfig(Config):
 
 class CodeLevelMetric(Metric):
     config: CodeLevelMetricConfig
-    context_view: SchemeManagerView
 
     @cached_property
     def codes(self) -> Tuple[str, ...]:
@@ -691,15 +674,10 @@ class CodeLevelMetric(Metric):
 
 
 class ObsCodeLevelMetric(CodeLevelMetric):
-    @cached_property
-    def codes(self) -> Tuple[str, ...]:
-        return self.context_view.scheme[self.config.scheme].codes
+    pass
 
 
 class CodeAUC(CodeLevelMetric):
-    @cached_property
-    def codes(self) -> Tuple[str, ...]:
-        return self.context_view.outcome[self.config.scheme].codes
 
     @staticmethod
     def agg_fields() -> Tuple[Tuple[str, Callable], ...]:

@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from .coding_scheme import (CodesVector, NumericalTypeHint, NumericScheme, SchemeManagerView)
+from .coding_scheme import (CodesVector, NumericalTypeHint, NumericScheme)
 from ..base import Config, VxData, Module, Array, np_module
 
 
@@ -360,7 +360,6 @@ class LeadingObservableExtractor(Module):
             int: the index of the observable code.
         """
         return self.observable_scheme.index[self.config.observable_code]
-
 
     @cached_property
     def type_hint(self) -> NumericalTypeHint:
@@ -728,7 +727,6 @@ class SegmentedInpatientInterventions(VxData):
     icu_procedures: Optional[Array] = None
     hosp_procedures: Optional[Array] = None
 
-
     def __len__(self):
         return sum(1 for o in [self.hosp_procedures, self.icu_procedures, self.icu_inputs] if o is not None)
 
@@ -797,7 +795,6 @@ class SegmentedInpatientInterventions(VxData):
         out = np.stack([inpatient_input(ti, input_size) for ti in t], axis=0)
         pad = np.zeros((len(t_nan), out[0].shape[0]), dtype=out.dtype)
         return np.vstack([out, pad])
-
 
     @cached_property
     def t0_padded(self):
