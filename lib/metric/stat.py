@@ -226,7 +226,7 @@ class Metric(Module):
         result = self(predictions)
         return dict(zip(self.column_names, self.estimand_values(result)))
 
-    def to_df(self, index: int, predictions: AdmissionsPrediction) -> pd.DataFrame:
+    def to_df(self, index: int | str, predictions: AdmissionsPrediction) -> pd.DataFrame:
         timenow = datetime.now()
         data = self.to_dict(predictions)
         eval_time = (datetime.now() - timenow).total_seconds()
@@ -984,7 +984,7 @@ class MetricsCollection:
         return tuple(sum([m.column_names for m in self.metrics], ()))
 
     def to_df(self,
-              iteration: int,
+              iteration: int | str,
               predictions: AdmissionsPrediction,
               other_estimated_metrics: Dict[str, float] = None):
         dfs = [m.to_df(iteration, predictions) for m in self.metrics]

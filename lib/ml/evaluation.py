@@ -19,6 +19,7 @@ from ..db.models import (Experiment as ExperimentModel, EvaluationRun as
 EvaluationRunModel, EvaluationStatus as
                          EvaluationStatusModel, Results as ResultsModel, Metric
                          as MetricModel, get_or_create, create_tables)
+from ..ehr import TVxEHR
 from ..metric.stat import (MetricsCollection)
 from ..utils import (load_config, zip_members)
 
@@ -37,26 +38,15 @@ class EvaluationConfig(Config):
 
 
 class Evaluation(Module):
-
-    def __init__(self, config: EvaluationConfig, **kwargs):
-        if isinstance(config, dict):
-            config = Config.from_dict(config)
-        super().__init__(config=config, **kwargs)
+    config: EvaluationConfig
 
     @property
-    def db_url(self):
+    def db_url(self) -> str:
         expr_abs_path = os.path.abspath(self.config.experiments_dir)
         return f'sqlite+pysqlite:///{expr_abs_path}/{self.config.db}'
 
-    def load_metrics(self, interface, splits):
-        external_kwargs = {'patients': interface, 'train_split': splits[0]}
-
-        metrics = []
-        for config in self.config.metrics:
-            metrics.append(
-                Module.import_module(config=config, **external_kwargs))
-
-        return MetricsCollection(metrics)
+    def load_metrics(self) -> MetricsCollection:
+        return MetricsCollection(tuple(Module.import_module(config=config) for config in self.config.metrics))
 
     def filter_params(self, params_list: List[str]) -> List[str]:
         numbers = {}
@@ -86,7 +76,7 @@ class Evaluation(Module):
 
     @property
     def experiment_dir(self) -> Dict[str, str]:
-        l = [
+        experiments_dirs = [
             os.path.join(self.config.experiments_dir, d)
             for d in os.listdir(self.config.experiments_dir)
             if os.path.isdir(os.path.join(self.config.experiments_dir, d))
@@ -94,21 +84,7 @@ class Evaluation(Module):
                 os.path.join(self.config.experiments_dir, d, 'config.json'))
         ]
 
-        d = {os.path.basename(d): d for d in l}
-
-        # Filter out based on the current precision supported.
-        # Koopman's code only supports float64.
-        if not is_x64_enabled():
-            d = {
-                exp: path
-                for exp, path in d.items() if 'koopman' not in exp.lower()
-            }
-        else:
-            d = {
-                exp: path
-                for exp, path in d.items() if 'koopman' in exp.lower()
-            }
-        return d
+        return {os.path.basename(d): d for d in experiments_dirs}
 
     @property
     def experiment_config(self) -> Dict[str, Config]:
@@ -157,60 +133,44 @@ class Evaluation(Module):
                                       value=metric_value)
                 session.add(result)
 
-    def get_experiment(self, exp: str):
+    def get_experiment(self, exp: str) -> Experiment:
         return Experiment(config=self.experiment_config[exp])
 
-    def evaluate(self, exp: str, snapshot: str):
+    def evaluate(self, exp: str, snapshot: str, tvx_ehr_path: str) -> Dict[str, float]:
         experiment = self.get_experiment(exp)
-        interface = experiment.load_interface()
-        splits = experiment.load_splits(interface.dataset)
-        metrics = self.load_metrics(interface, splits)
-        model = experiment.load_model(interface)
-        model = model.load_params_from_archive(
-            os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
+        interface = TVxEHR.load(tvx_ehr_path)
+        metrics = self.load_metrics()
+        model = experiment.load_model(interface, 42)
+        model = model.load_params_from_archive(os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
+        predictions = model.batch_predict(interface.device_batch())
+        return metrics.to_df(snapshot, predictions).iloc[0].to_dict()
 
-        _, val_split, _ = splits
-        predictions = model.batch_predict(interface.device_batch(val_split))
-        results = metrics.to_df(snapshot, predictions).iloc[0].to_dict()
-        return results
-
-    def run_evaluation(self, engine: Engine, exp: str, snapshot: str):
+    def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr_path: str):
         with Session(engine) as session, session.begin():
-            running_status = get_or_create(engine,
-                                           EvaluationStatusModel,
-                                           name='RUNNING')
+            running_status = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
             experiment = get_or_create(engine, ExperimentModel, name=exp)
 
-            running_eval = session.query(EvaluationRunModel).filter(
-                EvaluationRunModel.experiment.has(name=exp),
-                EvaluationRunModel.snapshot == snapshot,
-                EvaluationRunModel.status.has(name='RUNNING')).one_or_none()
-            running_hours = lambda: (datetime.now() - running_eval.created_at
-                                     ).total_seconds() / 3600
-            if running_eval is not None and running_hours(
-            ) > self.config.max_duration:
-                running_hours = (datetime.now() - running_eval.created_at
-                                 ).total_seconds() / 3600
+            running_eval = session.query(EvaluationRunModel).filter(EvaluationRunModel.experiment.has(name=exp),
+                                                                    EvaluationRunModel.snapshot == snapshot,
+                                                                    EvaluationRunModel.status.has(
+                                                                        name='RUNNING')).one_or_none()
+            running_hours = lambda: (datetime.now() - running_eval.created_at).total_seconds() / 3600
+            if running_eval is not None and running_hours() > self.config.max_duration:
+                running_hours = (datetime.now() - running_eval.created_at).total_seconds() / 3600
                 if running_hours > self.config.max_duration:
-                    logging.info(
-                        f'Evaluation {exp} {snapshot} took too long. Restart.')
+                    logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
             else:
-                new_eval = EvaluationRunModel(experiment=experiment,
-                                              snapshot=snapshot,
-                                              status=running_status)
+                new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot, status=running_status)
                 session.add(new_eval)
-        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot))
+        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr_path))
 
         with Session(engine) as session, session.begin():
-            finished_status = get_or_create(engine,
-                                            EvaluationStatusModel,
-                                            name='FINISHED')
-            new_eval = session.query(EvaluationRunModel).filter(
-                EvaluationRunModel.experiment.has(name=exp),
-                EvaluationRunModel.snapshot == snapshot).one()
+            finished_status = get_or_create(engine, EvaluationStatusModel, name='FINISHED')
+            new_eval = session.query(EvaluationRunModel).filter(EvaluationRunModel.experiment.has(name=exp),
+                                                                EvaluationRunModel.snapshot == snapshot).one()
             new_eval.status = finished_status
 
-    def start(self):
+    def start(self, tvx_ehr_path: str):
         logging.info('Database URL: %s', self.db_url)
         engine = create_engine(self.db_url)
         create_tables(engine)
@@ -219,9 +179,7 @@ class Evaluation(Module):
                 jax.clear_caches()
                 jax.clear_backends()
                 logging.info(f'Running {exp}, {snapshot}')
-                self.run_evaluation(engine, exp=exp, snapshot=snapshot)
+                self.run_evaluation(engine, exp=exp, snapshot=snapshot, tvx_ehr_path=tvx_ehr_path)
             except IntegrityError as e:
-
-                logging.warning(
-                    f'Possible: evaluation already exists: {exp}, {snapshot}')
+                logging.warning(f'Possible: evaluation already exists: {exp}, {snapshot}')
                 logging.warning(e)
