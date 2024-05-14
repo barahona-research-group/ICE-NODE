@@ -59,7 +59,7 @@ class GRUDynamics(eqx.Module):
         self.rx_g = eqx.nn.Linear(input_size, state_size, key=k3)
 
     @eqx.filter_jit
-    def __call__(self, x: jnp.ndarray, key: "jax.random.PRNGKey") -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         x = self.x_x(x)
         r = jnn.sigmoid(self.x_r(x))
         z = jnn.sigmoid(self.x_z(x))
