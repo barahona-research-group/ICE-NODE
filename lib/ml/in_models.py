@@ -54,9 +54,9 @@ class GRUDynamics(eqx.Module):
     def __init__(self, input_size: int, state_size: int, key: "jax.random.PRNGKey"):
         k0, k1, k2, k3 = jrandom.split(key, 4)
         self.x_x = eqx.nn.Linear(input_size, state_size, key=k0)
-        self.x_r = eqx.nn.Linear(input_size, state_size, key=k1)
-        self.x_z = eqx.nn.Linear(input_size, state_size, key=k2)
-        self.rx_g = eqx.nn.Linear(input_size, state_size, key=k3)
+        self.x_r = eqx.nn.Linear(state_size, state_size, key=k1)
+        self.x_z = eqx.nn.Linear(state_size, state_size, key=k2)
+        self.rx_g = eqx.nn.Linear(state_size, state_size, key=k3)
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
