@@ -46,6 +46,28 @@ class CompiledMLP(eqx.nn.MLP):
         return super().__call__(x)
 
 
+class GRUDynamics(eqx.Module):
+    x_x: eqx.nn.Linear
+    x_r: eqx.nn.Linear
+    x_z: eqx.nn.Linear
+    rx_g: eqx.nn.Linear
+
+    def __init__(self, input_size: int, state_size: int, key: "jax.random.PRNGKey"):
+        k0, k1, k2, k3 = jrandom.split(key, 4)
+        self.x_x = eqx.nn.Linear(input_size, state_size, key=k0)
+        self.x_r = eqx.nn.Linear(state_size, state_size, key=k1)
+        self.x_z = eqx.nn.Linear(state_size, state_size, key=k2)
+        self.rx_g = eqx.nn.Linear(state_size, state_size, key=k3)
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        x = self.x_x(x)
+        r = jnn.sigmoid(self.x_r(x))
+        z = jnn.sigmoid(self.x_z(x))
+        g = jnn.tanh(self.rx_g(r * x))
+        return (1 - z) * (g - x)
+
+
 class InpatientModelConfig(ModelConfig):
     state: int = 50
     lead_predictor: LeadPredictorName = "monotonic"
@@ -365,12 +387,13 @@ class InICENODE(InpatientModel):
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
-        f_dyn = CompiledMLP(in_size=state_size + interventions_size + demographics_size,
-                            out_size=state_size,
-                            activation=jnn.tanh,
-                            depth=2,
-                            width_size=state_size * 5,
-                            key=key)
+        # f_dyn = CompiledMLP(in_size=state_size + interventions_size + demographics_size,
+        #                     out_size=state_size,
+        #                     activation=jnn.tanh,
+        #                     depth=2,
+        #                     width_size=state_size * 5,
+        #                     key=key)
+        f_dyn = GRUDynamics(state_size + interventions_size + demographics_size, state_size, key)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 

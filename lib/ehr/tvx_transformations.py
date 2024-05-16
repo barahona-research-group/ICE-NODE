@@ -87,6 +87,15 @@ class TrainingSplitGroups(AbstractTVxTransformation):
         raise NotImplementedError('Use TrainingSplitGroups.apply()')
 
     @classmethod
+    def subset(cls, tvx_ehr: TVxEHR, group: Tuple[str, ...]) -> TVxEHR:
+        dataset = cls.sync_dataset(tvx_ehr.dataset, group)
+        subjects = {subject_id: subject for subject_id, subject in tvx_ehr.subjects.items() if subject_id in group}
+        tvx_ehr = eqx.tree_at(lambda x: x.dataset, tvx_ehr, dataset)
+        tvx_ehr = eqx.tree_at(lambda x: x.subjects, tvx_ehr, subjects)
+        tvx_ehr = eqx.tree_at(lambda x: x.splits, tvx_ehr, None, is_leaf=lambda x: x is None)
+        return tvx_ehr
+
+    @classmethod
     def __call__(cls, tv_ehr: TVxEHR, n_groups: int, seed: int = 0, split_balance: Optional[SplitLiteral] = None) -> \
             Tuple[TVxEHR, ...]:
         assert tv_ehr.config.splits is not None and tv_ehr.splits is not None, 'splits is None'
@@ -97,17 +106,7 @@ class TrainingSplitGroups(AbstractTVxTransformation):
                                        random_seed=seed,
                                        balance=split_balance or tv_ehr.config.splits.balance,
                                        discount_first_admission=tv_ehr.config.splits.discount_first_admission)
-        tvx_list = []
-        for group in groups:
-            group_dataset = cls.sync_dataset(tv_ehr.dataset, group)
-            group_subjects = {subject_id: subject for subject_id, subject in tv_ehr.subjects.items() if
-                              subject_id in group}
-            tvx = eqx.tree_at(lambda x: x.dataset, tv_ehr, group_dataset)
-            tvx = eqx.tree_at(lambda x: x.subjects, tvx, group_subjects)
-            tvx = eqx.tree_at(lambda x: x.splits, tvx, None, is_leaf=lambda x: x is None)
-            tvx_list.append(tvx)
-
-        return tuple(tvx_list)
+        return tuple(cls.subset(tv_ehr, group) for group in groups)
 
 
 class ZScoreScaler(CodedValueScaler):
