@@ -22,9 +22,10 @@
         "outcome": 1.0
     },
     "model": {
-        "_type": "InpatientModelConfig",
+        "_type": "ICENODEConfig",
         "lead_predictor": "monotonic",
-        "state": 50
+        "state": 50,
+        "dynamics": "mlp"
     },
     "model_classname": "InICENODELite",
     "model_snapshot_frequency": 10,
