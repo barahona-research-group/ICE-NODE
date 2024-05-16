@@ -213,16 +213,20 @@ class InICENODEStateFixedPoint(eqx.Module):
                  forecasted_state: jnp.ndarray,
                  true_observables: jnp.ndarray,
                  observables_mask: jnp.ndarray) -> jnp.ndarray:
-        def reconstruction_loss(state, args=None):
+        def residuals(state, args=None):
             obs_hat = obs_decoder(state)
-            return jnp.nanmean((true_observables - obs_hat) ** 2, where=observables_mask)
+            return (true_observables - obs_hat) * observables_mask
 
-        return optx.minimise(reconstruction_loss,
-                             # adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
-                             solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8)),
-                             max_steps=None,
-                             y0=forecasted_state, throw=True).value
+        # return optx.minimise(reconstruction_loss,
+        #                      # adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
+        #                      solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8)),
+        #                      max_steps=None,
+        #                      y0=forecasted_state, throw=True).value
 
+        return optx.least_squares(residuals,
+                                  solver=optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8),
+                                  max_steps=None,
+                                  y0=forecasted_state, throw=True).value
 
 class ICENODEStateTrajectory(InpatientObservables):
 
