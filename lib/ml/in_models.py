@@ -9,7 +9,6 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import jax.scipy as jscipy
 import jax.tree_util as jtu
 import optimistix as optx
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, SubSaveAt
@@ -1130,15 +1129,7 @@ class InRETAIN(InGRUJump):
 
 class InKoopmanPrecomputes(Precomputes):
     A: jnp.ndarray
-
-
-try:
-    if len(jax.devices()) > 0:
-        _flag_gpu_device = jax.devices()[0].platform == "gpu"
-    else:
-        _flag_gpu_device = False
-except RuntimeError:
-    _flag_gpu_device = False
+    A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
 
 
 class KoopmanPhi(eqx.Module):
@@ -1185,20 +1176,17 @@ class VanillaKoopmanOperator(eqx.Module):
     input_size: int = eqx.static_field()
     koopman_size: int = eqx.static_field()
     control_size: int = eqx.static_field()
-    eigen_decomposition: bool = eqx.static_field()
 
     def __init__(self,
                  input_size: int,
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 1,
-                 eigen_decomposition: bool = not _flag_gpu_device):
+                 phi_depth: int = 1):
         super().__init__()
         self.input_size = input_size
         self.koopman_size = koopman_size
         self.control_size = control_size
-        self.eigen_decomposition = eigen_decomposition
         keys = jrandom.split(key, 3)
 
         self.A = jrandom.normal(keys[0], (koopman_size, koopman_size),
@@ -1216,38 +1204,25 @@ class VanillaKoopmanOperator(eqx.Module):
                                   key=keys[2])
 
     @eqx.filter_jit
-    def compute_A(self) -> jnp.ndarray | Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        if self.eigen_decomposition:
-            lam, V = eig(self.A)
-            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
-            return self.A, (lam, V, V_inv)
-
-        return self.A
+    def compute_A(self) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+        lam, V = eig(self.A)
+        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
+        return self.A, (lam, V, V_inv)
 
     def K_operator(self, t: float, z: jnp.ndarray,
-                   A: Optional[jnp.ndarray | Tuple[
-                       jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]] = None) -> jnp.ndarray:
+                   A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
         assert z.ndim == 1, f"z must be a vector, got {z.ndim}D"
-        if A is None:
-            A = self.compute_A()
-        if self.eigen_decomposition:
-            _, (lam, V, V_inv) = A
-            lam_t = jnp.exp(lam * t)
-            complex_z = V @ (lam_t * (V_inv @ z))
-            return complex_z.real
-        else:
-            return jscipy.linalg.expm(A * t, max_squarings=20) @ z
+        (lam, V, V_inv) = A_eig
+        lam_t = jnp.exp(lam * t)
+        complex_z = V @ (lam_t * (V_inv @ z))
+        return complex_z.real
 
     @eqx.filter_jit
-    def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
-                 u: Optional[PyTree] = None,
-                 precomputes: Optional[InKoopmanPrecomputes] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
-        if precomputes is None:
-            precomputes = InKoopmanPrecomputes(A=self.compute_A())
-
+    def __call__(self, x0, t0: float, t1: float,
+                 u: Optional[PyTree],
+                 precomputes: InKoopmanPrecomputes, saveat: Optional[SaveAt]) -> jnp.ndarray:
         z = self.phi(x0, u=u)
-        K = self.compute_K(t1, A=precomputes.A)
-        z = K @ z
+        z = self.K_operator(t1, z, precomputes.A_eig)
         return self.phi_inv(z)
 
     @eqx.filter_jit
@@ -1257,11 +1232,7 @@ class VanillaKoopmanOperator(eqx.Module):
         return jnp.mean(diff ** 2)
 
     def compute_A_spectrum(self):
-        if self.eigen_decomposition:
-            _, (lam, _, _) = self.compute_A()
-        else:
-            lam, _ = jnp.linalg.eig(self.compute_A())
-
+        _, (lam, _, _) = self.compute_A()
         return lam.real, lam.imag
 
 
@@ -1277,17 +1248,14 @@ class KoopmanOperator(VanillaKoopmanOperator):
                  koopman_size: int,
                  key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 3,
-                 eigen_decomposition: bool = not _flag_gpu_device):
+                 phi_depth: int = 3):
         superkey, key = jrandom.split(key, 2)
         super().__init__(input_size=input_size,
                          koopman_size=koopman_size,
                          key=superkey,
                          control_size=control_size,
-                         phi_depth=phi_depth,
-                         eigen_decomposition=eigen_decomposition)
+                         phi_depth=phi_depth)
         self.A = None
-        self.eigen_decomposition = eigen_decomposition
         keys = jrandom.split(key, 3)
 
         self.R = jrandom.normal(keys[0], (koopman_size, koopman_size),
@@ -1313,12 +1281,9 @@ class KoopmanOperator(VanillaKoopmanOperator):
 
         A = jnp.linalg.solve(E, F)
 
-        if self.eigen_decomposition:
-            lam, V = eig(A)
-            V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
-            return A, (lam, V, V_inv)
-
-        return A
+        lam, V = eig(A)
+        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
+        return A, (lam, V, V_inv)
 
 
 class InKoopman(InICENODELite):
@@ -1335,7 +1300,8 @@ class InKoopman(InICENODELite):
                                key=key)
 
     def precomputes(self, *args, **kwargs):
-        return InKoopmanPrecomputes(A=self.f_dyn.compute_A())
+        A, A_eig = self.f_dyn.compute_A()
+        return InKoopmanPrecomputes(A=A, A_eig=A_eig)
 
     @property
     def dyn_params_list(self):
