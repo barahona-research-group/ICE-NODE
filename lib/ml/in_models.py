@@ -185,20 +185,19 @@ class InICENODEStateAdjust(eqx.Module):
 
 
 class InICENODEStateFixedPoint(eqx.Module):
-    x_dec: eqx.nn.MLP
-
 
     @eqx.filter_jit
-    def __call__(self, forecasted_state: jnp.ndarray,
-                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
-        def reconstruction_loss(z, args):
-            mask, x = args
-            x_hat = self.x_dec(z)
-            return jnp.nanmean((x - x_hat) ** 2, where=mask)
+    def __call__(self,
+                 obs_decoder: eqx.nn.MLP,
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        def reconstruction_loss(state, args=None):
+            obs_hat = obs_decoder(state)
+            return jnp.nanmean((true_observables - obs_hat) ** 2, where=observables_mask)
 
         return optx.minimise(reconstruction_loss,
                              adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
-                             args=(observables_mask, true_observables),
                              solver=optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8)),
                              max_steps=None,
                              y0=forecasted_state, throw=True).value
@@ -537,7 +536,7 @@ class InICENODELiteFPI(InICENODELite):
 
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateFixedPoint:
-        return InICENODEStateFixedPoint(None)
+        return InICENODEStateFixedPoint()
 
     def __call__(
             self, admission: SegmentedAdmission,
@@ -550,7 +549,6 @@ class InICENODELiteFPI(InICENODELite):
         if len(obs) == 0:
             logging.debug("No observation to fit.")
             return prediction
-        f_update = InICENODEStateFixedPoint(self.f_obs_dec)
         n_segments = obs.n_segments
         t = 0.0
         state_trajectory = tuple()
@@ -566,7 +564,7 @@ class InICENODELiteFPI(InICENODELite):
                 # if time-diff is more than 1 seconds, we integrate.
                 forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
                 forecasted_state = forecasted_state.squeeze()
-                state = f_update(forecasted_state, obs_val, obs_mask)
+                state = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask)
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
             state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes).squeeze()
