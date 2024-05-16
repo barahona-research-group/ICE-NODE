@@ -219,7 +219,7 @@ class InICENODEStateFixedPoint(eqx.Module):
 
         return optx.minimise(reconstruction_loss,
                              adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
-                             solver=optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8)),
+                             solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8)),
                              max_steps=None,
                              y0=forecasted_state, throw=True).value
 
