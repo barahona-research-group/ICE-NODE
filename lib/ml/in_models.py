@@ -536,7 +536,7 @@ class InICENODELiteFPI(InICENODELite):
 
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateFixedPoint:
-        return InICENODEStateFixedPoint(self.x_dec)
+        return InICENODEStateFixedPoint(None)
 
     def __call__(
             self, admission: SegmentedAdmission,
