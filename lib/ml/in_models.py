@@ -277,6 +277,13 @@ class DirectLeadPredictorWrapper(eqx.Module):
                                     mask=jnp.ones_like(leading_values, dtype=bool))
 
 
+DynamicsLiteral = Literal["gru", "mlp"]
+
+
+class ICENODEConfig(InpatientModelConfig):
+    dynamics: DynamicsLiteral = "mlp"
+
+
 class InICENODE(InpatientModel):
     """
     The InICENODE model. It is composed of the following components:
@@ -294,7 +301,7 @@ class InICENODE(InpatientModel):
     f_init: CompiledMLP
     f_outcome_dec: Optional[CompiledMLP] = None
 
-    config: InpatientModelConfig = eqx.static_field()
+    config: ICENODEConfig = eqx.static_field()
 
     def __init__(self, config: InpatientModelConfig,
                  embeddings_config: AdmissionEmbeddingsConfig,
@@ -329,8 +336,8 @@ class InICENODE(InpatientModel):
         self.f_obs_dec = self._make_obs_dec(config=config,
                                             observables_size=observables_size,
                                             key=obs_dec_key)
-        self.f_dyn = self._make_dyn(state_size=config.state,
-                                    embeddings_config=embeddings_config,
+        self.f_dyn = self._make_dyn(embeddings_config=embeddings_config,
+                                    model_config=config,
                                     key=dyn_key)
 
         self.f_update = self._make_update(state_size=config.state,
@@ -383,17 +390,22 @@ class InICENODE(InpatientModel):
         return DirectLeadPredictorWrapper(input_size, lead_times, predictor, key, **mlp_kwargs)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
-        # f_dyn = CompiledMLP(in_size=state_size + interventions_size + demographics_size,
-        #                     out_size=state_size,
-        #                     activation=jnn.tanh,
-        #                     depth=2,
-        #                     width_size=state_size * 5,
-        #                     key=key)
-        f_dyn = GRUDynamics(state_size + interventions_size + demographics_size, state_size, key)
+        if model_config.dynamics == "mlp":
+            f_dyn = CompiledMLP(in_size=model_config.state + interventions_size + demographics_size,
+                                out_size=model_config.state,
+                                activation=jnn.tanh,
+                                depth=2,
+                                width_size=model_config.state * 5,
+                                key=key)
+        elif model_config.dynamics == "gru":
+            f_dyn = GRUDynamics(model_config.state + interventions_size + demographics_size, model_config.state, key)
+        else:
+            raise ValueError(f"Unknown dynamics type: {model_config.dynamics}")
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
@@ -826,10 +838,11 @@ class InGRUJump(InICENODELite):
                                                key=key)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionSequentialEmbeddingsConfig,
+    def _make_dyn(model_config: InpatientModelConfig,
+                  embeddings_config: AdmissionSequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> CompiledGRU:
         return CompiledGRU(input_size=embeddings_config.sequence,
-                           hidden_size=state_size,
+                           hidden_size=model_config.state,
                            key=key)
 
     def __call__(self, admission: Admission, embedded_admission: EmbeddedDischargeSummary,
@@ -898,10 +911,11 @@ class InGRU(InICENODELite):
                                          key=key)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionSequentialEmbeddingsConfig,
+    def _make_dyn(model_config: InpatientModelConfig,
+                  embeddings_config: AdmissionSequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> CompiledGRU:
         return CompiledGRU(input_size=embeddings_config.sequence,
-                           hidden_size=state_size,
+                           hidden_size=model_config.state,
                            key=key)
 
     def __call__(
@@ -985,24 +999,24 @@ class InRETAIN(InGRUJump):
                    key=key)
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
+    def _make_dyn(model_config: InpatientModelConfig, embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> RETAINDynamic:
         keys = jrandom.split(key, 4)
-        gru_a = CompiledGRU(state_size,
-                            state_size // 2,
+        gru_a = CompiledGRU(model_config.state,
+                            model_config.state // 2,
                             use_bias=True,
                             key=keys[0])
-        gru_b = CompiledGRU(state_size,
-                            state_size // 2,
+        gru_b = CompiledGRU(model_config.state,
+                            model_config.state // 2,
                             use_bias=True,
                             key=keys[1])
 
-        att_a = CompiledLinear(state_size // 2,
+        att_a = CompiledLinear(model_config.state // 2,
                                1,
                                use_bias=True,
                                key=keys[2])
-        att_b = CompiledLinear(state_size // 2,
-                               state_size,
+        att_b = CompiledLinear(model_config.state // 2,
+                               model_config.state,
                                use_bias=True,
                                key=keys[3])
 
@@ -1202,7 +1216,7 @@ class VanillaKoopmanOperator(eqx.Module):
                                   key=keys[2])
 
     @eqx.filter_jit
-    def compute_A(self):
+    def compute_A(self) -> jnp.ndarray | Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
         if self.eigen_decomposition:
             lam, V = eig(self.A)
             V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
@@ -1210,14 +1224,19 @@ class VanillaKoopmanOperator(eqx.Module):
 
         return self.A
 
-    def compute_K(self, t, A=None):
+    def K_operator(self, t: float, z: jnp.ndarray,
+                   A: Optional[jnp.ndarray | Tuple[
+                       jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]] = None) -> jnp.ndarray:
+        assert z.ndim == 1, f"z must be a vector, got {z.ndim}D"
         if A is None:
             A = self.compute_A()
         if self.eigen_decomposition:
             _, (lam, V, V_inv) = A
-            return (V @ jnp.diag(jnp.exp(lam * t)) @ V_inv).real
+            lam_t = jnp.exp(lam * t)
+            complex_z = V @ (lam_t * (V_inv @ z))
+            return complex_z.real
         else:
-            return jscipy.linalg.expm(A * t, max_squarings=20)
+            return jscipy.linalg.expm(A * t, max_squarings=20) @ z
 
     @eqx.filter_jit
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
@@ -1306,13 +1325,13 @@ class InKoopman(InICENODELite):
     f_dyn: KoopmanOperator
 
     @staticmethod
-    def _make_dyn(state_size: int, embeddings_config: AdmissionEmbeddingsConfig,
+    def _make_dyn(model_config: InpatientModelConfig, embeddings_config: AdmissionEmbeddingsConfig,
                   key: jrandom.PRNGKey) -> KoopmanOperator:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic
-        return KoopmanOperator(input_size=state_size,
+        return KoopmanOperator(input_size=model_config.state,
                                control_size=interventions_size + demographics_size,
-                               koopman_size=state_size * 5,
+                               koopman_size=model_config.state * 5,
                                key=key)
 
     def precomputes(self, *args, **kwargs):
