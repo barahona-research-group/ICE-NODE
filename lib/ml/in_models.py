@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jax.scipy as jscipy
 import jax.tree_util as jtu
+import optimistix as optx
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, SubSaveAt
 from jaxtyping import PyTree
 
@@ -181,6 +182,28 @@ class InICENODEStateAdjust(eqx.Module):
         error = jnp.where(observables_mask, forecasted_observables - true_observables, 0.0)
         projected_error = self.f_project_error(error)
         return self.f_update(jnp.hstack((observables_mask, projected_error)), forecasted_state)
+
+
+class InICENODEStateFixedPoint(eqx.Module):
+
+    @eqx.filter_jit
+    def reconstruction_loss(z, mlp_mask_x):  # contractive map
+        mlp, mask, x = mlp_mask_x
+        x_hat = mlp(z)
+        loss = jnp.sqrt(jnp.nanmean((x - x_hat) ** 2, where=mask))
+        return loss, loss
+
+    @eqx.filter_jit
+    def __call__(self, forecasted_state: jnp.ndarray,
+                 obs_dec: eqx.nn.MLP,
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
+        def reconstruction_loss(z, args):  # contractive map
+            x_hat = obs_dec(z)
+            return jnp.sqrt(jnp.nanmean((true_observables - x_hat) ** 2, where=observables_mask))
+
+        return optx.minimise(reconstruction_loss,
+                             solver=optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8)),
+                             y0=forecasted_state, throw=True).value
 
 
 class ICENODEStateTrajectory(InpatientObservables):
@@ -509,6 +532,57 @@ class InICENODELite(InICENODE):
                    demographic_size=tvx_ehr.demographic_vector_size,
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
+
+
+class InICENODELiteFPI(InICENODELite):
+    f_update: InICENODEStateFixedPoint
+
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateFixedPoint:
+        return InICENODEStateFixedPoint()
+
+    def __call__(
+            self, admission: SegmentedAdmission,
+            embedded_admission: EmbeddedAdmission, precomputes: Precomputes
+    ) -> AdmissionTrajectoryPrediction:
+        prediction = AdmissionTrajectoryPrediction(admission=admission)
+        int_e = empty_if_none(embedded_admission.interventions)
+        demo_e = empty_if_none(embedded_admission.demographic)
+        obs = admission.observables
+        if len(obs) == 0:
+            logging.debug("No observation to fit.")
+            return prediction
+
+        n_segments = obs.n_segments
+        t = 0.0
+        state_trajectory = tuple()
+        state = self.f_init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
+        segments_t1 = admission.interventions.t1
+        for segment_index in range(n_segments):
+            segment_t1 = segments_t1[segment_index]
+            segment_obs = obs[segment_index]
+            segment_interventions = int_e[segment_index]
+            segment_force = jnp.hstack((demo_e, segment_interventions))
+
+            for obs_t, obs_val, obs_mask in segment_obs:
+                # if time-diff is more than 1 seconds, we integrate.
+                forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
+                forecasted_state = forecasted_state.squeeze()
+                state = self.f_update(forecasted_state, self.f_obs_dec, obs_val, obs_mask)
+                state_trajectory += ((forecasted_state, state),)
+                t = obs_t
+            state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes).squeeze()
+            t = segment_t1
+
+        if len(state_trajectory) > 0:
+            forecasted_states, adjusted_states = zip(*state_trajectory)
+            icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
+                                                                      adjusted_state=adjusted_states)
+            # TODO: test --> assert len(obs.time) == len(forecasted_states)
+            prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+                admission=admission, state_trajectory=icenode_state_trajectory))
+            prediction = prediction.add(leading_observable=self.f_lead_dec(icenode_state_trajectory))
+        return prediction
 
 
 class AugmentedForcedVectorField(ForcedVectorField):

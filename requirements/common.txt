@@ -12,3 +12,4 @@ optuna==2.10.0
 blinker==1.6.2
 SQLAlchemy==2.0.24
 psycopg2==2.9.9
+optimistix==0.0.6
