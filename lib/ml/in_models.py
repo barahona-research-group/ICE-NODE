@@ -187,13 +187,6 @@ class InICENODEStateAdjust(eqx.Module):
 class InICENODEStateFixedPoint(eqx.Module):
 
     @eqx.filter_jit
-    def reconstruction_loss(z, mlp_mask_x):  # contractive map
-
-        x_hat = mlp(z)
-        loss = jnp.sqrt(jnp.nanmean((x - x_hat) ** 2, where=mask))
-        return loss, loss
-
-    @eqx.filter_jit
     def __call__(self, forecasted_state: jnp.ndarray,
                  obs_dec: eqx.nn.MLP,
                  true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
