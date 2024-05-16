@@ -197,6 +197,7 @@ class InICENODEStateFixedPoint(eqx.Module):
             return jnp.nanmean((x - x_hat) ** 2, where=mask)
 
         return optx.minimise(reconstruction_loss,
+                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
                              args=(observables_mask, true_observables),
                              solver=optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8)),
                              max_steps=None,
