@@ -194,7 +194,7 @@ class InICENODEStateFixedPoint(eqx.Module):
         def reconstruction_loss(z, args):
             mask, x = args
             x_hat = self.x_dec(z)
-            return jnp.sqrt(jnp.nanmean((x - x_hat) ** 2, where=mask))
+            return jnp.nanmean((x - x_hat) ** 2, where=mask)
 
         return optx.minimise(reconstruction_loss,
                              args=(observables_mask, true_observables),

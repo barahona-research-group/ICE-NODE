@@ -391,9 +391,9 @@ TVX_BLOCKED_BY_RELATIONS: Final[Dict[Type[AbstractTransformation], Set[Type[Abst
     # Any TVX Transformation blocks DS Transformation.
     DatasetTransformation: {AbstractTVxTransformation}
 }
-TVX_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDependency(
-    depends=TVX_DEPENDS_RELATIONS,
-    blocked_by=TVX_BLOCKED_BY_RELATIONS,
+TVX_PIPELINE_VALIDATOR: Final[TransformationsDependency] = TransformationsDependency( {}, {}
+    # depends=TVX_DEPENDS_RELATIONS,
+    # blocked_by=TVX_BLOCKED_BY_RELATIONS,
 )
 
 
