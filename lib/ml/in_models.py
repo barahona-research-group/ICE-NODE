@@ -188,7 +188,7 @@ class InICENODEStateFixedPoint(eqx.Module):
 
     @eqx.filter_jit
     def reconstruction_loss(z, mlp_mask_x):  # contractive map
-        mlp, mask, x = mlp_mask_x
+
         x_hat = mlp(z)
         loss = jnp.sqrt(jnp.nanmean((x - x_hat) ** 2, where=mask))
         return loss, loss
@@ -197,12 +197,15 @@ class InICENODEStateFixedPoint(eqx.Module):
     def __call__(self, forecasted_state: jnp.ndarray,
                  obs_dec: eqx.nn.MLP,
                  true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> jnp.ndarray:
-        def reconstruction_loss(z, args):  # contractive map
-            x_hat = obs_dec(z)
-            return jnp.sqrt(jnp.nanmean((true_observables - x_hat) ** 2, where=observables_mask))
+        def reconstruction_loss(z, args):
+            x_dec, mask, x = args
+            x_hat = x_dec(z)
+            return jnp.sqrt(jnp.nanmean((x - x_hat) ** 2, where=mask))
 
         return optx.minimise(reconstruction_loss,
+                             args=(obs_dec, observables_mask, true_observables),
                              solver=optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8)),
+                             max_steps=None,
                              y0=forecasted_state, throw=True).value
 
 
