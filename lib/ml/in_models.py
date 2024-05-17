@@ -224,7 +224,7 @@ class InICENODEStateFixedPoint(eqx.Module):
                              adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
                              solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8)),
                              max_steps=512,
-                             y0=forecasted_state, throw=True).value
+                             y0=forecasted_state, throw=False).value
 
         # return optx.least_squares(residuals,
         #                           solver=optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8),
