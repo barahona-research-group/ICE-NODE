@@ -225,8 +225,8 @@ class InICENODEStateFixedPoint(eqx.Module):
 
         return optx.least_squares(residuals,
                                   solver=optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8),
-                                  max_steps=None,
-                                  y0=forecasted_state, throw=True).value
+                                  max_steps=512,
+                                  y0=forecasted_state, throw=False).value
 
 class ICENODEStateTrajectory(InpatientObservables):
 
