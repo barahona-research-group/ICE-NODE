@@ -45,6 +45,13 @@ class CompiledMLP(eqx.nn.MLP):
         return super().__call__(x)
 
 
+class CompiledLinear(eqx.nn.Linear):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
 class GRUDynamics(eqx.Module):
     x_x: eqx.nn.Linear
     x_r: eqx.nn.Linear
@@ -230,6 +237,44 @@ class InICENODEStateFixedPoint(eqx.Module):
         #                           solver=optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8),
         #                           max_steps=512,
         #                           y0=forecasted_state, throw=False).value
+
+
+class InICENODEStateMaskedSolution(eqx.Module):
+    # https://alexhwilliams.info/itsneuronalblog/2018/02/26/censored-lstsq/
+
+    @staticmethod
+    def censored_lstsq(A, B, M):
+        """Solves least squares problem subject to missing data.
+
+        Note: uses a broadcasted solve for speed.
+
+        Args
+        ----
+        A (ndarray) : m x r matrix
+        B (ndarray) : m x n matrix
+        M (ndarray) : m x n binary matrix (zeros indicate missing values)
+
+        Returns
+        -------
+        X (ndarray) : r x n matrix that minimizes norm(M*(AX - B))
+        """
+
+        # else solve via tensor representation
+        rhs = jnp.dot(A.T, M * B).T[:, :, None]  # n x r x 1 tensor
+        T = jnp.matmul(A.T[None, :, :], M.T[:, :, None] * A[None, :, :])  # n x r x r tensor
+        return jnp.squeeze(jnp.linalg.solve(T, rhs)).T  # transpose to get r x n
+
+    @eqx.filter_jit
+    def __call__(self,
+                 obs_decoder: CompiledLinear,
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        A = obs_decoder.weight
+        B = jnp.expand_dims(true_observables, axis=1)
+        M = jnp.expand_dims(observables_mask, axis=1)
+        return self.censored_lstsq(A, B, M)
+
 
 class ICENODEStateTrajectory(InpatientObservables):
 
@@ -573,11 +618,19 @@ class InICENODELite(InICENODE):
 
 
 class InICENODELiteFPI(InICENODELite):
-    f_update: InICENODEStateFixedPoint
+    f_update: InICENODEStateMaskedSolution
+    f_obs_dec: CompiledLinear
 
     @staticmethod
-    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateFixedPoint:
-        return InICENODEStateFixedPoint()
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMaskedSolution:
+        return InICENODEStateMaskedSolution()
+
+    @staticmethod
+    def _make_obs_dec(config, observables_size, key) -> CompiledLinear:
+        return CompiledLinear(config.state,
+                              observables_size,
+                              use_bias=False,
+                              key=key)
 
     def __call__(
             self, admission: SegmentedAdmission,
