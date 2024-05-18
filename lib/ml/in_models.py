@@ -645,6 +645,25 @@ class InICENODEMechanistic(InICENODELite):
     f_update: InICENODEStateMechanisticUpdate
     f_obs_dec: InICENODEMechanisticObsDecoder
 
+    def __init__(self, config: InpatientModelConfig,
+                 embeddings_config: AdmissionEmbeddingsConfig,
+                 lead_times: Tuple[float, ...],
+                 dx_codes_size: Optional[int] = None,
+                 icu_inputs_grouping: Optional[GroupingData] = None,
+                 icu_procedures_size: Optional[int] = None,
+                 hosp_procedures_size: Optional[int] = None,
+                 demographic_size: Optional[int] = None,
+                 observables_size: Optional[int] = None, *,
+                 key: "jax.random.PRNGKey", **lead_mlp_kwargs):
+        super().__init__(config=config, embeddings_config=embeddings_config, lead_times=lead_times,
+                         dx_codes_size=dx_codes_size, icu_inputs_grouping=icu_inputs_grouping,
+                         icu_procedures_size=icu_procedures_size, hosp_procedures_size=hosp_procedures_size,
+                         demographic_size=demographic_size, observables_size=observables_size, key=key)
+        self.f_lead_dec = self._make_lead_dec(input_size=config.state + observables_size,
+                                              lead_times=lead_times,
+                                              predictor=config.lead_predictor,
+                                              key=key, **lead_mlp_kwargs)
+
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
         return InICENODEStateMechanisticUpdate(state_size)
