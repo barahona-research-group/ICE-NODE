@@ -689,7 +689,7 @@ class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
 
         # ResNet
         h = forecasted_state
-        for _ in range(10):
+        for _ in range(5):
             h = h + fn(h)
 
         return h
