@@ -651,9 +651,7 @@ class InICENODEStateMechanisticFPIUpdate(InICENODEStateMechanisticUpdate):
                  forecasted_observables: jnp.ndarray,
                  true_observables: jnp.ndarray,
                  observables_mask: jnp.ndarray) -> jnp.ndarray:
-        print(f"a1.shape:{forecasted_state.shape}", f"a2.shape:{forecasted_observables.shape}", f"a3.shape:{true_observables.shape}", f"a4.shape:{observables_mask.shape}")
         def fn(h: jnp.ndarray, args=None):
-            print(f"h.shape:{h.shape}")
             unobserved, obs = jnp.split(h, [self.state_size])
             adjusted_observables = jnp.where(observables_mask, true_observables, obs)
             h = jnp.hstack((unobserved, adjusted_observables))
