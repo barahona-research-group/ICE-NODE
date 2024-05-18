@@ -739,7 +739,7 @@ class InICENODEMechanistic(InICENODELite):
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
 
-class InICENODEMechanisticFPI(InICENODELite):
+class InICENODEMechanisticFPI(InICENODEMechanistic):
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
         return InICENODEStateMechanisticFPIUpdate(state_size, observables_size, key)
