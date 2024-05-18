@@ -621,6 +621,11 @@ class InICENODELite(InICENODE):
 
 class InICENODEStateMechanisticUpdate(eqx.Module):
     state_size: int
+    observables_size: int
+
+    def __init__(self, state_size: int, observables_size: int, key: jrandom.PRNGKey):
+        self.state_size = state_size
+        self.observables_size = observables_size
 
     @eqx.filter_jit
     def __call__(self, forecasted_state: jnp.ndarray,
@@ -630,6 +635,33 @@ class InICENODEStateMechanisticUpdate(eqx.Module):
         forecasted_state, _ = jnp.split(forecasted_state, [self.state_size])
         adjusted_observables = jnp.where(observables_mask, true_observables, forecasted_observables)
         return jnp.hstack((forecasted_state, adjusted_observables))
+
+
+class InICENODEStateMechanisticFPIUpdate(InICENODEStateMechanisticUpdate):
+    linear: CompiledLinear
+
+    def __init__(self, state_size: int, observables_size: int, key: jrandom.PRNGKey):
+        self.state_size = state_size
+        self.observables_size = observables_size
+        self.linear = CompiledLinear(state_size + observables_size, state_size + observables_size,
+                                     use_bias=False,
+                                     key=key)
+
+    @eqx.filter_jit
+    def __call__(self, forecasted_state: jnp.ndarray,
+                 forecasted_observables: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        def fn(h: jnp.ndarray, args=None):
+            forecasted_state, forecasted_observables = jnp.split(h, [self.state_size])
+            adjusted_observables = jnp.where(observables_mask, true_observables, forecasted_observables)
+            h = jnp.hstack((forecasted_state, adjusted_observables))
+            return self.linear(h)
+
+        return optx.fixed_point(fn, y0=forecasted_state, throw=False, max_steps=None,
+                                args=None,
+                                adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
+                                solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8))).value
 
 
 class InICENODEMechanisticObsDecoder(eqx.Module):
@@ -666,7 +698,7 @@ class InICENODEMechanistic(InICENODELite):
 
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
-        return InICENODEStateMechanisticUpdate(state_size)
+        return InICENODEStateMechanisticUpdate(state_size, observables_size, key)
 
     @staticmethod
     def _make_init(embeddings_config: AdmissionEmbeddingsConfig,
@@ -705,6 +737,12 @@ class InICENODEMechanistic(InICENODELite):
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
+
+class InICENODEMechanisticFPI(InICENODELite):
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
+        return InICENODEStateMechanisticFPIUpdate(state_size, observables_size, key)
+    
 
 class InICENODELiteFPI(InICENODELite):
     f_update: InICENODEStateMaskedSolution
