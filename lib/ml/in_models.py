@@ -379,6 +379,7 @@ class InICENODE(InpatientModel):
                                           key=key)
         self.f_init = self._make_init(embeddings_config=embeddings_config,
                                       state_size=config.state,
+                                      observables_size=observables_size,
                                       key=emb_key)
         self.f_outcome_dec = self._make_outcome_dec(state_size=config.state,
                                                     outcome_size=outcome_size,
@@ -423,7 +424,7 @@ class InICENODE(InpatientModel):
 
     @staticmethod
     def _make_init(embeddings_config: AdmissionEmbeddingsConfig,
-                   state_size: int, key: jrandom.PRNGKey) -> CompiledMLP:
+                   state_size: int, key: jrandom.PRNGKey, **kwargs) -> CompiledMLP:
         dx_codes_size = embeddings_config.dx_codes or 0
         demographic_size = embeddings_config.demographic or 0
         return CompiledMLP(dx_codes_size + demographic_size,
@@ -647,6 +648,17 @@ class InICENODEMechanistic(InICENODELite):
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
         return InICENODEStateMechanisticUpdate(state_size)
+
+    @staticmethod
+    def _make_init(embeddings_config: AdmissionEmbeddingsConfig,
+                   state_size: int, key: jrandom.PRNGKey, observables_size: int) -> CompiledMLP:
+        dx_codes_size = embeddings_config.dx_codes or 0
+        demographic_size = embeddings_config.demographic or 0
+        return CompiledMLP(dx_codes_size + demographic_size,
+                           state_size + observables_size,
+                           (state_size + observables_size) * 2,
+                           depth=1,
+                           key=key)
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> InICENODEMechanisticObsDecoder:
