@@ -641,8 +641,7 @@ class InICENODEStateMechanisticFPIUpdate(InICENODEStateMechanisticUpdate):
     linear: CompiledLinear
 
     def __init__(self, state_size: int, observables_size: int, key: jrandom.PRNGKey):
-        self.state_size = state_size
-        self.observables_size = observables_size
+        super().__init__(state_size, observables_size, key)
         self.linear = CompiledLinear(state_size + observables_size, state_size + observables_size,
                                      use_bias=False,
                                      key=key)
@@ -653,9 +652,9 @@ class InICENODEStateMechanisticFPIUpdate(InICENODEStateMechanisticUpdate):
                  true_observables: jnp.ndarray,
                  observables_mask: jnp.ndarray) -> jnp.ndarray:
         def fn(h: jnp.ndarray, args=None):
-            forecasted_state, forecasted_observables = jnp.split(h, [self.state_size])
-            adjusted_observables = jnp.where(observables_mask, true_observables, forecasted_observables)
-            h = jnp.hstack((forecasted_state, adjusted_observables))
+            unobserved, obs = jnp.split(h, [self.state_size])
+            adjusted_observables = jnp.where(observables_mask, true_observables, obs)
+            h = jnp.hstack((unobserved, adjusted_observables))
             return self.linear(h)
 
         return optx.fixed_point(fn, y0=forecasted_state, throw=False, max_steps=None,
@@ -742,7 +741,7 @@ class InICENODEMechanisticFPI(InICENODELite):
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
         return InICENODEStateMechanisticFPIUpdate(state_size, observables_size, key)
-    
+
 
 class InICENODELiteFPI(InICENODELite):
     f_update: InICENODEStateMaskedSolution
