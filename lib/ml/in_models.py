@@ -690,11 +690,11 @@ class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
             return self.mlp(h)
 
         # ResNet
-        h = forecasted_state
-        for _ in range(2):
-            h = h + fn(h)
+        # h = forecasted_state
+        # for _ in range(2):
+        #     h = h + fn(h)
 
-        return h
+        return fn(fn(forecasted_state))
 
 
 class InICENODEMechanisticObsDecoder(eqx.Module):
