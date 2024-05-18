@@ -389,6 +389,7 @@ class InICENODE(InpatientModel):
                                             key=obs_dec_key)
         self.f_dyn = self._make_dyn(embeddings_config=embeddings_config,
                                     model_config=config,
+                                    observables_size=observables_size,
                                     key=dyn_key)
 
         self.f_update = self._make_update(state_size=config.state,
@@ -442,8 +443,8 @@ class InICENODE(InpatientModel):
 
     @staticmethod
     def _make_dyn(model_config: ICENODEConfig,
-                  embeddings_config: AdmissionEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> NeuralODESolver:
+                  embeddings_config: AdmissionEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> NeuralODESolver:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
         if model_config.dynamics == "mlp":
@@ -534,7 +535,7 @@ class InICENODE(InpatientModel):
                 # if time-diff is more than 1 seconds, we integrate.
                 forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
                 forecasted_state = forecasted_state.squeeze()
-                state = self.f_update(forecasted_state, self.f_obs_dec(state), obs_val, obs_mask)
+                state = self.f_update(forecasted_state, self.f_obs_dec(forecasted_state), obs_val, obs_mask)
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
             state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes).squeeze()
@@ -615,6 +616,59 @@ class InICENODELite(InICENODE):
                    demographic_size=tvx_ehr.demographic_vector_size,
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
+
+
+class InICENODEStateMechanisticUpdate(eqx.Module):
+    state_size: int
+    observables_size: int
+
+    @eqx.filter_jit
+    def __call__(self, forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        pass
+
+class InICENODEMechanisticObsDecoder(eqx.Module):
+    state_size: int
+
+    @eqx.filter_jit
+    def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
+        state, obs = jnp.split(state, [self.state_size])
+        return obs
+
+class InICENODEMechanistic(InICENODELite):
+    f_update: InICENODEStateMechanisticUpdate
+    f_obs_dec: InICENODEMechanisticObsDecoder
+
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
+        return InICENODEStateMechanisticUpdate(state_size)
+
+    @staticmethod
+    def _make_obs_dec(config, observables_size, key) -> InICENODEMechanisticObsDecoder:
+        return InICENODEMechanisticObsDecoder(config.state)
+
+    @staticmethod
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, observables_size: int, **kwargs) -> NeuralODESolver:
+        interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
+        demographics_size = embeddings_config.demographic or 0
+
+        if model_config.dynamics == "mlp":
+            f_dyn = CompiledMLP(in_size=model_config.state + interventions_size + demographics_size + observables_size,
+                                out_size=model_config.state + observables_size,
+                                activation=jnn.tanh,
+                                depth=2,
+                                width_size=(model_config.state + observables_size) * 2,
+                                key=key)
+        elif model_config.dynamics == "gru":
+            f_dyn = GRUDynamics(model_config.state + observables_size + interventions_size + demographics_size,
+                                model_config.state + observables_size, key)
+        else:
+            raise ValueError(f"Unknown dynamics type: {model_config.dynamics}")
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        return NeuralODESolver.from_mlp(mlp=f_dyn, second=1 / 3600.0, dt0=60.0)
 
 
 class InICENODELiteFPI(InICENODELite):
@@ -898,8 +952,8 @@ class InGRUJump(InICENODELite):
 
     @staticmethod
     def _make_dyn(model_config: InpatientModelConfig,
-                  embeddings_config: AdmissionSequentialEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> CompiledGRU:
+                  embeddings_config: AdmissionSequentialEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> CompiledGRU:
         return CompiledGRU(input_size=embeddings_config.sequence,
                            hidden_size=model_config.state,
                            key=key)
@@ -971,8 +1025,8 @@ class InGRU(InICENODELite):
 
     @staticmethod
     def _make_dyn(model_config: InpatientModelConfig,
-                  embeddings_config: AdmissionSequentialEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> CompiledGRU:
+                  embeddings_config: AdmissionSequentialEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> CompiledGRU:
         return CompiledGRU(input_size=embeddings_config.sequence,
                            hidden_size=model_config.state,
                            key=key)
@@ -1007,12 +1061,6 @@ class InGRU(InICENODELite):
 
 class InRETAINConfig(ModelConfig):
     lead_predictor: str = "monotonic"
-
-
-class CompiledLinear(eqx.nn.Linear):
-    @eqx.filter_jit
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        return super().__call__(x)
 
 
 class RETAINDynamic(eqx.Module):
@@ -1058,8 +1106,8 @@ class InRETAIN(InGRUJump):
                    key=key)
 
     @staticmethod
-    def _make_dyn(model_config: InpatientModelConfig, embeddings_config: DischargeSummarySequentialEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> RETAINDynamic:
+    def _make_dyn(model_config: InpatientModelConfig, embeddings_config: DischargeSummarySequentialEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> RETAINDynamic:
         keys = jrandom.split(key, 4)
         gru_a = CompiledGRU(model_config.state,
                             model_config.state // 2,
