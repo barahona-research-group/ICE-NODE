@@ -670,7 +670,7 @@ class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
         super().__init__(state_size, observables_size, key)
         mlp = CompiledMLP(state_size + observables_size,
                                state_size + observables_size,
-                               depth=1,
+                               depth=2,
                                width_size=state_size + observables_size,
                                activation=jnn.relu,
                                use_bias=False,
@@ -691,7 +691,7 @@ class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
 
         # ResNet
         h = forecasted_state
-        for _ in range(5):
+        for _ in range(2):
             h = h + fn(h)
 
         return h
