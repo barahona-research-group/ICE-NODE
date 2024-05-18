@@ -620,13 +620,16 @@ class InICENODELite(InICENODE):
 
 class InICENODEStateMechanisticUpdate(eqx.Module):
     state_size: int
-    observables_size: int
 
     @eqx.filter_jit
     def __call__(self, forecasted_state: jnp.ndarray,
+                 forecasted_observables: jnp.ndarray,
                  true_observables: jnp.ndarray,
                  observables_mask: jnp.ndarray) -> jnp.ndarray:
-        pass
+        forecasted_state, _ = jnp.split(forecasted_state, [self.state_size])
+        adjusted_observables = jnp.where(observables_mask, true_observables, forecasted_observables)
+        return jnp.hstack((forecasted_state, adjusted_observables))
+
 
 class InICENODEMechanisticObsDecoder(eqx.Module):
     state_size: int
@@ -635,6 +638,7 @@ class InICENODEMechanisticObsDecoder(eqx.Module):
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
         state, obs = jnp.split(state, [self.state_size])
         return obs
+
 
 class InICENODEMechanistic(InICENODELite):
     f_update: InICENODEStateMechanisticUpdate
