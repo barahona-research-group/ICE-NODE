@@ -668,13 +668,15 @@ class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
 
     def __init__(self, state_size: int, observables_size: int, key: jrandom.PRNGKey):
         super().__init__(state_size, observables_size, key)
-        self.mlp = CompiledMLP(state_size + observables_size,
+        mlp = CompiledMLP(state_size + observables_size,
                                state_size + observables_size,
                                depth=1,
                                width_size=state_size + observables_size,
                                activation=jnn.relu,
                                use_bias=False,
                                key=key)
+        self.mlp = model_params_scaler(mlp, 1e-2, eqx.is_inexact_array)
+
 
     @eqx.filter_jit
     def __call__(self, forecasted_state: jnp.ndarray,
