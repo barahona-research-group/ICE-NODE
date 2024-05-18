@@ -663,6 +663,38 @@ class InICENODEStateMechanisticFPIUpdate(InICENODEStateMechanisticUpdate):
                                 solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-8, atol=1e-8))).value
 
 
+class InICENODEStateMechanisticResUpdate(InICENODEStateMechanisticUpdate):
+    mlp: CompiledMLP
+
+    def __init__(self, state_size: int, observables_size: int, key: jrandom.PRNGKey):
+        super().__init__(state_size, observables_size, key)
+        self.mlp = CompiledMLP(state_size + observables_size,
+                               state_size + observables_size,
+                               depth=1,
+                               width_size=state_size + observables_size,
+                               activation=jnn.relu,
+                               use_bias=False,
+                               key=key)
+
+    @eqx.filter_jit
+    def __call__(self, forecasted_state: jnp.ndarray,
+                 forecasted_observables: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        def fn(h: jnp.ndarray, args=None):
+            unobserved, obs = jnp.split(h, [self.state_size])
+            adjusted_observables = jnp.where(observables_mask, true_observables, obs)
+            h = jnp.hstack((unobserved, adjusted_observables))
+            return self.mlp(h)
+
+        # ResNet
+        h = forecasted_state
+        for _ in range(10):
+            h = h + fn(h)
+
+        return h
+
+
 class InICENODEMechanisticObsDecoder(eqx.Module):
     state_size: int
 
@@ -740,7 +772,7 @@ class InICENODEMechanistic(InICENODELite):
 class InICENODEMechanisticFPI(InICENODEMechanistic):
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> InICENODEStateMechanisticUpdate:
-        return InICENODEStateMechanisticFPIUpdate(state_size, observables_size, key)
+        return InICENODEStateMechanisticResUpdate(state_size, observables_size, key)
 
 
 class InICENODELiteFPI(InICENODELite):
