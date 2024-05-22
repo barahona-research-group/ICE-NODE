@@ -33,6 +33,24 @@ if __name__ == '__main__':
 
         for override in args.override.split(splitter):
             key, value = override.split('=')
+            if isinstance(value, str):
+                if value == 'True':
+                    value = True
+                elif value == 'False':
+                    value = False
+
+                elif value.lower() == 'none' or value == 'null':
+                    value = None
+
+                elif value.isdigit():
+                    value = int(value)
+
+                elif '.' in value:
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass
+
             config = config.path_update(key, value)
 
     experiment = Experiment(config)
