@@ -51,7 +51,6 @@ if __name__ == '__main__':
                         pass
 
             config = config.path_update(key, value)
-            print(config)
 
     experiment = Experiment(config)
     experiment.run(tvx_ehr_path=args.dataset_path, prng_seed=42)
