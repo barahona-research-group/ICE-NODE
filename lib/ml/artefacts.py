@@ -20,7 +20,7 @@ class ModelBehaviouralMetrics(VxData):
     pass
 
 
-PredictionAttribute = Literal['outcome', 'observables', 'leading_observable']
+PredictionAttribute = Literal['outcome', 'observables', 'leading_observable', 'adjusted_observables']
 
 
 class AdmissionPrediction(VxData):
@@ -100,11 +100,13 @@ class AdmissionsPrediction(VxData):
     def __iter__(self) -> Iterable[AdmissionPrediction]:
         return iter(self.sorted_predictions)
 
-    def iter_attr(self, attr: str) -> Iterable[Tuple[VxDataItem, VxDataItem]]:
-        return ((getattr(p.admission, attr), getattr(p, attr)) for p in self if getattr(p, attr) is not None)
+    def iter_attr(self, attr: str, adm_attr: Optional[str] = None) -> Iterable[Tuple[VxDataItem, VxDataItem]]:
+        if adm_attr is None:
+            adm_attr = attr
+        return ((getattr(p.admission, adm_attr), getattr(p, attr)) for p in self if getattr(p, attr) is not None)
 
-    def list_attr(self, attr: str) -> Tuple[Tuple[VxDataItem, ...], Tuple[VxDataItem, ...]]:
-        ground_truth, predictions = tuple(zip(*self.iter_attr(attr)))
+    def list_attr(self, attr: str, adm_attr: Optional[str] = None) -> Tuple[Tuple[VxDataItem, ...], Tuple[VxDataItem, ...]]:
+        ground_truth, predictions = tuple(zip(*self.iter_attr(attr, adm_attr)))
         return ground_truth, predictions
 
     def __len__(self):

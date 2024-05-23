@@ -238,6 +238,21 @@ class InpatientObservables(VxData):
         return zip(self.time, self.value, self.mask)
 
 
+class ObservablesDistribution(InpatientObservables):
+
+    def __init__(self, time: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray, mask: jnp.ndarray):
+        super().__init__(time, mean, mask)
+        self.extra_layers = (std,)
+
+    @property
+    def mean(self):
+        return self.value
+
+    @property
+    def std(self):
+        return self.extra_layers[0]
+
+
 class SegmentedInpatientObservables(InpatientObservables):
     indexed_split: Array = field(kw_only=True)
 

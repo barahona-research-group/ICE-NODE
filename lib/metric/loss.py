@@ -1,4 +1,4 @@
-from typing import Optional, Literal, Callable, Final, Dict
+from typing import Optional, Literal, Callable, Final, Dict, Tuple
 
 import equinox as eqx
 import jax.nn as jnn
@@ -258,12 +258,37 @@ def r2(y: jnp.ndarray, y_hat: jnp.ndarray, mask: Optional[jnp.ndarray] = None, a
     return 1 - ss_res / ss_tot
 
 
+@eqx.filter_jit
+def gaussian_kl(y: Tuple[jnp.ndarray, jnp.ndarray], y_hat: Tuple[jnp.ndarray, jnp.ndarray],
+                mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None) -> jnp.ndarray:
+    """KL divergence between two Gaussian distributions."""
+    mean, std = y
+    mean_hat, std_hat = y_hat
+    kl = jnp.log(std) - jnp.log(std_hat) + (std_hat ** 2 + (mean - mean_hat) ** 2) / (2 * (std ** 2)) - 0.5
+    return jnp.mean(kl, axis=axis, where=mask)
+
+
+@eqx.filter_jit
+def log_normal(y: Tuple[jnp.ndarray, jnp.ndarray], y_hat: Tuple[jnp.ndarray, jnp.ndarray],
+               mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None) -> jnp.ndarray:
+    """Log-normal loss."""
+    mean, _ = y
+    mean_hat, std_hat = y_hat
+    error = (mean - mean_hat) / (std_hat + 1e-6)
+    log_normal_loss = 0.5 * (error ** 2 + 2 * jnp.log(std_hat + 1e-6))
+    return jnp.mean(log_normal_loss, axis=axis, where=mask)
+
+
 BinaryLossLiteral = Literal[
     'softmax_bce', 'balanced_focal_softmax_bce', 'balanced_focal_bce', 'allpairs_hard_rank',
     'allpairs_exp_rank', 'allpairs_sigmoid_rank', 'bce']
 
 NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
+
+ProbNumericLossLiteral = Literal['gaussian_kl', 'log_normal']
+
 LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
+ProbLossSignature = Callable[[Tuple[Array, Array], Tuple[Array, Array], Optional[Array], Optional[int]], Array | float]
 
 LOGITS_BINARY_LOSS: Final[Dict[BinaryLossLiteral, LossSignature]] = {
     'bce': bce,
@@ -285,3 +310,7 @@ NUMERIC_LOSS: Final[Dict[NumericLossLiteral, LossSignature]] = {
     'soft_dtw_0_1': softdtw,
     'r2': r2
 }
+
+PROB_NUMERIC_LOSS: Final[Dict[ProbNumericLossLiteral, ProbLossSignature]] = {
+    'gaussian_kl': gaussian_kl,
+    'log_normal': log_normal}

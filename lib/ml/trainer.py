@@ -25,8 +25,9 @@ from .artefacts import AdmissionsPrediction
 from .model import AbstractModel
 from ..base import Config, Module
 from ..ehr import TVxEHR
-from ..metric.loss import BinaryLossLiteral, NumericLossLiteral
-from ..metric.stat import (MetricsCollection, Metric, OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss)
+from ..metric.loss import BinaryLossLiteral, NumericLossLiteral, ProbNumericLossLiteral
+from ..metric.stat import (MetricsCollection, Metric, OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss,
+                           ProbObsPredictionLoss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 
@@ -655,11 +656,25 @@ class TrainerConfig(Config):
     lead_loss: Optional[NumericLossLiteral | BinaryLossLiteral] = None
 
 
+class ProbTrainerConfig(TrainerConfig):
+    prob_obs_loss: Optional[ProbNumericLossLiteral] = None
+    prob_adjusted_obs_loss: Optional[ProbNumericLossLiteral] = None
+
+
 class LossMixer(Config):
     l1: float = 0.0
     l2: float = 0.0
     outcome: float = 1.0
     observables: float = 1.0
+    leading_observable: float = 1.0
+
+
+class ProbLossMixer(Config):
+    l1: float = 0.0
+    l2: float = 0.0
+    outcome: float = 1.0
+    prob_observables: float = 1.0
+    prob_adjusted_observables: float = 1.0
     leading_observable: float = 1.0
 
 
@@ -940,6 +955,37 @@ class Trainer(Module):
 #             return model.prox_map()(model, self.reg_hyperparams)
 #         else:
 #             return model
+
+
+class ProbTrainer(Trainer):
+    config: ProbTrainerConfig
+    loss_mixer: ProbLossMixer = field(default_factory=ProbLossMixer)
+
+    @cached_property
+    def obs_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
+        raise NotImplementedError('Unsupported, use prob_obs_loss')
+
+    @cached_property
+    def prob_obs_loss(self) -> ProbObsPredictionLoss:
+        return ProbObsPredictionLoss(loss_key=self.config.prob_obs_loss)
+
+    @cached_property
+    def prob_adjusted_obs_loss(self) -> ProbObsPredictionLoss:
+        return ProbObsPredictionLoss(loss_key=self.config.prob_adjusted_obs_loss)
+
+    def batch_predict(self, model: AbstractModel, patients: TVxEHR):
+        return model.batch_predict(patients, leave_pbar=False)
+
+    def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
+        loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
+                self.loss_mixer.prob_observables * self.prob_obs_loss(predictions) +
+                self.loss_mixer.prob_adjusted_observables * self.prob_adjusted_obs_loss(predictions) +
+                self.loss_mixer.leading_observable * self.lead_loss(predictions))
+        if self.loss_mixer.l1 != 0.0:
+            loss += model.l1() * self.loss_mixer.l1
+        if self.loss_mixer.l2 != 0.0:
+            loss += model.l2() * self.loss_mixer.l2
+        return loss
 
 
 class KoopmanTrainer(Trainer):

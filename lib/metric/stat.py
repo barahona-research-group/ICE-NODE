@@ -16,10 +16,11 @@ from sklearn import metrics
 from tqdm import tqdm
 
 from .delong import FastDeLongTest
-from .loss import (NUMERIC_LOSS, NumericLossLiteral, LOGITS_BINARY_LOSS, PROB_BINARY_LOSS, BinaryLossLiteral)
+from .loss import (NUMERIC_LOSS, NumericLossLiteral, LOGITS_BINARY_LOSS, PROB_BINARY_LOSS, BinaryLossLiteral,
+                   ProbNumericLossLiteral, ProbLossSignature, PROB_NUMERIC_LOSS)
 from ..base import Module, Config, Array, VxDataItem, np_module
 from ..ehr import (TVxEHR, InpatientObservables, CodesVector, LeadingObservableExtractorConfig)
-from ..ehr.coding_scheme import SchemeManagerView
+from ..ehr.tvx_concepts import ObservablesDistribution
 from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction, PredictionAttribute
 
 
@@ -78,6 +79,39 @@ class LeadPredictionLoss(NumericPredictionLoss):
 
 
 class ObsPredictionLoss(NumericPredictionLoss):
+    prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
+
+
+class AdjustedObsPredictionLoss(ObsPredictionLoss):
+    loss_key: ProbNumericLossLiteral = field(default=None, kw_only=True)
+    prediction_attribute: ClassVar[PredictionAttribute] = 'adjusted_observables'
+
+    def item_loss(self, ground_truth: InpatientObservables, prediction: ObservablesDistribution) -> Array:
+        ground_truth_val = np_module(ground_truth.value).nan_to_num(ground_truth.value, nan=0.0)
+        if ground_truth_val.dtype == bool:
+            ground_truth_val = ground_truth_val.astype(float)
+        ground_truth_std = ground_truth_val * 0.0 + 0.1
+        return self.raw_loss((ground_truth_val, ground_truth_std), (prediction.mean, prediction.std), ground_truth.mask)
+
+    @cached_property
+    def raw_loss(self) -> ProbLossSignature:
+        return PROB_NUMERIC_LOSS[self.loss_key]
+
+    def __call__(self, predictions: AdmissionsPrediction) -> Array | float:
+        weights = [self.item_weight(gt) for gt in predictions.list_attr('observables')[0]]
+        weights = [w / sum(weights) for w in weights]
+
+        losses = jnp.array([(self.item_loss(gt, pred) * w if w > 0. else 0.) for (gt, pred), w in
+                            zip(predictions.iter_attr(self.prediction_attribute, 'observables'), weights)])
+        loss = jnp.nansum(losses)
+
+        if jnp.isnan(loss):
+            logging.warning('NaN obs loss detected')
+
+        return jnp.where(jnp.isnan(loss), 0., loss)
+
+
+class ProbObsPredictionLoss(AdjustedObsPredictionLoss):
     prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
 
 
@@ -336,7 +370,6 @@ class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
     aki_binary_index: int = field(kw_only=True)
 
 
-
 class LeadingAKIPredictionAccuracy(Metric):
     config: LeadingPredictionAccuracyConfig
 
@@ -468,7 +501,8 @@ class LeadingAKIPredictionAccuracy(Metric):
             prediction_df, ground_truth_df)
 
         # criterion (4) & (5)- recovery neglect window and no recovery since last occurrence.
-        prediction_df = prediction_df[(prediction_df['time'] > (prediction_df['last_recovery_time'] + self.config.recovery_window))]
+        prediction_df = prediction_df[
+            (prediction_df['time'] > (prediction_df['last_recovery_time'] + self.config.recovery_window))]
 
         if len(prediction_df) == 0:
             return None

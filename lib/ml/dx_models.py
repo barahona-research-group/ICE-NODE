@@ -9,7 +9,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
-from .base_models import (StateUpdate, NeuralODE_JAX)
 from .model import (DischargeSummaryModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Patient, DemographicVectorConfig,

@@ -1,92 +1,47 @@
-from typing import (Callable, Tuple)
+from typing import Tuple, Optional, Literal, Union, Final, Callable
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import jax.tree_util as jtu
-from diffrax import (ODETerm, Dopri5, diffeqsolve, SaveAt, RecursiveCheckpointAdjoint)
+from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController
 from jax.experimental.jet import jet
-from jax.experimental.ode import odeint
+from jaxtyping import PyTree
 
+from .model import (Precomputes)
 
-class GRUDynamics(eqx.Module):
-    """
-    Modified GRU unit to deal with latent state ``h(t)``.
-    """
-
-    x_x: eqx.Module
-    x_r: eqx.Module
-    x_z: eqx.Module
-    rx_g: eqx.Module
-
-    def __init__(self, input_size: int, state_size: int, use_bias: bool,
-                 key: "jax.random.PRNGKey"):
-        k0, k1, k2, k3 = jrandom.split(key, 4)
-        self.x_x = self.shallow_net(input_size, state_size, lambda x: x, k0)
-        self.x_r = self.shallow_net(input_size, state_size, jnn.sigmoid, k1)
-        self.x_z = self.shallow_net(input_size, state_size, jnn.sigmoid, k2)
-        self.rx_g = self.shallow_net(input_size, state_size, jax.nn.tanh, k3)
-
-    @staticmethod
-    def shallow_net(input_size, state_size, act, key, use_bias=True):
-        return eqx.nn.Sequential([
-            eqx.nn.Linear(input_size, state_size, use_bias=use_bias, key=key),
-            eqx.nn.Lambda(act)
-        ])
-
-    def weights(self):
-        weights = eqx.filter(self, lambda m: m.weight)
-        weights, _ = jtu.tree_flatten(weights)
-        return weights
-
-    def __call__(self, x: jnp.ndarray,
-                 key: "jax.random.PRNGKey") -> jnp.ndarray:
-        """
-        Returns a change due to one step of using GRU-ODE for all h.
-        Args:
-            h: hidden state (current) of the observable variables.
-            c: control variables.
-        Returns:
-            dh/dt
-        """
-        x = self.x_x(x)
-        r = self.x_r(x)
-        z = self.x_z(x)
-        g = self.rx_g(r * x)
-        return (1 - z) * (g - x)
-
-
-"""
-https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
-By Jacob Kelly
-Recursively compute higher order derivatives of dynamics of ODE.
-MIT License
-
-Copyright (c) 2020 Jacob Kelly and Jesse Bettencourt
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
+LeadPredictorName = Literal['monotonic', 'mlp']
 
 
 class TaylorAugmented(eqx.Module):
+    """
+    https://github.com/jacobjinkelly/easy-neural-ode/blob/master/latent_ode.py
+    By Jacob Kelly
+    Recursively compute higher order derivatives of dynamics of ODE.
+    MIT License
+
+    Copyright (c) 2020 Jacob Kelly and Jesse Bettencourt
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+    """
+
     f: Callable
     order: int = 0
 
@@ -123,156 +78,133 @@ class TaylorAugmented(eqx.Module):
         return dydt, jnp.mean(drdt ** 2)
 
 
-class ControlledDynamics(eqx.Module):
-    f_dyn: Callable
-
-    def __call__(self, t, x, args):
-        return self.f_dyn(t, jnp.concatenate((args['control'], x)), args)
-
-
-def timesamples(int_time, dt):
-    if dt < 0:
-        dt = int_time
-    return jnp.linspace(0, int_time - int_time % dt,
-                        round((int_time - int_time % dt) / dt + 1))
-
-
-class VectorField(eqx.Module):
-    f_dyn: eqx.Module
-
-    def __call__(self, t, x, args):
-        return self.f_dyn(x)
-
-
-class NeuralODE_JAX(eqx.Module):
-    ode_dyn: Callable
-    timescale: float = eqx.static_field()
+class ForcedVectorField(eqx.Module):
+    mlp: eqx.nn.MLP
 
     @eqx.filter_jit
-    def __call__(self, t, x, args=dict()):
-        x0 = self.get_x0(x, args)
-
-        sampling_rate = args.get('sampling_rate', None)
-        if sampling_rate:
-            t = timesamples(float(t), sampling_rate) / self.timescale
-        else:
-            t = jnp.array([0.0, t / self.timescale])
-        term = self.ode_term(args)
-        return odeint(term, x0, t, dict(control=args.get('control')))
-
-    def get_x0(self, x0, args):
-        if args.get('tay_reg', 0) > 0:
-            return (x0, jnp.array(0.0))
-        else:
-            return x0
-
-    def ode_term(self, args):
-        term = VectorField(self.ode_dyn)
-        if len(args.get('control', jnp.array([]))) > 0:
-            term = ControlledDynamics(term)
-        if args.get('tay_reg', 0) > 0:
-            term = TaylorAugmented(term, args['tay_reg'])
-        return lambda x, t, args: term(t, x, args)
+    def __call__(self, t: float, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
+        return self.mlp(jnp.hstack((x, u)))
 
 
-class NeuralODE(eqx.Module):
-    ode_dyn: Callable
-    timescale: float = eqx.static_field()
+class NeuralODESolver(eqx.Module):
+    f: ForcedVectorField
+    SECOND: Final[float] = 1 / 3600.0  # Time units in one second.
+    DT0: Final[float] = 60.0  # Initial time step in seconds.
+
+    @staticmethod
+    def from_mlp(mlp: eqx.nn.MLP, second: float = 1 / 3600.0, dt0: float = 60.0):
+        return NeuralODESolver(f=ForcedVectorField(mlp), SECOND=second, DT0=dt0)
+
+    @property
+    def zero_force(self) -> jnp.ndarray:
+        in_size = self.f.mlp.layers[0].weight.shape[1]
+        out_size = self.f.mlp.layers[-1].weight.shape[0]
+        return jnp.zeros((in_size - out_size,))
+
+    @property
+    def ode_term(self) -> ODETerm:
+        return ODETerm(self.f)
 
     @eqx.filter_jit
-    def __call__(self, t, x, args=dict()):
-        x0 = self.get_x0(x, args)
+    def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
+                 u: Optional[PyTree] = None,
+                 precomputes: Optional[Precomputes] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        sol = diffeqsolve(
+            terms=self.ode_term,
+            solver=Tsit5(),
+            t0=t0,
+            t1=t1,
+            dt0=self.DT0 * self.SECOND,
+            y0=self.get_aug_x0(x0, precomputes),
+            args=self.get_args(x0, u, precomputes),
+            adjoint=RecursiveCheckpointAdjoint(checkpoints=10),
+            # TODO: investigate the difference between checkpoints, max_steps, and BacksolveAdjoint.
+            saveat=saveat or SaveAt(t1=True),
+            stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
+            throw=True,
+            max_steps=None)
+        return self.get_solution(sol)
 
-        dt0 = self.initial_step_size(0, x, 4, 1.4e-8, 1.4e-8, args)
-        sampling_rate = args.get('sampling_rate', None)
-        if sampling_rate:
-            t = timesamples(float(t), sampling_rate) / self.timescale
-        else:
-            t = jnp.array([0.0, t / self.timescale])
-        return diffeqsolve(
-            self.ode_term(args),
-            Dopri5(),
-            t[0],
-            t[-1],
-            dt0=dt0,
-            y0=x0,
-            args=args,
-            # adjoint=BacksolveAdjoint(solver=Dopri5()),
-            adjoint=RecursiveCheckpointAdjoint(),
-            saveat=SaveAt(ts=t),
-            throw=False,
-            max_steps=2 ** 20)
+    def get_args(self, x0: jnp.ndarray, u: Optional[jnp.ndarray], precomputes: Optional[Precomputes]) -> PyTree:
+        return u if u is not None else self.zero_force
 
-    def get_x0(self, x0, args):
-        if args.get('tay_reg', 0) > 0:
-            return (x0, jnp.array(0.0))
-        else:
-            return x0
+    def get_aug_x0(self, x0: jnp.ndarray, precomputes: Precomputes) -> PyTree:
+        return x0
 
-    def ode_term(self, args):
-        term = VectorField(self.ode_dyn)
-        if len(args.get('control', jnp.array([]))) > 0:
-            term = ControlledDynamics(term)
-        if args.get('tay_reg', 0) > 0:
-            term = TaylorAugmented(term, args['tay_reg'])
-
-        return ODETerm(term)
-
-    def initial_step_size(self, t0, y0, order, rtol, atol, args):
-        """
-        Algorithm from:
-        E. Hairer, S. P. Norsett G. Wanner,
-        Solving Ordinary Differential Equations I: \
-            Nonstiff Problems, Sec. II.4.
-        Code from: \
-            https://github.com/google/jax/blob/main/jax/experimental/ode.py
-        """
-        ctrl = args.get('control', jnp.array([]))
-        ctrl_y = lambda y: jnp.concatenate((ctrl, y))
-        f0 = self.ode_dyn(ctrl_y(y0))
-
-        dtype = y0.dtype
-
-        scale = atol + jnp.abs(y0) * rtol
-        d0 = jnp.linalg.norm(y0 / scale.astype(dtype))
-        d1 = jnp.linalg.norm(f0 / scale.astype(dtype))
-
-        h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
-        y1 = y0 + h0.astype(dtype) * f0
-        f1 = self.ode_dyn(ctrl_y(y1))
-        d2 = jnp.linalg.norm((f1 - f0) / scale.astype(dtype)) / h0
-
-        h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
-                       jnp.maximum(1e-6, h0 * 1e-3),
-                       (0.01 / jnp.max(d1 + d2)) ** (1. / (order + 1.)))
-
-        return jnp.minimum(100. * h0, h1)
+    def get_solution(self, sol: Solution) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        return sol.ys
 
 
-class StateUpdate(eqx.Module):
-    """Implements discrete update based on the received observations."""
-    f_project_error: Callable
-    f_update: Callable
+class MonotonicLeadingObsPredictor(eqx.Module):
+    mlp: eqx.nn.MLP
 
-    def __init__(self, state_size: int, embeddings_size: int,
-                 key: "jax.random.PRNGKey"):
+    def __init__(self, input_size: int,
+                 n_lead_times: int,
+                 key: jrandom.PRNGKey, **mlp_kwargs):
         super().__init__()
-        key1, key2 = jrandom.split(key, 2)
-        self.f_project_error = eqx.nn.Sequential([
-            eqx.nn.Linear(embeddings_size * 2,
-                          embeddings_size,
-                          use_bias=True,
-                          key=key1),
-            eqx.nn.Lambda(jnp.tanh)
-        ])
-        self.f_update = eqx.nn.GRUCell(embeddings_size,
-                                       state_size,
-                                       use_bias=True,
-                                       key=key2)
+        out_size = n_lead_times + 1
+        width = mlp_kwargs.get("width_size", out_size * 5)
+        self.mlp = eqx.nn.MLP(input_size,
+                              out_size,
+                              width_size=width,
+                              activation=jnn.tanh,
+                              depth=2,
+                              key=key)
 
-    def __call__(self, state: jnp.ndarray, predicted_emb: jnp.ndarray,
-                 nominal_emb: jnp.ndarray) -> jnp.ndarray:
-        projected_error = self.f_project_error(
-            jnp.hstack((predicted_emb, nominal_emb)))
+    @eqx.filter_jit
+    def __call__(self, state):
+        y = self.mlp(state)
+        risk = jnn.sigmoid(y[-1])
+        p = jnp.cumsum(jnn.softmax(y[:-1]))
+        return risk * p
 
-        return self.f_update(projected_error, state)
+
+class MLPLeadingObsPredictor(eqx.Module):
+    _mlp: eqx.nn.MLP
+
+    def __init__(self, input_size: int,
+                 n_lead_times: int,
+                 key: jax.random.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        width = mlp_kwargs.get("width_size", n_lead_times * 5)
+        self._mlp = eqx.nn.MLP(input_size,
+                               n_lead_times,
+                               width_size=width,
+                               activation=jnn.tanh,
+                               final_activation=jnn.sigmoid,
+                               depth=2,
+                               key=key)
+
+    @eqx.filter_jit
+    def __call__(self, state):
+        return self._mlp(state)
+
+
+class CompiledMLP(eqx.nn.MLP):
+    # Just an eqx.nn.MLP with a compiled __call__ method.
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
+class CompiledLinear(eqx.nn.Linear):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
+class ProbMLP(CompiledMLP):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        mean_std = super().__call__(x)
+        mean, std = jnp.split(mean_std, 2, axis=-1)
+        return mean, jnn.softplus(std)
+
+
+class CompiledGRU(eqx.nn.GRUCell):
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(h, x)
