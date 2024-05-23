@@ -33,15 +33,15 @@ if __name__ == '__main__':
 
         for override in args.override.split(splitter):
             key, value = override.split('=')
+            print('xxx', value)
             if isinstance(value, str):
                 if value == 'True':
                     value = True
                 elif value == 'False':
                     value = False
 
-                elif value.lower() == 'none' or value == 'null':
+                elif value.lower() == 'none' or value.lower() == 'null':
                     value = None
-
                 elif value.isdigit():
                     value = int(value)
 
@@ -50,6 +50,7 @@ if __name__ == '__main__':
                         value = float(value)
                     except ValueError:
                         pass
+
 
             config = config.path_update(key, value)
 
