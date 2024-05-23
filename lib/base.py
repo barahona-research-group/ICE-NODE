@@ -160,9 +160,8 @@ class Config(eqx.Module):
                 x = getattr(x, n)
             return x
 
-        _type = type(_get(self))
-
-        return eqx.tree_at(_get, self, _type(value))
+        _constructor = type(_get(self)) if value is not None else lambda x: None
+        return eqx.tree_at(_get, self, _constructor(value))
 
 
 class FlatConfig(Config):

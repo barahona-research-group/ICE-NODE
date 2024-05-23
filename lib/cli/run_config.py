@@ -34,14 +34,12 @@ if __name__ == '__main__':
         for override in args.override.split(splitter):
             key, value = override.split('=')
             if isinstance(value, str):
-                print(value.lower() == 'none')
                 if value == 'True':
                     value = True
                 elif value == 'False':
                     value = False
 
                 elif value.lower() == 'none' or value.lower() == 'null':
-                    print('yyyyy')
                     value = None
                 elif value.isdigit():
                     value = int(value)
@@ -52,7 +50,6 @@ if __name__ == '__main__':
                     except ValueError:
                         pass
 
-            print(f'Overriding {key} with {value}')
             config = config.path_update(key, value)
             print(config)
 
