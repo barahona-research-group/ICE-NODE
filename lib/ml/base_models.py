@@ -208,3 +208,54 @@ class CompiledGRU(eqx.nn.GRUCell):
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
         return super().__call__(h, x)
+
+
+class PositiveSquaredLinear(eqx.nn.Linear):
+    def __call__(self, x: jnp.ndarray, *, key: Optional[jrandom.PRNGKeyArray] = None) -> jnp.ndarray:
+        w = self.weight ** 2
+        return w @ x + self.bias
+
+
+class ICNN(eqx.Module):
+    """Input Convex Neural Network"""
+    """https://github.com/atong01/ot-icnn-minimal/blob/main/icnn/icnn.py"""
+    Wzs: Tuple[PositiveSquaredLinear, ...]
+    Wxs: Tuple[PositiveSquaredLinear, ...]
+
+    def __init__(self, input_size: int, hidden_size: int, depth: int, key: jrandom.PRNGKey):
+        super().__init__()
+
+        def new_key():
+            nonlocal key
+            key, subkey = jrandom.split(key)
+            return subkey
+
+        Wzs = [PositiveSquaredLinear(input_size, hidden_size, key=new_key())]
+        for _ in range(depth - 1):
+            Wzs.append(PositiveSquaredLinear(hidden_size, hidden_size, use_bias=False, key=new_key()))
+        Wzs.append(PositiveSquaredLinear(hidden_size, 1, use_bias=False, key=new_key()))
+        self.Wzs = tuple(Wzs)
+
+        Wxs = []
+        for _ in range(depth - 1):
+            Wxs.append(PositiveSquaredLinear(input_size, hidden_size, key=new_key()))
+        Wxs.append(PositiveSquaredLinear(input_size, 1, use_bias=False, key=new_key()))
+        self.Wxs = tuple(Wxs)
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
+        z = jnn.softplus(self.Wzs[0](x))
+        for Wz, Wx in zip(self.Wzs[1:-1], self.Wxs[:-1]):
+            z = jnn.softplus(Wz(z) + Wx(x))
+        return self.Wzs[-1](z) + self.Wxs[-1](x)
+
+# def test_convexity(f):
+#     rdata = torch.randn(1024, 2).to(device)
+#     rdata2 = torch.randn(1024, 2).to(device)
+#     return np.all(
+#         (((f(rdata) + f(rdata2)) / 2 - f(rdata + rdata2) / 2) > 0)
+#         .cpu()
+#         .detach()
+#         .numpy()
+#     )
+#
