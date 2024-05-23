@@ -285,7 +285,7 @@ BinaryLossLiteral = Literal[
 
 NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
 
-ProbNumericLossLiteral = Literal['gaussian_kl', 'log_normal']
+ProbNumericLossLiteral = Literal['kl_gaussian', 'log_normal']
 
 LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
 ProbLossSignature = Callable[[Tuple[Array, Array], Tuple[Array, Array], Optional[Array], Optional[int]], Array | float]
@@ -312,5 +312,5 @@ NUMERIC_LOSS: Final[Dict[NumericLossLiteral, LossSignature]] = {
 }
 
 PROB_NUMERIC_LOSS: Final[Dict[ProbNumericLossLiteral, ProbLossSignature]] = {
-    'gaussian_kl': gaussian_kl,
+    'kl_gaussian': gaussian_kl,
     'log_normal': log_normal}
