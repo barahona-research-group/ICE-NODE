@@ -33,7 +33,6 @@ if __name__ == '__main__':
 
         for override in args.override.split(splitter):
             key, value = override.split('=')
-            print('xxx', value)
             if isinstance(value, str):
                 if value == 'True':
                     value = True
@@ -51,8 +50,9 @@ if __name__ == '__main__':
                     except ValueError:
                         pass
 
-
+            print(f'Overriding {key} with {value}')
             config = config.path_update(key, value)
+            print(config)
 
     experiment = Experiment(config)
     experiment.run(tvx_ehr_path=args.dataset_path, prng_seed=42)

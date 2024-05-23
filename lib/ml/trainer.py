@@ -967,10 +967,14 @@ class ProbTrainer(Trainer):
 
     @cached_property
     def prob_obs_loss(self) -> ProbObsPredictionLoss:
+        if self.config.prob_obs_loss is None:
+            return lambda p: 0.0
         return ProbObsPredictionLoss(loss_key=self.config.prob_obs_loss)
 
     @cached_property
     def prob_adjusted_obs_loss(self) -> ProbObsPredictionLoss:
+        if self.config.prob_adjusted_obs_loss is None:
+            return lambda p: 0.0
         return ProbObsPredictionLoss(loss_key=self.config.prob_adjusted_obs_loss)
 
     def batch_predict(self, model: AbstractModel, patients: TVxEHR):
