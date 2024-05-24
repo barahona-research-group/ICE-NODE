@@ -272,6 +272,8 @@ class ICNNObsDecoder(eqx.Module):
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: int,
                  depth: int, key: jrandom.PRNGKey):
         super().__init__()
+        self.observables_size = observables_size
+        self.state_size = state_size
         input_size = observables_size + state_size
         self.f_energy = ICNN(input_size, input_size * hidden_size_multiplier, depth, key)
 
