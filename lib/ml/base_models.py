@@ -283,7 +283,9 @@ class ICNNObsDecoder(eqx.Module):
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray):
         def masked_input_energy(y: jnp.ndarray, args: Any = None) -> jnp.ndarray:
-            return self.f_energy(jnp.where(fixed_mask, input, y))
+            e = self.f_energy(jnp.where(fixed_mask, input, y))
+            print(e.shape)
+            return e
 
         return optx.minimise(masked_input_energy,
                              adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
