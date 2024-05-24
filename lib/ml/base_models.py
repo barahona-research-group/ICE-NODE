@@ -7,7 +7,8 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import optax
 import optimistix as optx
-from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController
+from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, MultiTerm, \
+    ControlTerm, VirtualBrownianTree, ReversibleHeun
 from jax.experimental.jet import jet
 from jaxtyping import PyTree
 
@@ -80,8 +81,30 @@ class TaylorAugmented(eqx.Module):
         return dydt, jnp.mean(drdt ** 2)
 
 
+class DiffusionMLP(eqx.nn.MLP):
+    scale: jnp.ndarray
+    brownian_size: int
+    state_size: int
+
+    def __init__(self, brownian_size: int, control_size: int, state_size: int, width_size: int, depth: int, *,
+                 key: jrandom.PRNGKey, **kwargs):
+        scale_key, mlp_key = jrandom.split(key)
+        self.brownian_size = brownian_size
+        self.state_size = state_size
+        super().__init__(in_size=state_size + control_size, out_size=state_size * brownian_size,
+                         activation=jnn.tanh,
+                         width_size=width_size, depth=depth, key=mlp_key, **kwargs)
+        self.scale = jrandom.uniform(
+            scale_key, (state_size, brownian_size), minval=0.9, maxval=1.1
+        )
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return self.scale * super().__call__(x).reshape(self.state_size, self.brownian_size)
+
+
 class ForcedVectorField(eqx.Module):
-    mlp: eqx.nn.MLP
+    mlp: eqx.nn.MLP | DiffusionMLP
 
     @eqx.filter_jit
     def __call__(self, t: float, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
@@ -110,7 +133,8 @@ class NeuralODESolver(eqx.Module):
     @eqx.filter_jit
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
                  u: Optional[PyTree] = None,
-                 precomputes: Optional[Precomputes] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+                 precomputes: Optional[Precomputes] = None,
+                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
         sol = diffeqsolve(
             terms=self.ode_term,
             solver=Tsit5(),
@@ -121,6 +145,59 @@ class NeuralODESolver(eqx.Module):
             args=self.get_args(x0, u, precomputes),
             adjoint=RecursiveCheckpointAdjoint(checkpoints=10),
             # TODO: investigate the difference between checkpoints, max_steps, and BacksolveAdjoint.
+            saveat=saveat or SaveAt(t1=True),
+            stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
+            throw=True,
+            max_steps=None)
+        return self.get_solution(sol)
+
+    def get_args(self, x0: jnp.ndarray, u: Optional[jnp.ndarray], precomputes: Optional[Precomputes]) -> PyTree:
+        return u if u is not None else self.zero_force
+
+    def get_aug_x0(self, x0: jnp.ndarray, precomputes: Precomputes) -> PyTree:
+        return x0
+
+    def get_solution(self, sol: Solution) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        return sol.ys
+
+
+class StochasticNeuralODESolver(eqx.Module):
+    f_drift: ForcedVectorField
+    f_diffusion: ForcedVectorField
+    SECOND: Final[float] = 1 / 3600.0  # Time units in one second.
+    DT0: Final[float] = 60.0  # Initial time step in seconds.
+
+    @staticmethod
+    def from_mlp(drift: eqx.Module, diffusion: DiffusionMLP, second: float = 1 / 3600.0, dt0: float = 60.0):
+        return StochasticNeuralODESolver(f_drift=ForcedVectorField(drift), f_diffusion=ForcedVectorField(diffusion),
+                                         SECOND=second, DT0=dt0)
+
+    @property
+    def zero_force(self) -> jnp.ndarray:
+        in_size = self.f_drift.mlp.layers[0].weight.shape[1]
+        out_size = self.f_drift.mlp.layers[-1].weight.shape[0]
+        return jnp.zeros((in_size - out_size,))
+
+    def stochastic_ode_terms(self, t0: float, t1: float, key: jrandom.PRNGKey) -> MultiTerm:
+        control = VirtualBrownianTree(
+            t0=t0, t1=t1, tol=self.DT0 * self.SECOND / 2, shape=(self.f_diffusion.mlp.brownian_size,), key=key
+        )
+        return MultiTerm(ODETerm(self.f_drift), ControlTerm(self.f_diffusion, control))
+
+    @eqx.filter_jit
+    def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
+                 u: Optional[PyTree] = None,
+                 precomputes: Optional[Precomputes] = None,
+                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        sol = diffeqsolve(
+            terms=self.stochastic_ode_terms(t0, t1, key),
+            solver=ReversibleHeun(),
+            t0=t0,
+            t1=t1,
+            dt0=self.DT0 * self.SECOND,
+            y0=self.get_aug_x0(x0, precomputes),
+            args=self.get_args(x0, u, precomputes),
+            adjoint=RecursiveCheckpointAdjoint(checkpoints=10),
             saveat=saveat or SaveAt(t1=True),
             stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
             throw=True,

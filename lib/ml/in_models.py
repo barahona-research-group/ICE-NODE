@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
-    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder
+    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -298,6 +298,8 @@ class InICENODE(InpatientModel):
         state_trajectory = tuple()
         state = self.f_init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
         segments_t1 = admission.interventions.t1
+        key = jrandom.PRNGKey(hash(admission.admission_id))
+
         for segment_index in range(n_segments):
             segment_t1 = segments_t1[segment_index]
             segment_obs = obs[segment_index]
@@ -305,13 +307,16 @@ class InICENODE(InpatientModel):
             segment_force = jnp.hstack((demo_e, segment_interventions))
 
             for obs_t, obs_val, obs_mask in segment_obs:
+                key, subkey = jrandom.split(key)
                 # if time-diff is more than 1 seconds, we integrate.
-                forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes)
-                forecasted_state = forecasted_state.squeeze()
+                forecasted_state = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes,
+                                              key=subkey).squeeze()
                 state = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask)
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
-            state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes).squeeze()
+            key, subkey = jrandom.split(key)
+            state = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes,
+                               key=subkey).squeeze()
             t = segment_t1
 
         if self.f_outcome_dec is not None:
@@ -390,6 +395,35 @@ class InICENODELite(InICENODE):
                    demographic_size=tvx_ehr.demographic_vector_size,
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
+
+
+class StochasticInICENODELite(InICENODELite):
+
+    @staticmethod
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> StochasticNeuralODESolver:
+        interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
+        demographics_size = embeddings_config.demographic or 0
+        if model_config.dynamics == "mlp":
+            f_dyn = CompiledMLP(in_size=model_config.state + interventions_size + demographics_size,
+                                out_size=model_config.state,
+                                activation=jnn.tanh,
+                                depth=2,
+                                width_size=model_config.state * 5,
+                                key=key)
+        elif model_config.dynamics == "gru":
+            f_dyn = GRUDynamics(model_config.state + interventions_size + demographics_size, model_config.state, key)
+        else:
+            raise ValueError(f"Unknown dynamics type: {model_config.dynamics}")
+
+        f_diffusion = DiffusionMLP(brownian_size=model_config.state // 5,
+                                   control_size=interventions_size + demographics_size,
+                                   state_size=model_config.state, key=key, depth=2, width_size=model_config.state * 2)
+
+        return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
+                                                  diffusion=f_diffusion,
+                                                  second=1 / 3600.0, dt0=60.0)
 
 
 class GRUODEBayes(InICENODELite):
