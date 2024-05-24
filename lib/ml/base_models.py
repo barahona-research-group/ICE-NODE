@@ -1,10 +1,11 @@
-from typing import Tuple, Optional, Literal, Union, Final, Callable
+from typing import Tuple, Optional, Literal, Union, Final, Callable, Any
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
+import optimistix as optx
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController
 from jax.experimental.jet import jet
 from jaxtyping import PyTree
@@ -218,7 +219,9 @@ class PositiveSquaredLinear(eqx.nn.Linear):
 
 class ICNN(eqx.Module):
     """Input Convex Neural Network"""
-    """https://github.com/atong01/ot-icnn-minimal/blob/main/icnn/icnn.py"""
+    """https://github.com/atong01/ot-icnn-minimal/blob/main/icnn/icnn.py
+    Principled Weight Initialisation for Input-Convex Neural Networks: https://openreview.net/pdf?id=pWZ97hUQtQ 
+    """
     Wzs: Tuple[PositiveSquaredLinear, ...]
     Wxs: Tuple[PositiveSquaredLinear, ...]
 
@@ -249,6 +252,7 @@ class ICNN(eqx.Module):
             z = jnn.softplus(Wz(z) + Wx(x))
         return self.Wzs[-1](z) + self.Wxs[-1](x)
 
+
 # def test_convexity(f):
 #     rdata = torch.randn(1024, 2).to(device)
 #     rdata2 = torch.randn(1024, 2).to(device)
@@ -259,3 +263,31 @@ class ICNN(eqx.Module):
 #         .numpy()
 #     )
 #
+
+class ICNNObsDecoder(eqx.Module):
+    f_energy: ICNN
+    observables_size: int
+    state_size: int
+
+    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: int,
+                 depth: int, key: jrandom.PRNGKey):
+        super().__init__()
+        input_size = observables_size + state_size
+        self.f_energy = ICNN(input_size, input_size * hidden_size_multiplier, depth, key)
+
+    @eqx.filter_jit
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray):
+        def masked_input_energy(y: jnp.ndarray, args: Any = None) -> jnp.ndarray:
+            return self.f_energy(jnp.where(fixed_mask, input, y))
+
+        return optx.minimise(masked_input_energy,
+                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
+                             solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-6, atol=1e-6)),
+                             max_steps=None,
+                             y0=input, throw=False).value
+
+    @eqx.filter_jit
+    def __call__(self, state: jnp.ndarray) -> jnp.ndarray | float:
+        input = jnp.hstack((state, jnp.zeros(self.observables_size)))
+        mask = jnp.zeros_like(input).at[:self.state_size].set(1)
+        return self.partial_input_optimise(input, mask)

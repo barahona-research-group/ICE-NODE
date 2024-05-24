@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
-    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU
+    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -26,7 +26,7 @@ from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from .state_dynamics import GRUDynamics
 from .state_obs_imputers import DirectGRUStateImputer, StateObsLinearLeastSquareImpute, \
-    DirectGRUStateProbabilisticImputer
+    DirectGRUStateProbabilisticImputer, StateObsICNNImputer
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission, ObservablesDistribution
@@ -450,6 +450,21 @@ class InICENODELiteLinearLeastSquareImpute(InICENODELite):
         return CompiledLinear(config.state,
                               observables_size,
                               use_bias=False,
+                              key=key)
+
+
+class InICENODELiteICNNImpute(InICENODELite):
+    f_update: StateObsICNNImputer
+    f_obs_dec: ICNNObsDecoder
+
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> StateObsICNNImputer:
+        return StateObsICNNImputer(persistent_memory_size=state_size // 3)
+
+    @staticmethod
+    def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
+        return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
+                              hidden_size_multiplier=3, depth=5,
                               key=key)
 
 
