@@ -211,7 +211,7 @@ class CompiledGRU(eqx.nn.GRUCell):
 
 
 class PositiveSquaredLinear(eqx.nn.Linear):
-    def __call__(self, x: jnp.ndarray, *, key: Optional[jrandom.PRNGKeyArray] = None) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, *, key: Optional[jrandom.PRNGKey] = None) -> jnp.ndarray:
         w = self.weight ** 2
         return w @ x + self.bias
 
