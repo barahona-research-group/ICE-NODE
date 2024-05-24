@@ -153,6 +153,8 @@ class StateObsICNNImputer(eqx.Module):
         input = jnp.hstack((forecasted_state, obs_decoder(forecasted_state)))
         mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
         mask = mask.at[obs_decoder.state_size:].set(observables_mask)
-        return obs_decoder.partial_input_optimise(input, mask)
+        output = obs_decoder.partial_input_optimise(input, mask)
+        state, _ = jnp.split(output, [obs_decoder.state_size])
+        return state
 
 ## TODO: use Invertible NN for embeddings: https://proceedings.mlr.press/v162/zhi22a/zhi22a.pdf

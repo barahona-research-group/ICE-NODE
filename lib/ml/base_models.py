@@ -5,6 +5,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
+import optax
 import optimistix as optx
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController
 from jax.experimental.jet import jet
@@ -253,7 +254,7 @@ class ICNN(eqx.Module):
         z = jnn.softplus(self.Wzs[0](x))
         for Wz, Wx in zip(self.Wzs[1:-1], self.Wxs[:-1]):
             z = jnn.softplus(Wz(z) + Wx(x))
-        return self.Wzs[-1](z) + self.Wxs[-1](x)
+        return (self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
 
 
 # def test_convexity(f):
@@ -266,6 +267,26 @@ class ICNN(eqx.Module):
 #         .numpy()
 #     )
 #
+
+class MaskedOptimiser(eqx.Module):
+    optim: optax.GradientTransformation
+    mask: jnp.ndarray = eqx.static_field()
+
+    def __init__(self, optim: optax.GradientTransformation, mask: jnp.ndarray):
+        self.optim = optim
+        self.mask = mask
+
+    def update(
+            self,
+            updates: optax.Updates,
+            state: optax.OptState,
+            params: Optional[optax.Params] = None
+    ) -> tuple[optax.Updates, optax.OptState]:
+        return self.optim.update(jnp.where(self.mask, updates, 0.0), state, params)
+
+    def init(self, params: optax.Params) -> optax.OptState:
+        return self.optim.init(params)
+
 
 class ICNNObsDecoder(eqx.Module):
     f_energy: ICNN
@@ -283,13 +304,13 @@ class ICNNObsDecoder(eqx.Module):
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray):
         def masked_input_energy(y: jnp.ndarray, args: Any = None) -> jnp.ndarray:
-            e = self.f_energy(jnp.where(fixed_mask, input, y))
-            print(e.shape)
-            return e
+            return self.f_energy(jnp.where(fixed_mask, input, y))
 
         return optx.minimise(masked_input_energy,
                              adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
-                             solver=optx.BestSoFarMinimiser(optx.NonlinearCG(rtol=1e-6, atol=1e-6)),
+                             solver=optx.BestSoFarMinimiser(
+                                 optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(1e-3), fixed_mask),
+                                                     rtol=1e-8, atol=1e-8)),
                              max_steps=None,
                              y0=input, throw=False).value
 
@@ -297,4 +318,6 @@ class ICNNObsDecoder(eqx.Module):
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray | float:
         input = jnp.hstack((state, jnp.zeros(self.observables_size)))
         mask = jnp.zeros_like(input).at[:self.state_size].set(1)
-        return self.partial_input_optimise(input, mask)
+        output = self.partial_input_optimise(input, mask)
+        _, obs = jnp.split(output, [self.state_size])
+        return obs

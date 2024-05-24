@@ -7,10 +7,10 @@ from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import NumericScheme
 from lib.ehr.tvx_concepts import SegmentedAdmission
 from lib.metric.stat import ProbObsPredictionLoss, AdjustedObsPredictionLoss
-from lib.ml.artefacts import AdmissionsPrediction
+from lib.ml.artefacts import AdmissionsPrediction, AdmissionPrediction
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
 from lib.ml.in_models import InICENODE, LeadPredictorName, AdmissionTrajectoryPrediction, \
-    DynamicsLiteral, ICENODEConfig, GRUODEBayes, AdmissionGRUODEBayesPrediction
+    DynamicsLiteral, ICENODEConfig, GRUODEBayes, AdmissionGRUODEBayesPrediction, InICENODELiteICNNImpute
 from lib.ml.model import Precomputes
 from lib.utils import tree_hasnan
 
@@ -82,6 +82,24 @@ def gru_ode_bayes_model(inicenode_model_config: ICENODEConfig,
 
 
 @pytest.fixture
+def incenode_icnn_model(inicenode_model_config: ICENODEConfig,
+                        inicenode_model_embeddings_config: InICENODEEmbeddingsConfig,
+                        dx_scheme: CodingScheme,
+                        observation_scheme: NumericScheme,
+                        icu_proc_scheme: CodingScheme, hosp_proc_scheme: CodingScheme,
+                        icu_inputs_grouping_data) -> InICENODELiteICNNImpute:
+    return InICENODELiteICNNImpute(config=inicenode_model_config, embeddings_config=inicenode_model_embeddings_config,
+                                   lead_times=(1.,),
+                                   dx_codes_size=len(dx_scheme),
+                                   icu_inputs_grouping=icu_inputs_grouping_data,
+                                   icu_procedures_size=len(icu_proc_scheme),
+                                   hosp_procedures_size=len(hosp_proc_scheme),
+                                   demographic_size=None,
+                                   observables_size=len(observation_scheme),
+                                   key=jrandom.PRNGKey(0))
+
+
+@pytest.fixture
 def inicenode_embedded_admission(inicenode_model: InICENODE,
                                  segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
     return inicenode_model.f_emb(segmented_admission, None)
@@ -94,9 +112,15 @@ def gru_ode_bayes_embedded_admission(gru_ode_bayes_model: InICENODE,
 
 
 @pytest.fixture
+def icenode_icnn_embedded_admission(incenode_icnn_model: InICENODELiteICNNImpute,
+                                    segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
+    return incenode_icnn_model.f_emb(segmented_admission, None)
+
+
+@pytest.fixture
 @pytest.mark.usefixtures('jax_cpu_execution')
 def inicenode_predictions(inicenode_model: InICENODE, segmented_admission: SegmentedAdmission,
-                          inicenode_embedded_admission: EmbeddedAdmission):
+                          inicenode_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
     return inicenode_model(admission=segmented_admission, embedded_admission=inicenode_embedded_admission,
                            precomputes=Precomputes())
 
@@ -106,6 +130,14 @@ def inicenode_predictions(inicenode_model: InICENODE, segmented_admission: Segme
 def gru_ode_bayes_predictions(gru_ode_bayes_model: GRUODEBayes, segmented_admission: SegmentedAdmission,
                               gru_ode_bayes_embedded_admission: EmbeddedAdmission) -> AdmissionGRUODEBayesPrediction:
     return gru_ode_bayes_model(admission=segmented_admission, embedded_admission=gru_ode_bayes_embedded_admission,
+                               precomputes=Precomputes())
+
+
+@pytest.fixture
+@pytest.mark.usefixtures('jax_cpu_execution')
+def icenode_icnn_predictions(incenode_icnn_model: InICENODELiteICNNImpute, segmented_admission: SegmentedAdmission,
+                             icenode_icnn_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
+    return incenode_icnn_model(admission=segmented_admission, embedded_admission=icenode_icnn_embedded_admission,
                                precomputes=Precomputes())
 
 
@@ -122,6 +154,13 @@ def test_gru_ode_bayes_predictions(gru_ode_bayes_predictions):
     assert isinstance(gru_ode_bayes_predictions, AdmissionGRUODEBayesPrediction)
     assert gru_ode_bayes_predictions.leading_observable.value.shape == gru_ode_bayes_predictions.admission.leading_observable.value.shape
     assert gru_ode_bayes_predictions.adjusted_observables.value.shape == gru_ode_bayes_predictions.admission.observables.value.shape
+
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_icenode_icnn_predictions(icenode_icnn_predictions: AdmissionPrediction):
+    assert isinstance(icenode_icnn_predictions, AdmissionPrediction)
+    assert icenode_icnn_predictions.leading_observable.value.shape == icenode_icnn_predictions.admission.leading_observable.value.shape
 
 
 @pytest.mark.serial_test
