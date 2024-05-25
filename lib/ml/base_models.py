@@ -384,11 +384,11 @@ class ICNNObsDecoder(eqx.Module):
             return self.f_energy(jnp.where(fixed_mask, input, y))
 
         return optx.minimise(masked_input_energy,
-                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=10),
+                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=20),
                              solver=optx.BestSoFarMinimiser(
-                                 optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(1e-3), fixed_mask),
+                                 optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-4), fixed_mask),
                                                      rtol=1e-8, atol=1e-8)),
-                             max_steps=None,
+                             max_steps=2 ** 16,
                              y0=input, throw=False).value
 
     @eqx.filter_jit

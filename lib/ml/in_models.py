@@ -420,7 +420,8 @@ class StochasticInICENODELite(InICENODELite):
         f_diffusion = DiffusionMLP(brownian_size=model_config.state // 5,
                                    control_size=interventions_size + demographics_size,
                                    state_size=model_config.state, key=key, depth=2, width_size=model_config.state * 2)
-
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        f_diffusion = model_params_scaler(f_diffusion, 5e-2, eqx.is_inexact_array)
         return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
                                                   diffusion=f_diffusion,
                                                   second=1 / 3600.0, dt0=60.0)
@@ -493,12 +494,12 @@ class InICENODELiteICNNImpute(InICENODELite):
 
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> StateObsICNNImputer:
-        return StateObsICNNImputer(persistent_memory_size=state_size // 3)
+        return StateObsICNNImputer(persistent_memory_size=state_size // 5)
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
         return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
-                              hidden_size_multiplier=3, depth=5,
+                              hidden_size_multiplier=4, depth=8,
                               key=key)
 
 
