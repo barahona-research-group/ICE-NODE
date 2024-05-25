@@ -499,7 +499,7 @@ class InICENODELiteICNNImpute(InICENODELite):
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
         return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
-                              hidden_size_multiplier=4, depth=8,
+                              hidden_size_multiplier=3, depth=6,
                               key=key)
 
 
