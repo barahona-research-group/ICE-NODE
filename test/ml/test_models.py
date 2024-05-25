@@ -11,7 +11,7 @@ from lib.ml.artefacts import AdmissionsPrediction, AdmissionPrediction
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
 from lib.ml.in_models import InICENODE, LeadPredictorName, AdmissionTrajectoryPrediction, \
     DynamicsLiteral, ICENODEConfig, GRUODEBayes, AdmissionGRUODEBayesPrediction, InICENODELiteICNNImpute, \
-    StochasticInICENODELite
+    StochasticInICENODELite, StochasticMechanisticICENODE
 from lib.ml.model import Precomputes
 from lib.utils import tree_hasnan
 
@@ -167,19 +167,55 @@ def stochastic_icenode_model(in_model_config: ICENODEConfig,
 
 
 @pytest.fixture
-def stochastic_icenode_embedded_admission(stochastic_icenode_model: InICENODELiteICNNImpute,
+def stochastic_icenode_embedded_admission(stochastic_icenode_model: StochasticInICENODELite,
                                           segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
     return stochastic_icenode_model.f_emb(segmented_admission, None)
 
 
 @pytest.fixture
 @pytest.mark.usefixtures('jax_cpu_execution')
-def stochastic_icenode_predictions(stochastic_icenode_model: InICENODELiteICNNImpute,
+def stochastic_icenode_predictions(stochastic_icenode_model: StochasticInICENODELite,
                                    segmented_admission: SegmentedAdmission,
                                    stochastic_icenode_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
     return stochastic_icenode_model(admission=segmented_admission,
                                     embedded_admission=stochastic_icenode_embedded_admission,
                                     precomputes=Precomputes())
+
+
+@pytest.fixture
+def stochastic_mechanistic_icenode_model(in_model_config: ICENODEConfig,
+                                         in_model_embeddings_config: InICENODEEmbeddingsConfig,
+                                         dx_scheme: CodingScheme,
+                                         observation_scheme: NumericScheme,
+                                         icu_proc_scheme: CodingScheme, hosp_proc_scheme: CodingScheme,
+                                         icu_inputs_grouping_data) -> StochasticMechanisticICENODE:
+    return StochasticMechanisticICENODE(config=in_model_config, embeddings_config=in_model_embeddings_config,
+                                        lead_times=(1.,),
+                                        dx_codes_size=len(dx_scheme),
+                                        icu_inputs_grouping=icu_inputs_grouping_data,
+                                        icu_procedures_size=len(icu_proc_scheme),
+                                        hosp_procedures_size=len(hosp_proc_scheme),
+                                        demographic_size=None,
+                                        observables_size=len(observation_scheme),
+                                        key=jrandom.PRNGKey(0))
+
+
+@pytest.fixture
+def stochastic_mechanistic_icenode_embedded_admission(
+        stochastic_mechanistic_icenode_model: StochasticMechanisticICENODE,
+        segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
+    return stochastic_mechanistic_icenode_model.f_emb(segmented_admission, None)
+
+
+@pytest.fixture
+@pytest.mark.usefixtures('jax_cpu_execution')
+def stochastic_mechanistic_icenode_predictions(stochastic_mechanistic_icenode_model: StochasticMechanisticICENODE,
+                                               segmented_admission: SegmentedAdmission,
+                                               stochastic_mechanistic_icenode_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
+
+    return stochastic_mechanistic_icenode_model(admission=segmented_admission,
+                                                embedded_admission=stochastic_mechanistic_icenode_embedded_admission,
+                                                precomputes=Precomputes())
 
 
 @pytest.mark.serial_test
@@ -209,6 +245,13 @@ def test_icenode_icnn_predictions(icenode_icnn_predictions: AdmissionPrediction)
 def test_stochastic_icenode_predictions(stochastic_icenode_predictions: AdmissionPrediction):
     assert isinstance(stochastic_icenode_predictions, AdmissionPrediction)
     assert stochastic_icenode_predictions.leading_observable.value.shape == stochastic_icenode_predictions.admission.leading_observable.value.shape
+
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_stochastic_mechanistic_icenode_predictions(stochastic_mechanistic_icenode_predictions: AdmissionPrediction):
+    assert isinstance(stochastic_mechanistic_icenode_predictions, AdmissionPrediction)
+    assert stochastic_mechanistic_icenode_predictions.leading_observable.value.shape == stochastic_mechanistic_icenode_predictions.admission.leading_observable.value.shape
 
 
 @pytest.mark.serial_test
@@ -249,8 +292,9 @@ def test_gru_ode_bayes_model_grad_apply(gru_ode_bayes_model: GRUODEBayes, segmen
 
 @pytest.mark.serial_test
 @pytest.mark.usefixtures('jax_cpu_execution')
-def test_stochastic_icenode_model_grad_apply(stochastic_icenode_model: StochasticInICENODELite, segmented_admission: SegmentedAdmission,
-                                        stochastic_icenode_embedded_admission: EmbeddedAdmission):
+def test_stochastic_icenode_model_grad_apply(stochastic_icenode_model: StochasticInICENODELite,
+                                             segmented_admission: SegmentedAdmission,
+                                             stochastic_icenode_embedded_admission: EmbeddedAdmission):
     if len(segmented_admission.leading_observable) == 0:
         pytest.skip("No leading observable")
 
@@ -263,7 +307,6 @@ def test_stochastic_icenode_model_grad_apply(stochastic_icenode_model: Stochasti
 
     grad = eqx.filter_grad(forward)(stochastic_icenode_model)
     assert not tree_hasnan(grad)
-
 
 # @pytest.fixture
 # def intervention_uncertainty_weighting() -> InterventionUncertaintyWeightingScheme:

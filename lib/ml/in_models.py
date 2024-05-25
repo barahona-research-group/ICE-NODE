@@ -17,7 +17,8 @@ from jaxtyping import PyTree
 from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
-    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver
+    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
+    ICNNObsExtractor
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -487,10 +488,10 @@ class StochasticMechanisticICENODE(InICENODELite):
         return HiddenObsICNNImputer(persistent_memory_size=state_size // 5)
 
     @staticmethod
-    def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
-        return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
-                              hidden_size_multiplier=3, depth=6,
-                              key=key)
+    def _make_obs_dec(config, observables_size, key) -> ICNNObsExtractor:
+        return ICNNObsExtractor(observables_size=observables_size, state_size=config.state,
+                                hidden_size_multiplier=3, depth=6,
+                                key=key)
 
 
 class GRUODEBayes(InICENODELite):

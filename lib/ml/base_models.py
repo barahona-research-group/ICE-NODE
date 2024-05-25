@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Literal, Union, Final, Callable, Any, List
+from typing import Tuple, Optional, Literal, Union, Final, Callable, Any
 
 import equinox as eqx
 import jax
@@ -400,11 +400,8 @@ class ICNNObsDecoder(eqx.Module):
         return obs
 
 
-class VectorComponentExtractor(eqx.Module):
-    split: List[int]
-    index: int
-
+class ICNNObsExtractor(ICNNObsDecoder):
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        return jnp.split(x, self.split)[self.index]
+        return jnp.split(x, [self.state_size])[1]
