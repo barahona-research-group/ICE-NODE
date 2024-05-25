@@ -24,10 +24,10 @@
     "model": {
         "_type": "ICENODEConfig",
         "lead_predictor": "monotonic",
-        "state": 15,
+        "state": 30,
         "dynamics": "mlp"
     },
-    "model_classname": "InICENODEMechanistic",
+    "model_classname": "StochasticMechanisticICENODE",
     "model_snapshot_frequency": 10,
     "reporting": {
         "_type": "ReportingConfig",

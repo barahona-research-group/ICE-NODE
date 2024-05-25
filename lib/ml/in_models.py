@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import fields
-from typing import Tuple, Optional, Literal, Type, Self
+from typing import Tuple, Optional, Literal, Type, Self, Dict, Any
 
 import equinox as eqx
 import jax
@@ -26,7 +26,7 @@ from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from .state_dynamics import GRUDynamics
 from .state_obs_imputers import DirectGRUStateImputer, StateObsLinearLeastSquareImpute, \
-    DirectGRUStateProbabilisticImputer, StateObsICNNImputer
+    DirectGRUStateProbabilisticImputer, StateObsICNNImputer, HiddenObsICNNImputer
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission, ObservablesDistribution
@@ -136,7 +136,7 @@ class InICENODE(InpatientModel):
                  hosp_procedures_size: Optional[int] = None,
                  demographic_size: Optional[int] = None,
                  observables_size: Optional[int] = None, *,
-                 key: "jax.random.PRNGKey", **lead_mlp_kwargs):
+                 key: "jax.random.PRNGKey", lead_mlp_kwargs: Dict[str, Any] = None):
         super().__init__(config=config)
 
         (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key,
@@ -172,7 +172,8 @@ class InICENODE(InpatientModel):
         self.f_lead_dec = self._make_lead_dec(input_size=config.state,
                                               lead_times=lead_times,
                                               predictor=config.lead_predictor,
-                                              key=lead_key, **lead_mlp_kwargs)
+                                              observables_size=observables_size,
+                                              key=lead_key, mlp_kwargs=lead_mlp_kwargs or dict())
 
     @property
     def dyn_params_list(self):
@@ -210,7 +211,8 @@ class InICENODE(InpatientModel):
             input_size: int,
             lead_times: Tuple[float, ...],
             predictor: LeadPredictorName,
-            key: jrandom.PRNGKey, **mlp_kwargs
+            key: jrandom.PRNGKey, mlp_kwargs: Dict[str, Any],
+            observables_size: int, **kwargs
     ) -> DirectLeadPredictorWrapper:
         return DirectLeadPredictorWrapper(input_size, lead_times, predictor, key, **mlp_kwargs)
 
@@ -425,6 +427,70 @@ class StochasticInICENODELite(InICENODELite):
         return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
                                                   diffusion=f_diffusion,
                                                   second=1 / 3600.0, dt0=60.0)
+
+
+class StochasticMechanisticICENODE(InICENODELite):
+
+    @staticmethod
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig,
+                  *,
+                  key: jrandom.PRNGKey, observables_size: Optional[int] = None, **kwargs) -> StochasticNeuralODESolver:
+        interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
+        demographics_size = embeddings_config.demographic or 0
+        integrand_size = model_config.state + observables_size
+        if model_config.dynamics == "mlp":
+            f_dyn = CompiledMLP(in_size=integrand_size + interventions_size + demographics_size,
+                                out_size=integrand_size,
+                                activation=jnn.tanh,
+                                depth=2,
+                                width_size=integrand_size * 4,
+                                key=key)
+        elif model_config.dynamics == "gru":
+            f_dyn = GRUDynamics(integrand_size + interventions_size + demographics_size, integrand_size, key)
+        else:
+            raise ValueError(f"Unknown dynamics type: {model_config.dynamics}")
+
+        f_diffusion = DiffusionMLP(brownian_size=integrand_size // 5,
+                                   control_size=interventions_size + demographics_size,
+                                   state_size=integrand_size, key=key, depth=2, width_size=integrand_size * 2)
+        f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
+        f_diffusion = model_params_scaler(f_diffusion, 5e-2, eqx.is_inexact_array)
+        return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
+                                                  diffusion=f_diffusion,
+                                                  second=1 / 3600.0, dt0=60.0)
+
+    @staticmethod
+    def _make_init(embeddings_config: AdmissionEmbeddingsConfig,
+                   state_size: int, key: jrandom.PRNGKey, observables_size: int = 0, **kwargs) -> CompiledMLP:
+        dx_codes_size = embeddings_config.dx_codes or 0
+        demographic_size = embeddings_config.demographic or 0
+        integrand_size = state_size + observables_size
+        return CompiledMLP(dx_codes_size + demographic_size,
+                           integrand_size,
+                           integrand_size * 3,
+                           depth=2,
+                           key=key)
+
+    @staticmethod
+    def _make_lead_dec(
+            input_size: int,
+            lead_times: Tuple[float, ...],
+            predictor: LeadPredictorName,
+            key: jrandom.PRNGKey, mlp_kwargs: Dict[str, Any], observables_size: int, **kwargs
+    ) -> DirectLeadPredictorWrapper:
+        integrand_size = input_size + observables_size
+        return DirectLeadPredictorWrapper(integrand_size, lead_times, predictor, key, **mlp_kwargs)
+
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> HiddenObsICNNImputer:
+        return HiddenObsICNNImputer(persistent_memory_size=state_size // 5)
+
+    @staticmethod
+    def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
+        return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
+                              hidden_size_multiplier=3, depth=6,
+                              key=key)
 
 
 class GRUODEBayes(InICENODELite):

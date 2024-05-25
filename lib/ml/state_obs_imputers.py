@@ -150,11 +150,32 @@ class StateObsICNNImputer(eqx.Module):
         # init_obs: obs_decoder(forecasted_state).
         # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
-        input = jnp.hstack((forecasted_state, obs_decoder(forecasted_state)))
+        init_obs = jnp.where(observables_mask,  true_observables, obs_decoder(forecasted_state))
+        input = jnp.hstack((forecasted_state, init_obs))
         mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
         mask = mask.at[obs_decoder.state_size:].set(observables_mask)
         output = obs_decoder.partial_input_optimise(input, mask)
         state, _ = jnp.split(output, [obs_decoder.state_size])
         return state
+
+
+class HiddenObsICNNImputer(eqx.Module):
+    persistent_memory_size: int  # e.g., obs_decoder.state_size // 3
+
+    @eqx.filter_jit
+    def __call__(self,
+                 obs_decoder: ICNNObsDecoder,
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray) -> jnp.ndarray:
+        # init_obs: obs_decoder(forecasted_state).
+        # input: (persistent_hidden_confounder, hidden_confounder, init_obs).
+        # mask: (ones_like(state_mem), zeros_like(state_hidden).
+        init_obs = jnp.where(observables_mask, true_observables, obs_decoder(forecasted_state))
+        hidden_confounder = forecasted_state[:obs_decoder.state_size]
+        input = jnp.hstack((hidden_confounder, init_obs))
+        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
+        mask = mask.at[obs_decoder.state_size:].set(observables_mask)
+        return obs_decoder.partial_input_optimise(input, mask)
 
 ## TODO: use Invertible NN for embeddings: https://proceedings.mlr.press/v162/zhi22a/zhi22a.pdf
