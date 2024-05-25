@@ -18,7 +18,7 @@ from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
     NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
-    ICNNObsExtractor
+    ICNNObsExtractor, SkipShortIntervalsWrapper
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -405,7 +405,7 @@ class StochasticInICENODELite(InICENODELite):
     @staticmethod
     def _make_dyn(model_config: ICENODEConfig,
                   embeddings_config: AdmissionEmbeddingsConfig, *,
-                  key: jrandom.PRNGKey, **kwargs) -> StochasticNeuralODESolver:
+                  key: jrandom.PRNGKey, **kwargs) -> SkipShortIntervalsWrapper:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
         if model_config.dynamics == "mlp":
@@ -425,9 +425,10 @@ class StochasticInICENODELite(InICENODELite):
                                    state_size=model_config.state, key=key, depth=2, width_size=model_config.state * 2)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         f_diffusion = model_params_scaler(f_diffusion, 5e-2, eqx.is_inexact_array)
-        return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
-                                                  diffusion=f_diffusion,
-                                                  second=1 / 3600.0, dt0=60.0)
+        f_odeint = StochasticNeuralODESolver.from_mlp(drift=f_dyn,
+                                                      diffusion=f_diffusion,
+                                                      second=1 / 3600.0, dt0=60.0)
+        return SkipShortIntervalsWrapper(solver=f_odeint, min_interval=1.0)
 
 
 class StochasticMechanisticICENODE(InICENODELite):
@@ -436,7 +437,7 @@ class StochasticMechanisticICENODE(InICENODELite):
     def _make_dyn(model_config: ICENODEConfig,
                   embeddings_config: AdmissionEmbeddingsConfig,
                   *,
-                  key: jrandom.PRNGKey, observables_size: Optional[int] = None, **kwargs) -> StochasticNeuralODESolver:
+                  key: jrandom.PRNGKey, observables_size: Optional[int] = None, **kwargs) -> SkipShortIntervalsWrapper:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
         demographics_size = embeddings_config.demographic or 0
         integrand_size = model_config.state + observables_size
@@ -457,9 +458,10 @@ class StochasticMechanisticICENODE(InICENODELite):
                                    state_size=integrand_size, key=key, depth=2, width_size=integrand_size * 2)
         f_dyn = model_params_scaler(f_dyn, 1e-2, eqx.is_inexact_array)
         f_diffusion = model_params_scaler(f_diffusion, 5e-2, eqx.is_inexact_array)
-        return StochasticNeuralODESolver.from_mlp(drift=f_dyn,
-                                                  diffusion=f_diffusion,
-                                                  second=1 / 3600.0, dt0=60.0)
+        f_odeint = StochasticNeuralODESolver.from_mlp(drift=f_dyn,
+                                                      diffusion=f_diffusion,
+                                                      second=1 / 3600.0, dt0=60.0)
+        return SkipShortIntervalsWrapper(solver=f_odeint, min_interval=1.0)
 
     @staticmethod
     def _make_init(embeddings_config: AdmissionEmbeddingsConfig,

@@ -214,6 +214,19 @@ class StochasticNeuralODESolver(eqx.Module):
         return sol.ys
 
 
+class SkipShortIntervalsWrapper(eqx.Module):
+    solver: StochasticNeuralODESolver | NeuralODESolver
+    min_interval: float = 1.0  # seconds
+
+    def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
+                 u: Optional[PyTree] = None,
+                 precomputes: Optional[Precomputes] = None,
+                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+        if t1 - t0 < self.min_interval * self.solver.SECOND:
+            return x0
+        return self.solver(x0, t0, t1, saveat, u, precomputes, key)
+
+
 class MonotonicLeadingObsPredictor(eqx.Module):
     mlp: eqx.nn.MLP
 
