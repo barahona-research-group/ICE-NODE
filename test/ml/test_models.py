@@ -212,7 +212,6 @@ def stochastic_mechanistic_icenode_embedded_admission(
 def stochastic_mechanistic_icenode_predictions(stochastic_mechanistic_icenode_model: StochasticMechanisticICENODE,
                                                segmented_admission: SegmentedAdmission,
                                                stochastic_mechanistic_icenode_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
-
     return stochastic_mechanistic_icenode_model(admission=segmented_admission,
                                                 embedded_admission=stochastic_mechanistic_icenode_embedded_admission,
                                                 precomputes=Precomputes())
