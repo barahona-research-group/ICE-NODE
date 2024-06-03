@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Literal, Union, Final, Callable, Any
+from typing import Tuple, Optional, Literal, Union, Final, Callable, Any, Self
 
 import equinox as eqx
 import jax
@@ -7,12 +7,13 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import optax
 import optimistix as optx
-from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, Solution, PIDController, MultiTerm, \
+from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, PIDController, MultiTerm, \
     ControlTerm, VirtualBrownianTree, ReversibleHeun
 from jax.experimental.jet import jet
 from jaxtyping import PyTree
 
 from .model import (Precomputes)
+from .. import VxData
 
 LeadPredictorName = Literal['monotonic', 'mlp']
 
@@ -111,6 +112,27 @@ class ForcedVectorField(eqx.Module):
         return self.mlp(jnp.hstack((x, u)))
 
 
+class ODEMetrics(VxData):
+    n_steps: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
+    n_hours: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
+
+    @property
+    def n_solutions(self):
+        return len(self.n_steps)
+
+    @property
+    def n_steps_per_solution(self):
+        return sum(self.n_steps) / self.n_solutions
+
+    @property
+    def n_steps_per_hour(self):
+        return sum(self.n_steps) / sum(self.n_hours)
+
+    def __add__(self, other: Self) -> Self:
+        return ODEMetrics(n_steps=jnp.hstack((self.n_steps, other.n_steps)),
+                          n_hours=jnp.hstack((self.n_hours, other.n_hours)))
+
+
 class NeuralODESolver(eqx.Module):
     f: ForcedVectorField
     SECOND: Final[float] = 1 / 3600.0  # Time units in one second.
@@ -134,7 +156,8 @@ class NeuralODESolver(eqx.Module):
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
                  u: Optional[PyTree] = None,
                  precomputes: Optional[Precomputes] = None,
-                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+                 key: Optional[jrandom.PRNGKey] = None) -> Tuple[
+        Union[jnp.ndarray, Tuple[jnp.ndarray, ...]], ODEMetrics]:
         sol = diffeqsolve(
             terms=self.ode_term,
             solver=Tsit5(),
@@ -149,16 +172,13 @@ class NeuralODESolver(eqx.Module):
             stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
             throw=True,
             max_steps=None)
-        return self.get_solution(sol)
+        return sol.ys, ODEMetrics(n_steps=jnp.array(sol.stats['num_steps']), n_hours=jnp.array(t1 - t0))
 
     def get_args(self, x0: jnp.ndarray, u: Optional[jnp.ndarray], precomputes: Optional[Precomputes]) -> PyTree:
         return u if u is not None else self.zero_force
 
     def get_aug_x0(self, x0: jnp.ndarray, precomputes: Precomputes) -> PyTree:
         return x0
-
-    def get_solution(self, sol: Solution) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
-        return sol.ys
 
 
 class StochasticNeuralODESolver(eqx.Module):
@@ -188,7 +208,8 @@ class StochasticNeuralODESolver(eqx.Module):
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
                  u: Optional[PyTree] = None,
                  precomputes: Optional[Precomputes] = None,
-                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+                 key: Optional[jrandom.PRNGKey] = None) -> Tuple[
+        Union[jnp.ndarray, Tuple[jnp.ndarray, ...]], ODEMetrics]:
         sol = diffeqsolve(
             terms=self.stochastic_ode_terms(t0, t1, key),
             solver=ReversibleHeun(),
@@ -202,16 +223,13 @@ class StochasticNeuralODESolver(eqx.Module):
             stepsize_controller=PIDController(rtol=1.4e-8, atol=1.4e-8),
             throw=True,
             max_steps=None)
-        return self.get_solution(sol)
+        return sol.ys, ODEMetrics(n_steps=jnp.array(sol.stats['num_steps']), n_hours=jnp.array(t1 - t0))
 
     def get_args(self, x0: jnp.ndarray, u: Optional[jnp.ndarray], precomputes: Optional[Precomputes]) -> PyTree:
         return u if u is not None else self.zero_force
 
     def get_aug_x0(self, x0: jnp.ndarray, precomputes: Precomputes) -> PyTree:
         return x0
-
-    def get_solution(self, sol: Solution) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
-        return sol.ys
 
 
 class SkipShortIntervalsWrapper(eqx.Module):
@@ -221,9 +239,10 @@ class SkipShortIntervalsWrapper(eqx.Module):
     def __call__(self, x0, t0: float, t1: float, saveat: Optional[SaveAt] = None,
                  u: Optional[PyTree] = None,
                  precomputes: Optional[Precomputes] = None,
-                 key: Optional[jrandom.PRNGKey] = None) -> Union[jnp.ndarray, Tuple[jnp.ndarray, ...]]:
+                 key: Optional[jrandom.PRNGKey] = None) -> Tuple[
+        Union[jnp.ndarray, Tuple[jnp.ndarray, ...]], ODEMetrics]:
         if t1 - t0 < self.min_interval * self.solver.SECOND:
-            return x0
+            return x0, ODEMetrics()
         return self.solver(x0, t0, t1, saveat, u, precomputes, key)
 
 
