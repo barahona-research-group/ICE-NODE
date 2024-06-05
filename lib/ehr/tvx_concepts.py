@@ -240,9 +240,9 @@ class InpatientObservables(VxData):
 
 class ObservablesDistribution(InpatientObservables):
 
-    def __init__(self, time: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray, mask: jnp.ndarray):
-        super().__init__(time, mean, mask)
-        self.extra_layers = (std,)
+    @staticmethod
+    def compile(time: jnp.ndarray, mean: jnp.ndarray, std: jnp.ndarray, mask: jnp.ndarray) -> ObservablesDistribution:
+        return ObservablesDistribution(time=time, value=mean, mask=mask, extra_layers=(std,))
 
     @property
     def mean(self):

@@ -397,6 +397,13 @@ class MaskedOptimiser(eqx.Module):
         return self.optim.init(params)
 
 
+class ImputerMetrics(VxData):
+    n_steps: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
+
+    def __add__(self, other: Self) -> Self:
+        return ImputerMetrics(n_steps=jnp.hstack((self.n_steps, other.n_steps)))
+
+
 class ICNNObsDecoder(eqx.Module):
     f_energy: ICNN
     observables_size: int
@@ -411,23 +418,25 @@ class ICNNObsDecoder(eqx.Module):
         self.f_energy = ICNN(input_size, input_size * hidden_size_multiplier, depth, key)
 
     @eqx.filter_jit
-    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray):
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         def masked_input_energy(y: jnp.ndarray, args: Any = None) -> jnp.ndarray:
             return self.f_energy(jnp.where(fixed_mask, input, y))
 
-        return optx.minimise(masked_input_energy,
-                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=20),
-                             solver=optx.BestSoFarMinimiser(
-                                 optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-4), fixed_mask),
-                                                     rtol=1e-8, atol=1e-8)),
-                             max_steps=2 ** 16,
-                             y0=input, throw=False).value
+        sol = optx.minimise(masked_input_energy,
+                            adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=20),
+                            solver=optx.BestSoFarMinimiser(
+                                optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-4), fixed_mask),
+                                                    rtol=1e-8, atol=1e-8)),
+                            max_steps=2 ** 16,
+                            y0=input, throw=False)
+        num_steps = sol.stats['num_steps']
+        return sol.value, ImputerMetrics(n_steps=jnp.array(num_steps))
 
     @eqx.filter_jit
-    def __call__(self, state: jnp.ndarray) -> jnp.ndarray | float:
+    def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
         input = jnp.hstack((state, jnp.zeros(self.observables_size)))
         mask = jnp.zeros_like(input).at[:self.state_size].set(1)
-        output = self.partial_input_optimise(input, mask)
+        output, _ = self.partial_input_optimise(input, mask)
         _, obs = jnp.split(output, [self.state_size])
         return obs
 

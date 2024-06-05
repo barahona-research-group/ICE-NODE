@@ -12,10 +12,17 @@ from .ml import experiment
 from .ml import in_models
 from .ml import model
 from .ml import trainer
+from .ml import artefacts
+from .ml import state_obs_imputers
+from .ml import state_dynamics
+from .ml import base_models
+
 
 modules = [
+    # ml
     model, dx_models, in_models, embeddings, trainer,
     experiment, evaluation, stat,
+    artefacts, state_obs_imputers, state_dynamics, base_models,
     # schemes
     icd,
     # ehr

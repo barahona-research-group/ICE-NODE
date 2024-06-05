@@ -18,7 +18,7 @@ from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction, ModelBehaviouralMetrics
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
     NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
-    ICNNObsExtractor, SkipShortIntervalsWrapper, ODEMetrics
+    ICNNObsExtractor, SkipShortIntervalsWrapper, ODEMetrics, ImputerMetrics
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -72,7 +72,8 @@ class ICENODEStateTrajectory(InpatientObservables):
 
 
 class ICENODEMetrics(ModelBehaviouralMetrics):
-    ode_metrics: ODEMetrics
+    ode: ODEMetrics
+    imputer: ImputerMetrics
 
 
 class AdmissionTrajectoryPrediction(AdmissionPrediction):
@@ -294,6 +295,7 @@ class InICENODE(InpatientModel):
             embedded_admission: EmbeddedAdmission, precomputes: Precomputes
     ) -> AdmissionTrajectoryPrediction:
         ode_stats = ODEMetrics()
+        imputer_stats = ImputerMetrics()
         prediction = AdmissionTrajectoryPrediction(admission=admission)
         int_e = empty_if_none(embedded_admission.interventions)
         demo_e = empty_if_none(embedded_admission.demographic)
@@ -318,11 +320,13 @@ class InICENODE(InpatientModel):
             for obs_t, obs_val, obs_mask in segment_obs:
                 key, subkey = jrandom.split(key)
                 # if time-diff is more than 1 seconds, we integrate.
-                forecasted_state, stats = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force, precomputes=precomputes,
-                                                     key=subkey)
-                ode_stats += stats
+                forecasted_state, ode_stats_ = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force,
+                                                          precomputes=precomputes,
+                                                          key=subkey)
+                ode_stats += ode_stats_
                 forecasted_state = forecasted_state.squeeze()
-                state = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask)
+                state, imputer_stats_ = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask)
+                imputer_stats += imputer_stats_
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
             key, subkey = jrandom.split(key)
@@ -332,7 +336,7 @@ class InICENODE(InpatientModel):
             state = state.squeeze()
             t = segment_t1
 
-        prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode_metrics=ode_stats))
+        prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
         if self.f_outcome_dec is not None:
             prediction = prediction.add(outcome=CodesVector(self.f_outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
@@ -515,15 +519,15 @@ class GRUODEBayes(InICENODELite):
                                             admission: SegmentedAdmission | Admission,
                                             state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         pred_obs_mean, pred_obs_std = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.forecasted_state)
-        return ObservablesDistribution(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
-                                       mask=admission.observables.mask)
+        return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
+                                               mask=admission.observables.mask)
 
     def decode_state_trajectory_adjusted_observables(self,
                                                      admission: SegmentedAdmission | Admission,
                                                      state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         pred_obs_mean, pred_obs_std = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.adjusted_state)
-        return ObservablesDistribution(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
-                                       mask=admission.observables.mask)
+        return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
+                                               mask=admission.observables.mask)
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ProbMLP:

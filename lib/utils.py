@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import zipfile
+from datetime import datetime
 from typing import Optional
 
 import equinox as eqx
@@ -156,7 +157,17 @@ def append_params_to_zip(model, params_name, zipfile_fname):
     with zipfile.ZipFile(
             translate_path(zipfile_fname), compression=zipfile.ZIP_STORED, mode="a"
     ) as archive:
-        with archive.open(params_name, "w") as zip_member:
+        # create a ZipInfo model with date_time.
+        file_info = zipfile.ZipInfo(
+            filename=params_name,
+            date_time=datetime.now().timetuple()[:6],
+            # for demo purpose. may need carefully examine timezone in case of practice.
+        )
+
+        # important: explicitly set compress_type here to sync with ZipFile,
+        # otherwise a bad default ZIP_STORED will be used.
+        file_info.compress_type = archive.compression
+        with archive.open(file_info, "w") as zip_member:
             eqx.tree_serialise_leaves(zip_member, model)
 
 

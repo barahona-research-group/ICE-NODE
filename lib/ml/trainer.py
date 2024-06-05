@@ -27,7 +27,7 @@ from ..base import Config, Module
 from ..ehr import TVxEHR
 from ..metric.loss import BinaryLossLiteral, NumericLossLiteral, ProbNumericLossLiteral
 from ..metric.stat import (MetricsCollection, Metric, OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss,
-                           ProbObsPredictionLoss)
+                           ProbObsPredictionLoss, AdjustedProbObsPredictionLoss)
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 
@@ -975,7 +975,7 @@ class ProbTrainer(Trainer):
     def prob_adjusted_obs_loss(self) -> ProbObsPredictionLoss:
         if self.config.prob_adjusted_obs_loss is None:
             return lambda p: 0.0
-        return ProbObsPredictionLoss(loss_key=self.config.prob_adjusted_obs_loss)
+        return AdjustedProbObsPredictionLoss(loss_key=self.config.prob_adjusted_obs_loss)
 
     def batch_predict(self, model: AbstractModel, patients: TVxEHR):
         return model.batch_predict(patients, leave_pbar=False)
