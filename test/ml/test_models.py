@@ -282,7 +282,7 @@ def test_gru_ode_bayes_model_grad_apply(gru_ode_bayes_model: GRUODEBayes, segmen
                            precomputes=Precomputes())
         p = AdmissionsPrediction().add(subject_id='test_subj', prediction=prediction)
         loss1 = ProbObsPredictionLoss(loss_key='log_normal')(p)
-        loss2 = AdjustedObsPredictionLoss(loss_key='kl_gaussian')(p)
+        loss2 = AdjustedProbObsPredictionLoss(loss_key='kl_gaussian')(p)
         return loss1 + loss2
 
     grad = eqx.filter_grad(forward)(gru_ode_bayes_model)
