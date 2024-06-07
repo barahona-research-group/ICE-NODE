@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pytest
 from lib.metric.stat import VisitsAUC, ObsPredictionLossMetric, OutcomePredictionLossMetric, LeadPredictionLossMetric, \
@@ -13,13 +13,14 @@ class TestGlobalMetric:
         return request.param()
 
     @pytest.fixture
-    def metric_out(self, metric: Metric, identical_predictions: AdmissionsPrediction) -> Dict[str, float]:
+    def metric_out(self, metric: Metric, identical_predictions: AdmissionsPrediction) -> Tuple[Tuple[str,...], Tuple[float, ...]]:
         return metric(identical_predictions)
 
-    def test_metric_out(self, metric: ObsPredictionLossMetric, metric_out: Dict[str, float]):
-        assert isinstance(metric_out, dict)
-        assert set(metric_out.keys()) == set(metric.estimands())
-        assert all(isinstance(v, (jnp.ndarray, float)) for v in metric_out.values())
+    def test_metric_out(self, metric: ObsPredictionLossMetric, metric_out: Tuple[Tuple[str,...], Tuple[float, ...]]):
+        assert isinstance(metric_out[0], tuple)
+        assert isinstance(metric_out[1], tuple)
+        assert set(metric_out[0][:-1]) == set(metric.column_names())
+        assert all(isinstance(v, (jnp.ndarray, float)) for v in metric_out[1])
 
 
 class TestLeadingAKIPredictionAccuracy:

@@ -275,118 +275,84 @@ def nan_compute_auc(v_truth, v_preds):
 
 class Metric(Module):
     config: Config = field(default_factory=Config)
-
-    def estimands(self) -> Tuple[str, ...]:
-        return tuple()
-
-    def estimands_optimal_directions(self) -> Tuple[int, ...]:
-        return tuple()
-
-    @cached_property
-    def estimand_optimal_direction(self) -> Dict[str, int]:
-        assert len(self.estimands()) == len(self.estimands_optimal_directions()), \
-            f'{self.classname()} must define estimands and their optimal directions.'
-        return dict(zip(self.estimands(), self.estimands_optimal_directions()))
+    estimands: Tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
-    def classname(cls) -> str:
-        return cls.__name__
+    def expand_metric_label(cls, estimand: str, n: Optional[int] = None) -> Tuple[str, ...]:
+        if n is None:
+            return f'{cls.__name__}.{estimand}',
+        return tuple(f'{cls.__name__}.{estimand}[{i}]' for i in range(n))
 
-    def estimand_column_name(self, estimand: str) -> str:
-        return f'{self.classname()}.{estimand}'
+    @staticmethod
+    def expand_metrics_labels(metric_labels: Tuple[str, ...], n: Optional[int] = None) -> Tuple[str, ...]:
+        return sum((Metric.expand_metric_label(label, n) for label in metric_labels), ())
 
-    @cached_property
-    def column_names(self) -> Tuple[str, ...]:
-        return tuple(map(self.estimand_column_name, self.estimands()))
+    @classmethod
+    def estimand_column_name(cls, estimand: str, index: Optional[int]) -> str:
+        return f'{cls.__name__}.{estimand}' + (f'[{index}]' if index is not None else '')
+
+    def column_names(self, n: Optional[int] = None) -> Tuple[str, ...]:
+        return self.expand_metrics_labels(self.estimands, n)
+
+    def __call__(self, predictions: AdmissionsPrediction) -> Tuple[Tuple[str, ...], Tuple[float, ...]]:
+        timenow = datetime.now()
+        values = self.apply(predictions)
+        n = None
+        if isinstance(next(iter(values)), (jnp.ndarray, onp.ndarray)) and onp.ndim(next(iter(values))) > 0:
+            n = onp.size(next(iter(values)))
+            values = tuple(onp.hstack(values).flatten().tolist())
+        eval_time = (datetime.now() - timenow).total_seconds()
+        values = values + (eval_time,)
+        columns = self.column_names(n) + (f'{self.__class__.__name__}.eval_time',)
+        return columns, values
 
     @abstractmethod
-    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
+    def apply(self, predictions: AdmissionsPrediction) -> Tuple[float | Array, ...]:
         pass
 
-    def estimand_values(self, result: Dict[str, float]) -> Tuple[float, ...]:
-        return tuple(map(result.get, self.estimands()))
-
-    def to_dict(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
-        result = self(predictions)
-        return dict(zip(self.column_names, self.estimand_values(result)))
-
-    def to_df(self, index: int | str, predictions: AdmissionsPrediction) -> pd.DataFrame:
-        timenow = datetime.now()
-        data = self.to_dict(predictions)
-        eval_time = (datetime.now() - timenow).total_seconds()
-        data.update({f'{self.classname()}.eval_time': eval_time})
-        return pd.DataFrame(data, index=[index])
-
-    def value_extractor(self, **kwargs) -> Callable[[pd.DataFrame, Optional[int]], float | Tuple[int, float]]:
-        field_name = kwargs.get('estimand', self.estimands()[0])
-        column_name = self.estimand_column_name(field_name)
-        return self.from_df_functor(column_name, self.estimand_optimal_direction[field_name])
-
-    def from_df_functor(self, column_name, direction) -> Callable[[pd.DataFrame, str | int], float | Tuple[int, float]]:
-
-        def from_df(df: pd.DataFrame, index: str | int = -1) -> float | Tuple[int, float]:
-            if isinstance(df, AdmissionsPrediction):
-                df = self.to_df(index, df)
-
-            if index == 'optimum':
-                if direction == 1:
-                    return df[column_name].argmax(), df[column_name].max()
-                else:
-                    return df[column_name].argmin(), df[column_name].min()
-            else:
-                return df[column_name].iloc[index]
-
-        return from_df
+    @staticmethod
+    def to_df(self, index: int | str, results: Tuple[Tuple[str, ...], Tuple[float, ...]]) -> pd.DataFrame:
+        columns, values = results
+        return pd.DataFrame([list(values)], columns=list(columns), index=[index])
 
 
 class VisitsAUC(Metric):
+    estimands: Tuple[str, ...] = field(default_factory=lambda: ('macro_auc', 'micro_auc'))
 
-    def estimands(self) -> Tuple[str, ...]:
-        return 'macro_auc', 'micro_auc'
-
-    def estimands_optimal_directions(self) -> Tuple[int, ...]:
-        return 1, 1
-
-    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
+    def apply(self, predictions: AdmissionsPrediction) -> Tuple[float | Array, ...]:
         ground_truth_vectors, prediction_vectors = [], []
         for ground_truth_outcome, predicted_outcome in predictions.iter_attr('outcome'):
             ground_truth_vectors.append(ground_truth_outcome.vec)
             prediction_vectors.append(predicted_outcome.vec)
-        return {
-            'macro_auc':
-                compute_auc(onp.hstack(ground_truth_vectors), onp.hstack(prediction_vectors)),
-            'micro_auc':
-                silent_nanmean(onp.array(list(map(
-                    compute_auc,
-                    ground_truth_vectors,
-                    prediction_vectors,
-                ))))
-        }
+        macro_auc = compute_auc(onp.hstack(ground_truth_vectors), onp.hstack(prediction_vectors))
+        micro_auc = silent_nanmean(onp.array(list(map(
+            compute_auc,
+            ground_truth_vectors,
+            prediction_vectors,
+        ))))
+        return macro_auc, micro_auc
 
 
 class LossMetricConfig(Config):
-    loss_keys: Tuple[str] = field(default_factory=tuple)
+    loss_keys: Tuple[str, ...] = field(default_factory=tuple)
+    per_column: bool = False
 
 
 class LossMetric(Metric):
     config: LossMetricConfig = field(default_factory=lambda: LossMetricConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = PredictionLoss
+    estimands: Tuple[str, ...] = field(default_factory=lambda: tuple())
+
+    def __post_init__(self):
+        self.estimands = tuple(sorted(self.config.loss_keys))
 
     @cached_property
     def loss_dictionary(self) -> Dict[str, PredictionLoss]:
-        return {k: self.prediction_loss_class(loss_key=k) for k in self.config.loss_keys}
+        return {k: self.prediction_loss_class(loss_key=k, per_column=self.config.per_column) for k in
+                self.config.loss_keys}
 
-    def estimands_optimal_directions(self) -> Tuple[int, ...]:
-        return tuple(1 if 'r2' in k else 0 for k in self.config.loss_keys)
-
-    def estimands(self) -> Tuple[str, ...]:
-        return tuple(sorted(self.config.loss_keys))
-
-    def __len__(self):
-        return len(self.estimands())
-
-    def __call__(self, predictions: AdmissionsPrediction) -> Dict[str, float]:
-        return {k: self.prediction_loss_class(loss_key=k)(predictions) for k in self.config.loss_keys}
+    def apply(self, predictions: AdmissionsPrediction) -> Tuple[float | Array, ...]:
+        return tuple(self.loss_dictionary[k](predictions) for k in self.estimands)
 
 
 class ObsPredictionLossConfig(LossMetricConfig):
@@ -396,6 +362,10 @@ class ObsPredictionLossConfig(LossMetricConfig):
 class ObsPredictionLossMetric(LossMetric):
     config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig())
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
+
+
+class PerColumnObsPredictionLoss(ObsPredictionLossMetric):
+    config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig(per_column=True))
 
 
 class OutcomePredictionLossConfig(LossMetricConfig):
@@ -423,11 +393,25 @@ class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
 class LeadingAKIPredictionAccuracy(Metric):
     config: LeadingPredictionAccuracyConfig
 
-    @property
-    def lead_extractor(self):
-        return dict(
-            zip(range(len(self.config.leading_hours)),
-                [f'{self.config.observable_code}_next_{h}hrs' for h in self.config.leading_hours]))
+    def __post_init__(self):
+        timestamp_class = [
+            'negative', 'unknown', 'first_pre_emergence',
+            'later_pre_emergence', 'recovery_window', 'recovered'
+        ]
+
+        fields = [f'n_timestamps_{c}' for c in timestamp_class]
+        fields += [f'n_admissions_{c}' for c in timestamp_class]
+        time_window = self.config.leading_hours
+        t1 = time_window[-1]
+        pre_emergence_types = [
+            'first_pre_emergence', 'later_pre_emergence',
+            'pre_emergence'
+        ]
+        for t0 in time_window[:-1]:
+            for c in pre_emergence_types:
+                fields.append(f'n_timestamps_{c}_{t0}-{t1}')
+                fields.append(f'AUC_{c}_{t0}-{t1}')
+        self.estimands = tuple(fields)
 
     def _annotate_lead_predictions(self, prediction: pd.DataFrame,
                                    ground_truth: pd.DataFrame):
@@ -604,27 +588,7 @@ class LeadingAKIPredictionAccuracy(Metric):
                        df['next_occurrence_time'] == onp.inf), 'class'] = 'recovered'
         return prediction_df
 
-    def estimands(self):
-        timestamp_class = [
-            'negative', 'unknown', 'first_pre_emergence',
-            'later_pre_emergence', 'recovery_window', 'recovered'
-        ]
-
-        fields = [f'n_timestamps_{c}' for c in timestamp_class]
-        fields += [f'n_admissions_{c}' for c in timestamp_class]
-        time_window = self.config.leading_hours
-        t1 = time_window[-1]
-        pre_emergence_types = [
-            'first_pre_emergence', 'later_pre_emergence',
-            'pre_emergence'
-        ]
-        for t0 in time_window[:-1]:
-            for c in pre_emergence_types:
-                fields.append(f'n_timestamps_{c}_{t0}-{t1}')
-                fields.append(f'AUC_{c}_{t0}-{t1}')
-        return fields
-
-    def __call__(self, predictions: AdmissionsPrediction):
+    def apply(self, predictions: AdmissionsPrediction) -> Tuple[float, ...]:
         df = self._lead_dataframes(predictions)
         df = self._classify_timestamps(df)
         df_grouped = df.groupby('class')
@@ -667,7 +631,7 @@ class LeadingAKIPredictionAccuracy(Metric):
                 labels = onp.concatenate((neg_labels, pos_labels))
                 res[f'AUC_{c}_{t0}-{t1}'] = compute_auc(labels, values)
                 res[f'n_timestamps_{c}_{t0}-{t1}'] = len(df_t)
-        return res
+        return tuple(map(res.get, self.estimands))
 
 
 #

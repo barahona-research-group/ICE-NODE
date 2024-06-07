@@ -132,9 +132,9 @@ def auc_upset(auc_metric: M.DeLongTest, auc_tests: pd.DataFrame,
     # Assign each code to the best model (max AUC), then assign it as well
     # to any model with no significant difference with the best.
     for code_index in auc_tests.index:
-        auc = auc_metric.value_extractor(code_index=code_index, field='auc')
-        p_val = auc_metric.value_extractor(code_index=code_index,
-                                           field='p_val')
+        auc = auc_metric.table_value_extractor(code_index=code_index, field='auc')
+        p_val = auc_metric.table_value_extractor(code_index=code_index,
+                                                 field='p_val')
 
         # The first candidate model with the highest AUC.
         seed = max(models, key=lambda m: auc(auc_tests, model=m))
@@ -284,7 +284,7 @@ def top_k_tables(group_acc_metric: M.CodeGroupTopAlarmAccuracy,
     output = {}
     models = sorted(results.keys())
     for k in k_list:
-        acc_val = lambda m, i: group_acc_metric.value_extractor(
+        acc_val = lambda m, i: group_acc_metric.table_value_extractor(
             {
                 'k': k,
                 'group_index': i
