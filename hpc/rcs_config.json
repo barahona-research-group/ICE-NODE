@@ -22,7 +22,7 @@
 
 	"general72":
 	{
-		"spec": "#PBS -lselect=1:ncpus=32:mem=124gb",
+		"spec": "#PBS -lselect=1:ncpus=31:mem=123gb",
 		"array": 10,
 		"parallel": 5,
 		"hours": "72:0",
