@@ -6,7 +6,7 @@ import pytest
 from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import NumericScheme
 from lib.ehr.tvx_concepts import SegmentedAdmission
-from lib.metric.stat import ProbObsPredictionLoss, AdjustedProbObsPredictionLoss, ObsPredictionLoss
+from lib.metric.metrics import ProbObsPredictionLoss, AdjustedProbObsPredictionLoss, ObsPredictionLoss
 from lib.ml.artefacts import AdmissionsPrediction, AdmissionPrediction
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
 from lib.ml.in_models import InICENODE, LeadPredictorName, AdmissionTrajectoryPrediction, \

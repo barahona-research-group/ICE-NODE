@@ -4,7 +4,7 @@ from .base import Config, Module, VxData
 from .ehr import tvx_concepts, dataset, coding_scheme, transformations, tvx_transformations, tvx_ehr
 from .ehr.example_datasets import mimic3, cprd, mimiciv, mimiciv_aki
 from .ehr.example_schemes import icd
-from .metric import stat
+from .metric import metrics, loss_wrap
 from .ml import dx_models
 from .ml import embeddings
 from .ml import evaluation
@@ -21,7 +21,7 @@ from .ml import base_models
 modules = [
     # ml
     model, dx_models, in_models, embeddings, trainer,
-    experiment, evaluation, stat,
+    experiment, evaluation, metrics, loss_wrap,
     artefacts, state_obs_imputers, state_dynamics, base_models,
     # schemes
     icd,

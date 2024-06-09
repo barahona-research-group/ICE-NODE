@@ -20,7 +20,7 @@ EvaluationRunModel, EvaluationStatus as
                          EvaluationStatusModel, Results as ResultsModel, Metric
                          as MetricModel, get_or_create, create_tables)
 from ..ehr import TVxEHR
-from ..metric.stat import (MetricsCollection)
+from ..metric.metrics import (MetricsCollection)
 from ..utils import (load_config, zip_members)
 
 

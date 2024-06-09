@@ -1,8 +1,10 @@
 from typing import Dict, List, Tuple
 
+import pandas as pd
 import pytest
-from lib.metric.stat import VisitsAUC, ObsPredictionLossMetric, OutcomePredictionLossMetric, LeadPredictionLossMetric, \
-    Metric, LeadingPredictionAccuracyConfig, LeadingAKIPredictionAccuracy
+from lib.metric.metrics import VisitsAUC, ObsPredictionLossMetric, OutcomePredictionLossMetric, \
+    LeadPredictionLossMetric, \
+    Metric, LeadingPredictionAccuracyConfig, LeadingAKIPredictionAccuracy, MetricsOutput
 from lib.ml.artefacts import AdmissionsPrediction
 import jax.numpy as jnp
 
@@ -13,14 +15,17 @@ class TestGlobalMetric:
         return request.param()
 
     @pytest.fixture
-    def metric_out(self, metric: Metric, identical_predictions: AdmissionsPrediction) -> Tuple[Tuple[str,...], Tuple[float, ...]]:
+    def metric_out(self, metric: Metric, identical_predictions: AdmissionsPrediction) -> MetricsOutput:
         return metric(identical_predictions)
 
-    def test_metric_out(self, metric: ObsPredictionLossMetric, metric_out: Tuple[Tuple[str,...], Tuple[float, ...]]):
-        assert isinstance(metric_out[0], tuple)
-        assert isinstance(metric_out[1], tuple)
-        assert set(metric_out[0][:-1]) == set(metric.column_names())
-        assert all(isinstance(v, (jnp.ndarray, float)) for v in metric_out[1])
+    def test_metric_out(self, metric: ObsPredictionLossMetric, metric_out:  MetricsOutput):
+        assert isinstance(metric_out.values, tuple)
+        assert isinstance(metric_out.estimands, tuple)
+        assert metric_out.name == type(metric).__name__
+        assert metric_out.estimands == metric.estimands
+        assert len(metric_out.values) == len(metric.estimands)
+        assert isinstance(metric_out.as_df(), pd.DataFrame)
+        assert all(isinstance(v, (jnp.ndarray, float)) for v in metric_out.values)
 
 
 class TestLeadingAKIPredictionAccuracy:
@@ -60,13 +65,16 @@ class TestLeadingAKIPredictionAccuracy:
         return LeadingAKIPredictionAccuracy(config=config)
 
     @pytest.fixture
-    def metric_out(self, metric: VisitsAUC, identical_predictions: AdmissionsPrediction) -> Dict[str, float]:
+    def metric_out(self, metric: VisitsAUC, identical_predictions: AdmissionsPrediction) -> MetricsOutput:
         return metric(identical_predictions)
 
-    def test_leading_auc(self, metric: VisitsAUC, metric_out: Dict[str, float]):
-        assert isinstance(metric_out, dict)
-        estimand_set = set(metric.estimands())
-        assert set(metric_out.keys()).issubset(estimand_set)
-        assert all(isinstance(v, (int, float)) for v in metric_out.values())
+    def test_leading_auc(self, metric: VisitsAUC, metric_out: MetricsOutput):
+        assert isinstance(metric_out.values, tuple)
+        assert isinstance(metric_out.estimands, tuple)
+        assert metric_out.name == type(metric).__name__
+        assert metric_out.estimands == metric.estimands
+        assert len(metric_out.values) == len(metric.estimands)
+        assert isinstance(metric_out.as_df(), pd.DataFrame)
+        assert all(isinstance(v, (jnp.ndarray, float, int)) for v in metric_out.values)
 
 

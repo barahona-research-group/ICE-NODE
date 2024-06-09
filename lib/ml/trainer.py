@@ -26,8 +26,9 @@ from .model import AbstractModel
 from ..base import Config, Module
 from ..ehr import TVxEHR
 from ..metric.loss import BinaryLossLiteral, NumericLossLiteral, ProbNumericLossLiteral
-from ..metric.stat import (MetricsCollection, Metric, OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss,
-                           ProbObsPredictionLoss, AdjustedProbObsPredictionLoss)
+from ..metric.loss_wrap import (ProbObsPredictionLoss, AdjustedProbObsPredictionLoss,
+                                OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss)
+from ..metric.metrics import (MetricsCollection, Metric, )
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 
