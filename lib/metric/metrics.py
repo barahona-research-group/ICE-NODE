@@ -167,7 +167,7 @@ class MetricsOutput:
     @property
     def row(self) -> List[float]:
         if self.dim is not None:
-            values = [onp.hstack(v).flatten().tolist() for v in self.values]
+            values = sum((onp.hstack(v).flatten().tolist() for v in self.values), [])
         else:
             values = list(self.values)
         return values + self.aggregation_rows + [self.time_elapsed]
@@ -587,7 +587,8 @@ class CodeGroupTopAlarmAccuracy(Metric):
         return tuple(acc)
 
 
-class MetricsCollectionOutput(Module):
+@dataclass
+class MetricsCollectionOutput:
     metrics: Tuple[MetricsOutput, ...]
     codes: Tuple[Optional[Tuple[str, ...]], ...] = ()
 
@@ -611,6 +612,7 @@ class MetricsCollection(Metric):
     metrics: Tuple[Metric, ...] = field(default_factory=tuple)
     codes: Tuple[Optional[Tuple[str, ...]], ...] = field(default_factory=tuple)
     estimands: Tuple[str, ...] = ()
+
 
     def __call__(self, predictions: AdmissionsPrediction) -> MetricsCollectionOutput:
         output = tuple(m(predictions) for m in self.metrics)
