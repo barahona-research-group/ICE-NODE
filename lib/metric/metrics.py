@@ -265,6 +265,12 @@ class LeadPredictionLossMetric(ObsPredictionLossMetric):
 
 class LeadingPredictionAccuracyConfig(LeadingObservableExtractorConfig):
     aki_binary_index: int = field(kw_only=True)
+    observable_code: str = field(default_factory=lambda: '')
+    scheme: str = field(default_factory=lambda: '')
+    leading_hours: List[float] = field(default_factory=lambda: [6.0, 12.0, 24.0, 36.0, 48.0])
+    entry_neglect_window: float = 6.0
+    minimum_acquisitions: int = 2  # minimum number of acquisitions to consider
+    recovery_window: float = 12.0
 
 
 class LeadingAKIPredictionAccuracy(Metric):
@@ -604,7 +610,7 @@ class MetricsCollectionOutput:
     def row(self) -> List[float]:
         return sum((metric.row for metric in self.metrics), [])
 
-    def as_df(self, index: int = 0) -> pd.DataFrame:
+    def as_df(self, index: int | str = 0) -> pd.DataFrame:
         return pd.DataFrame([self.row], columns=self.columns, index=[index])
 
 
@@ -612,7 +618,6 @@ class MetricsCollection(Metric):
     metrics: Tuple[Metric, ...] = field(default_factory=tuple)
     codes: Tuple[Optional[Tuple[str, ...]], ...] = field(default_factory=tuple)
     estimands: Tuple[str, ...] = ()
-
 
     def __call__(self, predictions: AdmissionsPrediction) -> MetricsCollectionOutput:
         output = tuple(m(predictions) for m in self.metrics)

@@ -8,12 +8,13 @@ from lib.base import Array
 from lib.metric.metrics import VisitsAUC, ObsPredictionLossMetric, OutcomePredictionLossMetric, \
     LeadPredictionLossMetric, \
     LeadingPredictionAccuracyConfig, LeadingAKIPredictionAccuracy, MetricsOutput, AdmissionAUC, MetricsCollection, \
-    MetricsCollectionOutput
+    MetricsCollectionOutput, PerColumnObsPredictionLoss
 from lib.ml.artefacts import AdmissionsPrediction
 
 
 @pytest.mark.parametrize('standard_metric',
                          [ObsPredictionLossMetric(), OutcomePredictionLossMetric(), LeadPredictionLossMetric(),
+                          PerColumnObsPredictionLoss(),
                           VisitsAUC(),
                           AdmissionAUC()])
 def test_metric_out(standard_metric: ObsPredictionLossMetric, identical_predictions: AdmissionsPrediction):
@@ -31,7 +32,7 @@ def test_metric_out(standard_metric: ObsPredictionLossMetric, identical_predicti
 def metrics_collection():
     return MetricsCollection(
         metrics=[ObsPredictionLossMetric(), OutcomePredictionLossMetric(), LeadPredictionLossMetric(),
-                 VisitsAUC(), AdmissionAUC()])
+                 VisitsAUC(), AdmissionAUC(), PerColumnObsPredictionLoss()])
 
 
 def test_metrics_collection_output(metrics_collection: MetricsCollection, identical_predictions: AdmissionsPrediction):

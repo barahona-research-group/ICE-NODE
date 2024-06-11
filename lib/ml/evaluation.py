@@ -37,6 +37,8 @@ class EvaluationConfig(Config):
     max_duration: int = 24 * 3  # in hours
 
 
+# def no_config_metrics
+
 class Evaluation(Module):
     config: EvaluationConfig
 
@@ -143,7 +145,7 @@ class Evaluation(Module):
         model = experiment.load_model(interface, 42)
         model = model.load_params_from_archive(os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
         predictions = model.batch_predict(interface.device_batch())
-        return metrics.to_df(snapshot, predictions).iloc[0].to_dict()
+        return metrics(predictions).as_df(snapshot).iloc[0].to_dict()
 
     def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr_path: str):
         with Session(engine) as session, session.begin():

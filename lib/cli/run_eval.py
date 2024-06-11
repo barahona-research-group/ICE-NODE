@@ -1,6 +1,6 @@
 import argparse
 import logging
-from ..ml import  EvaluationConfig, Evaluation
+from ..ml.evaluation import  EvaluationConfig, Evaluation
 from ..utils import load_config, translate_path
 from ..base import Config
 
