@@ -13,17 +13,13 @@ if __name__ == '__main__':
     parser.add_argument('--output-path', type=str, required=True)
     parser.add_argument('--override', type=str, required=False, default="")
     args = parser.parse_args()
-
     config = load_config(translate_path(args.config))
     config = Config.from_dict(config)
-
     logging.warning(args)
+    config = config.path_update('reporting.output_dir', translate_path(args.output_path))
 
-    config = config.path_update('reporting.output_dir',
-                                translate_path(args.output_path))
-
-    if args.override is not None and len(
-            args.override) > 0 and args.override != '0':
+    if args.override is not None and len(args.override) > 0 and args.override != '0':
+        splitter = ','
         if ',' in args.override:
             splitter = ','
         elif ';' in args.override:
@@ -43,7 +39,6 @@ if __name__ == '__main__':
                     value = None
                 elif value.isdigit():
                     value = int(value)
-
                 elif '.' in value:
                     try:
                         value = float(value)
