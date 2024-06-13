@@ -138,16 +138,15 @@ class Evaluation(Module):
     def get_experiment(self, exp: str) -> Experiment:
         return Experiment(config=self.experiment_config[exp])
 
-    def evaluate(self, exp: str, snapshot: str, tvx_ehr_path: str) -> Dict[str, float]:
+    def evaluate(self, exp: str, snapshot: str, tvx_ehr: TVxEHR) -> Dict[str, float]:
         experiment = self.get_experiment(exp)
-        interface = TVxEHR.load(tvx_ehr_path)
         metrics = self.load_metrics()
-        model = experiment.load_model(interface, 42)
+        model = experiment.load_model(tvx_ehr, 42)
         model = model.load_params_from_archive(os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
-        predictions = model.batch_predict(interface.device_batch())
+        predictions = model.batch_predict(tvx_ehr.device_batch())
         return metrics(predictions).as_df(snapshot).iloc[0].to_dict()
 
-    def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr_path: str):
+    def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr: TVxEHR):
         with Session(engine) as session, session.begin():
             running_status = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
             experiment = get_or_create(engine, ExperimentModel, name=exp)
@@ -164,7 +163,7 @@ class Evaluation(Module):
             else:
                 new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot, status=running_status)
                 session.add(new_eval)
-        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr_path))
+        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr))
 
         with Session(engine) as session, session.begin():
             finished_status = get_or_create(engine, EvaluationStatusModel, name='FINISHED')
@@ -176,12 +175,13 @@ class Evaluation(Module):
         logging.info('Database URL: %s', self.db_url)
         engine = create_engine(self.db_url)
         create_tables(engine)
+        tvx = TVxEHR.load(tvx_ehr_path)
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
                 jax.clear_caches()
                 jax.clear_backends()
                 logging.info(f'Running {exp}, {snapshot}')
-                self.run_evaluation(engine, exp=exp, snapshot=snapshot, tvx_ehr_path=tvx_ehr_path)
+                self.run_evaluation(engine, exp=exp, snapshot=snapshot, tvx_ehr=tvx)
             except IntegrityError as e:
                 logging.warning(f'Possible: evaluation already exists: {exp}, {snapshot}')
                 logging.warning(e)
