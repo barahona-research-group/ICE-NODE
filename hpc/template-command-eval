@@ -1,4 +1,4 @@
-$PY_BIN_DIR/python -m lib.cli.run_eval \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
 --config $env_config_path \
 --experiments-dir $env_experiments_dir \
 --db $env_db \

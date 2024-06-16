@@ -37,7 +37,7 @@ export JAX_PLATFORMS="cpu"
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
 # fi
 
-$PY_BIN_DIR/python -m lib.cli.run_eval \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
 --config $CONFIG_PATH \
 --experiments-dir $EXPERIMENTS_DIR \
 --db $DB \
