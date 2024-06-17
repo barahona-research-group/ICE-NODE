@@ -84,6 +84,8 @@ class Evaluation(Module):
             if os.path.isdir(os.path.join(self.config.experiments_dir, d))
                and os.path.exists(
                 os.path.join(self.config.experiments_dir, d, 'config.json'))
+               and os.path.exists(
+                os.path.join(self.config.experiments_dir, d, 'params.zip'))
         ]
 
         return {os.path.basename(d): d for d in experiments_dirs}
