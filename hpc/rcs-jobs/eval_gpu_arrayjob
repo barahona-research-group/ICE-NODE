@@ -12,6 +12,7 @@ source $HOME/.stores.sh
 # $CONFIG_PATH: Path (absolute or relative) to JSON config file for the experiment settings. Example: ~/GP/ICE-NODE/optimal_configs/icenode_v1/icenode_2lr.json
 # $EXPERIMENTS_DIR: Path (absolute or relative) to the experiments directory. Example: ~/GP/ICE-NODE/experiments
 # $DB: Name of the database to use. Example: sqlite:///icenode.sqlite
+# $DATASET_PATH: Path (absolute or relative) to the dataset directory. Example: ~/GP/ehr-data/dataset
 # $OVERRIDE: Override existing configuration. Example: model.emb.dx=10,model.mem=5
 
 # Clone repository and checkout to the given tag name.
@@ -37,9 +38,10 @@ export JAX_PLATFORMS="gpu"
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
 # fi
 
-$PY_BIN_DIR/python -m lib.cli.run_eval \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_eval \
 --config $CONFIG_PATH \
 --experiments-dir $EXPERIMENTS_DIR \
+--dataset-path $DATASET_PATH \
 --db $DB \
 --override $OVERRIDE
 
