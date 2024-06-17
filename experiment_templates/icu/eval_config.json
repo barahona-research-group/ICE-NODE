@@ -1,0 +1,67 @@
+{
+    "_type": "EvaluationConfig",
+    "db": "",
+    "experiments_dir": "",
+    "frequency": 100,
+    "max_duration": 72,
+    "metrics": [
+        {
+            "classname": "LeadingAKIPredictionAccuracy",
+            "config": {
+                "_type": "LeadingPredictionAccuracyConfig",
+                "aki_binary_index": 81,
+                "entry_neglect_window": 6.0,
+                "leading_hours": [
+                    6.0,
+                    12.0,
+                    24.0,
+                    36.0,
+                    48.0
+                ],
+                "minimum_acquisitions": 2,
+                "observable_code": "",
+                "recovery_window": 12.0,
+                "scheme": ""
+            }
+        },
+        {
+            "classname": "PerColumnObsPredictionLoss",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": true
+            }
+        },
+        {
+            "classname": "LeadPredictionLossMetric",
+            "config": {
+                "_type": "LeadPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": false
+            }
+        },
+        {
+            "classname": "ObsPredictionLossMetric",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": false
+            }
+        }
+    ]
+}

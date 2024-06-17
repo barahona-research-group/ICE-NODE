@@ -1,0 +1,35 @@
+{
+    "_type": "EvaluationConfig",
+    "db": "",
+    "experiments_dir": "",
+    "frequency": 100,
+    "max_duration": 72,
+    "metrics": [
+        {
+            "classname": "PerColumnObsPredictionLoss",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": true
+            }
+        },
+        {
+            "classname": "ObsPredictionLossMetric",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": false
+            }
+        }
+    ]
+}
