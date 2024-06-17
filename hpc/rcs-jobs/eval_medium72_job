@@ -1,4 +1,4 @@
-#PBS -lselect=1:ncpus=60:mem=920gb
+#PBS -lselect=1:ncpus=60:mem=220gb
 
 #PBS -lwalltime=72:0:0
 
