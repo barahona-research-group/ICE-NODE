@@ -446,6 +446,7 @@ class StochasticInICENODELite(InICENODELite):
         return SkipShortIntervalsWrapper(solver=f_odeint, min_interval=1.0)
 
 
+
 class StochasticMechanisticICENODE(InICENODELite):
 
     @staticmethod
@@ -535,7 +536,7 @@ class GRUODEBayes(InICENODELite):
                        observables_size * 2,
                        observables_size * 5,
                        activation=jnp.tanh,
-                       depth=2,
+                       depth=1,
                        key=key)
 
     @staticmethod
