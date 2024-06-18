@@ -146,8 +146,7 @@ class InICENODE(InpatientModel):
                  key: "jax.random.PRNGKey", lead_mlp_kwargs: Dict[str, Any] = None):
         super().__init__(config=config)
 
-        (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key,
-         update_key) = jrandom.split(key, 6)
+        (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key, update_key) = jrandom.split(key, 6)
         self.f_emb = self._make_embedding(config=embeddings_config,
                                           dx_codes_size=dx_codes_size,
                                           icu_inputs_grouping=icu_inputs_grouping,
@@ -164,17 +163,13 @@ class InICENODE(InpatientModel):
                                                     outcome_size=outcome_size,
                                                     key=outcome_dec_key)
 
-        self.f_obs_dec = self._make_obs_dec(config=config,
-                                            observables_size=observables_size,
-                                            key=obs_dec_key)
+        self.f_obs_dec = self._make_obs_dec(config=config, observables_size=observables_size, key=obs_dec_key)
         self.f_dyn = self._make_dyn(embeddings_config=embeddings_config,
                                     model_config=config,
                                     observables_size=observables_size,
                                     key=dyn_key)
 
-        self.f_update = self._make_update(state_size=config.state,
-                                          observables_size=observables_size,
-                                          key=update_key)
+        self.f_update = self._make_update(state_size=config.state, observables_size=observables_size, key=update_key)
 
         self.f_lead_dec = self._make_lead_dec(input_size=config.state,
                                               lead_times=lead_times,
