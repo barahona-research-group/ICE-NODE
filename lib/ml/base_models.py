@@ -324,6 +324,7 @@ class CompiledGRU(eqx.nn.GRUCell):
 class PositiveSquaredLinear(eqx.nn.Linear):
     def __call__(self, x: jnp.ndarray, *, key: Optional[jrandom.PRNGKey] = None) -> jnp.ndarray:
         w = self.weight ** 2
+        # w = jnn.relu(self.weight)
         y = w @ x
         if self.bias is not None:
             y += self.bias
@@ -337,6 +338,7 @@ class ICNN(eqx.Module):
     """
     Wzs: Tuple[PositiveSquaredLinear, ...]
     Wxs: Tuple[PositiveSquaredLinear, ...]
+    activations: Tuple[Callable[..., jnp.ndarray], ...]
 
     def __init__(self, input_size: int, hidden_size: int, depth: int, key: jrandom.PRNGKey):
         super().__init__()
@@ -357,11 +359,12 @@ class ICNN(eqx.Module):
             Wxs.append(PositiveSquaredLinear(input_size, hidden_size, key=new_key()))
         Wxs.append(PositiveSquaredLinear(input_size, 1, use_bias=False, key=new_key()))
         self.Wxs = tuple(Wxs)
+        self.activations = tuple(jnn.softplus for i in range(depth))
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
         z = jnn.softplus(self.Wzs[0](x))
-        for Wz, Wx in zip(self.Wzs[1:-1], self.Wxs[:-1]):
+        for Wz, Wx, sigma in zip(self.Wzs[1:-1], self.Wxs[:-1], self.activations):
             z = jnn.softplus(Wz(z) + Wx(x))
         return (self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
 
@@ -379,11 +382,11 @@ class ICNN(eqx.Module):
 
 class MaskedOptimiser(eqx.Module):
     optim: optax.GradientTransformation
-    mask: jnp.ndarray = eqx.static_field()
+    fixed_mask: jnp.ndarray = eqx.static_field()
 
-    def __init__(self, optim: optax.GradientTransformation, mask: jnp.ndarray):
+    def __init__(self, optim: optax.GradientTransformation, fixed_mask: jnp.ndarray):
         self.optim = optim
-        self.mask = mask
+        self.fixed_mask = fixed_mask
 
     def update(
             self,
@@ -391,7 +394,7 @@ class MaskedOptimiser(eqx.Module):
             state: optax.OptState,
             params: Optional[optax.Params] = None
     ) -> tuple[optax.Updates, optax.OptState]:
-        return self.optim.update(jnp.where(self.mask, updates, 0.0), state, params)
+        return self.optim.update(jnp.where(self.fixed_mask, 0.0, updates), state, params)
 
     def init(self, params: optax.Params) -> optax.OptState:
         return self.optim.init(params)
@@ -425,9 +428,12 @@ class ICNNObsDecoder(eqx.Module):
         sol = optx.minimise(masked_input_energy,
                             adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=20),
                             solver=optx.BestSoFarMinimiser(
-                                optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-4), fixed_mask),
-                                                    rtol=1e-8, atol=1e-8)),
-                            max_steps=2 ** 16,
+                                optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-3), fixed_mask),
+                                                    rtol=1e-8, atol=1e-8,
+                                                    # verbose=frozenset({"step", "accepted", "loss", "step_size"}),
+                            )
+                            ),
+                            max_steps=2 ** 14,
                             y0=input, throw=False)
         num_steps = sol.stats['num_steps']
         return sol.value, ImputerMetrics(n_steps=jnp.array(num_steps))
