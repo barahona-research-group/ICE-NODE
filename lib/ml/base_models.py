@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Literal, Union, Final, Callable, Any, Self
+from typing import Tuple, Optional, Literal, Union, Final, Callable, Self, cast
 
 import equinox as eqx
 import jax
@@ -369,35 +369,175 @@ class ICNN(eqx.Module):
         return (self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
 
 
-# def test_convexity(f):
-#     rdata = torch.randn(1024, 2).to(device)
-#     rdata2 = torch.randn(1024, 2).to(device)
-#     return np.all(
-#         (((f(rdata) + f(rdata2)) / 2 - f(rdata + rdata2) / 2) > 0)
-#         .cpu()
-#         .detach()
-#         .numpy()
-#     )
-#
+class MaskedOptaxMinimiser(optx.OptaxMinimiser):
 
-class MaskedOptimiser(eqx.Module):
-    optim: optax.GradientTransformation
-    fixed_mask: jnp.ndarray = eqx.static_field()
-
-    def __init__(self, optim: optax.GradientTransformation, fixed_mask: jnp.ndarray):
-        self.optim = optim
-        self.fixed_mask = fixed_mask
-
-    def update(
+    def step(
             self,
-            updates: optax.Updates,
-            state: optax.OptState,
-            params: Optional[optax.Params] = None
-    ) -> tuple[optax.Updates, optax.OptState]:
-        return self.optim.update(jnp.where(self.fixed_mask, 0.0, updates), state, params)
+            fn,
+            y,
+            args,
+            options,
+            state,
+            tags,
+    ):
+        (f, aux), grads = eqx.filter_value_and_grad(fn, has_aux=True)(y, args)
+        grads = jnp.where(options['fixed_mask'], 0.0, grads)
+        f = cast(jax.Array, f)
+        if len(self.verbose) > 0:
+            optx._misc.verbose_print(
+                ("step" in self.verbose, "Step", state.step),
+                ("loss" in self.verbose, "Loss", f),
+                ("y" in self.verbose, "y", y),
+            )
+        updates, new_opt_state = self.optim.update(grads, state.opt_state, params=y)
+        new_y = eqx.apply_updates(y, updates)
+        terminate = optx._misc.cauchy_termination(
+            self.rtol,
+            self.atol,
+            self.norm,
+            y,
+            updates,
+            f,
+            f - state.f,
+        )
+        new_state = optx._solver.optax._OptaxState(
+            step=state.step + 1, f=f, opt_state=new_opt_state, terminate=terminate
+        )
+        return new_y, new_state, aux
 
-    def init(self, params: optax.Params) -> optax.OptState:
-        return self.optim.init(params)
+
+class MaskedNonlinearCG(optx.NonlinearCG):
+    def step(
+            self,
+            fn,
+            y,
+            args,
+            options,
+            state,
+            tags,
+    ):
+        f_eval, lin_fn, aux_eval = jax.linearize(
+            lambda _y: fn(_y, args), state.y_eval, has_aux=True
+        )
+        step_size, accept, search_result, search_state = self.search.step(
+            state.first_step,
+            y,
+            state.y_eval,
+            state.f_info,
+            optx.FunctionInfo.Eval(f_eval),
+            state.search_state,
+        )
+
+        def accepted(descent_state):
+            (grad,) = optx._misc.lin_to_grad(lin_fn, y)
+            grad = jnp.where(options['fixed_mask'], 0.0, grad)
+            f_eval_info = optx.FunctionInfo.EvalGrad(f_eval, grad)
+            descent_state = self.descent.query(state.y_eval, f_eval_info, descent_state)
+            y_diff = (state.y_eval ** eqx.internal.ω - y ** eqx.internal.ω).ω
+            f_diff = (f_eval ** eqx.internal.ω - state.f_info.f ** eqx.internal.ω).ω
+            terminate = optx._misc.cauchy_termination(
+                self.rtol, self.atol, self.norm, state.y_eval, y_diff, f_eval, f_diff
+            )
+            return state.y_eval, f_eval_info, aux_eval, descent_state, terminate
+
+        def rejected(descent_state):
+            return y, state.f_info, state.aux, descent_state, jnp.array(False)
+
+        y, f_info, aux, descent_state, terminate = optx._misc.filter_cond(
+            accept, accepted, rejected, state.descent_state
+        )
+
+        y_descent, descent_result = self.descent.step(step_size, descent_state)
+        y_eval = (y ** eqx.internal.ω + y_descent ** eqx.internal.ω).ω
+        result = optx.RESULTS.where(
+            search_result == optx.RESULTS.successful, descent_result, search_result
+        )
+
+        state = optx._solver.gradient_methods._GradientDescentState(
+            first_step=jnp.array(False),
+            y_eval=y_eval,
+            search_state=search_state,
+            f_info=f_info,
+            aux=aux,
+            descent_state=descent_state,
+            terminate=terminate,
+            result=result,
+        )
+        return y, state, aux
+
+
+class MaskedBFGS(optx.BFGS):
+
+    def step(
+            self,
+            fn,
+            y,
+            args,
+            options,
+            state,
+            tags,
+    ):
+        f_eval, lin_fn, aux_eval = jax.linearize(
+            lambda _y: fn(_y, args), state.y_eval, has_aux=True
+        )
+        step_size, accept, search_result, search_state = self.search.step(
+            state.first_step,
+            y,
+            state.y_eval,
+            state.f_info,
+            optx.FunctionInfo.Eval(f_eval),
+            state.search_state,
+        )
+
+        def accepted(descent_state):
+            (grad,) = optx._misc.lin_to_grad(lin_fn, y)
+            grad = jnp.where(options['fixed_mask'], 0.0, grad)
+            y_diff = (state.y_eval ** eqx.internal.ω - y ** eqx.internal.ω).ω
+            if self.use_inverse:
+                hessian = None
+                hessian_inv = state.f_info.hessian_inv
+            else:
+                hessian = state.f_info.hessian
+                hessian_inv = None
+            f_eval_info = optx._solver.bfgs._bfgs_update(
+                f_eval, grad, state.f_info.grad, hessian, hessian_inv, y_diff
+            )
+            descent_state = self.descent.query(
+                state.y_eval,
+                f_eval_info,  # pyright: ignore
+                descent_state,
+            )
+            f_diff = (f_eval ** eqx.internal.ω - state.f_info.f ** eqx.internal.ω).ω
+            terminate = optx._misc.cauchy_termination(
+                self.rtol, self.atol, self.norm, state.y_eval, y_diff, f_eval, f_diff
+            )
+            return state.y_eval, f_eval_info, aux_eval, descent_state, terminate
+
+        def rejected(descent_state):
+            return y, state.f_info, state.aux, descent_state, jnp.array(False)
+
+        y, f_info, aux, descent_state, terminate = optx._misc.filter_cond(
+            accept, accepted, rejected, state.descent_state
+        )
+
+        y_descent, descent_result = self.descent.step(step_size, descent_state)
+        y_eval = (y ** eqx.internal.ω + y_descent ** eqx.internal.ω).ω
+        result = optx.RESULTS.where(
+            search_result == optx.RESULTS.successful, descent_result, search_result
+        )
+
+        state = optx._solver.bfgs._BFGSState(
+            first_step=jnp.array(False),
+            y_eval=y_eval,
+            search_state=search_state,
+            f_info=f_info,
+            aux=aux,
+            descent_state=descent_state,
+            terminate=terminate,
+            result=result,
+            num_accepted_steps=state.num_accepted_steps + accept,
+        )
+        return y, state, aux
 
 
 class ImputerMetrics(VxData):
@@ -422,21 +562,25 @@ class ICNNObsDecoder(eqx.Module):
 
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        def masked_input_energy(y: jnp.ndarray, args: Any = None) -> jnp.ndarray:
-            return self.f_energy(jnp.where(fixed_mask, input, y))
-
-        sol = optx.minimise(masked_input_energy,
-                            adjoint=optx.RecursiveCheckpointAdjoint(checkpoints=20),
-                            solver=optx.BestSoFarMinimiser(
-                                optx.OptaxMinimiser(optim=MaskedOptimiser(optax.adam(5e-3), fixed_mask),
-                                                    rtol=1e-8, atol=1e-8,
-                                                    # verbose=frozenset({"step", "accepted", "loss", "step_size"}),
-                            )
-                            ),
-                            max_steps=2 ** 14,
+        sol = optx.minimise(lambda y, args: self.f_energy(y),
+                            solver=optx.BestSoFarMinimiser(solver=self.optax_solver()),
+                            max_steps=2 ** 12,
+                            options=dict(fixed_mask=fixed_mask),
                             y0=input, throw=False)
         num_steps = sol.stats['num_steps']
         return sol.value, ImputerMetrics(n_steps=jnp.array(num_steps))
+
+    @staticmethod
+    def optax_solver():
+        return MaskedOptaxMinimiser(optax.adadelta(1e-5), rtol=1e-8, atol=1e-8)
+
+    @staticmethod
+    def cg_solver():
+        return MaskedNonlinearCG(rtol=3e-4, atol=3e-4, method=optx.polak_ribiere)
+
+    @staticmethod
+    def bfgs_solver():
+        return MaskedBFGS(rtol=3e-4, atol=3e-4)
 
     @eqx.filter_jit
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
