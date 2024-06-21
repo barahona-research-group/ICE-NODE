@@ -331,6 +331,15 @@ class PositiveSquaredLinear(eqx.nn.Linear):
         return y
 
 
+class PositiveReLuLinear(eqx.nn.Linear):
+    def __call__(self, x: jnp.ndarray, *, key: Optional[jrandom.PRNGKey] = None) -> jnp.ndarray:
+        w = jnn.relu(self.weight)
+        y = w @ x
+        if self.bias is not None:
+            y += self.bias
+        return y
+
+
 class ICNN(eqx.Module):
     """Input Convex Neural Network"""
     """https://github.com/atong01/ot-icnn-minimal/blob/main/icnn/icnn.py
@@ -342,11 +351,29 @@ class ICNN(eqx.Module):
 
     def __init__(self, input_size: int, hidden_size: int, depth: int, key: jrandom.PRNGKey):
         super().__init__()
+        positive_layer_i = 0
+        activation_i = 0
 
         def new_key():
             nonlocal key
             key, subkey = jrandom.split(key)
             return subkey
+
+        def positive_layer(*args, **kwargs):
+            nonlocal positive_layer_i
+            positive_layer_i += 1
+            if positive_layer_i % 2 == 0:
+                return PositiveSquaredLinear(*args, **kwargs)
+            return PositiveReLuLinear(*args, **kwargs)
+
+        def activation():
+            nonlocal activation_i
+            activation_i += 1
+            if activation_i == 0:
+                return jnn.sigmoid
+            if activation_i % 2 == 0:
+                return jnn.softplus
+            return jnn.relu
 
         Wzs = [PositiveSquaredLinear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
@@ -359,7 +386,7 @@ class ICNN(eqx.Module):
             Wxs.append(PositiveSquaredLinear(input_size, hidden_size, key=new_key()))
         Wxs.append(PositiveSquaredLinear(input_size, 1, use_bias=False, key=new_key()))
         self.Wxs = tuple(Wxs)
-        self.activations = tuple(jnn.softplus for i in range(depth))
+        self.activations = tuple(jnn.softplus for _ in range(depth))
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
@@ -564,7 +591,7 @@ class ICNNObsDecoder(eqx.Module):
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         sol = optx.minimise(lambda y, args: self.f_energy(y),
                             solver=optx.BestSoFarMinimiser(solver=self.optax_solver()),
-                            max_steps=2 ** 12,
+                            max_steps=2 ** 10,
                             options=dict(fixed_mask=fixed_mask),
                             y0=input, throw=False)
         num_steps = sol.stats['num_steps']
@@ -572,11 +599,11 @@ class ICNNObsDecoder(eqx.Module):
 
     @staticmethod
     def optax_solver():
-        return MaskedOptaxMinimiser(optax.adadelta(1e-5), rtol=1e-8, atol=1e-8)
+        return MaskedOptaxMinimiser(optax.adam(1e-7), rtol=1e-8, atol=1e-8)
 
     @staticmethod
     def cg_solver():
-        return MaskedNonlinearCG(rtol=3e-4, atol=3e-4, method=optx.polak_ribiere)
+        return MaskedNonlinearCG(rtol=3e-8, atol=3e-8, method=optx.polak_ribiere)
 
     @staticmethod
     def bfgs_solver():
