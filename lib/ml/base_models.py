@@ -599,7 +599,7 @@ class ICNNObsDecoder(eqx.Module):
 
     @staticmethod
     def optax_solver():
-        return MaskedOptaxMinimiser(optax.adam(1e-7), rtol=1e-8, atol=1e-8)
+        return MaskedOptaxMinimiser(optax.adadelta(1e-3), rtol=1e-6, atol=1e-6)
 
     @staticmethod
     def cg_solver():
