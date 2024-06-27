@@ -6,6 +6,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
+import lineax
 import optax
 import optimistix as optx
 from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODETerm, PIDController, MultiTerm, \
@@ -427,7 +428,9 @@ class MaskedOptaxMinimiser(optx.OptaxMinimiser):
                 ("loss" in self.verbose, "Loss", f),
                 ("y" in self.verbose, "y", y),
             )
-        updates, new_opt_state = self.optim.update(grads, state.opt_state, params=y)
+        updates, new_opt_state = self.optim.update(grads, state.opt_state, params=y,
+                                                   value=f, grad=grads,
+                                                   value_fn=lambda yi: fn(yi, args)[0])
         new_y = eqx.apply_updates(y, updates)
         terminate = optx._misc.cauchy_termination(
             self.rtol,
@@ -602,7 +605,7 @@ class ICNNObsDecoder(eqx.Module):
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         sol = optx.minimise(lambda y, args: self.f_energy(y),
                             solver=optx.BestSoFarMinimiser(solver=self.optax_solver()),
-                            adjoint=optx.ImplicitAdjoint(),
+                            adjoint=optx.ImplicitAdjoint(linear_solver=lineax.AutoLinearSolver(well_posed=False)),
                             max_steps=2 ** 10,
                             options=dict(fixed_mask=fixed_mask),
                             y0=input, throw=False)
@@ -614,12 +617,16 @@ class ICNNObsDecoder(eqx.Module):
         return MaskedOptaxMinimiser(optax.adam(1e-3), rtol=1e-8, atol=1e-8)
 
     @staticmethod
+    def optax_lbfgs_solver():
+        return MaskedOptaxMinimiser(optax.lbfgs(1e-3), rtol=1e-8, atol=1e-8)
+
+    @staticmethod
     def cg_solver():
         return MaskedNonlinearCG(rtol=3e-8, atol=3e-8, method=optx.polak_ribiere)
 
     @staticmethod
     def bfgs_solver():
-        return MaskedBFGS(rtol=3e-8, atol=3e-8)
+        return MaskedBFGS(rtol=3e-8, atol=3e-8, norm=optx._misc.rms_norm)
 
     @eqx.filter_jit
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
