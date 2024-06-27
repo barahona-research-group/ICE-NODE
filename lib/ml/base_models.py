@@ -626,7 +626,7 @@ class ICNNObsDecoder(eqx.Module):
 
     @staticmethod
     def bfgs_solver():
-        return MaskedBFGS(rtol=3e-8, atol=3e-8, norm=optx._misc.rms_norm)
+        return MaskedBFGS(rtol=3e-8, atol=3e-8)
 
     @eqx.filter_jit
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
