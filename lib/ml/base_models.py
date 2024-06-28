@@ -592,19 +592,23 @@ class ICNNObsDecoder(eqx.Module):
     f_energy: ICNN
     observables_size: int
     state_size: int
+    optax_optimiser_name: Literal['adam', 'lbfgs', 'polyak_sgd',  'lamb', 'yogi']
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: int,
-                 depth: int, key: jrandom.PRNGKey):
+                 depth: int,
+                 optax_optimiser_name: Literal['adam', 'lbfgs', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
+                 key: jrandom.PRNGKey):
         super().__init__()
         self.observables_size = observables_size
         self.state_size = state_size
         input_size = observables_size + state_size
         self.f_energy = ICNN(input_size, input_size * hidden_size_multiplier, depth, key)
+        self.optax_optimiser_name = optax_optimiser_name
 
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         sol = optx.minimise(lambda y, args: self.f_energy(y),
-                            solver=optx.BestSoFarMinimiser(solver=self.optax_solver()),
+                            solver=optx.BestSoFarMinimiser(solver=self.optax_solver(self.optax_optimiser_name)),
                             adjoint=optx.ImplicitAdjoint(linear_solver=lineax.AutoLinearSolver(well_posed=False)),
                             max_steps=2 ** 10,
                             options=dict(fixed_mask=fixed_mask),
@@ -613,20 +617,20 @@ class ICNNObsDecoder(eqx.Module):
         return sol.value, ImputerMetrics(n_steps=jnp.array(num_steps))
 
     @staticmethod
-    def optax_solver():
-        return MaskedOptaxMinimiser(optax.adam(1e-3), rtol=1e-8, atol=1e-8)
+    def optax_solver(optax_optimiser_name: str = 'adam') -> MaskedOptaxMinimiser:
+        optimiser = ICNNObsDecoder.optax_solver_from_name(optax_optimiser_name)
+        return MaskedOptaxMinimiser(optimiser(1e-3), rtol=1e-8, atol=1e-8)
 
     @staticmethod
-    def optax_lbfgs_solver():
-        return MaskedOptaxMinimiser(optax.lbfgs(1e-3), rtol=1e-8, atol=1e-8)
-
-    @staticmethod
-    def cg_solver():
-        return MaskedNonlinearCG(rtol=3e-8, atol=3e-8, method=optx.polak_ribiere)
-
-    @staticmethod
-    def bfgs_solver():
-        return MaskedBFGS(rtol=3e-8, atol=3e-8)
+    def optax_solver_from_name(optax_solver_name: str) -> Callable[[float], optax.GradientTransformation]:
+        return {
+            'adam': optax.adam,
+            'lbfgs': optax.lbfgs,
+            'polyak_sgd': optax.polyak_sgd,
+            'novograd': optax.novograd,
+            'lamb': optax.lamb,
+            'yogi': optax.yogi,
+        }[optax_solver_name]
 
     @eqx.filter_jit
     def __call__(self, state: jnp.ndarray) -> jnp.ndarray:
