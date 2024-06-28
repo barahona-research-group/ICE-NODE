@@ -18,7 +18,7 @@ from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction, ModelBehaviouralMetrics
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
     NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
-    ICNNObsExtractor, SkipShortIntervalsWrapper, ODEMetrics, ImputerMetrics
+    ICNNObsExtractor, SkipShortIntervalsWrapper, ODEMetrics, ImputerMetrics, KoopmanOperator, KoopmanPrecomputes
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
@@ -921,165 +921,8 @@ class InRETAIN(InGRUJump):
 
         return prediction
 
-
-class InKoopmanPrecomputes(Precomputes):
-    A: jnp.ndarray
-    A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
-
-
-class KoopmanPhi(eqx.Module):
-    """Koopman embeddings for continuous-time systems."""
-    mlp: eqx.Module
-    C: jnp.ndarray = eqx.static_field()
-    skip: bool = eqx.static_field()
-
-    def __init__(self,
-                 input_size: int,
-                 output_size: int,
-                 key: "jax.random.PRNGKey",
-                 depth: int,
-                 control_size: int = 0,
-                 skip: bool = True):
-        super().__init__()
-        self.skip = skip
-        self.C = jnp.eye(output_size, M=input_size + control_size)
-        self.mlp = eqx.nn.MLP(
-            input_size + control_size,
-            output_size,
-            depth=depth,
-            width_size=(input_size + control_size + output_size) // 2,
-            activation=jnn.relu,
-            use_final_bias=not skip,
-            key=key)
-
-    @eqx.filter_jit
-    def __call__(self, x, u=None):
-        if u is not None:
-            x = jnp.hstack((x, u))
-
-        if self.skip:
-            return self.C @ x + self.mlp(x)
-        else:
-            return self.mlp(x)
-
-
-class VanillaKoopmanOperator(eqx.Module):
-    A: jnp.ndarray
-    phi: KoopmanPhi
-    phi_inv: KoopmanPhi
-
-    input_size: int = eqx.static_field()
-    koopman_size: int = eqx.static_field()
-    control_size: int = eqx.static_field()
-
-    def __init__(self,
-                 input_size: int,
-                 koopman_size: int,
-                 key: "jax.random.PRNGKey",
-                 control_size: int = 0,
-                 phi_depth: int = 1):
-        super().__init__()
-        self.input_size = input_size
-        self.koopman_size = koopman_size
-        self.control_size = control_size
-        keys = jrandom.split(key, 3)
-
-        self.A = jrandom.normal(keys[0], (koopman_size, koopman_size),
-                                dtype=jnp.float32)
-        self.phi = KoopmanPhi(input_size,
-                              koopman_size,
-                              control_size=control_size,
-                              depth=phi_depth,
-                              skip=True,
-                              key=keys[1])
-        self.phi_inv = KoopmanPhi(koopman_size,
-                                  input_size,
-                                  depth=phi_depth,
-                                  skip=False,
-                                  key=keys[2])
-
-    @eqx.filter_jit
-    def compute_A(self) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-        lam, V = eig(self.A)
-        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
-        return self.A, (lam, V, V_inv)
-
-    def K_operator(self, t: float, z: jnp.ndarray,
-                   A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
-        assert z.ndim == 1, f"z must be a vector, got {z.ndim}D"
-        (lam, V, V_inv) = A_eig
-        lam_t = jnp.exp(lam * t)
-        complex_z = V @ (lam_t * (V_inv @ z))
-        return complex_z.real
-
-    @eqx.filter_jit
-    def __call__(self, x0, t0: float, t1: float,
-                 u: Optional[PyTree],
-                 precomputes: InKoopmanPrecomputes, saveat: Optional[SaveAt]) -> jnp.ndarray:
-        z = self.phi(x0, u=u)
-        z = self.K_operator(t1, z, precomputes.A_eig)
-        return self.phi_inv(z)
-
-    @eqx.filter_jit
-    def compute_phi_loss(self, x, u=None):
-        z = self.phi(x, u=u)
-        diff = x - self.phi_inv(z)
-        return jnp.mean(diff ** 2)
-
-    def compute_A_spectrum(self):
-        _, (lam, _, _) = self.compute_A()
-        return lam.real, lam.imag
-
-
-class KoopmanOperator(VanillaKoopmanOperator):
-    """Koopman operator for continuous-time systems."""
-    R: jnp.ndarray
-    Q: jnp.ndarray
-    N: jnp.ndarray
-    epsI: jnp.ndarray = eqx.static_field()
-
-    def __init__(self,
-                 input_size: int,
-                 koopman_size: int,
-                 key: "jax.random.PRNGKey",
-                 control_size: int = 0,
-                 phi_depth: int = 3):
-        superkey, key = jrandom.split(key, 2)
-        super().__init__(input_size=input_size,
-                         koopman_size=koopman_size,
-                         key=superkey,
-                         control_size=control_size,
-                         phi_depth=phi_depth)
-        self.A = None
-        keys = jrandom.split(key, 3)
-
-        self.R = jrandom.normal(keys[0], (koopman_size, koopman_size),
-                                dtype=jnp.float64)
-        self.Q = jrandom.normal(keys[1], (koopman_size, koopman_size),
-                                dtype=jnp.float64)
-        self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
-                                dtype=jnp.float64)
-        self.epsI = 1e-9 * jnp.eye(koopman_size, dtype=jnp.float64)
-
-        assert all(a.dtype == jnp.float64 for a in (self.R, self.Q, self.N)), \
-            "SKELKoopmanOperator requires float64 precision"
-
-    @eqx.filter_jit
-    def compute_A(self):
-        R = self.R
-        Q = self.Q
-        N = self.N
-
-        skew = (R - R.T) / 2
-        F = skew - Q @ Q.T - self.epsI
-        E = N @ N.T + self.epsI
-
-        A = jnp.linalg.solve(E, F)
-
-        lam, V = eig(A)
-        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
-        return A, (lam, V, V_inv)
-
+class InKoopmanPrecomputes(KoopmanPrecomputes, Precomputes):
+    pass
 
 class InKoopman(InICENODELite):
     f_dyn: KoopmanOperator
@@ -1128,15 +971,15 @@ class InKoopman(InICENODELite):
             })
         return stats
 
-
-class InMultiscaleKoopman(InICENODELite):
-    pass
-
-
-# TODO: finish this class
-
-
-class TimestepsKoopmanPrecomputes(Precomputes):
-    pass
-    # Precompute a number of operators for given timesteps. https://www.geeksforgeeks.org/find-minimum-number-of-coins-that-make-a-change/
-    # Use the minimum-number-of-coins-needed principle to determine the matrix-vector multiplication sequence.
+#
+# class InMultiscaleKoopman(InICENODELite):
+#     pass
+#
+#
+# # TODO: finish this class
+#
+#
+# class TimestepsKoopmanPrecomputes(Precomputes):
+#     pass
+#     # Precompute a number of operators for given timesteps. https://www.geeksforgeeks.org/find-minimum-number-of-coins-that-make-a-change/
+#     # Use the minimum-number-of-coins-needed principle to determine the matrix-vector multiplication sequence.

@@ -1,6 +1,5 @@
 diffrax==0.5.0
 equinox==0.11.4
-optax==0.2.2
 optax @ git+https://github.com/google-deepmind/optax@99967d2673a6ed3bd18e3e3630bb20b0a9b15246
 numpy==1.26.4
 pandas==2.1.4

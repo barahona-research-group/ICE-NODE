@@ -14,6 +14,7 @@ from diffrax import diffeqsolve, Tsit5, RecursiveCheckpointAdjoint, SaveAt, ODET
 from jax.experimental.jet import jet
 from jaxtyping import PyTree
 
+from ._eig_ad import eig
 from .model import (Precomputes)
 from .. import VxData
 
@@ -592,11 +593,11 @@ class ICNNObsDecoder(eqx.Module):
     f_energy: ICNN
     observables_size: int
     state_size: int
-    optax_optimiser_name: Literal['adam', 'lbfgs', 'polyak_sgd',  'lamb', 'yogi']
+    optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi']
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: int,
                  depth: int,
-                 optax_optimiser_name: Literal['adam', 'lbfgs', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
+                 optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
                  key: jrandom.PRNGKey):
         super().__init__()
         self.observables_size = observables_size
@@ -625,7 +626,6 @@ class ICNNObsDecoder(eqx.Module):
     def optax_solver_from_name(optax_solver_name: str) -> Callable[[float], optax.GradientTransformation]:
         return {
             'adam': optax.adam,
-            'lbfgs': optax.lbfgs,
             'polyak_sgd': optax.polyak_sgd,
             'novograd': optax.novograd,
             'lamb': optax.lamb,
@@ -646,3 +646,201 @@ class ICNNObsExtractor(ICNNObsDecoder):
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.split(x, [self.state_size])[1]
+
+
+class KoopmanPrecomputes(eqx.Module):
+    A: jnp.ndarray
+    A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+
+
+class KoopmanPhi(eqx.Module):
+    @eqx.filter_jit
+    def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None,
+               observed_mask: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+        pass
+
+    @eqx.filter_jit
+    def decode(self, z: jnp.ndarray) -> jnp.ndarray:
+        pass
+
+
+class KoopmanPhiMLP(KoopmanPhi):
+    """Koopman embeddings for continuous-time systems."""
+    mlp: eqx.Module
+    mlp_inv: eqx.Module
+    C: jnp.ndarray = eqx.static_field()
+    C_inv: jnp.ndarray = eqx.static_field()
+    skip: bool = eqx.static_field()
+
+    def __init__(self,
+                 observables_size: int,
+                 embeddings_size: int,
+                 key: "jax.random.PRNGKey",
+                 depth: int,
+                 control_size: int = 0,
+                 skip: bool = True):
+        super().__init__()
+        self.skip = skip
+        self.C = jnp.eye(embeddings_size, M=observables_size + control_size)
+        self.C_inv = jnp.eye(observables_size, M=embeddings_size)
+        self.mlp = eqx.nn.MLP(
+            observables_size + control_size,
+            embeddings_size,
+            depth=depth,
+            width_size=(observables_size + control_size + embeddings_size) // 2,
+            activation=jnn.relu,
+            use_final_bias=not skip,
+            key=key)
+        self.mlp_inv = eqx.nn.MLP(
+            embeddings_size,
+            observables_size,
+            depth=depth,
+            width_size=(observables_size + control_size + embeddings_size) // 2,
+            activation=jnn.relu,
+            use_final_bias=not skip,
+            key=key)
+
+    @eqx.filter_jit
+    def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None):
+        if u is not None:
+            x = jnp.hstack((x, u))
+
+        if self.skip:
+            return self.C @ x + self.mlp(x)
+        else:
+            return self.mlp(x)
+
+    @eqx.filter_jit
+    def decode(self, z):
+        if self.skip:
+            return self.mlp_inv(z) + self.C_inv @ z
+        else:
+            return self.mlp_inv(z)
+
+
+# class KoopmanPhiICNN(KoopmanPhi):
+#     f_icnn: ICNNObsDecoder
+#
+#
+#     def __init__(self, observables_size: int, embeddings_size: int,
+#
+#
+#                  key: jrandom.PRNGKey,
+#                  depth: int = 4,
+#                  control_size: int = 0,
+#                  hidden_size_multiplier: int = 2,
+#                     optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam'):
+#         super().__init__()
+#         self.f_icnn = ICNNObsDecoder(observables_size, embeddings_size, 2, 2, key)
+
+
+class VanillaKoopmanOperator(eqx.Module):
+    A: jnp.ndarray
+    phi: KoopmanPhiMLP
+
+    input_size: int = eqx.static_field()
+    koopman_size: int = eqx.static_field()
+    control_size: int = eqx.static_field()
+
+    def __init__(self,
+                 input_size: int,
+                 koopman_size: int,
+                 key: "jax.random.PRNGKey",
+                 control_size: int = 0,
+                 phi_depth: int = 1):
+        super().__init__()
+        self.input_size = input_size
+        self.koopman_size = koopman_size
+        self.control_size = control_size
+        keys = jrandom.split(key, 3)
+
+        self.A = jrandom.normal(keys[0], (koopman_size, koopman_size),
+                                dtype=jnp.float32)
+        self.phi = KoopmanPhiMLP(observables_size=input_size,
+                                 embeddings_size=koopman_size,
+                                 control_size=control_size,
+                                 depth=phi_depth,
+                                 skip=True,
+                                 key=keys[1])
+
+    @eqx.filter_jit
+    def compute_A(self) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+        lam, V = eig(self.A)
+        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), self.A)
+        return self.A, (lam, V, V_inv)
+
+    def K_operator(self, t: float, z: jnp.ndarray,
+                   A_eig: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]) -> jnp.ndarray:
+        assert z.ndim == 1, f"z must be a vector, got {z.ndim}D"
+        (lam, V, V_inv) = A_eig
+        lam_t = jnp.exp(lam * t)
+        complex_z = V @ (lam_t * (V_inv @ z))
+        return complex_z.real
+
+    @eqx.filter_jit
+    def __call__(self, x0, t0: float, t1: float,
+                 u: Optional[PyTree],
+                 precomputes: KoopmanPrecomputes, saveat: Optional[SaveAt]) -> jnp.ndarray:
+        z = self.phi.encode(x0, u=u)
+        z = self.K_operator(t1, z, precomputes.A_eig)
+        return self.phi.decode(z)
+
+    @eqx.filter_jit
+    def compute_phi_loss(self, x, u=None):
+        z = self.phi.encode(x, u=u)
+        diff = x - self.phi.decode(z)
+        return jnp.mean(diff ** 2)
+
+    def compute_A_spectrum(self):
+        _, (lam, _, _) = self.compute_A()
+        return lam.real, lam.imag
+
+
+class KoopmanOperator(VanillaKoopmanOperator):
+    """Koopman operator for continuous-time systems."""
+    R: jnp.ndarray
+    Q: jnp.ndarray
+    N: jnp.ndarray
+    epsI: jnp.ndarray = eqx.static_field()
+
+    def __init__(self,
+                 input_size: int,
+                 koopman_size: int,
+                 key: "jax.random.PRNGKey",
+                 control_size: int = 0,
+                 phi_depth: int = 3):
+        superkey, key = jrandom.split(key, 2)
+        super().__init__(input_size=input_size,
+                         koopman_size=koopman_size,
+                         key=superkey,
+                         control_size=control_size,
+                         phi_depth=phi_depth)
+        self.A = None
+        keys = jrandom.split(key, 3)
+
+        self.R = jrandom.normal(keys[0], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.Q = jrandom.normal(keys[1], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.N = jrandom.normal(keys[2], (koopman_size, koopman_size),
+                                dtype=jnp.float64)
+        self.epsI = 1e-9 * jnp.eye(koopman_size, dtype=jnp.float64)
+
+        assert all(a.dtype == jnp.float64 for a in (self.R, self.Q, self.N)), \
+            "SKELKoopmanOperator requires float64 precision"
+
+    @eqx.filter_jit
+    def compute_A(self):
+        R = self.R
+        Q = self.Q
+        N = self.N
+
+        skew = (R - R.T) / 2
+        F = skew - Q @ Q.T - self.epsI
+        E = N @ N.T + self.epsI
+
+        A = jnp.linalg.solve(E, F)
+
+        lam, V = eig(A)
+        V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
+        return A, (lam, V, V_inv)
