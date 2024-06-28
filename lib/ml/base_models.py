@@ -656,11 +656,11 @@ class KoopmanPrecomputes(eqx.Module):
 class KoopmanPhi(eqx.Module):
     @eqx.filter_jit
     def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None,
-               observed_mask: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+               x_mask: Optional[jnp.ndarray] = None) -> jnp.ndarray:
         pass
 
     @eqx.filter_jit
-    def decode(self, z: jnp.ndarray) -> jnp.ndarray:
+    def decode(self, z: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
         pass
 
 
@@ -701,7 +701,8 @@ class KoopmanPhiMLP(KoopmanPhi):
             key=key)
 
     @eqx.filter_jit
-    def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None):
+    def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+
         if u is not None:
             x = jnp.hstack((x, u))
 
@@ -711,27 +712,93 @@ class KoopmanPhiMLP(KoopmanPhi):
             return self.mlp(x)
 
     @eqx.filter_jit
-    def decode(self, z):
+    def decode(self, z: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
         if self.skip:
             return self.mlp_inv(z) + self.C_inv @ z
         else:
             return self.mlp_inv(z)
 
 
-# class KoopmanPhiICNN(KoopmanPhi):
-#     f_icnn: ICNNObsDecoder
-#
-#
-#     def __init__(self, observables_size: int, embeddings_size: int,
-#
-#
-#                  key: jrandom.PRNGKey,
-#                  depth: int = 4,
-#                  control_size: int = 0,
-#                  hidden_size_multiplier: int = 2,
-#                     optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam'):
-#         super().__init__()
-#         self.f_icnn = ICNNObsDecoder(observables_size, embeddings_size, 2, 2, key)
+class KoopmanPhiICNN(KoopmanPhi):
+    f_icnn: ICNNObsDecoder
+    z_size: int = eqx.static_field()  # Embeddings
+    x_size: int = eqx.static_field()  # Observables
+    u_size: int = eqx.static_field()  # Control
+
+    def __init__(self, x_size: int, z_size: int, u_size: int,
+                 key: jrandom.PRNGKey,
+                 depth: int = 4,
+                 hidden_size_multiplier: int = 2,
+                 optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam'):
+        # Input Components: (z "embeddings", x "observables", u "control")
+        super().__init__()
+        self.f_icnn = ICNNObsDecoder(x_size + z_size + u_size, 0,
+                                     hidden_size_multiplier, depth,
+                                     optax_optimiser_name=optax_optimiser_name, key=key)
+        self.u_size = u_size
+        self.x_size = x_size
+        self.z_size = z_size
+
+    @eqx.filter_jit
+    def encode(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+
+        # fix the mask for the control input.
+        if u is None:
+            u = jnp.zeros(self.u_size)
+
+        z = jnp.zeros(self.z_size)
+        icnn_input = jnp.hstack((z, x, u))
+        mask = jnp.hstack((z, jnp.ones_like(x), jnp.ones_like(u)))
+        icnn_output, _ = self.f_icnn.partial_input_optimise(icnn_input, mask)
+        z, _, _ = self.split(icnn_output)
+        return z
+
+    @eqx.filter_jit
+    def decode(self, z: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+        if u is None:
+            u = jnp.zeros(self.u_size)
+
+        icnn_input = jnp.hstack((z, jnp.zeros(self.x_size), u))
+        icnn_mask = jnp.hstack((jnp.ones(self.z_size), jnp.zeros(self.x_size), jnp.ones(self.u_size)))
+        icnn_input, _ = self.f_icnn.partial_input_optimise(icnn_input, icnn_mask)
+        _, x, _ = self.split(icnn_input)
+        return x
+
+    @eqx.filter_jit
+    def autoimpute_x(self, x: jnp.ndarray, x_mask: jnp.ndarray, u: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+        if u is None:
+            u = jnp.zeros(self.u_size)
+
+        icnn_input = jnp.hstack((jnp.zeros(self.z_size), x, u))
+        icnn_mask = jnp.hstack((jnp.zeros(self.z_size), x_mask, jnp.ones(self.u_size)))
+        icnn_input, _ = self.f_icnn.partial_input_optimise(icnn_input, icnn_mask)
+        _, x, _ = self.split(icnn_input)
+        return x
+
+    def split(self, icnn_input: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        z, x, u = jnp.split(icnn_input, [self.z_size, self.z_size + self.x_size])
+        return z, x, u
+
+
+class KoopmanIVPGenerator(eqx.Module):
+    persistence_ratio: float = eqx.static_field(default=0.0)
+
+    @eqx.filter_jit
+    def __call__(self,
+                 k_icnn: KoopmanPhiICNN,
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray,
+                 observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        # init_obs: obs_decoder(forecasted_state).
+        # input: (persistent_hidden_confounder, hidden_confounder, init_obs).
+        # mask: (ones_like(state_mem), zeros_like(state_hidden).
+        unobserved_size = len(forecasted_state) - len(true_observables)
+        persistent_memory_size = int(unobserved_size * self.persistence_ratio)
+        x = jnp.hstack((forecasted_state[:unobserved_size], true_observables))
+        unobserved_mask = jnp.zeros_like(forecasted_state).at[:persistent_memory_size].set(1)
+        x_mask = jnp.hstack((unobserved_mask, observables_mask))
+        return k_icnn.autoimpute_x(x, x_mask, u), ImputerMetrics(n_steps=jnp.array([]))
 
 
 class VanillaKoopmanOperator(eqx.Module):
@@ -783,12 +850,12 @@ class VanillaKoopmanOperator(eqx.Module):
                  precomputes: KoopmanPrecomputes, saveat: Optional[SaveAt]) -> jnp.ndarray:
         z = self.phi.encode(x0, u=u)
         z = self.K_operator(t1, z, precomputes.A_eig)
-        return self.phi.decode(z)
+        return self.phi.decode(z, u=u)
 
     @eqx.filter_jit
-    def compute_phi_loss(self, x, u=None):
+    def compute_phi_loss(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None):
         z = self.phi.encode(x, u=u)
-        diff = x - self.phi.decode(z)
+        diff = x - self.phi.decode(z, u=u)
         return jnp.mean(diff ** 2)
 
     def compute_A_spectrum(self):

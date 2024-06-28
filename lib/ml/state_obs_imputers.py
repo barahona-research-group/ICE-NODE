@@ -1,16 +1,14 @@
 """."""
 from __future__ import annotations
 
-from typing import Tuple, ClassVar, Callable, Self
+from typing import Tuple, ClassVar, Callable, Optional
 
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
-import optimistix as optx
 
-from lib import VxData
 from lib.ml.base_models import ICNNObsDecoder, ImputerMetrics
 
 
@@ -40,7 +38,8 @@ class DirectGRUStateImputer(eqx.Module):
     def __call__(self,
                  f_obs_decoder: Callable[[jnp.ndarray], jnp.ndarray],
                  forecasted_state: jnp.ndarray,
-                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
         error = jnp.where(observables_mask, f_obs_decoder(forecasted_state) - true_observables, 0.0)
         projected_error = self.f_project_error(error)
         return self.f_update(jnp.hstack((observables_mask, projected_error)), forecasted_state), ImputerMetrics()
@@ -65,7 +64,8 @@ class DirectGRUStateProbabilisticImputer(eqx.Module):
     def __call__(self,
                  f_obs_decoder: Callable[[jnp.ndarray], Tuple[jnp.ndarray, jnp.ndarray]],
                  forecasted_state: jnp.ndarray,
-                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
         mean_hat, std_hat = f_obs_decoder(forecasted_state)
         # dimension: (obs_dim, )
         error = (true_observables - mean_hat) / (std_hat + 1e-6)
@@ -105,14 +105,15 @@ class StateObsLinearLeastSquareImpute(eqx.Module):
                  obs_decoder: eqx.nn.Linear,
                  forecasted_state: jnp.ndarray,
                  true_observables: jnp.ndarray,
-                 observables_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                 observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
         A = obs_decoder.weight
         B = jnp.expand_dims(true_observables, axis=1)
         M = jnp.expand_dims(observables_mask, axis=1)
         return self.censored_lstsq(A, B, M), ImputerMetrics()
 
 
-class StateObsICNNImputer(eqx.Module):
+class StateObsICNNImputer(eqx.Module): # For latent state space model.
     persistent_memory_size: int  # e.g., obs_decoder.state_size // 3
 
     @eqx.filter_jit
@@ -120,12 +121,12 @@ class StateObsICNNImputer(eqx.Module):
                  obs_decoder: ICNNObsDecoder,
                  forecasted_state: jnp.ndarray,
                  true_observables: jnp.ndarray,
-                 observables_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                 observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
         # init_obs: obs_decoder(forecasted_state).
         # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
-        init_obs = jnp.where(observables_mask, true_observables, obs_decoder(forecasted_state))
-        input = jnp.hstack((forecasted_state, init_obs))
+        input = jnp.hstack((forecasted_state, true_observables))
         mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
         mask = mask.at[obs_decoder.state_size:].set(observables_mask)
         output, stats = obs_decoder.partial_input_optimise(input, mask)
@@ -133,7 +134,7 @@ class StateObsICNNImputer(eqx.Module):
         return state, stats
 
 
-class HiddenObsICNNImputer(eqx.Module):
+class HiddenObsICNNImputer(eqx.Module): # For shallow state space model.
     persistent_memory_size: int  # e.g., obs_decoder.state_size // 3
 
     @eqx.filter_jit
@@ -141,13 +142,13 @@ class HiddenObsICNNImputer(eqx.Module):
                  obs_decoder: ICNNObsDecoder,
                  forecasted_state: jnp.ndarray,
                  true_observables: jnp.ndarray,
-                 observables_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                 observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
         # init_obs: obs_decoder(forecasted_state).
         # input: (persistent_hidden_confounder, hidden_confounder, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
-        init_obs = jnp.where(observables_mask, true_observables, obs_decoder(forecasted_state))
         hidden_confounder = forecasted_state[:obs_decoder.state_size]
-        input = jnp.hstack((hidden_confounder, init_obs))
+        input = jnp.hstack((hidden_confounder, true_observables))
         mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
         mask = mask.at[obs_decoder.state_size:].set(observables_mask)
         return obs_decoder.partial_input_optimise(input, mask)

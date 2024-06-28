@@ -320,7 +320,8 @@ class InICENODE(InpatientModel):
                                                           key=subkey)
                 ode_stats += ode_stats_
                 forecasted_state = forecasted_state.squeeze()
-                state, imputer_stats_ = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask)
+                state, imputer_stats_ = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask,
+                                                      u=segment_force)
                 imputer_stats += imputer_stats_
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
