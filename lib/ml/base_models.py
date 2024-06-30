@@ -595,7 +595,7 @@ class ICNNObsDecoder(eqx.Module):
     state_size: int
     optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi']
 
-    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: int,
+    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
                  optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
                  key: jrandom.PRNGKey):
@@ -603,7 +603,7 @@ class ICNNObsDecoder(eqx.Module):
         self.observables_size = observables_size
         self.state_size = state_size
         input_size = observables_size + state_size
-        self.f_energy = ICNN(input_size, input_size * hidden_size_multiplier, depth, key)
+        self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, key)
         self.optax_optimiser_name = optax_optimiser_name
 
     @eqx.filter_jit
@@ -675,10 +675,10 @@ class KoopmanPhiMLP(KoopmanPhi):
     def __init__(self,
                  observables_size: int,
                  embeddings_size: int,
-                 key: "jax.random.PRNGKey",
                  depth: int,
                  control_size: int = 0,
-                 skip: bool = True):
+                 skip: bool = True, *,
+                 key: "jax.random.PRNGKey"):
         super().__init__()
         self.skip = skip
         self.C = jnp.eye(embeddings_size, M=observables_size + control_size)
@@ -728,7 +728,7 @@ class KoopmanPhiICNN(KoopmanPhi):
     def __init__(self, x_size: int, z_size: int, u_size: int,
                  key: jrandom.PRNGKey,
                  depth: int = 4,
-                 hidden_size_multiplier: int = 2,
+                 hidden_size_multiplier: float = 1.0,
                  optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam'):
         # Input Components: (z "embeddings", x "observables", u "control")
         super().__init__()
@@ -808,27 +808,28 @@ class VanillaKoopmanOperator(eqx.Module):
     input_size: int = eqx.static_field()
     koopman_size: int = eqx.static_field()
     control_size: int = eqx.static_field()
+    phi_depth: int = eqx.static_field()
 
     def __init__(self,
                  input_size: int,
                  koopman_size: int,
-                 key: "jax.random.PRNGKey",
                  control_size: int = 0,
-                 phi_depth: int = 1):
+                 phi_depth: int = 1, *,
+                 key: "jax.random.PRNGKey"):
         super().__init__()
         self.input_size = input_size
         self.koopman_size = koopman_size
         self.control_size = control_size
-        keys = jrandom.split(key, 3)
+        self.phi_depth = phi_depth
+        key1, key2 = jrandom.split(key, 2)
 
-        self.A = jrandom.normal(keys[0], (koopman_size, koopman_size),
+        self.A = jrandom.normal(key1, (koopman_size, koopman_size),
                                 dtype=jnp.float32)
-        self.phi = KoopmanPhiMLP(observables_size=input_size,
-                                 embeddings_size=koopman_size,
-                                 control_size=control_size,
-                                 depth=phi_depth,
-                                 skip=True,
-                                 key=keys[1])
+        self.phi = self.make_phi(key2)
+
+    def make_phi(self, key: jrandom.PRNGKey) -> KoopmanPhiMLP:
+        return KoopmanPhiMLP(self.input_size, self.koopman_size, control_size=self.control_size,
+                             depth=self.phi_depth, skip=True, key=key)
 
     @eqx.filter_jit
     def compute_A(self) -> Tuple[jnp.ndarray, Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
@@ -847,10 +848,11 @@ class VanillaKoopmanOperator(eqx.Module):
     @eqx.filter_jit
     def __call__(self, x0, t0: float, t1: float,
                  u: Optional[PyTree],
-                 precomputes: KoopmanPrecomputes, saveat: Optional[SaveAt]) -> jnp.ndarray:
+                 precomputes: KoopmanPrecomputes, saveat: Optional[SaveAt] = None,
+                 key: Optional[jrandom.PRNGKey] = None) -> Tuple[jnp.ndarray, ODEMetrics]:
         z = self.phi.encode(x0, u=u)
         z = self.K_operator(t1, z, precomputes.A_eig)
-        return self.phi.decode(z, u=u)
+        return self.phi.decode(z, u=u), ODEMetrics()
 
     @eqx.filter_jit
     def compute_phi_loss(self, x: jnp.ndarray, u: Optional[jnp.ndarray] = None):
@@ -911,3 +913,15 @@ class KoopmanOperator(VanillaKoopmanOperator):
         lam, V = eig(A)
         V_inv = jnp.linalg.solve(V @ jnp.diag(lam), A)
         return A, (lam, V, V_inv)
+
+
+class ICNNKoopmanOperator(KoopmanOperator):
+    phi: KoopmanPhiICNN
+
+    def __init__(self, input_size: int, koopman_size: int, key: jrandom.PRNGKey,
+                 control_size: int = 0, phi_depth: int = 3):
+        super().__init__(input_size, koopman_size, key, control_size, phi_depth)
+
+    def make_phi(self, key: jrandom.PRNGKey) -> KoopmanPhiICNN:
+        return KoopmanPhiICNN(x_size=self.input_size, z_size=self.koopman_size,
+                              u_size=self.control_size, depth=self.phi_depth, key=key)

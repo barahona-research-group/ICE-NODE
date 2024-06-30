@@ -11,10 +11,7 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
-from diffrax import SaveAt
-from jaxtyping import PyTree
 
-from ._eig_ad import eig
 from .artefacts import AdmissionPrediction, AdmissionsPrediction, ModelBehaviouralMetrics
 from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
     NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
@@ -114,6 +111,16 @@ class ICENODEConfig(InpatientModelConfig):
     dynamics: DynamicsLiteral = "mlp"
 
 
+class ICEDynComponents(eqx.Module):
+    emb: Optional[AdmissionEmbedding] = None
+    obs_dec: Optional[CompiledMLP] = None
+    lead_dec: Optional[DirectLeadPredictorWrapper] = None
+    dyn: Optional[NeuralODESolver | CompiledGRU | RETAINDynamic] = None
+    update: Optional[DirectGRUStateImputer] = None
+    init: Optional[CompiledMLP] = None
+    outcome_dec: Optional[CompiledMLP] = None
+
+
 class InICENODE(InpatientModel):
     """
     The InICENODE model. It is composed of the following components:
@@ -176,6 +183,11 @@ class InICENODE(InpatientModel):
                                               predictor=config.lead_predictor,
                                               observables_size=observables_size,
                                               key=lead_key, mlp_kwargs=lead_mlp_kwargs or dict())
+
+    @property
+    def components(self) -> ICEDynComponents:
+        return ICEDynComponents(emb=self.f_emb, obs_dec=self.f_obs_dec, lead_dec=self.f_lead_dec,
+                                dyn=self.f_dyn, update=self.f_update, init=self.f_init, outcome_dec=self.f_outcome_dec)
 
     @property
     def dyn_params_list(self):
@@ -282,7 +294,8 @@ class InICENODE(InpatientModel):
     def decode_state_trajectory_observables(self,
                                             admission: SegmentedAdmission | Admission,
                                             state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
-        pred_obs = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.forecasted_state)
+        f = self.components
+        pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
         return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
 
     def __call__(
@@ -302,7 +315,8 @@ class InICENODE(InpatientModel):
         n_segments = obs.n_segments
         t = 0.0
         state_trajectory = tuple()
-        state = self.f_init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
+        f = self.components
+        state = f.init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
         segments_t1 = admission.interventions.t1
         key = jrandom.PRNGKey(hash(admission.admission_id))
 
@@ -315,26 +329,26 @@ class InICENODE(InpatientModel):
             for obs_t, obs_val, obs_mask in segment_obs:
                 key, subkey = jrandom.split(key)
                 # if time-diff is more than 1 seconds, we integrate.
-                forecasted_state, ode_stats_ = self.f_dyn(state, t0=t, t1=obs_t, u=segment_force,
-                                                          precomputes=precomputes,
-                                                          key=subkey)
+                forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, u=segment_force,
+                                                     precomputes=precomputes,
+                                                     key=subkey)
                 ode_stats += ode_stats_
                 forecasted_state = forecasted_state.squeeze()
-                state, imputer_stats_ = self.f_update(self.f_obs_dec, forecasted_state, obs_val, obs_mask,
-                                                      u=segment_force)
+                state, imputer_stats_ = f.update(f.obs_dec, forecasted_state, obs_val, obs_mask,
+                                                 u=segment_force)
                 imputer_stats += imputer_stats_
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
             key, subkey = jrandom.split(key)
-            state, stats = self.f_dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes,
-                                      key=subkey)
+            state, stats = f.dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes,
+                                 key=subkey)
             ode_stats += stats
             state = state.squeeze()
             t = segment_t1
 
         prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
-        if self.f_outcome_dec is not None:
-            prediction = prediction.add(outcome=CodesVector(self.f_outcome_dec(state), admission.outcome.scheme))
+        if f.outcome_dec is not None:
+            prediction = prediction.add(outcome=CodesVector(f.outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
             forecasted_states, adjusted_states = zip(*state_trajectory)
             icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
@@ -342,7 +356,7 @@ class InICENODE(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
-            prediction = prediction.add(leading_observable=self.f_lead_dec(icenode_state_trajectory))
+            prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
             prediction = prediction.add(trajectory=icenode_state_trajectory)
         return prediction
 
@@ -442,7 +456,6 @@ class StochasticInICENODELite(InICENODELite):
         return SkipShortIntervalsWrapper(solver=f_odeint, min_interval=1.0)
 
 
-
 class StochasticMechanisticICENODE(InICENODELite):
 
     @staticmethod
@@ -515,14 +528,16 @@ class GRUODEBayes(InICENODELite):
     def decode_state_trajectory_observables(self,
                                             admission: SegmentedAdmission | Admission,
                                             state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
-        pred_obs_mean, pred_obs_std = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.forecasted_state)
+        f = self.components
+        pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
     def decode_state_trajectory_adjusted_observables(self,
                                                      admission: SegmentedAdmission | Admission,
                                                      state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
-        pred_obs_mean, pred_obs_std = eqx.filter_vmap(self.f_obs_dec)(state_trajectory.adjusted_state)
+        f = self.components
+        pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.adjusted_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
@@ -654,10 +669,11 @@ class InGRUJump(InICENODELite):
             logging.debug("No observation to fit.")
             return prediction
         state_trajectory = tuple()
-        state = self.f_init(embedded_admission.history_summary)
+        f = self.components
+        state = f.init(embedded_admission.history_summary)
         for i in range(len(obs.time)):
-            forecasted_state = self.f_dyn(embedded_admission.history_summary, state)
-            state = self.f_update(self.f_obs_dec, forecasted_state, obs.value[i], obs.mask[i])
+            forecasted_state = f.dyn(embedded_admission.history_summary, state)
+            state = f.update(f.obs_dec, forecasted_state, obs.value[i], obs.mask[i])
             state_trajectory += ((forecasted_state, state),)
 
         forecasted_states, adjusted_states = zip(*state_trajectory)
@@ -665,7 +681,7 @@ class InGRUJump(InICENODELite):
                                                               adjusted_state=adjusted_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
-        prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
+        prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
         return prediction
 
 
@@ -729,12 +745,12 @@ class InGRU(InICENODELite):
         if len(embedded_admission.sequence) == 0:
             logging.debug("No observations to fit.")
             return prediction
-
-        state = self.f_init(force)
+        f = self.components
+        state = f.init(force)
         state_trajectory = tuple()
         for seq_e in embedded_admission.sequence:
             forecasted_state = state
-            state = self.f_dyn(seq_e, state)
+            state = f.dyn(seq_e, state)
             state_trajectory += ((forecasted_state, state),)
 
         forecasted_states, adjusted_states = zip(*state_trajectory)
@@ -743,7 +759,7 @@ class InGRU(InICENODELite):
                                                               adjusted_state=adjusted_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
-        prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
+        prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
         return prediction
 
 
@@ -852,7 +868,6 @@ class InRETAIN(InGRUJump):
             precomputes: Precomputes) -> AdmissionPrediction:
 
         obs = admission.observables
-        lead = admission.leading_observable
         prediction = AdmissionPrediction(admission=admission)
 
         if len(obs) == 0:
@@ -922,18 +937,26 @@ class InRETAIN(InGRUJump):
 
         return prediction
 
+
 class InKoopmanPrecomputes(KoopmanPrecomputes, Precomputes):
     pass
 
-class InKoopman(InICENODELite):
+
+class InKoopman(StochasticMechanisticICENODE):
     f_dyn: KoopmanOperator
 
+    # Obs autoimputation with ICNN
+    # KoopmanEmbs <-> Obs with MLP-AEs
+
     @staticmethod
-    def _make_dyn(model_config: InpatientModelConfig, embeddings_config: AdmissionEmbeddingsConfig,
-                  key: jrandom.PRNGKey) -> KoopmanOperator:
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig,
+                  *,
+                  key: jrandom.PRNGKey, observables_size: Optional[int] = None, **kwargs) -> KoopmanOperator:
         interventions_size = embeddings_config.interventions.interventions if embeddings_config.interventions else 0
-        demographics_size = embeddings_config.demographic
-        return KoopmanOperator(input_size=model_config.state,
+        demographics_size = embeddings_config.demographic or 0
+        integrand_size = model_config.state + observables_size
+        return KoopmanOperator(input_size=integrand_size,
                                control_size=interventions_size + demographics_size,
                                koopman_size=model_config.state * 5,
                                key=key)
@@ -971,16 +994,3 @@ class InKoopman(InICENODELite):
                 }
             })
         return stats
-
-#
-# class InMultiscaleKoopman(InICENODELite):
-#     pass
-#
-#
-# # TODO: finish this class
-#
-#
-# class TimestepsKoopmanPrecomputes(Precomputes):
-#     pass
-#     # Precompute a number of operators for given timesteps. https://www.geeksforgeeks.org/find-minimum-number-of-coins-that-make-a-change/
-#     # Use the minimum-number-of-coins-needed principle to determine the matrix-vector multiplication sequence.
