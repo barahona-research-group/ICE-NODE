@@ -388,16 +388,16 @@ class ICNN(eqx.Module):
                 return jnn.softplus
             return jnn.relu
 
-        Wzs = [PositiveSquaredLinear(input_size, hidden_size, key=new_key())]
+        Wzs = [PositiveAbsLinear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
-            Wzs.append(PositiveSquaredLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
-        Wzs.append(PositiveSquaredLinear(hidden_size, 1, use_bias=True, key=new_key()))
+            Wzs.append(PositiveAbsLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
+        Wzs.append(PositiveAbsLinear(hidden_size, 1, use_bias=True, key=new_key()))
         self.Wzs = tuple(Wzs)
 
         Wxs = []
         for _ in range(depth - 1):
-            Wxs.append(PositiveSquaredLinear(input_size, hidden_size, key=new_key()))
-        Wxs.append(PositiveSquaredLinear(input_size, 1, use_bias=True, key=new_key()))
+            Wxs.append(PositiveAbsLinear(input_size, hidden_size, key=new_key()))
+        Wxs.append(PositiveAbsLinear(input_size, 1, use_bias=True, key=new_key()))
         self.Wxs = tuple(Wxs)
         self.activations = tuple(jnn.softplus for _ in range(depth))
 
