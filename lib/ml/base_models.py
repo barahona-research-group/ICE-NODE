@@ -406,7 +406,7 @@ class ICNN(eqx.Module):
                 return jnn.softplus
             return jnn.relu
 
-        Wzs = [PositiveAbsLinear(input_size, hidden_size, key=new_key())]
+        Wzs = [eqx.nn.Linear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
             Wzs.append(PositiveAbsLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
         Wzs.append(PositiveAbsLinear(hidden_size, 1, use_bias=True, key=new_key()))
