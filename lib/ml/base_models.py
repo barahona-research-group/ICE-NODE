@@ -382,29 +382,11 @@ class ICNN(eqx.Module):
 
     def __init__(self, input_size: int, hidden_size: int, depth: int, key: jrandom.PRNGKey):
         super().__init__()
-        positive_layer_i = 0
-        activation_i = 0
 
         def new_key():
             nonlocal key
             key, subkey = jrandom.split(key)
             return subkey
-
-        def positive_layer(*args, **kwargs):
-            nonlocal positive_layer_i
-            positive_layer_i += 1
-            if positive_layer_i % 2 == 0:
-                return PositiveSquaredLinear(*args, **kwargs)
-            return PositiveReLuLinear(*args, **kwargs)
-
-        def activation():
-            nonlocal activation_i
-            activation_i += 1
-            if activation_i == 0:
-                return jnn.sigmoid
-            if activation_i % 2 == 0:
-                return jnn.softplus
-            return jnn.relu
 
         Wzs = [eqx.nn.Linear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
