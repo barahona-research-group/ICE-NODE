@@ -15,6 +15,7 @@ from jax.experimental.jet import jet
 from jaxtyping import PyTree
 
 from ._eig_ad import eig
+from .icnn_init import ConvexInitialiser
 from .model import (Precomputes)
 from .. import VxData
 
@@ -326,6 +327,14 @@ class CompiledGRU(eqx.nn.GRUCell):
 
 class PositivityLayer(eqx.nn.Linear):
 
+    def __init__(self, in_size: int, out_size: int, use_bias: bool = True, key: jrandom.PRNGKey = None):
+        super().__init__(in_size, out_size, use_bias=use_bias, key=key)
+        self.weight, self.bias = self.re_init_params(self.weight, self.bias, key)
+
+    @staticmethod
+    def re_init_params(weight: jnp.ndarray, bias: jnp.ndarray, key: jrandom.PRNGKey) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        return weight, bias
+
     @abstractmethod
     def transform(self, x: jnp.ndarray) -> jnp.ndarray:
         pass
@@ -344,11 +353,20 @@ class PositiveSquaredLinear(PositivityLayer):
 
 
 class PositiveReLuLinear(PositivityLayer):
+    @staticmethod
+    def re_init_params(weight: jnp.ndarray, bias: jnp.ndarray, key: jrandom.PRNGKey) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        return ConvexInitialiser()(weight.shape, bias.shape, key)
+
     def transform(self, x: jnp.ndarray) -> jnp.ndarray:
         return jax.nn.relu(x)
 
 
 class PositiveAbsLinear(PositivityLayer):
+
+    @staticmethod
+    def re_init_params(weight: jnp.ndarray, bias: jnp.ndarray, key: jrandom.PRNGKey) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        return ConvexInitialiser()(weight.shape, bias.shape, key)
+
     def transform(self, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.abs(x)
 
@@ -359,45 +377,27 @@ class ICNN(eqx.Module):
     Principled Weight Initialisation for Input-Convex Neural Networks: https://openreview.net/pdf?id=pWZ97hUQtQ 
     """
     Wzs: Tuple[PositivityLayer, ...]
-    Wxs: Tuple[PositivityLayer, ...]
+    Wxs: Tuple[eqx.nn.Linear, ...]
     activations: Tuple[Callable[..., jnp.ndarray], ...]
 
     def __init__(self, input_size: int, hidden_size: int, depth: int, key: jrandom.PRNGKey):
         super().__init__()
-        positive_layer_i = 0
-        activation_i = 0
 
         def new_key():
             nonlocal key
             key, subkey = jrandom.split(key)
             return subkey
 
-        def positive_layer(*args, **kwargs):
-            nonlocal positive_layer_i
-            positive_layer_i += 1
-            if positive_layer_i % 2 == 0:
-                return PositiveSquaredLinear(*args, **kwargs)
-            return PositiveReLuLinear(*args, **kwargs)
-
-        def activation():
-            nonlocal activation_i
-            activation_i += 1
-            if activation_i == 0:
-                return jnn.sigmoid
-            if activation_i % 2 == 0:
-                return jnn.softplus
-            return jnn.relu
-
-        Wzs = [PositiveSquaredLinear(input_size, hidden_size, key=new_key())]
+        Wzs = [eqx.nn.Linear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
-            Wzs.append(PositiveSquaredLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
-        Wzs.append(PositiveSquaredLinear(hidden_size, 1, use_bias=True, key=new_key()))
+            Wzs.append(PositiveAbsLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
+        Wzs.append(PositiveAbsLinear(hidden_size, 1, use_bias=True, key=new_key()))
         self.Wzs = tuple(Wzs)
 
         Wxs = []
         for _ in range(depth - 1):
-            Wxs.append(PositiveSquaredLinear(input_size, hidden_size, key=new_key()))
-        Wxs.append(PositiveSquaredLinear(input_size, 1, use_bias=True, key=new_key()))
+            Wxs.append(eqx.nn.Linear(input_size, hidden_size, key=new_key()))
+        Wxs.append(eqx.nn.Linear(input_size, 1, use_bias=True, key=new_key()))
         self.Wxs = tuple(Wxs)
         self.activations = tuple(jnn.softplus for _ in range(depth))
 

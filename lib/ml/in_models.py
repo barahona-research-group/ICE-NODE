@@ -518,6 +518,7 @@ class StochasticMechanisticICENODE(InICENODELite):
     def _make_obs_dec(config, observables_size, key) -> ICNNObsExtractor:
         return ICNNObsExtractor(observables_size=observables_size, state_size=config.state,
                                 hidden_size_multiplier=3, depth=4,
+                                optax_optimiser_name='polyak_sgd',
                                 key=key)
 
 
@@ -596,6 +597,7 @@ class InICENODELiteICNNImpute(InICENODELite):
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
         return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
                               hidden_size_multiplier=3, depth=4,
+                              optax_optimiser_name='polyak_sgd',
                               key=key)
 
 
