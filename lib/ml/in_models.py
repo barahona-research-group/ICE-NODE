@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import fields
-from typing import Tuple, Optional, Literal, Type, Self, Dict, Any
+from typing import Tuple, Optional, Literal, Type, Self, Dict, Any, ClassVar, Callable
 
 import equinox as eqx
 import jax
@@ -13,23 +13,118 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 
 from .artefacts import AdmissionPrediction, AdmissionsPrediction, ModelBehaviouralMetrics
-from .base_models import LeadPredictorName, MonotonicLeadingObsPredictor, MLPLeadingObsPredictor, CompiledMLP, \
-    NeuralODESolver, ProbMLP, CompiledLinear, CompiledGRU, ICNNObsDecoder, DiffusionMLP, StochasticNeuralODESolver, \
-    ICNNObsExtractor, SkipShortIntervalsWrapper, ODEMetrics, ImputerMetrics, KoopmanOperator, KoopmanPrecomputes
+from .base_models import LeadPredictorName, NeuralODESolver, DiffusionMLP, StochasticNeuralODESolver, \
+    SkipShortIntervalsWrapper, ODEMetrics
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
                          AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
 from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, EmbeddedDischargeSummary)
+from .icnn_modules import ImputerMetrics, ICNNObsExtractor, ICNNObsDecoder
+from .koopman_modules import KoopmanOperator, KoopmanPrecomputes
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
-from .state_dynamics import GRUDynamics
-from .state_obs_imputers import DirectGRUStateImputer, StateObsLinearLeastSquareImpute, \
-    DirectGRUStateProbabilisticImputer, StateObsICNNImputer, HiddenObsICNNImputer
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission, ObservablesDistribution
 from ..ehr.tvx_ehr import SegmentedTVxEHR
 from ..utils import model_params_scaler, tqdm_constructor
+
+
+class MonotonicLeadingObsPredictor(eqx.Module):
+    mlp: eqx.nn.MLP
+
+    def __init__(self, input_size: int,
+                 n_lead_times: int,
+                 key: jrandom.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        out_size = n_lead_times + 1
+        width = mlp_kwargs.get("width_size", out_size * 5)
+        self.mlp = eqx.nn.MLP(input_size,
+                              out_size,
+                              width_size=width,
+                              activation=jnn.tanh,
+                              depth=2,
+                              key=key)
+
+    @eqx.filter_jit
+    def __call__(self, state):
+        y = self.mlp(state)
+        risk = jnn.sigmoid(y[-1])
+        p = jnp.cumsum(jnn.softmax(y[:-1]))
+        return risk * p
+
+
+class MLPLeadingObsPredictor(eqx.Module):
+    _mlp: eqx.nn.MLP
+
+    def __init__(self, input_size: int,
+                 n_lead_times: int,
+                 key: jax.random.PRNGKey, **mlp_kwargs):
+        super().__init__()
+        width = mlp_kwargs.get("width_size", n_lead_times * 5)
+        self._mlp = eqx.nn.MLP(input_size,
+                               n_lead_times,
+                               width_size=width,
+                               activation=jnn.tanh,
+                               final_activation=jnn.sigmoid,
+                               depth=2,
+                               key=key)
+
+    @eqx.filter_jit
+    def __call__(self, state):
+        return self._mlp(state)
+
+
+class CompiledMLP(eqx.nn.MLP):
+    # Just an eqx.nn.MLP with a compiled __call__ method.
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
+class GRUDynamics(eqx.Module):
+    x_x: eqx.nn.Linear
+    x_r: eqx.nn.Linear
+    x_z: eqx.nn.Linear
+    rx_g: eqx.nn.Linear
+
+    def __init__(self, input_size: int, state_size: int, key: "jax.random.PRNGKey"):
+        k0, k1, k2, k3 = jrandom.split(key, 4)
+        self.x_x = eqx.nn.Linear(input_size, state_size, key=k0)
+        self.x_r = eqx.nn.Linear(state_size, state_size, key=k1)
+        self.x_z = eqx.nn.Linear(state_size, state_size, key=k2)
+        self.rx_g = eqx.nn.Linear(state_size, state_size, key=k3)
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        x = self.x_x(x)
+        r = jnn.sigmoid(self.x_r(x))
+        z = jnn.sigmoid(self.x_z(x))
+        g = jnn.tanh(self.rx_g(r * x))
+        return (1 - z) * (g - x)
+
+
+class CompiledLinear(eqx.nn.Linear):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(x)
+
+
+class ProbMLP(CompiledMLP):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        mean_std = super().__call__(x)
+        mean, std = jnp.split(mean_std, 2, axis=-1)
+        return mean, jnn.softplus(std)
+
+
+class CompiledGRU(eqx.nn.GRUCell):
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray, h: jnp.ndarray) -> jnp.ndarray:
+        return super().__call__(h, x)
 
 
 def empty_if_none(x):
@@ -105,6 +200,39 @@ class DirectLeadPredictorWrapper(eqx.Module):
 
 
 DynamicsLiteral = Literal["gru", "mlp"]
+
+
+class DirectGRUStateImputer(eqx.Module):
+    """Implements discrete update based on the received observations."""
+    f_project_error: eqx.nn.MLP
+    f_update: eqx.nn.GRUCell
+
+    def __init__(self, state_size: int, obs_size: int,
+                 key: "jax.random.PRNGKey"):
+        super().__init__()
+        key1, key2 = jrandom.split(key, 2)
+
+        self.f_project_error = eqx.nn.MLP(obs_size,
+                                          obs_size,
+                                          width_size=obs_size * 5,
+                                          depth=1,
+                                          use_bias=False,
+                                          activation=jnn.tanh,
+                                          key=key1)
+        self.f_update = eqx.nn.GRUCell(obs_size * 2,
+                                       state_size,
+                                       use_bias=False,
+                                       key=key2)
+
+    @eqx.filter_jit
+    def __call__(self,
+                 f_obs_decoder: Callable[[jnp.ndarray], jnp.ndarray],
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        error = jnp.where(observables_mask, f_obs_decoder(forecasted_state) - true_observables, 0.0)
+        projected_error = self.f_project_error(error)
+        return self.f_update(jnp.hstack((observables_mask, projected_error)), forecasted_state), ImputerMetrics()
 
 
 class ICENODEConfig(InpatientModelConfig):
@@ -457,6 +585,30 @@ class StochasticInICENODELite(InICENODELite):
 
 
 class StochasticMechanisticICENODE(InICENODELite):
+    @property
+    def persistent_memory_size(self):
+        return self.config.state // 5
+
+    @eqx.filter_jit
+    def _f_update(self,
+                  obs_decoder: ICNNObsDecoder,
+                  forecasted_state: jnp.ndarray,
+                  true_observables: jnp.ndarray,
+                  observables_mask: jnp.ndarray,
+                  u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        # init_obs: obs_decoder(forecasted_state).
+        # input: (persistent_hidden_confounder, hidden_confounder, init_obs).
+        # mask: (ones_like(state_mem), zeros_like(state_hidden).
+        hidden_confounder = forecasted_state[:obs_decoder.state_size]
+        input = jnp.hstack((hidden_confounder, true_observables))
+        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
+        mask = mask.at[obs_decoder.state_size:].set(observables_mask)
+        return obs_decoder.partial_input_optimise(input, mask)
+
+    @property
+    def components(self):
+        return ICEDynComponents(emb=self.f_emb, obs_dec=self.f_obs_dec, lead_dec=self.f_lead_dec,
+                                dyn=self.f_dyn, update=self._f_update, init=self.f_init, outcome_dec=self.f_outcome_dec)
 
     @staticmethod
     def _make_dyn(model_config: ICENODEConfig,
@@ -511,8 +663,8 @@ class StochasticMechanisticICENODE(InICENODELite):
         return DirectLeadPredictorWrapper(integrand_size, lead_times, predictor, key, **mlp_kwargs)
 
     @staticmethod
-    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> HiddenObsICNNImputer:
-        return HiddenObsICNNImputer(persistent_memory_size=state_size // 5)
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> None:
+        return None
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsExtractor:
@@ -520,6 +672,36 @@ class StochasticMechanisticICENODE(InICENODELite):
                                 hidden_size_multiplier=3, depth=4,
                                 optax_optimiser_name='polyak_sgd',
                                 key=key)
+
+
+class DirectGRUStateProbabilisticImputer(eqx.Module):
+    f_project_error: eqx.nn.Linear
+    f_update: eqx.nn.GRUCell
+    f_project_error_bias: jnp.ndarray
+    obs_size: int
+    prep_hidden: ClassVar[int] = 4
+
+    def __init__(self, obs_size: int, state_size: int, key: jrandom.PRNGKey):
+        super().__init__()
+        gru_key, prep_key = jrandom.split(key)
+        self.obs_size = obs_size
+        self.f_update = eqx.nn.GRUCell(self.prep_hidden * obs_size, state_size, use_bias=True, key=gru_key)
+        self.f_project_error = eqx.nn.Linear(obs_size * 3, self.prep_hidden * obs_size, key=prep_key, use_bias=False)
+        self.f_project_error_bias = jnp.zeros((self.obs_size, self.prep_hidden))
+
+    @eqx.filter_jit
+    def __call__(self,
+                 f_obs_decoder: Callable[[jnp.ndarray], Tuple[jnp.ndarray, jnp.ndarray]],
+                 forecasted_state: jnp.ndarray,
+                 true_observables: jnp.ndarray, observables_mask: jnp.ndarray,
+                 u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        mean_hat, std_hat = f_obs_decoder(forecasted_state)
+        # dimension: (obs_dim, )
+        error = (true_observables - mean_hat) / (std_hat + 1e-6)
+        gru_input = jnp.hstack([mean_hat, std_hat, error])
+        gru_input = self.f_project_error(gru_input).reshape(self.obs_size, self.prep_hidden)
+        gru_input = gru_input * observables_mask.reshape(-1, 1) + self.f_project_error_bias
+        return self.f_update(jnp.tanh(gru_input.flatten()), forecasted_state), ImputerMetrics()
 
 
 class GRUODEBayes(InICENODELite):
@@ -569,29 +751,39 @@ class GRUODEBayes(InICENODELite):
         return predictions
 
 
-class InICENODELiteLinearLeastSquareImpute(InICENODELite):
-    f_update: StateObsLinearLeastSquareImpute
-    f_obs_dec: CompiledLinear
-
-    @staticmethod
-    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> StateObsLinearLeastSquareImpute:
-        return StateObsLinearLeastSquareImpute()
-
-    @staticmethod
-    def _make_obs_dec(config, observables_size, key) -> CompiledLinear:
-        return CompiledLinear(config.state,
-                              observables_size,
-                              use_bias=False,
-                              key=key)
-
-
 class InICENODELiteICNNImpute(InICENODELite):
-    f_update: StateObsICNNImputer
+    f_update: None
     f_obs_dec: ICNNObsDecoder
 
+    @property
+    def persistent_memory_size(self):
+        return self.config.state // 5
+
+    @eqx.filter_jit
+    def _f_update(self,
+                  obs_decoder: ICNNObsDecoder,
+                  forecasted_state: jnp.ndarray,
+                  true_observables: jnp.ndarray,
+                  observables_mask: jnp.ndarray,
+                  u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        # init_obs: obs_decoder(forecasted_state).
+        # input: (state_mem, state_hidden, init_obs).
+        # mask: (ones_like(state_mem), zeros_like(state_hidden).
+        input = jnp.hstack((forecasted_state, true_observables))
+        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
+        mask = mask.at[obs_decoder.state_size:].set(observables_mask)
+        output, stats = obs_decoder.partial_input_optimise(input, mask)
+        state, _ = jnp.split(output, [obs_decoder.state_size])
+        return state, stats
+
+    @property
+    def components(self) -> ICEDynComponents:
+        return ICEDynComponents(emb=self.f_emb, obs_dec=self.f_obs_dec, lead_dec=self.f_lead_dec,
+                                dyn=self.f_dyn, update=self._f_update, init=self.f_init, outcome_dec=self.f_outcome_dec)
+
     @staticmethod
-    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> StateObsICNNImputer:
-        return StateObsICNNImputer(persistent_memory_size=state_size // 5)
+    def _make_update(state_size: int, observables_size: int, key: jrandom.PRNGKey) -> None:
+        return None
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
