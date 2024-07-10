@@ -126,7 +126,8 @@ class ICNN(eqx.Module):
     Wxs: Tuple[eqx.nn.Linear, ...]
     activations: Tuple[Callable[..., jnp.ndarray], ...]
 
-    def __init__(self, input_size: int, hidden_size: int, depth: int, key: jr.PRNGKey):
+    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared'],
+                 key: jr.PRNGKey):
         super().__init__()
 
         def new_key():
@@ -134,10 +135,17 @@ class ICNN(eqx.Module):
             key, subkey = jr.split(key)
             return subkey
 
+        if positivity == 'squared':
+            PositivityLayer = PositiveSquaredLinear
+        elif positivity == 'abs':
+            PositivityLayer = PositiveAbsLinear
+        else:
+            raise ValueError(f"Unknown positivity parameter: {positivity}")
+
         Wzs = [eqx.nn.Linear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
-            Wzs.append(PositiveAbsLinear(hidden_size, hidden_size, use_bias=True, key=new_key()))
-        Wzs.append(PositiveAbsLinear(hidden_size, 1, use_bias=True, key=new_key()))
+            Wzs.append(PositivityLayer(hidden_size, hidden_size, use_bias=True, key=new_key()))
+        Wzs.append(PositivityLayer(hidden_size, 1, use_bias=True, key=new_key()))
         self.Wzs = tuple(Wzs)
 
         Wxs = []
@@ -343,13 +351,14 @@ class ICNNObsDecoder(eqx.Module):
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
+                 positivity: Literal['abs', 'squared'] = 'abs',
                  optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
                  key: jr.PRNGKey):
         super().__init__()
         self.observables_size = observables_size
         self.state_size = state_size
         input_size = observables_size + state_size
-        self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, key)
+        self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, positivity, key)
         self.optax_optimiser_name = optax_optimiser_name
 
     @eqx.filter_jit
@@ -394,19 +403,20 @@ class ICNNObsExtractor(ICNNObsDecoder):
         return jnp.split(x, [self.state_size])[1]
 
 
-class ProbStackedICNNImputer(eqx.Module):
+class ProbStagedICNNImputer(eqx.Module):
     icnn_mean: ICNNObsDecoder
     icnn_var: ICNNObsDecoder
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
+                 positivity: Literal['abs', 'squared'] = 'abs',
                  optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
                  key: jr.PRNGKey):
         key_mu, key_sigma = jr.split(key, 2)
-        self.icnn_mean = ICNNObsDecoder(observables_size, state_size, hidden_size_multiplier, depth,
+        self.icnn_mean = ICNNObsDecoder(observables_size, state_size, hidden_size_multiplier, depth, positivity,
                                         optax_optimiser_name,
                                         key=key_mu)
-        self.icnn_var = ICNNObsDecoder(observables_size * 2, state_size, hidden_size_multiplier // 2, depth,
+        self.icnn_var = ICNNObsDecoder(observables_size * 2, state_size, hidden_size_multiplier // 2, depth, positivity,
                                        optax_optimiser_name,
                                        key=key_sigma)
 
@@ -427,15 +437,16 @@ class ProbStackedICNNImputer(eqx.Module):
         return mu, metrics
 
 
-class ProbStagedICNNImputer(ICNNObsDecoder):
+class ProbStackedICNNImputer(ICNNObsDecoder):
     f_energy: ICNN
 
-    def __init__(self, observables_size: int, hidden_size_multiplier: float, depth: int,
+    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float, depth: int,
+                 positivity: Literal['abs', 'squared'] = 'abs',
                  optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
                  key: jr.PRNGKey):
-        super().__init__(observables_size=observables_size * 2, state_size=0,
+        super().__init__(observables_size=observables_size * 2, state_size=state_size,
                          hidden_size_multiplier=hidden_size_multiplier,
-                         depth=depth, optax_optimiser_name=optax_optimiser_name, key=key)
+                         depth=depth, positivity=positivity, optax_optimiser_name=optax_optimiser_name, key=key)
 
     @eqx.filter_jit
     def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[
