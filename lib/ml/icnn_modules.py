@@ -481,7 +481,7 @@ class ProbICNNImputerTrainer(eqx.Module):
     train_batch_size: int = 256
     seed: int = 0
     model_snapshot_frequency: int = 100
-    artificial_missingness: float = 0.5
+    artificial_missingness: float = 0.8
     model_config: Optional[ICNNImputerConfig] = None
     # State
     model: Optional[ProbStackedICNNImputer | ProbStagedICNNImputer] = None
