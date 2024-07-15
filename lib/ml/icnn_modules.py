@@ -483,6 +483,7 @@ class ProbICNNImputerTrainer(eqx.Module):
     model_snapshot_frequency: int = 100
     artificial_missingness: float = 0.8
     model_config: Optional[ICNNImputerConfig] = None
+    loss_function: Callable = None
     # State
     model: Optional[ProbStackedICNNImputer | ProbStagedICNNImputer] = None
     model_snapshots: Dict[int, ProbStackedICNNImputer | ProbStagedICNNImputer] = eqx.field(default_factory=dict)
@@ -515,6 +516,10 @@ class ProbICNNImputerTrainer(eqx.Module):
         self.model = None
         self.model_snapshots = {}
         self.train_history = ()
+        if loss == 'kl_divergence':
+            self.loss_function = gaussian_kl
+        else:
+            self.loss_function = log_normal
 
     def init_model(self, X: jnp.ndarray) -> ProbStackedICNNImputer | ProbStagedICNNImputer:
         model_cls = ProbStagedICNNImputer if self.model_config.model_type == 'staged' else ProbStackedICNNImputer
@@ -533,14 +538,13 @@ class ProbICNNImputerTrainer(eqx.Module):
         # Zero for artificially missig values
         batch_X_art = jnp.where(batch_M_art, batch_X, 0.)
         # Tune for artificially masked-out values, fix mask-in (batch_M_art) values.
-        (X_imp, std), aux = eqx.filter_vmap(model.prob_partial_input_optimise)(batch_X_art, batch_M_art)
+        (X_imp, std_imp), aux = eqx.filter_vmap(model.prob_partial_input_optimise)(batch_X_art, batch_M_art)
         # Penalise discrepancy with artifially masked-out values.
         mask = (1 - batch_M_art) * batch_M
-        if self.prob_loss_name == 'kl_divergence':
-            loss_function = gaussian_kl
-        else:
-            loss_function = log_normal
-        return loss_function((batch_X, jnp.zeros_like(batch_X) + 0.01), (X_imp, std), mask), aux
+        # Compute loss
+        batch_std = jnp.zeros_like(batch_X) + 0.01
+        L = self.loss_function((batch_X, batch_std), (X_imp, std_imp), mask)
+        return jnp.where(jnp.isnan(L), 0., L), aux
 
     @staticmethod
     def r_squared(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
@@ -654,9 +658,9 @@ class ProbICNNImputerTrainer(eqx.Module):
                     f"Trn-L: {train_loss:.3f}, Trn-R2: ({np.nanmax(r2_vec_rank):.2f}, {np.nanmin(r2_vec_rank):.2f}, {np.nanmean(r2_vec_rank):.2f}, {np.nanmedian(r2_vec_rank):.2f}),  Trn-N-steps: {train_n_steps}, "
                     f"Computation time: {end - start:.2f}, ")
         this = self
-        this = eqx.tree_at(lambda x: x.model, this, model)
-        this = eqx.tree_at(lambda x: x.train_history, this, tuple(train_history))
-        this = eqx.tree_at(lambda x: x.model_snapshots, this, tuple(model_snapshots))
+        this = eqx.tree_at(lambda x: x.model, this, model, is_leaf=lambda x: x is None)
+        this = eqx.tree_at(lambda x: x.train_history, this, tuple(train_history), is_leaf=lambda x: x is None)
+        this = eqx.tree_at(lambda x: x.model_snapshots, this, tuple(model_snapshots), is_leaf=lambda x: x is None)
         return this
 
     def transform(self, X: jnp.ndarray) -> jnp.ndarray:
