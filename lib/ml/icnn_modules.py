@@ -560,13 +560,23 @@ class ProbICNNImputerTrainer(eqx.Module):
 
     @staticmethod
     @eqx.filter_jit
-    def r_squared_ranked_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray, k: int):
+    def r_squared_ranked_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray, k: int) -> jnp.ndarray:
         sigma = jnp.where(mask, sigma, jnp.inf)
         sigma_sorter = jnp.argpartition(sigma, k, axis=0)[:k]
         y = jnp.take_along_axis(y, sigma_sorter, axis=0)
         y_hat = jnp.take_along_axis(y_hat, sigma_sorter, axis=0)
         mask = jnp.take_along_axis(mask, sigma_sorter, axis=0)
         return jnp.where(jnp.all(mask), ProbICNNImputerTrainer.r_squared(y, y_hat, mask), jnp.nan)
+
+    @staticmethod
+    @eqx.filter_jit
+    def r_squared_thresholded_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray,
+                                   thresh: float) -> jnp.ndarray:
+        sigma = jnp.where(mask, sigma, jnp.inf)
+        mask = mask * (sigma < thresh)
+        return ProbICNNImputerTrainer.r_squared(y, y_hat, mask)
+
+
 
     @staticmethod
     @eqx.filter_jit
@@ -584,7 +594,6 @@ class ProbICNNImputerTrainer(eqx.Module):
     @eqx.filter_jit
     def model_r_squared_ranked_prob(self, model: ProbStackedICNNImputer, batch_X: jnp.ndarray, batch_M: jnp.ndarray,
                                     batch_M_art: jnp.ndarray, k: int) -> jnp.ndarray:
-        # Penalise discrepancy with artificially masked-out values.
         mask = (1 - batch_M_art) * batch_M
         # Zero for artificially missing values
         batch_X_art = jnp.where(batch_M_art, batch_X, 0.)
