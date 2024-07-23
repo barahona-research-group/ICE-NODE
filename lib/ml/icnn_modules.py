@@ -1,5 +1,6 @@
 import math
 import time
+import zipfile
 from abc import abstractmethod
 from typing import Tuple, Optional, Literal, Callable, Self, cast, Dict
 
@@ -15,7 +16,7 @@ import optimistix as optx
 
 from .. import VxData, Config
 from ..metric.loss import log_normal, gaussian_kl
-from ..utils import tqdm_constructor
+from ..utils import tqdm_constructor, translate_path
 
 
 class ConvexInitialiser(eqx.Module):
@@ -394,6 +395,29 @@ class ICNNObsDecoder(eqx.Module):
         _, obs = jnp.split(output, [self.state_size])
         return obs
 
+    def load_params(self, params_file):
+        """
+        Load the parameters in `params_file`\
+            filepath and return as PyTree Object.
+        """
+        with open(translate_path(params_file), 'rb') as file_rsc:
+            return eqx.tree_deserialise_leaves(file_rsc, self)
+
+    def write_params(self, params_file):
+        """
+        Store the parameters (PyTree object) into a new file
+        given by `params_file`.
+        """
+        with open(translate_path(params_file), 'wb') as file_rsc:
+            eqx.tree_serialise_leaves(file_rsc, self)
+
+    def load_params_from_archive(self, zipfile_fname: str, params_fname: str):
+        with zipfile.ZipFile(translate_path(zipfile_fname),
+                             compression=zipfile.ZIP_STORED,
+                             mode="r") as archive:
+            with archive.open(params_fname, "r") as zip_member:
+                return eqx.tree_deserialise_leaves(zip_member, self)
+
 
 class ICNNObsExtractor(ICNNObsDecoder):
 
@@ -560,7 +584,8 @@ class ProbICNNImputerTrainer(eqx.Module):
 
     @staticmethod
     @eqx.filter_jit
-    def r_squared_ranked_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray, k: int) -> jnp.ndarray:
+    def r_squared_ranked_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray,
+                              k: int) -> jnp.ndarray:
         sigma = jnp.where(mask, sigma, jnp.inf)
         sigma_sorter = jnp.argpartition(sigma, k, axis=0)[:k]
         y = jnp.take_along_axis(y, sigma_sorter, axis=0)
@@ -575,8 +600,6 @@ class ProbICNNImputerTrainer(eqx.Module):
         sigma = jnp.where(mask, sigma, jnp.inf)
         mask = mask * (sigma < thresh)
         return ProbICNNImputerTrainer.r_squared(y, y_hat, mask)
-
-
 
     @staticmethod
     @eqx.filter_jit
