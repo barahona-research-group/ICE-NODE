@@ -501,6 +501,7 @@ class ProbICNNImputerTrainer(eqx.Module):
     # Config
     prob_loss_name: Literal['log_normal', 'kl_divergence'] = 'log_normal'
     trainer_name: Literal['adam', 'novograd'] = 'adam'
+    loss_feature_normalisation: bool = False
     lr: float = 1e-3
     steps: int = 1000000
     train_batch_size: int = 256
@@ -520,6 +521,7 @@ class ProbICNNImputerTrainer(eqx.Module):
                  icnn_positivity: Literal['abs', 'squared'] = 'abs',
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam',
                  loss: Literal['log_normal', 'kl_divergence'] = 'log_normal',
+                 loss_feature_normalisation: bool = False,
                  trainer: Literal['adam', 'novograd'] = 'adam',
                  lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
                  model_snapshot_frequency: int = 100, artificial_missingness: float = 0.5):
@@ -541,6 +543,7 @@ class ProbICNNImputerTrainer(eqx.Module):
         self.model = None
         self.model_snapshots = {}
         self.train_history = ()
+        self.loss_feature_normalisation = loss_feature_normalisation
         if loss == 'kl_divergence':
             self.loss_function = gaussian_kl
         else:
@@ -568,7 +571,11 @@ class ProbICNNImputerTrainer(eqx.Module):
         mask = (1 - batch_M_art) * batch_M
         # Compute loss
         batch_std = jnp.zeros_like(batch_X) + 0.01
-        L = self.loss_function((batch_X, batch_std), (X_imp, std_imp), mask)
+        if self.loss_feature_normalisation:
+            L_norm = self.loss_function((batch_X, batch_std), (X_imp, std_imp), mask, axis=0)
+            L = jnp.nanmean(L_norm)
+        else:
+            L = self.loss_function((batch_X, batch_std), (X_imp, std_imp), mask)
         return jnp.where(jnp.isnan(L), 0., L), aux
 
     @staticmethod
