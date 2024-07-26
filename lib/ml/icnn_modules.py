@@ -157,6 +157,7 @@ class ICNN(eqx.Module):
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
+        # https://arxiv.org/pdf/1609.07152 (Eq (2)). Fully input convex.
         z = jnn.softplus(self.Wzs[0](x))
         for Wz, Wx, sigma in zip(self.Wzs[1:-1], self.Wxs[:-1], self.activations):
             z = sigma(Wz(z) + Wx(x))
