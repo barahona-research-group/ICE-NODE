@@ -15,7 +15,7 @@ import optax
 import optimistix as optx
 
 from .. import VxData, Config
-from ..metric.loss import log_normal, gaussian_kl
+from ..metric.loss import log_normal, gaussian_kl, mse
 from ..utils import tqdm_constructor, translate_path
 
 
@@ -428,7 +428,7 @@ class ICNNObsExtractor(ICNNObsDecoder):
 
 
 class ICNNImputerConfig(Config):
-    model_type: Literal['staged', 'stacked']
+    model_type: Literal['staged', 'stacked', 'standard']
     observables_size: int
     state_size: int
     hidden_size_multiplier: float
@@ -709,6 +709,106 @@ class ProbICNNImputerTrainer(eqx.Module):
         X = jnp.where(jnp.isnan(X), 0., X)
         X_imp, _ = eqx.filter_vmap(self.model.partial_input_optimise)(X, M)
         return X_imp
+
+
+class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
+    prob_loss_name: Literal['mse']
+
+    def __init__(self, icnn_hidden_size_multiplier: float = 3,
+                 icnn_depth: int = 4,
+                 icnn_positivity: Literal['abs', 'squared'] = 'abs',
+                 icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam',
+                 loss_feature_normalisation: bool = False,
+                 trainer: Literal['adam', 'novograd'] = 'adam',
+                 lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
+                 model_snapshot_frequency: int = 100, artificial_missingness: float = 0.5):
+        super().__init__(icnn_hidden_size_multiplier=icnn_hidden_size_multiplier,
+                         icnn_depth=icnn_depth,
+                         icnn_positivity=icnn_positivity,
+                         icnn_optimiser=icnn_optimiser,
+                         loss_feature_normalisation=loss_feature_normalisation,
+                         trainer=trainer,
+                         lr=lr, steps=steps, train_batch_size=train_batch_size, seed=seed,
+                         model_snapshot_frequency=model_snapshot_frequency,
+                         artificial_missingness=artificial_missingness)
+        self.prob_loss_name = 'mse'
+        self.model_config = ICNNImputerConfig(observables_size=0,
+                                              model_type='standard',
+                                              state_size=0,
+                                              hidden_size_multiplier=icnn_hidden_size_multiplier,
+                                              depth=icnn_depth,
+                                              positivity=icnn_positivity,
+                                              optax_optimiser_name=icnn_optimiser)
+        self.model = None
+        self.model_snapshots = {}
+        self.train_history = ()
+        self.loss_feature_normalisation = loss_feature_normalisation
+        self.loss_function = mse
+
+    def init_model(self, X: jnp.ndarray) -> ICNNObsDecoder:
+        return ICNNObsDecoder(observables_size=X.shape[1],
+                              state_size=self.model_config.state_size,
+                              hidden_size_multiplier=self.model_config.hidden_size_multiplier,
+                              depth=self.model_config.depth,
+                              positivity=self.model_config.positivity,
+                              optax_optimiser_name=self.model_config.optax_optimiser_name,
+                              key=jr.PRNGKey(self.seed))
+
+    @eqx.filter_jit
+    def loss(self, model: ICNNObsDecoder,
+             batch_X: jnp.ndarray, batch_M: jnp.ndarray,
+             batch_M_art: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        # Zero for artificially missig values
+        batch_X_art = jnp.where(batch_M_art, batch_X, 0.)
+        # Tune for artificially masked-out values, fix mask-in (batch_M_art) values.
+        X_imp, aux = eqx.filter_vmap(model.partial_input_optimise)(batch_X_art, batch_M_art)
+        # Penalise discrepancy with artifially masked-out values.
+        mask = (1 - batch_M_art) * batch_M
+        # Compute loss
+        if self.loss_feature_normalisation:
+            L_norm = self.loss_function(batch_X, X_imp, mask, axis=0)
+            L = jnp.nanmean(L_norm)
+        else:
+            L = self.loss_function(batch_X, X_imp, mask)
+        return jnp.where(jnp.isnan(L), 0., L), aux
+
+    def fit(self, X: jnp.ndarray) -> Self:
+        model = self.init_model(X)
+        X = jnp.array(X)
+        train_M = jnp.where(jnp.isnan(X), 0., 1.)
+        train_X = jnp.where(jnp.isnan(X), 0., X)
+        train_M_art = jr.bernoulli(jr.PRNGKey(self.seed), p=self.artificial_missingness, shape=train_M.shape) * train_M
+        train_loader = self.dataloader((train_X, train_M, train_M_art), self.train_batch_size,
+                                       key=jr.PRNGKey(self.seed))
+        optim = optax.adam(self.lr) if self.trainer_name == 'adam' else optax.novograd(self.lr)
+        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
+        train_history = []
+        model_snapshots = []
+
+        with tqdm_constructor(range(self.steps)) as pbar:
+            for step, (batch_X, batch_M, batch_M_art) in zip(pbar, train_loader):
+                start = time.time()
+                (train_loss, aux), model, opt_state = self.make_step(model, optim, opt_state, batch_X, batch_M,
+                                                                     batch_M_art)
+                r2_vec = self.model_r_squared(model, batch_X, batch_M, batch_M_art)
+                r2_vec = np.array(r2_vec)
+                train_n_steps = int(sum(aux.n_steps) / len(aux.n_steps))
+                train_history.append({'R2': r2_vec,
+                                      'loss': train_loss,
+                                      'n_opt_steps': train_n_steps})
+                end = time.time()
+
+                if (step % self.model_snapshot_frequency) == 0 or step == self.steps - 1:
+                    model_snapshots.append(model)
+
+                pbar.set_description(
+                    f"Trn-L: {train_loss:.3f}, Trn-R2: ({np.nanmax(r2_vec):.2f}, {np.nanmin(r2_vec):.2f}, {np.nanmean(r2_vec):.2f}, {np.nanmedian(r2_vec):.2f}),  Trn-N-steps: {train_n_steps}, "
+                    f"Computation time: {end - start:.2f}, ")
+        this = self
+        this = eqx.tree_at(lambda x: x.model, this, model, is_leaf=lambda x: x is None)
+        this = eqx.tree_at(lambda x: x.train_history, this, tuple(train_history), is_leaf=lambda x: x is None)
+        this = eqx.tree_at(lambda x: x.model_snapshots, this, tuple(model_snapshots), is_leaf=lambda x: x is None)
+        return this
 
 # class StateObsLinearLeastSquareImpute(eqx.Module):
 #     # https://alexhwilliams.info/itsneuronalblog/2018/02/26/censored-lstsq/
