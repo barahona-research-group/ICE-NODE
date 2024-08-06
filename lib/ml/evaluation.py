@@ -48,7 +48,7 @@ class Evaluation(Module):
         return f'sqlite+pysqlite:///{expr_abs_path}/{self.config.db}'
 
     def load_metrics(self) -> MetricsCollection:
-        return MetricsCollection(tuple(Module.import_module(config=config) for config in self.config.metrics))
+        return MetricsCollection(metrics=tuple(Module.import_module(config=config) for config in self.config.metrics))
 
     def filter_params(self, params_list: List[str]) -> List[str]:
         numbers = {}
@@ -178,6 +178,7 @@ class Evaluation(Module):
         engine = create_engine(self.db_url)
         create_tables(engine)
         tvx = TVxEHR.load(tvx_ehr_path)
+
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
                 jax.clear_caches()
