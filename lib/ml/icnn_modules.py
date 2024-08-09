@@ -591,6 +591,14 @@ class ProbICNNImputerTrainer(eqx.Module):
         return jnp.where(mask.sum() > 1, 1 - (ss_res / ss_tot), jnp.nan)
 
     @staticmethod
+    def r_squared_micro_average(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+        y_bar = jnp.nanmean(y, where=mask, axis=0, keepdims=True)
+        ss_tot = jnp.nansum((y - y_bar) ** 2, where=mask, axis=0)
+        ss_res = jnp.nansum((y - y_hat) ** 2, where=mask, axis=0)
+
+        return jnp.where(mask.sum() > 1, 1 - (np.nansum(ss_res) / np.nansum(ss_tot)), jnp.nan)
+
+    @staticmethod
     @eqx.filter_jit
     def r_squared_ranked_prob(y: jnp.ndarray, y_hat: jnp.ndarray, mask: jnp.ndarray, sigma: jnp.ndarray,
                               k: int) -> jnp.ndarray:
