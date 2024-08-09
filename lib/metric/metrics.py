@@ -364,6 +364,9 @@ class LeadingAKIPredictionAccuracy(Metric):
             AKI.
             - next_occurrence_value: value of the next occurrence of the AKI.
         """
+        if prediction.leading_observable is None:
+            return None
+
         lead_prediction = prediction.leading_observable.to_cpu()
 
         # criterion (1) - minimum acquisitions, early skip function.
