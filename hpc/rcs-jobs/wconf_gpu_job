@@ -29,7 +29,7 @@ module load CUDA/12.3.0
 # Run program
 
 export JAX_PLATFORM_NAME="gpu"
-export JAX_PLATFORMS="gpu"
+# export JAX_PLATFORMS="gpu"
 
 # if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
