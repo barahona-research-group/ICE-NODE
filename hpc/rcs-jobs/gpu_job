@@ -27,11 +27,12 @@ module load CUDA/12.3.0
 export JAX_PLATFORM_NAME="gpu"
 # export JAX_PLATFORMS="gpu"
 
-# if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
+if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+   export JAX_PLATFORMS="gpu"
 # else
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
-# fi
+fi
 
 $PY_BIN_DIR/python -m icenode.cli.optuna_multi \
 --output-dir $OUTPUT_DIR \

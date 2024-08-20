@@ -31,11 +31,12 @@ cd $TMPDIR/ICE-NODE
 export JAX_PLATFORM_NAME="cpu"
 # export JAX_PLATFORMS="cpu"
 
-# if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
+if [ "$JAX_PLATFORM_NAME" == "cpu" ]; then
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev-cpu/bin
+   export JAX_PLATFORMS="cpu"
 # else
 #     export PY_BIN_DIR=$HOME/GP/env/icenode-dev/bin
-# fi
+fi
 
 $HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_config \
 --config $CONFIG_PATH \
