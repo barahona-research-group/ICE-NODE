@@ -2,34 +2,27 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import fields
-from typing import Tuple, Optional, Literal, Type, Self, Dict, Any, ClassVar, Callable
+from typing import Tuple, Optional, Self, Callable
 
 import equinox as eqx
 import jax
-import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 
-from .artefacts import AdmissionPrediction, AdmissionsPrediction, ModelBehaviouralMetrics
-from .base_models import LeadPredictorName, NeuralODESolver, DiffusionMLP, StochasticNeuralODESolver, \
-    SkipShortIntervalsWrapper, ODEMetrics
+from .artefacts import AdmissionsPrediction, ModelBehaviouralMetrics
+from .base_models import NeuralODESolver, ODEMetrics
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
-from .embeddings import (AdmissionSequentialEmbeddingsConfig, AdmissionSequentialObsEmbedding,
-                         AdmissionEmbeddingsConfig, EmbeddedAdmissionObsSequence)
-from .embeddings import (DischargeSummarySequentialEmbeddingsConfig, EmbeddedDischargeSummary)
-from .icnn_modules import ImputerMetrics, ICNNObsExtractor, ICNNObsDecoder
-from .in_models import DynamicsLiteral, ICENODEStateTrajectory, InICENODE, ICENODEConfig
-from .koopman_modules import KoopmanOperator, KoopmanPrecomputes
+from .embeddings import (AdmissionEmbeddingsConfig)
+from .icnn_modules import ImputerMetrics, ICNNObsDecoder
+from .in_models import DynamicsLiteral, ICENODEStateTrajectory, InICENODE, ICENODEConfig, AdmissionTrajectoryPrediction
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
-from ..ehr.tvx_concepts import SegmentedAdmission, ObservablesDistribution
+from ..ehr.tvx_concepts import SegmentedAdmission
 from ..ehr.tvx_ehr import SegmentedTVxEHR
-from ..utils import model_params_scaler, tqdm_constructor
-
+from ..utils import tqdm_constructor
 
 
 class CompiledMLP(eqx.nn.MLP):
@@ -38,6 +31,7 @@ class CompiledMLP(eqx.nn.MLP):
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return super().__call__(x)
+
 
 def empty_if_none(x):
     return x if x is not None else jnp.array([])
@@ -60,9 +54,9 @@ class ODEICNNComponents(eqx.Module):
     emb: Optional[AdmissionEmbedding] = None
     dyn: Optional[NeuralODESolver] = None
     # All share the same ICNN:
-    f_init: Optional[Callable] = None
-    f_obs_dec: Optional[Callable] = None
-    f_update: Optional[Callable] = None
+    init: Optional[Callable] = None
+    obs_dec: Optional[Callable] = None
+    update: Optional[Callable] = None
 
 
 class ODEICNN(InpatientModel):
@@ -89,9 +83,9 @@ class ODEICNN(InpatientModel):
                                           key=key)
         self.f_icnn = self._make_icnn(config=config, observables_size=observables_size, key=obs_dec_key)
         self.f_dyn = InICENODE._make_dyn(embeddings_config=embeddings_config,
-                                    model_config=ICENODEConfig(state=config.state, dynamics=config.dynamics),
-                                    observables_size=observables_size,
-                                    key=dyn_key)
+                                         model_config=ICENODEConfig(state=config.state, dynamics=config.dynamics),
+                                         observables_size=observables_size,
+                                         key=dyn_key)
 
     @property
     def persistent_memory_size(self) -> int:
@@ -110,8 +104,8 @@ class ODEICNN(InpatientModel):
         # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
         input = jnp.hstack((forecasted_state, true_observables))
-        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1) # Keep memory fixed.
-        mask = mask.at[obs_decoder.state_size:].set(observables_mask) # Keep the given obs fixed.
+        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)  # Keep memory fixed.
+        mask = mask.at[obs_decoder.state_size:].set(observables_mask)  # Keep the given obs fixed.
         output, stats = obs_decoder.partial_input_optimise(input, mask)
         state, _ = jnp.split(output, [obs_decoder.state_size])
         return state, stats
@@ -126,29 +120,25 @@ class ODEICNN(InpatientModel):
         return obs, stats
 
     @eqx.filter_jit
-    def _f_init(self,
-                  obs_decoder: ICNNObsDecoder,
-                  forecasted_state: jnp.ndarray,
-                  true_observables: jnp.ndarray,
-                  observables_mask: jnp.ndarray,
-                  u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+    def _f_init(self) -> Tuple[jnp.ndarray, ImputerMetrics]:
         # update:fix the given obs and tune everything else.
 
         # init_obs: obs_decoder(forecasted_state).
         # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
-        input = jnp.hstack((forecasted_state, true_observables))
-        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)
-        mask = mask.at[obs_decoder.state_size:].set(observables_mask)
-        output, stats = obs_decoder.partial_input_optimise(input, mask)
-        state, _ = jnp.split(output, [obs_decoder.state_size])
+        input = jnp.hstack((jnp.zeros(self.f_icnn.state_size), jnp.zeros(self.f_icnn.observables_size)))
+        mask = jnp.zeros_like(input)
+        output, stats = self.f_icnn.partial_input_optimise(input, mask)
+        state, _ = jnp.split(output, [self.f_icnn.state_size])
         return state, stats
-
 
     @property
     def components(self) -> ODEICNNComponents:
-        return ODEICNNComponents(emb=self.f_emb, obs_dec=self.f_obs_dec,
-                                dyn=self.f_dyn, update=self._f_update, init=self.f_init)
+        return ODEICNNComponents(emb=self.f_emb,
+                                 obs_dec=self._f_obs_dec,
+                                 dyn=self.f_dyn,
+                                 update=self._f_update,
+                                 init=self._f_init)
 
     @staticmethod
     def _make_icnn(config: ODEICNNConfig, observables_size: int, key) -> ICNNObsDecoder:
@@ -156,8 +146,6 @@ class ODEICNN(InpatientModel):
                               hidden_size_multiplier=3, depth=4,
                               optax_optimiser_name='polyak_sgd',
                               key=key)
-
-
 
     @property
     def dyn_params_list(self):
@@ -174,8 +162,6 @@ class ODEICNN(InpatientModel):
                    hosp_procedures_size=len(tvx_ehr.scheme.hosp_procedures),
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
-
-
 
     @staticmethod
     def _make_embedding(config: AdmissionEmbeddingsConfig,
@@ -221,7 +207,7 @@ class ODEICNN(InpatientModel):
         t = 0.0
         state_trajectory = tuple()
         f = self.components
-        state = f.init(jnp.hstack((embedded_admission.dx_codes_history, demo_e)))
+        state = f.init()
         segments_t1 = admission.interventions.t1
         key = jrandom.PRNGKey(hash(admission.admission_id))
 
