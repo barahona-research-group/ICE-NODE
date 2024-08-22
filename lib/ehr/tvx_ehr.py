@@ -699,8 +699,6 @@ class TVxEHR(AbstractDatasetRepresentation):
 
         w_adms = n_adms.loc[subject_ids] / n_adms.loc[subject_ids].sum()
         weights = w_adms.values.cumsum()
-        logging.info(f"Weights: {weights}")
-        logging.info(f"p_splits: {p_splits}")
         splits = np.searchsorted(weights, p_splits)
         splits = [a.tolist() for a in np.split(subject_ids, splits)]
         splits = [s for s in splits if len(s) > 0]
