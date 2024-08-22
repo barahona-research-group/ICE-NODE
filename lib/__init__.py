@@ -16,7 +16,7 @@ from .ml import artefacts
 from .ml import base_models
 from .ml import icnn_modules
 from .ml import koopman_modules
-
+from .ml import exp_ode_icnn
 
 modules = [
     # ml

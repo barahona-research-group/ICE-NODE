@@ -339,9 +339,11 @@ class MaskedBFGS(optx.BFGS):
 
 class ImputerMetrics(VxData):
     n_steps: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
+    energy: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
 
     def __add__(self, other: Self) -> Self:
-        return ImputerMetrics(n_steps=jnp.hstack((self.n_steps, other.n_steps)))
+        return ImputerMetrics(n_steps=jnp.hstack((self.n_steps, other.n_steps)),
+                              energy=jnp.hstack((self.energy, other.energy)))
 
 
 class ICNNObsDecoder(eqx.Module):
@@ -353,7 +355,8 @@ class ICNNObsDecoder(eqx.Module):
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
                  positivity: Literal['abs', 'squared'] = 'abs',
-                 optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam', *,
+                 optax_optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam',
+                 max_steps: int = 2 ** 8, *,
                  key: jr.PRNGKey):
         super().__init__()
         self.observables_size = observables_size
@@ -361,22 +364,31 @@ class ICNNObsDecoder(eqx.Module):
         input_size = observables_size + state_size
         self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, positivity, key)
         self.optax_optimiser_name = optax_optimiser_name
+        # self.max_steps = max_steps
 
     @eqx.filter_jit
-    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray,
+                               max_steps: int = 2 ** 10,
+                               lr: float = 1e-3) -> Tuple[jnp.ndarray, ImputerMetrics]:
         sol = optx.minimise(lambda y, args: self.f_energy(y),
-                            solver=optx.BestSoFarMinimiser(solver=self.optax_solver(self.optax_optimiser_name)),
+                            solver=optx.BestSoFarMinimiser(solver=self.optax_solver(self.optax_optimiser_name, lr)),
+                            # solver=self.optax_solver(self.optax_optimiser_name),
                             adjoint=optx.ImplicitAdjoint(linear_solver=lineax.AutoLinearSolver(well_posed=False)),
-                            max_steps=2 ** 10,
+                            max_steps=max_steps,
                             options=dict(fixed_mask=fixed_mask),
                             y0=input, throw=False)
-        num_steps = sol.stats['num_steps']
-        return sol.value, ImputerMetrics(n_steps=jnp.array(num_steps))
+        return sol.value, ImputerMetrics(n_steps=sol.stats['num_steps'],
+                                         energy=self.f_energy(sol.value))
+
+    @eqx.filter_jit
+    def full_optimise(self):
+        return self.partial_input_optimise(jnp.zeros(self.observables_size + self.state_size),
+                                           jnp.zeros(self.observables_size + self.state_size))
 
     @staticmethod
-    def optax_solver(optax_optimiser_name: str = 'adam') -> MaskedOptaxMinimiser:
+    def optax_solver(optax_optimiser_name: str, lr: float) -> MaskedOptaxMinimiser:
         optimiser = ICNNObsDecoder.optax_solver_from_name(optax_optimiser_name)
-        return MaskedOptaxMinimiser(optimiser(1e-3), rtol=1e-8, atol=1e-8)
+        return MaskedOptaxMinimiser(optimiser(lr), rtol=1e-8, atol=1e-8)
 
     @staticmethod
     def optax_solver_from_name(optax_solver_name: str) -> Callable[[float], optax.GradientTransformation]:
@@ -455,19 +467,19 @@ class ProbStagedICNNImputer(eqx.Module):
                                        key=key_sigma)
 
     @eqx.filter_jit
-    def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[
+    def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[
         Tuple[jnp.ndarray, jnp.ndarray], ImputerMetrics]:
-        mu, metrics = self.icnn_mean.partial_input_optimise(input, fixed_mask)
+        mu, metrics = self.icnn_mean.partial_input_optimise(input, fixed_mask, **kwargs)
 
         mu_std, _ = self.icnn_var.partial_input_optimise(jnp.hstack((mu, jnp.where(fixed_mask, -4., 10.))),
-                                                         jnp.hstack((jnp.ones_like(mu), fixed_mask)))
+                                                         jnp.hstack((jnp.ones_like(mu), fixed_mask)), **kwargs)
         mu, std = jnp.hsplit(mu_std, 2)
         std = jnn.softplus(std)
         return (mu, std), metrics
 
     @eqx.filter_jit
-    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask)
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask, **kwargs)
         return mu, metrics
 
 
@@ -483,13 +495,19 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
                          depth=depth, positivity=positivity, optax_optimiser_name=optax_optimiser_name, key=key)
 
     @eqx.filter_jit
-    def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[
+    def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[
         Tuple[jnp.ndarray, jnp.ndarray], ImputerMetrics]:
         mu_std, metrics = super().partial_input_optimise(jnp.hstack((input, jnp.where(fixed_mask, -4., 10.))),
-                                                         jnp.hstack((fixed_mask, fixed_mask)))
+                                                         jnp.hstack((fixed_mask, fixed_mask)), **kwargs)
         mu, std = jnp.hsplit(mu_std, 2)
         std = jnn.softplus(std)
         return (mu, std), metrics
+
+    @eqx.filter_jit
+    def energy0(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> jnp.ndarray:
+        return self.f_energy(jnp.hstack((input, jnp.where(fixed_mask, -4., 10.))))
+
+
 
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:

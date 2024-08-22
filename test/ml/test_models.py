@@ -10,6 +10,7 @@ from lib.metric.loss_wrap import ProbObsPredictionLoss, AdjustedProbObsPredictio
 from lib.metric.metrics import ObsPredictionLoss
 from lib.ml.artefacts import AdmissionsPrediction, AdmissionPrediction
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
+from lib.ml.exp_ode_icnn import AutoODEICNN, ODEICNNConfig
 from lib.ml.in_models import InICENODE, LeadPredictorName, AdmissionTrajectoryPrediction, \
     DynamicsLiteral, ICENODEConfig, GRUODEBayes, AdmissionGRUODEBayesPrediction, InICENODELiteICNNImpute, \
     StochasticInICENODELite, StochasticMechanisticICENODE, InKoopman
@@ -150,6 +151,33 @@ def icenode_icnn_predictions(incenode_icnn_model: InICENODELiteICNNImpute, segme
 
 
 @pytest.fixture
+def auto_icnn_model(in_model_config: ODEICNNConfig,
+                    in_model_embeddings_config: InICENODEEmbeddingsConfig,
+                    dx_scheme: CodingScheme,
+                    observation_scheme: NumericScheme,
+                    icu_proc_scheme: CodingScheme, hosp_proc_scheme: CodingScheme,
+                    icu_inputs_grouping_data) -> AutoODEICNN:
+    return AutoODEICNN(config=ODEICNNConfig(state=in_model_config.state,
+                                            dynamics=in_model_config.dynamics,
+                                            memory_ratio=0.5),
+                       observables_size=len(observation_scheme), key=jrandom.PRNGKey(0))
+
+
+@pytest.fixture
+def auto_icnn_embedded_admission(auto_icnn_model: AutoODEICNN,
+                                 segmented_admission: SegmentedAdmission) -> EmbeddedAdmission:
+    return auto_icnn_model.f_emb(segmented_admission, None)
+
+
+@pytest.fixture
+@pytest.mark.usefixtures('jax_cpu_execution')
+def auto_icnn_predictions(auto_icnn_model: AutoODEICNN, segmented_admission: SegmentedAdmission,
+                          auto_icnn_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
+    return auto_icnn_model(admission=segmented_admission, embedded_admission=auto_icnn_embedded_admission,
+                           precomputes=Precomputes())
+
+
+@pytest.fixture
 def stochastic_icenode_model(in_model_config: ICENODEConfig,
                              in_model_embeddings_config: InICENODEEmbeddingsConfig,
                              dx_scheme: CodingScheme,
@@ -273,6 +301,13 @@ def test_gru_ode_bayes_predictions(gru_ode_bayes_predictions):
 def test_icenode_icnn_predictions(icenode_icnn_predictions: AdmissionPrediction):
     assert isinstance(icenode_icnn_predictions, AdmissionPrediction)
     assert icenode_icnn_predictions.leading_observable.value.shape == icenode_icnn_predictions.admission.leading_observable.value.shape
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_auto_icnn_predictions(auto_icnn_predictions: AdmissionPrediction):
+    assert isinstance(auto_icnn_predictions, AdmissionPrediction)
+    assert auto_icnn_predictions.observables.value.shape == auto_icnn_predictions.admission.observables.value.shape
+
 
 
 @pytest.mark.serial_test

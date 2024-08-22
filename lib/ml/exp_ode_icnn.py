@@ -6,23 +6,24 @@ from typing import Tuple, Optional, Self, Callable
 
 import equinox as eqx
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
-import jax.random as jrandom
+import jax.random as jr
 import jax.tree_util as jtu
 
 from .artefacts import AdmissionsPrediction, ModelBehaviouralMetrics
-from .base_models import NeuralODESolver, ODEMetrics
+from .base_models import NeuralODESolver, ODEMetrics, AutoVectorField
 from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionEmbeddingsConfig)
 from .icnn_modules import ImputerMetrics, ICNNObsDecoder
-from .in_models import DynamicsLiteral, ICENODEStateTrajectory, InICENODE, ICENODEConfig, AdmissionTrajectoryPrediction
+from .in_models import DynamicsLiteral, ICENODEStateTrajectory, AdmissionTrajectoryPrediction, \
+    GRUDynamics
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
-from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
-from ..ehr.coding_scheme import GroupingData
+from ..ehr import (Admission, InpatientObservables, TVxEHR)
 from ..ehr.tvx_concepts import SegmentedAdmission
 from ..ehr.tvx_ehr import SegmentedTVxEHR
-from ..utils import tqdm_constructor
+from ..utils import tqdm_constructor, model_params_scaler
 
 
 class CompiledMLP(eqx.nn.MLP):
@@ -59,7 +60,7 @@ class ODEICNNComponents(eqx.Module):
     update: Optional[Callable] = None
 
 
-class ODEICNN(InpatientModel):
+class AutoODEICNN(InpatientModel):
     f_emb: AdmissionEmbedding
     f_dyn: NeuralODESolver
     f_icnn: ICNNObsDecoder
@@ -67,34 +68,50 @@ class ODEICNN(InpatientModel):
     config: ODEICNNConfig = eqx.static_field()
 
     def __init__(self, config: ODEICNNConfig,
-                 embeddings_config: AdmissionEmbeddingsConfig,
                  observables_size: int,
-                 icu_inputs_grouping: Optional[GroupingData] = None,
-                 icu_procedures_size: Optional[int] = None,
-                 hosp_procedures_size: Optional[int] = None, *,
                  key: "jax.random.PRNGKey"):
         super().__init__(config=config)
 
-        (emb_key, obs_dec_key, lead_key, outcome_dec_key, dyn_key, update_key) = jrandom.split(key, 6)
-        self.f_emb = self._make_embedding(config=embeddings_config,
-                                          icu_inputs_grouping=icu_inputs_grouping,
-                                          icu_procedures_size=icu_procedures_size,
-                                          hosp_procedures_size=hosp_procedures_size,
-                                          key=key)
-        self.f_icnn = self._make_icnn(config=config, observables_size=observables_size, key=obs_dec_key)
-        self.f_dyn = InICENODE._make_dyn(embeddings_config=embeddings_config,
-                                         model_config=ICENODEConfig(state=config.state, dynamics=config.dynamics),
-                                         observables_size=observables_size,
-                                         key=dyn_key)
+        (icnn_key, dyn_key) = jr.split(key, 2)
+        self.f_emb = AdmissionEmbedding(config=AdmissionEmbeddingsConfig(),
+                                        dx_codes_size=None,
+                                        icu_inputs_grouping=None,
+                                        icu_procedures_size=None,
+                                        hosp_procedures_size=None,
+                                        demographic_size=None,
+                                        observables_size=None,
+                                        key=key)
+        self.f_icnn = self._make_icnn(config=config, observables_size=observables_size, key=icnn_key)
+        self.f_dyn = self._make_dyn(model_config=config, observables_size=observables_size, key=dyn_key)
+
+    @staticmethod
+    def _make_dyn(model_config: ODEICNNConfig, *,
+                  key: jr.PRNGKey, **kwargs) -> NeuralODESolver:
+
+        if model_config.dynamics == "mlp":
+            f_dyn = CompiledMLP(in_size=model_config.state,
+                                out_size=model_config.state,
+                                activation=jnn.tanh,
+                                depth=2,
+                                width_size=model_config.state * 5,
+                                key=key)
+        elif model_config.dynamics == "gru":
+            f_dyn = GRUDynamics(model_config.state, model_config.state, key)
+        else:
+            raise ValueError(f"Unknown dynamics type: {model_config.dynamics}")
+        f_dyn = model_params_scaler(f_dyn, 1e-1, eqx.is_inexact_array)
+        return NeuralODESolver(AutoVectorField(f_dyn))
 
     @property
     def persistent_memory_size(self) -> int:
         return int(self.config.state * self.config.memory_ratio)
 
+    @property
+    def ephemeral_memory_size(self) -> int:
+        return self.config.state - self.persistent_memory_size
+
     @eqx.filter_jit
-    def _f_update(self,
-                  obs_decoder: ICNNObsDecoder,
-                  forecasted_state: jnp.ndarray,
+    def _f_update(self, forecasted_state: jnp.ndarray,
                   true_observables: jnp.ndarray,
                   observables_mask: jnp.ndarray,
                   u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
@@ -104,33 +121,30 @@ class ODEICNN(InpatientModel):
         # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
         input = jnp.hstack((forecasted_state, true_observables))
-        mask = jnp.zeros_like(input).at[:self.persistent_memory_size].set(1)  # Keep memory fixed.
-        mask = mask.at[obs_decoder.state_size:].set(observables_mask)  # Keep the given obs fixed.
-        output, stats = obs_decoder.partial_input_optimise(input, mask)
-        state, _ = jnp.split(output, [obs_decoder.state_size])
+        mask = jnp.hstack([jnp.ones(self.persistent_memory_size),  # Keep memory fixed.
+                           jnp.zeros(self.ephemeral_memory_size),
+                           observables_mask])  # Keep the given obs fixed.
+        output, stats = self.f_icnn.partial_input_optimise(input, mask)
+        state, _ = jnp.split(output, [self.config.state])
         return state, stats
 
     @eqx.filter_jit
     def _f_obs_dec(self, forecasted_state: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         # update: keeps the memory and state fixed and tune everything else.
         input = jnp.hstack((forecasted_state, jnp.zeros(self.f_icnn.observables_size)))
-        mask = jnp.zeros_like(input).at[:self.f_icnn.state_size].set(1)
+        mask = jnp.hstack([jnp.ones(self.config.state),
+                           jnp.zeros(self.f_icnn.observables_size)])
+
         output, stats = self.f_icnn.partial_input_optimise(input, mask)
         state, obs = jnp.split(output, [self.f_icnn.state_size])
-        return obs, stats
+        return obs
 
     @eqx.filter_jit
     def _f_init(self) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        # update:fix the given obs and tune everything else.
-
-        # init_obs: obs_decoder(forecasted_state).
-        # input: (state_mem, state_hidden, init_obs).
         # mask: (ones_like(state_mem), zeros_like(state_hidden).
-        input = jnp.hstack((jnp.zeros(self.f_icnn.state_size), jnp.zeros(self.f_icnn.observables_size)))
-        mask = jnp.zeros_like(input)
-        output, stats = self.f_icnn.partial_input_optimise(input, mask)
+        output, stats = self.f_icnn.full_optimise()
         state, _ = jnp.split(output, [self.f_icnn.state_size])
-        return state, stats
+        return state
 
     @property
     def components(self) -> ODEICNNComponents:
@@ -153,34 +167,12 @@ class ODEICNN(InpatientModel):
 
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: ODEICNNConfig,
-                     embeddings_config: AdmissionEmbeddingsConfig, seed: int = 0) -> Self:
-        key = jrandom.PRNGKey(seed)
+                     embeddings_config: AdmissionEmbeddingsConfig,
+                     seed: int = 0) -> Self:
+        key = jr.PRNGKey(seed)
         return cls(config=config,
-                   embeddings_config=embeddings_config,
-                   icu_inputs_grouping=tvx_ehr.icu_inputs_grouping,
-                   icu_procedures_size=len(tvx_ehr.scheme.icu_procedures),
-                   hosp_procedures_size=len(tvx_ehr.scheme.hosp_procedures),
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
-
-    @staticmethod
-    def _make_embedding(config: AdmissionEmbeddingsConfig,
-                        dx_codes_size: Optional[int],
-                        icu_inputs_grouping: Optional[GroupingData],
-                        icu_procedures_size: Optional[int],
-                        hosp_procedures_size: Optional[int],
-                        demographic_size: Optional[int],
-                        observables_size: Optional[int],
-                        key: jrandom.PRNGKey, **kwargs):
-        return AdmissionEmbedding(
-            config=config,
-            dx_codes_size=dx_codes_size,
-            icu_inputs_grouping=icu_inputs_grouping,
-            icu_procedures_size=icu_procedures_size,
-            hosp_procedures_size=hosp_procedures_size,
-            demographic_size=demographic_size,
-            observables_size=observables_size,
-            key=key)
 
     def decode_state_trajectory_observables(self,
                                             admission: SegmentedAdmission | Admission,
@@ -193,62 +185,41 @@ class ODEICNN(InpatientModel):
             self, admission: SegmentedAdmission,
             embedded_admission: EmbeddedAdmission, precomputes: Precomputes
     ) -> AdmissionTrajectoryPrediction:
-        ode_stats = ODEMetrics()
-        imputer_stats = ImputerMetrics()
+
         prediction = AdmissionTrajectoryPrediction(admission=admission)
-        int_e = empty_if_none(embedded_admission.interventions)
-        demo_e = empty_if_none(embedded_admission.demographic)
-        obs = admission.observables
-        if len(obs) == 0:
+
+        if len(admission.observables) == 0:
             logging.debug("No observation to fit.")
             return prediction
 
-        n_segments = obs.n_segments
+        ode_stats = ODEMetrics()
+        imputer_stats = ImputerMetrics()
         t = 0.0
         state_trajectory = tuple()
         f = self.components
         state = f.init()
-        segments_t1 = admission.interventions.t1
-        key = jrandom.PRNGKey(hash(admission.admission_id))
+        key = jr.PRNGKey(hash(admission.admission_id))
 
-        for segment_index in range(n_segments):
-            segment_t1 = segments_t1[segment_index]
-            segment_obs = obs[segment_index]
-            segment_interventions = int_e[segment_index]
-            segment_force = jnp.hstack((demo_e, segment_interventions))
-
-            for obs_t, obs_val, obs_mask in segment_obs:
-                key, subkey = jrandom.split(key)
-                # if time-diff is more than 1 seconds, we integrate.
-                forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, u=segment_force,
-                                                     precomputes=precomputes,
-                                                     key=subkey)
-                ode_stats += ode_stats_
-                forecasted_state = forecasted_state.squeeze()
-                state, imputer_stats_ = f.update(f.obs_dec, forecasted_state, obs_val, obs_mask,
-                                                 u=segment_force)
-                imputer_stats += imputer_stats_
-                state_trajectory += ((forecasted_state, state),)
-                t = obs_t
-            key, subkey = jrandom.split(key)
-            state, stats = f.dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes,
-                                 key=subkey)
-            ode_stats += stats
-            state = state.squeeze()
-            t = segment_t1
+        for obs_t, obs_val, obs_mask in admission.observables:
+            # if time-diff is more than 1 seconds, we integrate.
+            forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, precomputes=precomputes, u=jnp.array([]))
+            ode_stats += ode_stats_
+            forecasted_state = forecasted_state.squeeze()
+            state, imputer_stats_ = f.update(forecasted_state, obs_val, obs_mask)
+            imputer_stats += imputer_stats_
+            state_trajectory += ((forecasted_state, state),)
+            t = obs_t
 
         prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
-        if f.outcome_dec is not None:
-            prediction = prediction.add(outcome=CodesVector(f.outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
             forecasted_states, adjusted_states = zip(*state_trajectory)
-            icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
-                                                                      adjusted_state=adjusted_states)
+            state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
+                                                              forecasted_state=forecasted_states,
+                                                              adjusted_state=adjusted_states)
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
-                admission=admission, state_trajectory=icenode_state_trajectory))
-            prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
-            prediction = prediction.add(trajectory=icenode_state_trajectory)
+                admission=admission, state_trajectory=state_trajectory))
+            prediction = prediction.add(trajectory=state_trajectory)
         return prediction
 
     def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:

@@ -15,6 +15,7 @@ from typing import List, Any, Dict, Tuple, Union, Optional, Callable
 
 import equinox as eqx
 import jax.example_libraries.optimizers as jopt
+import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import optuna
@@ -655,6 +656,7 @@ class TrainerConfig(Config):
     outcome_loss: Optional[BinaryLossLiteral] = None
     obs_loss: Optional[NumericLossLiteral] = None
     lead_loss: Optional[NumericLossLiteral | BinaryLossLiteral] = None
+    normalised_obs_loss: bool = False
 
 
 class ProbTrainerConfig(TrainerConfig):
@@ -693,7 +695,10 @@ class Trainer(Module):
     def obs_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
         if self.config.obs_loss is None:
             return lambda p: 0.0
-        return ObsPredictionLoss(loss_key=self.config.obs_loss)
+        if self.config.normalised_obs_loss:
+            obs_loss = ObsPredictionLoss(loss_key=self.config.obs_loss, per_column=True) # noqa
+            return lambda p: jnp.nanmean(obs_loss(p)) # noqa
+        return ObsPredictionLoss(loss_key=self.config.obs_loss) # noqa
 
     @cached_property
     def lead_loss(self) -> LeadPredictionLoss | Callable[[AdmissionsPrediction], float]:

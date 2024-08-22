@@ -109,6 +109,12 @@ class ForcedVectorField(eqx.Module):
     def __call__(self, t: float, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
         return self.mlp(jnp.hstack((x, u)))
 
+class AutoVectorField(eqx.Module):
+    mlp: eqx.nn.MLP | DiffusionMLP
+
+    @eqx.filter_jit
+    def __call__(self, t: float, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
+        return self.mlp(x)
 
 class ODEMetrics(VxData):
     n_steps: jnp.ndarray = eqx.field(default_factory=lambda: jnp.array([]))
