@@ -46,11 +46,11 @@
     "warmup": {
         "_type": "WarmupConfig",
         "batch_size": 1,
-        "epochs": 0.01,
+        "epochs": 0.03,
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
-            "lr": 0.0005,
+            "lr": 0.001,
             "opt": "adam",
             "reverse_schedule": false
         }
