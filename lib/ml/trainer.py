@@ -696,9 +696,9 @@ class Trainer(Module):
         if self.config.obs_loss is None:
             return lambda p: 0.0
         if self.config.normalised_obs_loss:
-            obs_loss = ObsPredictionLoss(loss_key=self.config.obs_loss, per_column=True) # noqa
-            return lambda p: jnp.nanmean(obs_loss(p)) # noqa
-        return ObsPredictionLoss(loss_key=self.config.obs_loss) # noqa
+            obs_loss = ObsPredictionLoss(loss_key=self.config.obs_loss, per_column=True)  # noqa
+            return lambda p: jnp.nanmean(obs_loss(p))  # noqa
+        return ObsPredictionLoss(loss_key=self.config.obs_loss)  # noqa
 
     @cached_property
     def lead_loss(self) -> LeadPredictionLoss | Callable[[AdmissionsPrediction], float]:
@@ -807,7 +807,9 @@ class Trainer(Module):
                               prng_seed=prng_seed,
                               trial_terminate_time=trial_terminate_time,
                               history=history,
-                              signals=signals)
+                              signals=signals,
+                              exported_config={},
+                              val_split=None)
 
     def _train(self,
                model: AbstractModel,
