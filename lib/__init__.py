@@ -22,7 +22,7 @@ modules = [
     # ml
     model, dx_models, in_models, embeddings, trainer,
     experiment, evaluation, metrics, loss_wrap,
-    artefacts, base_models, icnn_modules, koopman_modules,
+    artefacts, base_models, icnn_modules, koopman_modules, exp_ode_icnn,
     # schemes
     icd,
     # ehr
