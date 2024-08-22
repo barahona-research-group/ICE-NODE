@@ -697,7 +697,7 @@ class TVxEHR(AbstractDatasetRepresentation):
         if discount_first_admission:
             n_adms = n_adms - 1
 
-        w_adms = n_adms.loc[subject_ids] / n_adms.sum()
+        w_adms = n_adms.loc[subject_ids] / n_adms.loc[subject_ids].sum()
         weights = w_adms.values.cumsum()
         logging.info(f"Weights: {weights}")
         logging.info(f"p_splits: {p_splits}")
