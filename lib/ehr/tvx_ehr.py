@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import field
 from functools import cached_property
@@ -695,8 +696,11 @@ class TVxEHR(AbstractDatasetRepresentation):
         n_adms = self.dataset.subjects_n_admissions
         if discount_first_admission:
             n_adms = n_adms - 1
+
         w_adms = n_adms.loc[subject_ids] / n_adms.sum()
         weights = w_adms.values.cumsum()
+        logging.info(f"Weights: {weights}")
+        logging.info(f"p_splits: {p_splits}")
         splits = np.searchsorted(weights, p_splits)
         splits = [a.tolist() for a in np.split(subject_ids, splits)]
         splits = [s for s in splits if len(s) > 0]
