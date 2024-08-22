@@ -43,5 +43,16 @@
         "outcome_loss": null
     },
     "trainer_classname": "Trainer",
-    "warmup": null
+    "warmup": {
+        "_type": "WarmupConfig",
+        "batch_size": 1,
+        "epochs": 0.05,
+        "optimizer": {
+            "_type": "OptimizerConfig",
+            "decay_rate": null,
+            "lr": 0.001,
+            "opt": "adam",
+            "reverse_schedule": false
+        }
+    }
 }
