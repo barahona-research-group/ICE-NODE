@@ -30,7 +30,7 @@
         "_type": "TrainerConfig",
         "batch_size": 64,
         "epochs": 100,
-        "lead_loss": "mse",
+        "lead_loss": null,
         "obs_loss": "mse",
         "normalised_obs_loss": true,
         "optimizer": {
