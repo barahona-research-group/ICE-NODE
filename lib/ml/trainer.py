@@ -755,11 +755,7 @@ class Trainer(Module):
                 'in the reporters list.')
 
         if warmup_config is not None:
-            first_step = 0
-            if continue_training:
-                first_step = ParamsDiskWriter.last_eval_step(reporting.output_dir)
-
-            if first_step == 0:
+            if (not continue_training) or (ParamsDiskWriter.last_eval_step(reporting.output_dir) is None):
                 logging.info('Warming up...')
                 model = self._warmup(model=model,
                                      patients=patients,
