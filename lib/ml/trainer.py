@@ -885,6 +885,7 @@ class Trainer(Module):
             pyrng.shuffle(train_split)
             epoch_splits = patients.epoch_splits(train_split, batch_n_admissions=batch_size,
                                                  discount_first_admission=model.discount_first_admission)
+            logging.info(f'Epoch splits ({len(epoch_splits)}, B={batch_size}, T={len(train_split)}): {epoch_splits} of {epochs}')
             split_gen = tqdm_constructor(epoch_splits, leave=False, unit='Batch')
 
             timenow = datetime.now()
