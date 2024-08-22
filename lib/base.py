@@ -120,7 +120,8 @@ class Config(eqx.Module):
 
     def update(self, other: Union['Config', Dict[str, Any]]) -> Self:
         if isinstance(other, Config):
-            other = other.as_dict()
+            other = other.to_dict()
+            other["_type"] = self.__class__.__name__
         return Config.from_dict(self.to_dict() | other)
 
     def __len__(self) -> int:
