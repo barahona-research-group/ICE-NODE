@@ -65,5 +65,6 @@ class Experiment(Module):
             n_evals=0,
             model_snapshot_frequency=self.config.model_snapshot_frequency,
             continue_training=self.config.continue_training,
+            warmup_config=self.config.warmup,
             exported_config=self.config.to_dict(),
             prng_seed=prng_seed)
