@@ -28,7 +28,7 @@
     },
     "trainer": {
         "_type": "TrainerConfig",
-        "batch_size": 64,
+        "batch_size": 32,
         "epochs": 100,
         "lead_loss": null,
         "obs_loss": "mse",
