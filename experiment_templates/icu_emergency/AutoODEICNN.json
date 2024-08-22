@@ -46,7 +46,7 @@
     "warmup": {
         "_type": "WarmupConfig",
         "batch_size": 1,
-        "epochs": 0.05,
+        "epochs": 0.01,
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,

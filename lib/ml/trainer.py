@@ -754,17 +754,22 @@ class Trainer(Module):
                 'Make sure to include a ParamsDiskWriter '
                 'in the reporters list.')
 
-        if not continue_training and warmup_config is not None:
-            logging.info('Warming up...')
-            model = self._warmup(model=model,
-                                 patients=patients,
-                                 train_split=train_split,
-                                 prng_seed=prng_seed,
-                                 trial_terminate_time=trial_terminate_time,
-                                 history=reporting.new_training_history(),
-                                 signals=TrainerSignals(),
-                                 warmup_config=warmup_config)
-            logging.info('[DONE] Warming up.')
+        if warmup_config is not None:
+            first_step = 0
+            if continue_training:
+                first_step = ParamsDiskWriter.last_eval_step(reporting.output_dir)
+
+            if first_step == 0:
+                logging.info('Warming up...')
+                model = self._warmup(model=model,
+                                     patients=patients,
+                                     train_split=train_split,
+                                     prng_seed=prng_seed,
+                                     trial_terminate_time=trial_terminate_time,
+                                     history=reporting.new_training_history(),
+                                     signals=TrainerSignals(),
+                                     warmup_config=warmup_config)
+                logging.info('[DONE] Warming up.')
 
         exported_config = exported_config or {}
 
