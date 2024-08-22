@@ -797,7 +797,9 @@ class Trainer(Module):
                 warmup_config: WarmupConfig):
 
         conf = self.config.update(warmup_config)
+        logging.info(f'HPs: {conf.to_dict()}')
         trainer = type(self)(config=conf, loss_mixer=self.loss_mixer)
+
         return trainer._train(model=model,
                               patients=patients,
                               train_split=train_split,
@@ -808,7 +810,7 @@ class Trainer(Module):
                               trial_terminate_time=trial_terminate_time,
                               history=history,
                               signals=signals,
-                              exported_config={},
+                              exported_config=conf.to_dict(),
                               val_split=None)
 
     def _train(self,
