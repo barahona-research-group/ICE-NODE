@@ -1,12 +1,11 @@
 import argparse
 import logging
 from collections import defaultdict
+from pathlib import Path
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import jax.example_libraries.optimizers as jopt
-import pickle
 import optax
 import pandas as pd
 from tqdm import tqdm
@@ -82,19 +81,21 @@ def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
     train_history = defaultdict(list)
     progress = tqdm(range(steps))
 
+    experiment_dir = f'{experiments_dir}/{EXP_DIR[exp]}'
+    Path(experiment_dir).mkdir(parents=True, exist_ok=True)
+
     for step, batch_train in zip(progress, train_batches):
         (train_loss, train_aux), model, opt_state = trainer.make_step(model, optim, opt_state, *batch_train)
         train_nsteps = int(sum(train_aux.n_steps) / len(train_aux.n_steps))
         train_history['loss'].append(train_loss)
         train_history['n_opt_steps'].append(train_nsteps)
         if (step % model_snapshot_frequency) == 0 or step == steps - 1:
-            append_params_to_zip(model, f'step{step:04d}.eqx',
-                                 f'{experiments_dir}/{EXP_DIR[exp]}/params.zip')
+            append_params_to_zip(model, f'step{step:04d}.eqx', f'{experiment_dir}/params.zip')
 
         progress.set_description(f"Trn-L: {train_loss:.3f}")
 
     train_history = pd.DataFrame(train_history).astype(float)
-    train_history.to_csv(f'{experiments_dir}/{EXP_DIR[exp]}/train_history.csv', index=False)
+    train_history.to_csv(f'{experiment_dir}/train_history.csv', index=False)
 
 
 if __name__ == '__main__':

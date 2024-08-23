@@ -8,6 +8,8 @@ else
   export STUDY_TAG="debug"
 fi
 
+export JAX_PLATFORM_NAME="cpu"
+
 $HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_icnn_imputer_training \
 --exp $EXP \
 --experiments-dir $OUTPUT_PATH \
