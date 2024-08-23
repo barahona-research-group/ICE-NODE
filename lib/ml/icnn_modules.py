@@ -126,8 +126,9 @@ class ICNN(eqx.Module):
     Wxs: Tuple[eqx.nn.Linear, ...]
     activations: Tuple[Callable[..., jnp.ndarray], ...]
     input_size: int = eqx.field(init=False)
+    positivity: Literal['abs', 'squared', 'none'] = 'abs'
 
-    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared'],
+    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared', 'none'],
                  key: jr.PRNGKey):
         super().__init__()
 
@@ -140,6 +141,8 @@ class ICNN(eqx.Module):
             PositivityLayer = PositiveSquaredLinear
         elif positivity == 'abs':
             PositivityLayer = PositiveAbsLinear
+        elif positivity == 'none':
+            PositivityLayer = eqx.nn.Linear
         else:
             raise ValueError(f"Unknown positivity parameter: {positivity}")
 
@@ -147,7 +150,9 @@ class ICNN(eqx.Module):
         for _ in range(depth - 1):
             Wzs.append(PositivityLayer(hidden_size, hidden_size, use_bias=True, key=new_key()))
         Wzs.append(PositivityLayer(hidden_size, 1, use_bias=True, key=new_key()))
-        self.Wzs = tuple(Wzs)
+
+        if positivity == 'none':
+            self.Wzs = ICNN._clip_negative_weights_Wzs(tuple(Wzs))
 
         Wxs = []
         for _ in range(depth - 1):
@@ -156,6 +161,7 @@ class ICNN(eqx.Module):
         self.Wxs = tuple(Wxs)
         self.activations = tuple(jnn.softplus for _ in range(depth))
         self.input_size = input_size
+        self.positivity = positivity
 
     @eqx.filter_jit
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
@@ -164,6 +170,20 @@ class ICNN(eqx.Module):
         for Wz, Wx, sigma in zip(self.Wzs[1:-1], self.Wxs[:-1], self.activations):
             z = sigma(Wz(z) + Wx(x))
         return self.activations[-1](self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
+
+    @staticmethod
+    def _clip_negative_weights(Wz: eqx.nn.Linear):
+        return eqx.tree_at(lambda x: x.weight, Wz, jnp.clip(Wz.weight, 0., None))
+
+    @staticmethod
+    def _clip_negative_weights_Wzs(Wzs: Tuple[PositivityLayer, ...]):
+        Wzs = [Wzs[0]]
+        for Wz in Wzs[1:]:
+            Wzs.append(ICNN._clip_negative_weights(Wz))
+        return tuple(Wzs)
+
+    def clip_negative_weights(self):
+        return eqx.tree_at(lambda x: x.Wzs, self, ICNN._clip_negative_weights_Wzs(self.Wzs))
 
 
 class MaskedOptaxMinimiser(optx.OptaxMinimiser):
@@ -444,6 +464,9 @@ class ICNNObsDecoder(eqx.Module):
             with archive.open(params_fname, "r") as zip_member:
                 return eqx.tree_deserialise_leaves(zip_member, self)
 
+    def clip_negative_weights(self):
+        return eqx.tree_at(lambda x: x.f_energy, self, self.f_energy.clip_negative_weights())
+
 
 class ICNNObsExtractor(ICNNObsDecoder):
 
@@ -464,44 +487,45 @@ class ICNNImputerConfig(Config):
     optimiser_max_steps: int
 
 
-class ProbStagedICNNImputer(eqx.Module):
-    icnn_mean: ICNNObsDecoder
-    icnn_var: ICNNObsDecoder
-
-    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
-                 depth: int,
-                 positivity: Literal['abs', 'squared'] = 'abs',
-                 optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
-                 max_steps: int = 2 ** 9,
-                 lr: float = 1e-2,
-                 *,
-                 key: jr.PRNGKey):
-        key_mu, key_sigma = jr.split(key, 2)
-        self.icnn_mean = ICNNObsDecoder(observables_size, state_size, hidden_size_multiplier, depth, positivity,
-                                        optimiser_name,
-                                        max_steps=max_steps, lr=lr,
-                                        key=key_mu)
-        self.icnn_var = ICNNObsDecoder(observables_size * 2, state_size, hidden_size_multiplier // 2, depth, positivity,
-                                       optimiser_name,
-                                       max_steps=max_steps, lr=lr,
-                                       key=key_sigma)
-
-    @eqx.filter_jit
-    def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[
-        Tuple[jnp.ndarray, jnp.ndarray], ImputerMetrics]:
-        mu, metrics = self.icnn_mean.partial_input_optimise(input, fixed_mask)
-
-        mu_std, _ = self.icnn_var.partial_input_optimise(jnp.hstack((mu, jnp.where(fixed_mask, -4., 10.))),
-                                                         jnp.hstack((jnp.ones_like(mu), fixed_mask)))
-        mu, std = jnp.hsplit(mu_std, 2)
-        std = jnn.softplus(std)
-        return (mu, std), metrics
-
-    @eqx.filter_jit
-    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[
-        jnp.ndarray, ImputerMetrics]:
-        (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask, **kwargs)
-        return mu, metrics
+#
+# class ProbStagedICNNImputer(eqx.Module):
+#     icnn_mean: ICNNObsDecoder
+#     icnn_var: ICNNObsDecoder
+#
+#     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
+#                  depth: int,
+#                  positivity: Literal['abs', 'squared'] = 'abs',
+#                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
+#                  max_steps: int = 2 ** 9,
+#                  lr: float = 1e-2,
+#                  *,
+#                  key: jr.PRNGKey):
+#         key_mu, key_sigma = jr.split(key, 2)
+#         self.icnn_mean = ICNNObsDecoder(observables_size, state_size, hidden_size_multiplier, depth, positivity,
+#                                         optimiser_name,
+#                                         max_steps=max_steps, lr=lr,
+#                                         key=key_mu)
+#         self.icnn_var = ICNNObsDecoder(observables_size * 2, state_size, hidden_size_multiplier // 2, depth, positivity,
+#                                        optimiser_name,
+#                                        max_steps=max_steps, lr=lr,
+#                                        key=key_sigma)
+#
+#     @eqx.filter_jit
+#     def prob_partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[
+#         Tuple[jnp.ndarray, jnp.ndarray], ImputerMetrics]:
+#         mu, metrics = self.icnn_mean.partial_input_optimise(input, fixed_mask)
+#
+#         mu_std, _ = self.icnn_var.partial_input_optimise(jnp.hstack((mu, jnp.where(fixed_mask, -4., 10.))),
+#                                                          jnp.hstack((jnp.ones_like(mu), fixed_mask)))
+#         mu, std = jnp.hsplit(mu_std, 2)
+#         std = jnn.softplus(std)
+#         return (mu, std), metrics
+#
+#     @eqx.filter_jit
+#     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[
+#         jnp.ndarray, ImputerMetrics]:
+#         (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask, **kwargs)
+#         return mu, metrics
 
 
 class ProbStackedICNNImputer(ICNNObsDecoder):
@@ -553,13 +577,13 @@ class ProbICNNImputerTrainer(eqx.Module):
     model_config: Optional[ICNNImputerConfig] = None
     loss_function: Callable = None
     # State
-    model: Optional[ProbStackedICNNImputer | ProbStagedICNNImputer] = None
-    model_snapshots: Dict[int, ProbStackedICNNImputer | ProbStagedICNNImputer] = eqx.field(default_factory=dict)
+    model: Optional[ProbStackedICNNImputer] = None
+    model_snapshots: Dict[int, ProbStackedICNNImputer] = eqx.field(default_factory=dict)
     train_history: Tuple[Dict[str, float], ...] = eqx.field(default_factory=tuple)
 
     def __init__(self, icnn_hidden_size_multiplier: float = 3,
                  icnn_depth: int = 4,
-                 icnn_model_name: Literal['staged', 'stacked'] = 'stacked',
+                 icnn_model_name: Literal['stacked'] = 'stacked',
                  icnn_positivity: Literal['abs', 'squared'] = 'abs',
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  icnn_max_steps: int = 2 ** 9,
@@ -596,20 +620,19 @@ class ProbICNNImputerTrainer(eqx.Module):
         else:
             self.loss_function = log_normal
 
-    def init_model(self, X: jnp.ndarray) -> ProbStackedICNNImputer | ProbStagedICNNImputer:
-        model_cls = ProbStagedICNNImputer if self.model_config.model_type == 'staged' else ProbStackedICNNImputer
-        return model_cls(observables_size=X.shape[1],
-                         state_size=self.model_config.state_size,
-                         hidden_size_multiplier=self.model_config.hidden_size_multiplier,
-                         depth=self.model_config.depth,
-                         positivity=self.model_config.positivity,
-                         optimiser_name=self.model_config.optimiser_name,
-                         max_steps=self.model_config.optimiser_max_steps,
-                         lr=self.model_config.optimiser_lr,
-                         key=jr.PRNGKey(self.seed))
+    def init_model(self, X: jnp.ndarray) -> ProbStackedICNNImputer:
+        return ProbStackedICNNImputer(observables_size=X.shape[1],
+                                      state_size=self.model_config.state_size,
+                                      hidden_size_multiplier=self.model_config.hidden_size_multiplier,
+                                      depth=self.model_config.depth,
+                                      positivity=self.model_config.positivity,
+                                      optimiser_name=self.model_config.optimiser_name,
+                                      max_steps=self.model_config.optimiser_max_steps,
+                                      lr=self.model_config.optimiser_lr,
+                                      key=jr.PRNGKey(self.seed))
 
     @eqx.filter_jit
-    def loss(self, model: ProbStackedICNNImputer | ProbStagedICNNImputer,
+    def loss(self, model: ProbStackedICNNImputer,
              batch_X: jnp.ndarray, batch_M: jnp.ndarray,
              batch_M_art: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
         # Zero for artificially missig values
@@ -703,6 +726,10 @@ class ProbICNNImputerTrainer(eqx.Module):
                                                                        batch_M_art))
 
         model = eqx.apply_updates(model, updates)
+
+        if model.f_energy.positivity == 'none':
+            model = model.clip_negative_weights()
+
         return (loss, aux), model, opt_state
 
     @staticmethod
