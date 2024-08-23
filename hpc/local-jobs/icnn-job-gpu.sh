@@ -10,7 +10,7 @@ fi
 
 export JAX_PLATFORM_NAME="gpu"
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.run_icnn_imputer_training.run_config \
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_icnn_imputer_training \
 --exp $EXP \
 --experiments-dir $OUTPUT_PATH \
 --dataset-path $DATASET_PATH
