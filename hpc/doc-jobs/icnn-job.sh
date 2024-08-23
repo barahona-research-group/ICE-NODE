@@ -9,6 +9,7 @@ STORE=/vol/bitbucket/am8520
 
 WORKDIR=${STORE}/gpu_job_${SLURM_JOB_ID}
 export JAX_PLATFORM_NAME="gpu"
+export JAX_ENABLE_X64="True"
 
 mkdir -p "$WORKDIR" && cd "$WORKDIR" || exit -1
 
