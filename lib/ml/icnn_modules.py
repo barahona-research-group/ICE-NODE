@@ -534,7 +534,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
     f_energy: ICNN
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float, depth: int,
-                 positivity: Literal['abs', 'squared'] = 'abs',
+                 positivity: Literal['abs', 'squared', 'none'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'adam',
                  max_steps: int = 2 ** 9, lr: float = 1e-2,
                  *,
