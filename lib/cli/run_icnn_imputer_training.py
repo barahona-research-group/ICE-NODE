@@ -44,14 +44,14 @@ def experiment_model(exp: str, observables_size: int):
 
 def experiment_trainer(e: str):
     return {
-        'ICNN_LN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam'),
-        'ICNN_NLN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam', loss_feature_normalisation=True),
-        'ICNN_KL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='adam',),
-        'ICNN_NKL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='adam', loss_feature_normalisation=True),
-        'ICNN_JSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='adam'),
-        'ICNN_NJSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='adam', loss_feature_normalisation=True),
-        'ICNN_MSE': StandardICNNImputerTrainer(optimiser_name='adam'),
-        'ICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='adam', loss_feature_normalisation=True)
+        'ICNN_LN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='lamb'),
+        'ICNN_NLN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='lamb', loss_feature_normalisation=True),
+        'ICNN_KL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='lamb',),
+        'ICNN_NKL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='lamb', loss_feature_normalisation=True),
+        'ICNN_JSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='lamb'),
+        'ICNN_NJSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='lamb', loss_feature_normalisation=True),
+        'ICNN_MSE': StandardICNNImputerTrainer(optimiser_name='lamb'),
+        'ICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='lamb', loss_feature_normalisation=True)
     }[e]
 
 

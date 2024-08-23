@@ -525,7 +525,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
         mu_std, metrics = super().partial_input_optimise(jnp.hstack((input, jnp.where(fixed_mask, -4., 10.))),
                                                          jnp.hstack((fixed_mask, fixed_mask)))
         mu, std = jnp.hsplit(mu_std, 2)
-        std = jnn.softplus(std)
+        std = jnn.softplus(std) + jnn.softplus(-4)
         return (mu, std), metrics
 
     @eqx.filter_jit
