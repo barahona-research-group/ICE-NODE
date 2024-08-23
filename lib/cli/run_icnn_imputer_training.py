@@ -38,7 +38,7 @@ def experiment_model(exp: str, observables_size: int):
 
     dmodels = {k: ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
                                  max_steps=2 ** 9, lr=1e-2,
-                                 positivity='abs', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
+                                 positivity='softplus', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
                for k in DET_MODELS}
     return (pmodels | dmodels)[exp]
 
