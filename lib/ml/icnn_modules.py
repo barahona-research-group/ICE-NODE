@@ -161,7 +161,7 @@ class ICNN(eqx.Module):
         z = jnn.softplus(self.Wzs[0](x))
         for Wz, Wx, sigma in zip(self.Wzs[1:-1], self.Wxs[:-1], self.activations):
             z = sigma(Wz(z) + Wx(x))
-        return (self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
+        return 100 * jnn.sigmoid(self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
 
 
 class MaskedOptaxMinimiser(optx.OptaxMinimiser):
@@ -510,8 +510,8 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
 
 
     @eqx.filter_jit
-    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask)
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray, **kwargs) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        (mu, _), metrics = self.prob_partial_input_optimise(input, fixed_mask, **kwargs)
         return mu, metrics
 
 
