@@ -542,7 +542,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
 class ProbICNNImputerTrainer(eqx.Module):
     # Config
     prob_loss_name: Literal['log_normal', 'kl_divergence'] = 'log_normal'
-    trainer_name: Literal['adam', 'novograd'] = 'adam'
+    optimiser_name: Literal['adam', 'novograd'] = 'adam'
     loss_feature_normalisation: bool = False
     lr: float = 1e-3
     steps: int = 1000000
@@ -566,11 +566,11 @@ class ProbICNNImputerTrainer(eqx.Module):
                  icnn_lr: float = 1e-2,
                  loss: Literal['log_normal', 'kl_divergence', 'jsd_gaussian'] = 'log_normal',
                  loss_feature_normalisation: bool = False,
-                 trainer: Literal['adam', 'novograd'] = 'adam',
+                 optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam',
                  lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
                  model_snapshot_frequency: int = 100, artificial_missingness: float = 0.5):
         self.prob_loss_name = loss
-        self.trainer_name = trainer
+        self.optimiser_name = optimiser_name
         self.lr = lr
         self.steps = steps
         self.train_batch_size = train_batch_size
@@ -720,6 +720,13 @@ class ProbICNNImputerTrainer(eqx.Module):
                 start = end
                 end = start + batch_size
 
+    def new_optimiser(self):
+        return {
+            'adam': optax.adam(self.lr),
+            'novograd': optax.novograd(self.lr),
+            'lamb': optax.lamb(self.lr)
+        }[self.optimiser_name]
+
     def fit(self, X: jnp.ndarray) -> Self:
         model = self.init_model(X)
         X = jnp.array(X)
@@ -728,7 +735,7 @@ class ProbICNNImputerTrainer(eqx.Module):
         train_M_art = jr.bernoulli(jr.PRNGKey(self.seed), p=self.artificial_missingness, shape=train_M.shape) * train_M
         train_loader = self.dataloader((train_X, train_M, train_M_art), self.train_batch_size,
                                        key=jr.PRNGKey(self.seed))
-        optim = optax.adam(self.lr) if self.trainer_name == 'adam' else optax.novograd(self.lr)
+        optim = self.new_optimiser()
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
         train_history = []
         model_snapshots = []
@@ -778,7 +785,7 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
                  loss_feature_normalisation: bool = False,
-                 trainer: Literal['adam', 'novograd'] = 'adam',
+                 optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam',
                  lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
                  model_snapshot_frequency: int = 100, artificial_missingness: float = 0.5):
         super().__init__(icnn_hidden_size_multiplier=icnn_hidden_size_multiplier,
@@ -788,7 +795,7 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                          icnn_max_steps=icnn_max_steps,
                          icnn_lr=icnn_lr,
                          loss_feature_normalisation=loss_feature_normalisation,
-                         trainer=trainer,
+                         optimiser_name=optimiser_name,
                          lr=lr, steps=steps, train_batch_size=train_batch_size, seed=seed,
                          model_snapshot_frequency=model_snapshot_frequency,
                          artificial_missingness=artificial_missingness)
