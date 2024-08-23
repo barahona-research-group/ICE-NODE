@@ -23,6 +23,9 @@ import pandas as pd
 from blinker import signal
 
 from .artefacts import AdmissionsPrediction
+from .exp_ode_icnn import AutoKoopmanICNN
+from .in_models import AdmissionTrajectoryPrediction
+from .koopman_modules import KoopmanOperator
 from .model import AbstractModel
 from ..base import Config, Module
 from ..ehr import TVxEHR
@@ -681,6 +684,15 @@ class ProbLossMixer(Config):
     leading_observable: float = 1.0
 
 
+class KoopmanLossMixer(Config):
+    l1: float = 0.0
+    l2: float = 0.0
+    outcome: float = 1.0
+    observables: float = 1.0
+    leading_observable: float = 1.0
+    reconstruction: float = 1.0
+
+
 class Trainer(Module):
     config: TrainerConfig
     loss_mixer: LossMixer = field(default_factory=LossMixer)
@@ -1004,9 +1016,22 @@ class ProbTrainer(Trainer):
 
 
 class KoopmanTrainer(Trainer):
-    @cached_property
-    def reconstruction_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
-        raise NotImplementedError
+    loss_mixer: KoopmanLossMixer = field(default_factory=KoopmanLossMixer)
 
-    def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
-        raise NotImplementedError
+    def reconstruction_loss(self, koopman_operator: KoopmanOperator, predictions: AdmissionsPrediction) -> jnp.ndarray:
+        def trajectory_loss(admission_prediction: AdmissionTrajectoryPrediction) -> jnp.ndarray:
+            return (koopman_operator.compute_phi_loss(admission_prediction.trajectory.adjusted_state) +
+                    koopman_operator.compute_phi_loss(admission_prediction.trajectory.forecasted_state))
+
+        return sum(trajectory_loss(prediction) for prediction in predictions) / len(predictions)
+
+    def loss_term(self, model: AutoKoopmanICNN, predictions: AdmissionsPrediction):
+        loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
+                self.loss_mixer.observables * self.obs_loss(predictions) +
+                self.loss_mixer.leading_observable * self.lead_loss(predictions) +
+                self.loss_mixer.reconstruction * self.reconstruction_loss(model.f_dyn, predictions))
+        if self.loss_mixer.l1 != 0.0:
+            loss += model.l1() * self.loss_mixer.l1
+        if self.loss_mixer.l2 != 0.0:
+            loss += model.l2() * self.loss_mixer.l2
+        return loss

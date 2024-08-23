@@ -18,6 +18,7 @@ from .embeddings import (AdmissionEmbeddingsConfig)
 from .icnn_modules import ImputerMetrics, ICNNObsDecoder
 from .in_models import DynamicsLiteral, ICENODEStateTrajectory, AdmissionTrajectoryPrediction, \
     GRUDynamics
+from .koopman_modules import KoopmanOperator, KoopmanPrecomputes
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
 from ..ehr import (Admission, InpatientObservables, TVxEHR)
@@ -198,8 +199,6 @@ class AutoODEICNN(InpatientModel):
         state_trajectory = tuple()
         f = self.components
         state = f.init()
-        key = jr.PRNGKey(hash(admission.admission_id))
-
         for obs_t, obs_val, obs_mask in admission.observables:
             # if time-diff is more than 1 seconds, we integrate.
             forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, precomputes=precomputes, u=jnp.array([]))
@@ -252,3 +251,54 @@ class AutoODEICNN(InpatientModel):
                                               precomputes=precomputes))
                     pbar.update(admission.interval_days)
             return results.filter_nans()
+
+
+class KoopmanICNNConfig(ModelConfig):
+    state: int = 30
+    memory_ratio: float = 0.5
+    koopman_size: int = 300
+
+
+class AutoKoopmanICNN(AutoODEICNN):
+    f_dyn: KoopmanOperator
+
+    def _make_dyn(self, model_config: KoopmanICNNConfig, *,
+                  key: jr.PRNGKey, **kwargs) -> KoopmanOperator:
+        return KoopmanOperator(input_size=model_config.state,
+                               koopman_size=model_config.koopman_size,
+                               phi_depth=3,
+                               key=key)
+
+    def precomputes(self, *args, **kwargs):
+        A, A_eig = self.f_dyn.compute_A()
+        return KoopmanPrecomputes(A=A, A_eig=A_eig)
+
+    @property
+    def dyn_params_list(self):
+        return jtu.tree_leaves(eqx.filter((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N), eqx.is_inexact_array))
+
+    @eqx.filter_jit
+    def pathwise_params_stats(self):
+        stats = super().pathwise_params_stats()
+        real_eig_A, imag_eig_A = self.f_dyn.compute_A_spectrum()
+        desc = [f'f_dyn.A.lam_{i}' for i in range(real_eig_A.shape[0])]
+        stats.update({
+            k: {
+                'real': lamr,
+                'imag': lami
+            }
+            for k, lamr, lami in zip(desc, real_eig_A, imag_eig_A)
+        })
+        for component, v in (('real', real_eig_A), ('imag', imag_eig_A)):
+            stats.update({
+                f'f_dyn.A.{component}_lam': {
+                    'mean': jnp.nanmean(v),
+                    'std': jnp.nanstd(v),
+                    'min': jnp.nanmin(v),
+                    'max': jnp.nanmax(v),
+                    'l1': jnp.abs(v).sum(),
+                    'l2': jnp.square(v).sum(),
+                    'nans': jnp.isnan(v).sum(),
+                }
+            })
+        return stats
