@@ -179,10 +179,10 @@ class ICNN(eqx.Module):
 
     @staticmethod
     def _clip_negative_weights_Wzs(Wzs: Tuple[PositivityLayer, ...]):
-        Wzs = [Wzs[0]]
+        clipped_Wzs = [Wzs[0]]
         for Wz in Wzs[1:]:
-            Wzs.append(ICNN._clip_negative_weights(Wz))
-        return tuple(Wzs)
+            clipped_Wzs.append(ICNN._clip_negative_weights(Wz))
+        return tuple(clipped_Wzs)
 
     def clip_negative_weights(self):
         return eqx.tree_at(lambda x: x.Wzs, self, ICNN._clip_negative_weights_Wzs(self.Wzs))
