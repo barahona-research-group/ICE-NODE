@@ -152,7 +152,9 @@ class ICNN(eqx.Module):
         Wzs.append(PositivityLayer(hidden_size, 1, use_bias=True, key=new_key()))
 
         if positivity == 'none':
-            self.Wzs = ICNN._clip_negative_weights_Wzs(tuple(Wzs))
+            Wzs = ICNN._clip_negative_weights_Wzs(tuple(Wzs))
+
+        self.Wzs = tuple(Wzs)
 
         Wxs = []
         for _ in range(depth - 1):
