@@ -117,6 +117,18 @@ class PositiveAbsLinear(PositivityLayer):
         return jnp.abs(x)
 
 
+class PositiveClippedLinear(PositivityLayer):
+    @staticmethod
+    def re_init_params(weight: jnp.ndarray, bias: jnp.ndarray, key: jr.PRNGKey) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        return ConvexInitialiser()(weight.shape, bias.shape, key)
+
+    def transform(self, x: jnp.ndarray) -> jnp.ndarray:
+        return x
+
+    def clip_negative_weights(self):
+        return eqx.tree_at(lambda x: x.weight, self, jnp.clip(self.weight, 0., None))
+
+
 class ICNN(eqx.Module):
     """Input Convex Neural Network"""
     """https://github.com/atong01/ot-icnn-minimal/blob/main/icnn/icnn.py
@@ -141,8 +153,8 @@ class ICNN(eqx.Module):
             PositivityLayer = PositiveSquaredLinear
         elif positivity == 'abs':
             PositivityLayer = PositiveAbsLinear
-        elif positivity == 'none':
-            PositivityLayer = eqx.nn.Linear
+        elif positivity == 'clipped':
+            PositivityLayer = PositiveClippedLinear
         else:
             raise ValueError(f"Unknown positivity parameter: {positivity}")
 
@@ -150,9 +162,6 @@ class ICNN(eqx.Module):
         for _ in range(depth - 1):
             Wzs.append(PositivityLayer(hidden_size, hidden_size, use_bias=True, key=new_key()))
         Wzs.append(PositivityLayer(hidden_size, 1, use_bias=True, key=new_key()))
-
-        if positivity == 'none':
-            Wzs = ICNN._clip_negative_weights_Wzs(tuple(Wzs))
 
         self.Wzs = tuple(Wzs)
 
@@ -174,14 +183,10 @@ class ICNN(eqx.Module):
         return self.activations[-1](self.Wzs[-1](z) + self.Wxs[-1](x)).squeeze()
 
     @staticmethod
-    def _clip_negative_weights(Wz: eqx.nn.Linear):
-        return eqx.tree_at(lambda x: x.weight, Wz, jnp.clip(Wz.weight, 0., None))
-
-    @staticmethod
-    def _clip_negative_weights_Wzs(Wzs: Tuple[PositivityLayer, ...]):
+    def _clip_negative_weights_Wzs(Wzs: Tuple[PositiveClippedLinear, ...]):
         clipped_Wzs = [Wzs[0]]
         for Wz in Wzs[1:]:
-            clipped_Wzs.append(ICNN._clip_negative_weights(Wz))
+            clipped_Wzs.append(Wz.clip_negative_weights())
         return tuple(clipped_Wzs)
 
     def clip_negative_weights(self):
@@ -380,7 +385,7 @@ class ICNNObsDecoder(eqx.Module):
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
-                 positivity: Literal['abs', 'squared', 'none'] = 'abs',
+                 positivity: Literal['abs', 'squared', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  max_steps: int = 2 ** 9,
                  lr: float = 1e-2, *,
@@ -534,7 +539,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
     f_energy: ICNN
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float, depth: int,
-                 positivity: Literal['abs', 'squared', 'none'] = 'abs',
+                 positivity: Literal['abs', 'squared', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'adam',
                  max_steps: int = 2 ** 9, lr: float = 1e-2,
                  *,
@@ -729,7 +734,7 @@ class ProbICNNImputerTrainer(eqx.Module):
 
         model = eqx.apply_updates(model, updates)
 
-        if model.f_energy.positivity == 'none':
+        if model.f_energy.positivity == 'clipped':
             model = model.clip_negative_weights()
 
         return (loss, aux), model, opt_state
