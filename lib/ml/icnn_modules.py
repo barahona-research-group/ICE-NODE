@@ -138,9 +138,9 @@ class ICNN(eqx.Module):
     Wxs: Tuple[eqx.nn.Linear, ...]
     activations: Tuple[Callable[..., jnp.ndarray], ...]
     input_size: int = eqx.field(init=False)
-    positivity: Literal['abs', 'squared', 'none'] = 'abs'
+    positivity: Literal['abs', 'squared', 'clipped'] = 'abs'
 
-    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared', 'none'],
+    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared', 'clipped'],
                  key: jr.PRNGKey):
         super().__init__()
 
@@ -150,18 +150,18 @@ class ICNN(eqx.Module):
             return subkey
 
         if positivity == 'squared':
-            PositivityLayer = PositiveSquaredLinear
+            positivity_layer_cls = PositiveSquaredLinear
         elif positivity == 'abs':
-            PositivityLayer = PositiveAbsLinear
+            positivity_layer_cls = PositiveAbsLinear
         elif positivity == 'clipped':
-            PositivityLayer = PositiveClippedLinear
+            positivity_layer_cls = PositiveClippedLinear
         else:
             raise ValueError(f"Unknown positivity parameter: {positivity}")
 
         Wzs = [eqx.nn.Linear(input_size, hidden_size, key=new_key())]
         for _ in range(depth - 1):
-            Wzs.append(PositivityLayer(hidden_size, hidden_size, use_bias=True, key=new_key()))
-        Wzs.append(PositivityLayer(hidden_size, 1, use_bias=True, key=new_key()))
+            Wzs.append(positivity_layer_cls(hidden_size, hidden_size, use_bias=True, key=new_key()))
+        Wzs.append(positivity_layer_cls(hidden_size, 1, use_bias=True, key=new_key()))
 
         self.Wzs = tuple(Wzs)
 
@@ -556,7 +556,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
         mu_std, metrics = super().partial_input_optimise(jnp.hstack((input, jnp.where(fixed_mask, -4., 10.))),
                                                          jnp.hstack((fixed_mask, fixed_mask)))
         mu, std = jnp.hsplit(mu_std, 2)
-        std = jnn.softplus(std) + jnn.softplus(-3)
+        std = std ** 2
         return (mu, std), metrics
 
     @eqx.filter_jit
