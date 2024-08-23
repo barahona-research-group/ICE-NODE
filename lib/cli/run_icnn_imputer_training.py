@@ -35,9 +35,9 @@ def experiment_model(exp: str, observables_size: int):
                                   max_steps=2 ** 9, lr=1e-2,
                                   positivity='softplus', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
         for k in PROP_MODELS}
-    pmodels['ICNN_LN'] = ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
-                                  max_steps=2 ** 9, lr=1e-2,
-                                  positivity='clipped', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
+    # pmodels['ICNN_LN'] = ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
+    #                               max_steps=2 ** 9, lr=1e-2,
+    #                               positivity='clipped', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
 
     dmodels = {k: ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
                                  max_steps=2 ** 9, lr=1e-2,
@@ -48,7 +48,7 @@ def experiment_model(exp: str, observables_size: int):
 
 def experiment_trainer(e: str):
     return {
-        'ICNN_LN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='lamb'),
+        'ICNN_LN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam'),
         'ICNN_NLN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam', loss_feature_normalisation=True),
         'ICNN_KL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='adam', ),
         'ICNN_NKL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='adam',
