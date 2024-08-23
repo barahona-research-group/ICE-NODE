@@ -33,7 +33,7 @@ def experiment_model(exp: str, observables_size: int):
     pmodels = {
         k: ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
                                   max_steps=2 ** 9, lr=1e-2,
-                                  positivity='squared', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
+                                  positivity='softplus', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
         for k in PROP_MODELS}
 
     dmodels = {k: ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',

@@ -98,6 +98,11 @@ class PositiveSquaredLinear(PositivityLayer):
         return x ** 2
 
 
+class PositiveSoftPlusLinear(PositivityLayer):
+    def transform(self, x: jnp.ndarray) -> jnp.ndarray:
+        return jax.nn.softplus(x)
+
+
 class PositiveReLuLinear(PositivityLayer):
     @staticmethod
     def re_init_params(weight: jnp.ndarray, bias: jnp.ndarray, key: jr.PRNGKey) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -138,9 +143,10 @@ class ICNN(eqx.Module):
     Wxs: Tuple[eqx.nn.Linear, ...]
     activations: Tuple[Callable[..., jnp.ndarray], ...]
     input_size: int = eqx.field(init=False)
-    positivity: Literal['abs', 'squared', 'clipped'] = 'abs'
+    positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs'
 
-    def __init__(self, input_size: int, hidden_size: int, depth: int, positivity: Literal['abs', 'squared', 'clipped'],
+    def __init__(self, input_size: int, hidden_size: int, depth: int,
+                 positivity: Literal['abs', 'squared', 'softplus', 'clipped'],
                  key: jr.PRNGKey):
         super().__init__()
 
@@ -151,6 +157,8 @@ class ICNN(eqx.Module):
 
         if positivity == 'squared':
             positivity_layer_cls = PositiveSquaredLinear
+        elif positivity == 'softplus':
+            positivity_layer_cls = PositiveSoftPlusLinear
         elif positivity == 'abs':
             positivity_layer_cls = PositiveAbsLinear
         elif positivity == 'clipped':
@@ -385,7 +393,7 @@ class ICNNObsDecoder(eqx.Module):
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
-                 positivity: Literal['abs', 'squared', 'clipped'] = 'abs',
+                 positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  max_steps: int = 2 ** 9,
                  lr: float = 1e-2, *,
@@ -488,7 +496,7 @@ class ICNNImputerConfig(Config):
     state_size: int
     hidden_size_multiplier: float
     depth: int
-    positivity: Literal['abs', 'squared']
+    positivity: Literal['abs', 'squared', 'softplus']
     optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg']
     optimiser_lr: float
     optimiser_max_steps: int
@@ -539,7 +547,7 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
     f_energy: ICNN
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float, depth: int,
-                 positivity: Literal['abs', 'squared', 'clipped'] = 'abs',
+                 positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'adam',
                  max_steps: int = 2 ** 9, lr: float = 1e-2,
                  *,
@@ -591,7 +599,7 @@ class ProbICNNImputerTrainer(eqx.Module):
     def __init__(self, icnn_hidden_size_multiplier: float = 3,
                  icnn_depth: int = 4,
                  icnn_model_name: Literal['stacked'] = 'stacked',
-                 icnn_positivity: Literal['abs', 'squared'] = 'abs',
+                 icnn_positivity: Literal['abs', 'squared', 'softplus'] = 'abs',
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
@@ -814,7 +822,7 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
 
     def __init__(self, icnn_hidden_size_multiplier: float = 3,
                  icnn_depth: int = 4,
-                 icnn_positivity: Literal['abs', 'squared'] = 'abs',
+                 icnn_positivity: Literal['abs', 'squared', 'softplus'] = 'abs',
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam',
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
