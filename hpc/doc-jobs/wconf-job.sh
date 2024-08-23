@@ -28,7 +28,7 @@ cd $WORKDIR/ICENODE
 # PostgresQL
 source ~/.pgdb-am8520-am8520
 
-source /vol/cuda/11.4.120-cudnn8.2.4/setup.sh
+source /vol/cuda/12.5.0/setup.sh
 
 
 
