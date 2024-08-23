@@ -20,7 +20,7 @@ cd $WORKDIR/ICENODE
 source /vol/cuda/12.5.0/setup.sh
 
 
-$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_icnn_imputer_training \
+$STORE/GP/env/icenode-dev/bin/python -m lib.cli.run_icnn_imputer_training \
 --exp $EXP \
 --experiments-dir $OUTPUT_PATH \
 --dataset-path $DATASET_PATH
