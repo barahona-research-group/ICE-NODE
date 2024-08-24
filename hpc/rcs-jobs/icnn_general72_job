@@ -1,0 +1,38 @@
+#PBS -lselect=1:ncpus=31:mem=123gb
+
+#PBS -lwalltime=72:0:0
+
+
+
+# Setup environement using .bashrc
+source $HOME/.stores.sh
+
+# Input Environment Variables:
+# $STUDY_TAG: Name of the Git branch or tag. If optuna job is executing, the study tag will be used for the optuna study name. Example: v0.2.25
+# $OUTPUT_PATH: Path (absolute or relative) to the output directory. Example: ~/GP/ICE-NODE/output
+# $DATASET_PATH: Path (absolute or relative) to the dataset directory. Example: ~/GP/ehr-data/dataset
+
+# Clone repository and checkout to the given tag name.
+git clone git@github.com:A-Alaa/ICE-NODE.git $TMPDIR/ICE-NODE --branch $STUDY_TAG --single-branch  --depth 1 
+
+cd $TMPDIR/ICE-NODE
+
+# Load modules
+
+
+# Input data and output configuration
+
+
+
+# Run program
+
+export JAX_PLATFORM_NAME="cpu"
+export JAX_PLATFORMS="cpu"
+
+$HOME/GP/env/icenode-dev/bin/python -m lib.cli.run_icnn_imputer_training \
+--exp $EXP \
+--experiments-dir $OUTPUT_PATH \
+--dataset-path $DATASET_PATH
+
+#mkdir $PBS_O_WORKDIR/$PBS_JOBID
+#cp * $PBS_O_WORKDIR/$PBS_JOBID
