@@ -15,7 +15,7 @@
     "_type": "KoopmanICNNConfig",
     "memory_ratio": 0.5,
     "state": 20,
-    "koopman_size": 300
+    "koopman_size": 200
   },
   "model_classname": "AutoKoopmanICNN",
   "model_snapshot_frequency": 10,
