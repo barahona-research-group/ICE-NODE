@@ -159,7 +159,9 @@ class AutoODEICNN(InpatientModel):
     def _make_icnn(config: ODEICNNConfig, observables_size: int, key) -> ICNNObsDecoder:
         return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
                               hidden_size_multiplier=3, depth=4,
-                              optax_optimiser_name='polyak_sgd',
+                              optimiser_name='lamb',
+                              max_steps=2 ** 9, lr=1e-2,
+                              positivity='softplus',
                               key=key)
 
     @property

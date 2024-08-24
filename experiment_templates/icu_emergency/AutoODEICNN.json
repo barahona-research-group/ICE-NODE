@@ -13,7 +13,7 @@
     "model": {
         "_type": "ODEICNNConfig",
         "memory_ratio": 0.5,
-        "state": 16,
+        "state": 20,
         "dynamics": "mlp"
     },
     "model_classname": "AutoODEICNN",
