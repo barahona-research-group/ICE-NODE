@@ -11,7 +11,7 @@
 	},
 	"medium72b":
 	{
-		"spec": "#PBS -lselect=1:ncpus=60:mem=200gb",
+		"spec": "#PBS -lselect=1:ncpus=60:mem=300gb",
 		"array": 5,
 		"parallel": 30,
 		"hours": "72:0",
