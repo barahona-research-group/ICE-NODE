@@ -1019,8 +1019,9 @@ class KoopmanTrainer(Trainer):
 
     def reconstruction_loss(self, koopman_operator: KoopmanOperator, predictions: AdmissionsPrediction) -> jnp.ndarray:
         def trajectory_loss(admission_prediction: AdmissionTrajectoryPrediction) -> jnp.ndarray:
-            return (koopman_operator.compute_phi_loss(admission_prediction.trajectory.adjusted_state) +
-                    koopman_operator.compute_phi_loss(admission_prediction.trajectory.forecasted_state))
+            state = jnp.vstack((admission_prediction.trajectory.adjusted_state,
+                                admission_prediction.trajectory.forecasted_state))
+            return eqx.filter_vmap(koopman_operator.compute_phi_loss)(state).mean()
 
         return sum(trajectory_loss(prediction) for prediction in predictions) / len(predictions)
 
