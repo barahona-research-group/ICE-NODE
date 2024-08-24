@@ -1018,12 +1018,17 @@ class KoopmanTrainer(Trainer):
     loss_mixer: KoopmanLossMixer = field(default_factory=KoopmanLossMixer)
 
     def reconstruction_loss(self, koopman_operator: KoopmanOperator, predictions: AdmissionsPrediction) -> jnp.ndarray:
-        def trajectory_loss(admission_prediction: AdmissionTrajectoryPrediction) -> jnp.ndarray:
-            state = jnp.vstack((admission_prediction.trajectory.adjusted_state,
-                                admission_prediction.trajectory.forecasted_state))
-            return eqx.filter_vmap(koopman_operator.compute_phi_loss)(state).mean()
+        def trajectory_loss(trajectory: ICENODEStateTrajectory) -> jnp.ndarray:
+            state = jnp.vstack((trajectory.adjusted_state, trajectory.forecasted_state))
+            return eqx.filter_vmap(koopman_operator.compute_phi_loss)(state)
 
-        return sum(trajectory_loss(prediction) for prediction in predictions) / len(predictions)
+        trajs_loss = [trajectory_loss(prediction.trajectory) for prediction in predictions if prediction.trajectory is not None]
+
+        if len(trajs_loss) > 0:
+            return jnp.mean(jnp.hstack(trajs_loss))
+        else:
+            return 0.0
+
 
     def loss_term(self, model: AutoKoopmanICNN, predictions: AdmissionsPrediction):
         loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
