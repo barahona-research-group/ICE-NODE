@@ -1,0 +1,58 @@
+{
+  "_type": "ExperimentConfig",
+  "continue_training": true,
+  "embeddings": null,
+  "loss_mixer": {
+    "_type": "LossMixer",
+    "l1": 0.0,
+    "l2": 0.0,
+    "leading_observable": 1.0,
+    "observables": 1.0,
+    "outcome": 1.0
+  },
+  "model": {
+    "_type": "KoopmanICNNConfig",
+    "memory_ratio": 0.5,
+    "state": 20,
+    "koopman_size": 300
+  },
+  "model_classname": "AutoKoopmanICNN",
+  "model_snapshot_frequency": 10,
+  "reporting": {
+    "_type": "ReportingConfig",
+    "config_json": true,
+    "console": true,
+    "model_stats": false,
+    "output_dir": "test",
+    "parameter_snapshots": true
+  },
+  "trainer": {
+    "_type": "TrainerConfig",
+    "batch_size": 16,
+    "epochs": 100,
+    "lead_loss": null,
+    "obs_loss": "mse",
+    "normalised_obs_loss": true,
+    "optimizer": {
+      "_type": "OptimizerConfig",
+      "decay_rate": null,
+      "lr": 0.001,
+      "opt": "adam",
+      "reverse_schedule": false
+    },
+    "outcome_loss": null
+  },
+  "trainer_classname": "KoopmanTrainer",
+  "warmup": {
+    "_type": "WarmupConfig",
+    "batch_size": 1,
+    "epochs": 0.03,
+    "optimizer": {
+      "_type": "OptimizerConfig",
+      "decay_rate": null,
+      "lr": 0.001,
+      "opt": "adam",
+      "reverse_schedule": false
+    }
+  }
+}
