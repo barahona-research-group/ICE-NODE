@@ -3,12 +3,13 @@
   "continue_training": true,
   "embeddings": null,
   "loss_mixer": {
-    "_type": "LossMixer",
+    "_type": "KoopmanLossMixer",
     "l1": 0.0,
     "l2": 0.0,
     "leading_observable": 1.0,
     "observables": 1.0,
-    "outcome": 1.0
+    "outcome": 1.0,
+    "reconstruction": 1.0
   },
   "model": {
     "_type": "KoopmanICNNConfig",

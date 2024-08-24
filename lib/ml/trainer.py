@@ -809,7 +809,6 @@ class Trainer(Module):
                 warmup_config: WarmupConfig):
 
         conf = self.config.update(warmup_config)
-        logging.info(f'HPs: {conf.to_dict()}')
         trainer = type(self)(config=conf, loss_mixer=self.loss_mixer)
 
         return trainer._train(model=model,
