@@ -15,7 +15,7 @@ from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNN
     StandardICNNImputerTrainer
 from ..utils import append_params_to_zip
 
-PROP_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_JSD', 'ICNN_NJSD')
+PROP_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_KLR', 'ICNN_NKLR', 'ICNN_JSD', 'ICNN_NJSD')
 DET_MODELS = ('ICNN_MSE', 'ICNN_NMSE')
 
 EXP_DIR = {
