@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 import pandas as pd
-from etils.etree import jax
+import jax
 from tqdm import tqdm
 
 from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNNImputerTrainer, \
