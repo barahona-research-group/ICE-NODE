@@ -15,7 +15,7 @@ import optax
 import optimistix as optx
 
 from .. import VxData, Config
-from ..metric.loss import log_normal, gaussian_kl, mse
+from ..metric.loss import log_normal, gaussian_kl, mse, gaussian_klr, gaussian_jsd
 from ..utils import tqdm_constructor, translate_path
 
 
@@ -580,8 +580,8 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
 
 class ProbICNNImputerTrainer(eqx.Module):
     # Config
-    prob_loss_name: Literal['log_normal', 'kl_divergence'] = 'log_normal'
-    optimiser_name: Literal['adam', 'novograd'] = 'adam'
+    prob_loss_name: Literal['log_normal', 'kl_divergence', 'klr_divergence', 'jsd_gaussian'] = 'log_normal'
+    optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam'
     loss_feature_normalisation: bool = False
     lr: float = 1e-3
     steps: int = 1000000
@@ -603,7 +603,7 @@ class ProbICNNImputerTrainer(eqx.Module):
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
-                 loss: Literal['log_normal', 'kl_divergence', 'jsd_gaussian'] = 'log_normal',
+                 loss: Literal['log_normal', 'kl_divergence', 'klr_divergence', 'jsd_gaussian'] = 'log_normal',
                  loss_feature_normalisation: bool = False,
                  optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam',
                  lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
@@ -632,8 +632,14 @@ class ProbICNNImputerTrainer(eqx.Module):
         self.loss_feature_normalisation = loss_feature_normalisation
         if loss == 'kl_divergence':
             self.loss_function = gaussian_kl
-        else:
+        elif loss == 'klr_divergence':
+            self.loss_function = gaussian_klr
+        elif loss == 'log_normal':
             self.loss_function = log_normal
+        elif loss == 'jsd_gaussian':
+            self.loss_function = gaussian_jsd
+        else:
+            raise ValueError(f'Unknown loss function {loss}')
 
     def init_model(self, X: jnp.ndarray) -> ProbStackedICNNImputer:
         return ProbStackedICNNImputer(observables_size=X.shape[1],

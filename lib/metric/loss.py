@@ -269,6 +269,13 @@ def gaussian_kl(y: Tuple[jnp.ndarray, jnp.ndarray], y_hat: Tuple[jnp.ndarray, jn
 
 
 @eqx.filter_jit
+def gaussian_klr(y: Tuple[jnp.ndarray, jnp.ndarray], y_hat: Tuple[jnp.ndarray, jnp.ndarray],
+                 mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None) -> jnp.ndarray:
+    """KL divergence between two Gaussian distributions, reversed."""
+    return gaussian_kl(y_hat, y, mask=mask, axis=axis)
+
+
+@eqx.filter_jit
 def gaussian_jsd(y: Tuple[jnp.ndarray, jnp.ndarray], y_hat: Tuple[jnp.ndarray, jnp.ndarray],
                  mask: Optional[jnp.ndarray] = None, axis: Optional[int] = None) -> jnp.ndarray:
     """Jenson-Shannon divergence between two Gaussian distributions."""
@@ -294,7 +301,7 @@ BinaryLossLiteral = Literal[
 
 NumericLossLiteral = Literal['mse', 'mae', 'rms', 'soft_dtw_0_1', 'r2']
 
-ProbNumericLossLiteral = Literal['kl_gaussian', 'log_normal', 'jsd_gaussian']
+ProbNumericLossLiteral = Literal['kl_gaussian', 'klr_gaussian', 'log_normal', 'jsd_gaussian']
 
 LossSignature = Callable[[Array, Array, Optional[Array], Optional[int]], Array | float]
 ProbLossSignature = Callable[[Tuple[Array, Array], Tuple[Array, Array], Optional[Array], Optional[int]], Array | float]
@@ -323,4 +330,5 @@ NUMERIC_LOSS: Final[Dict[NumericLossLiteral, LossSignature]] = {
 PROB_NUMERIC_LOSS: Final[Dict[ProbNumericLossLiteral, ProbLossSignature]] = {
     'kl_gaussian': gaussian_kl,
     'jsd_gaussian': gaussian_jsd,
+    'klr_gaussian': gaussian_klr,
     'log_normal': log_normal}
