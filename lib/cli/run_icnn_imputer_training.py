@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 import pandas as pd
+from etils.etree import jax
 from tqdm import tqdm
 
 from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNNImputerTrainer, \
@@ -104,6 +105,42 @@ def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
     train_history.to_csv(f'{experiment_dir}/train_history.csv', index=False)
 
 
+def run_eval(exp: str, dataset_path: str, experiments_dir: str):
+    obs_val, obs_mask, artificial_mask = experiment_data(dataset_path)
+    model = experiment_model(exp, obs_val.shape[1])
+    split_ratio = 0.7
+    seed = 0
+    indices = jr.permutation(jr.PRNGKey(seed), len(obs_val))
+    train_idx = indices[:int(split_ratio * len(indices))]
+
+    obs_val_test = jnp.array(obs_val.iloc[train_idx].to_numpy())
+    art_mask_test = jnp.array(artificial_mask.iloc[train_idx].to_numpy())
+    experiment_dir = f'{experiments_dir}/{EXP_DIR[exp]}'
+
+    model = model.load_params_from_archive(f'{experiment_dir}/params.zip', 'step9999.eqx')
+
+    if exp in PROP_MODELS:
+        with jax.default_device(jax.devices("cpu")[0]):
+            obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
+            (X_test_imp, X_test_std), _ = eqx.filter_vmap(model.prob_partial_input_optimise)(obs_test, art_mask_test)
+
+        X_test_imp_df = pd.DataFrame(X_test_imp, columns=obs_val.columns)
+        X_test_std_df = pd.DataFrame(X_test_std, columns=obs_val.columns)
+
+        X_test_imp_df.to_csv(f'{experiment_dir}/pred_X_test_imp.csv')
+        X_test_std_df.to_csv(f'{experiment_dir}/pred_X_test_std.csv')
+
+    elif exp in DET_MODELS:
+        with jax.default_device(jax.devices("cpu")[0]):
+            obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
+            X_test_imp, _ = eqx.filter_vmap(model.partial_input_optimise)(obs_test, art_mask_test)
+
+        X_test_imp_df = pd.DataFrame(X_test_imp, columns=obs_val.columns)
+        X_test_imp_df.to_csv(f'{experiment_dir}/pred_X_test_imp.csv')
+    else:
+        raise ValueError(f"Unknown model {exp}")
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
@@ -112,4 +149,8 @@ if __name__ == '__main__':
     parser.add_argument('--dataset-path', type=str, required=True)
     args = parser.parse_args()
     logging.warning(args)
-    run_experiment(args.exp, args.dataset_path, args.experiments_dir)
+    if args.exp.startswith('eval.'):
+        exp = args.exp.split('.')[1]
+        run_eval(exp, args.dataset_path, args.experiments_dir)
+    else:
+        run_experiment(args.exp, args.dataset_path, args.experiments_dir)
