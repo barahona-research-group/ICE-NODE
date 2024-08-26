@@ -4,22 +4,25 @@ from collections import defaultdict
 from pathlib import Path
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
 import pandas as pd
-import jax
 from tqdm import tqdm
 
 from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNNImputerTrainer, \
     StandardICNNImputerTrainer
 from ..utils import append_params_to_zip
 
-PROP_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_KLR', 'ICNN_NKLR', 'ICNN_JSD', 'ICNN_NJSD')
+PROB_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_KLR', 'ICNN_NKLR', 'ICNN_JSD', 'ICNN_NJSD')
+PROB_MODELS += tuple(f'ICNNB_{m}' for m in PROB_MODELS)
+
 DET_MODELS = ('ICNN_MSE', 'ICNN_NMSE')
+DET_MODELS += tuple(f'ICNNB_{m}' for m in DET_MODELS)
 
 EXP_DIR = {
-    key: f'snapshots_{key.lower()}' for key in PROP_MODELS + DET_MODELS
+    key: f'snapshots_{key.lower()}' for key in PROB_MODELS + DET_MODELS
 }
 
 
@@ -34,21 +37,23 @@ def experiment_model(exp: str, observables_size: int):
     pmodels = {
         k: ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
                                   max_steps=2 ** 9, lr=1e-2,
+                                  upper_bounded=k.startswith('ICNNB'),
                                   positivity='softplus', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
-        for k in PROP_MODELS}
+        for k in PROB_MODELS}
     # pmodels['ICNN_LN'] = ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
     #                               max_steps=2 ** 9, lr=1e-2,
     #                               positivity='clipped', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
 
     dmodels = {k: ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
                                  max_steps=2 ** 9, lr=1e-2,
+                                 upper_bounded=k.startswith('ICNNB'),
                                  positivity='softplus', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
                for k in DET_MODELS}
     return (pmodels | dmodels)[exp]
 
 
 def experiment_trainer(e: str):
-    return {
+    d0 = {
         'ICNN_LN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam'),
         'ICNN_NLN': ProbICNNImputerTrainer(loss='log_normal', optimiser_name='adam', loss_feature_normalisation=True),
         'ICNN_KL': ProbICNNImputerTrainer(loss='kl_divergence', optimiser_name='adam', ),
@@ -56,13 +61,17 @@ def experiment_trainer(e: str):
                                            loss_feature_normalisation=True),
         'ICNN_KLR': ProbICNNImputerTrainer(loss='klr_divergence', optimiser_name='adam', ),
         'ICNN_NKLR': ProbICNNImputerTrainer(loss='klr_divergence', optimiser_name='adam',
-                                           loss_feature_normalisation=True),
+                                            loss_feature_normalisation=True),
         'ICNN_JSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='adam'),
         'ICNN_NJSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='adam',
                                             loss_feature_normalisation=True),
         'ICNN_MSE': StandardICNNImputerTrainer(optimiser_name='adam'),
         'ICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='adam', loss_feature_normalisation=True)
-    }[e]
+    }
+
+    d1 = {f'ICNNB_{k.split("_")[1]}': v for k, v in d0.items()}
+    
+    return (d0 | d1)[e]
 
 
 def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
@@ -122,7 +131,7 @@ def run_eval(exp: str, dataset_path: str, experiments_dir: str):
 
     model = model.load_params_from_archive(f'{experiment_dir}/params.zip', 'step9999.eqx')
 
-    if exp in PROP_MODELS:
+    if exp in PROB_MODELS:
         with jax.default_device(jax.devices("cpu")[0]):
             obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
             (X_test_imp, X_test_std), _ = eqx.filter_vmap(model.prob_partial_input_optimise)(obs_test, art_mask_test)

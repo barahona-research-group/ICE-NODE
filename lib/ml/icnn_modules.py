@@ -201,6 +201,17 @@ class ICNN(eqx.Module):
         return eqx.tree_at(lambda x: x.Wzs, self, ICNN._clip_negative_weights_Wzs(self.Wzs))
 
 
+class UpperBoundedICNN(ICNN):
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray | float:
+        # https://arxiv.org/pdf/1609.07152 (Eq (2)). Fully input convex.
+        z = jnn.softplus(self.Wzs[0](x))
+        for Wz, Wx, sigma in zip(self.Wzs[1:-1], self.Wxs[:-1], self.activations):
+            z = sigma(Wz(z) + Wx(x))
+        return self.input_size * jnn.sigmoid((self.Wzs[-1](z) + self.Wxs[-1](x)) / self.input_size).squeeze()
+
+
 class MaskedOptaxMinimiser(optx.OptaxMinimiser):
 
     def step(
@@ -396,13 +407,18 @@ class ICNNObsDecoder(eqx.Module):
                  positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  max_steps: int = 2 ** 9,
-                 lr: float = 1e-2, *,
+                 lr: float = 1e-2,
+                 upper_bounded: bool = False, *,
                  key: jr.PRNGKey):
         super().__init__()
         self.observables_size = observables_size
         self.state_size = state_size
         input_size = observables_size + state_size
-        self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, positivity, key)
+        if upper_bounded:
+            self.f_energy = UpperBoundedICNN(input_size, int(input_size * hidden_size_multiplier), depth, positivity,
+                                             key)
+        else:
+            self.f_energy = ICNN(input_size, int(input_size * hidden_size_multiplier), depth, positivity, key)
         self.optimiser_name = optimiser_name
         self.max_steps = max_steps
         self.lr = lr
@@ -500,6 +516,7 @@ class ICNNImputerConfig(Config):
     optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg']
     optimiser_lr: float
     optimiser_max_steps: int
+    upper_bounded: bool
 
 
 #
@@ -550,12 +567,14 @@ class ProbStackedICNNImputer(ICNNObsDecoder):
                  positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
                  optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'adam',
                  max_steps: int = 2 ** 9, lr: float = 1e-2,
+                 upper_bounded: bool = False,
                  *,
                  key: jr.PRNGKey):
         super().__init__(observables_size=observables_size * 2, state_size=state_size,
                          hidden_size_multiplier=hidden_size_multiplier,
                          depth=depth, positivity=positivity, optimiser_name=optimiser_name,
                          max_steps=max_steps, lr=lr,
+                         upper_bounded=upper_bounded,
                          key=key)
 
     @eqx.filter_jit
@@ -603,6 +622,7 @@ class ProbICNNImputerTrainer(eqx.Module):
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
+                 icnn_upper_bounded: bool = False,
                  loss: Literal['log_normal', 'kl_divergence', 'klr_divergence', 'jsd_gaussian'] = 'log_normal',
                  loss_feature_normalisation: bool = False,
                  optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam',
@@ -624,7 +644,8 @@ class ProbICNNImputerTrainer(eqx.Module):
                                               positivity=icnn_positivity,
                                               optimiser_name=icnn_optimiser,
                                               optimiser_lr=icnn_lr,
-                                              optimiser_max_steps=icnn_max_steps)
+                                              optimiser_max_steps=icnn_max_steps,
+                                              upper_bounded=icnn_upper_bounded)
 
         self.model = None
         self.model_snapshots = {}
@@ -650,6 +671,7 @@ class ProbICNNImputerTrainer(eqx.Module):
                                       optimiser_name=self.model_config.optimiser_name,
                                       max_steps=self.model_config.optimiser_max_steps,
                                       lr=self.model_config.optimiser_lr,
+                                      upper_bounded=self.model_config.upper_bounded,
                                       key=jr.PRNGKey(self.seed))
 
     @eqx.filter_jit
@@ -832,6 +854,7 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                  icnn_optimiser: Literal['adam', 'polyak_sgd', 'lamb', 'yogi'] = 'adam',
                  icnn_max_steps: int = 2 ** 9,
                  icnn_lr: float = 1e-2,
+                 icnn_upper_bounded: bool = False,
                  loss_feature_normalisation: bool = False,
                  optimiser_name: Literal['adam', 'novograd', 'lamb'] = 'adam',
                  lr: float = 1e-3, steps: int = 1000000, train_batch_size: int = 256, seed: int = 0,
@@ -856,7 +879,8 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                                               positivity=icnn_positivity,
                                               optimiser_name=icnn_optimiser,
                                               optimiser_lr=icnn_lr,
-                                              optimiser_max_steps=icnn_max_steps)
+                                              optimiser_max_steps=icnn_max_steps,
+                                              upper_bounded=icnn_upper_bounded)
         self.model = None
         self.model_snapshots = {}
         self.train_history = ()
@@ -872,6 +896,7 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                               optimiser_name=self.model_config.optimiser_name,
                               lr=self.model_config.optimiser_lr,
                               max_steps=self.model_config.optimiser_max_steps,
+                              upper_bounded=self.model_config.upper_bounded,
                               key=jr.PRNGKey(self.seed))
 
     @eqx.filter_jit
