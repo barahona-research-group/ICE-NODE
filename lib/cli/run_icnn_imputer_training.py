@@ -123,10 +123,10 @@ def run_eval(exp: str, dataset_path: str, experiments_dir: str):
     split_ratio = 0.7
     seed = 0
     indices = jr.permutation(jr.PRNGKey(seed), len(obs_val))
-    train_idx = indices[:int(split_ratio * len(indices))]
+    test_idx = indices[int(split_ratio * len(indices)):]
 
-    obs_val_test = jnp.array(obs_val.iloc[train_idx].to_numpy())
-    art_mask_test = jnp.array(artificial_mask.iloc[train_idx].to_numpy())
+    obs_val_test = jnp.array(obs_val.iloc[test_idx].to_numpy())
+    art_mask_test = jnp.array(artificial_mask.iloc[test_idx].to_numpy())
     experiment_dir = f'{experiments_dir}/{EXP_DIR[exp]}'
 
     model = model.load_params_from_archive(f'{experiment_dir}/params.zip', 'step9999.eqx')
