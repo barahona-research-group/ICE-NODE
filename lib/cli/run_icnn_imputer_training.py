@@ -16,10 +16,10 @@ from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNN
 from ..utils import append_params_to_zip
 
 PROB_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_KLR', 'ICNN_NKLR', 'ICNN_JSD', 'ICNN_NJSD')
-PROB_MODELS += tuple(f'ICNNB_{m}' for m in PROB_MODELS)
+PROB_MODELS += tuple(f'ICNNB_{m.split("_")[1]}' for m in PROB_MODELS)
 
 DET_MODELS = ('ICNN_MSE', 'ICNN_NMSE')
-DET_MODELS += tuple(f'ICNNB_{m}' for m in DET_MODELS)
+DET_MODELS += tuple(f'ICNNB_{m.split("_")[1]}' for m in DET_MODELS)
 
 EXP_DIR = {
     key: f'snapshots_{key.lower()}' for key in PROB_MODELS + DET_MODELS
