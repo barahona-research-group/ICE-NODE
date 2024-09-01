@@ -59,6 +59,11 @@ class ODEICNNComponents(eqx.Module):
     init: Optional[Callable] = None
     obs_dec: Optional[Callable] = None
     update: Optional[Callable] = None
+    impute: Optional[Callable] = None
+
+
+class AdmissionImputationAndForecasting(AdmissionTrajectoryPrediction):
+    imputed_observables: InpatientObservables = None
 
 
 class AutoODEICNN(InpatientModel):
@@ -115,7 +120,7 @@ class AutoODEICNN(InpatientModel):
     def _f_update(self, forecasted_state: jnp.ndarray,
                   true_observables: jnp.ndarray,
                   observables_mask: jnp.ndarray,
-                  u: Optional[jnp.ndarray] = None) -> Tuple[jnp.ndarray, ImputerMetrics]:
+                  u: Optional[jnp.ndarray] = None) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray], ImputerMetrics]:
         # update: keeps the memory fixed (+given obs) and tune everything else.
 
         # init_obs: obs_decoder(forecasted_state).
@@ -126,8 +131,8 @@ class AutoODEICNN(InpatientModel):
                            jnp.zeros(self.ephemeral_memory_size),
                            observables_mask])  # Keep the given obs fixed.
         output, stats = self.f_icnn.partial_input_optimise(input, mask)
-        state, _ = jnp.split(output, [self.config.state])
-        return state, stats
+        state, imputed_obs = jnp.split(output, [self.config.state])
+        return (state, imputed_obs), stats
 
     @eqx.filter_jit
     def _f_obs_dec(self, forecasted_state: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
@@ -189,7 +194,7 @@ class AutoODEICNN(InpatientModel):
             embedded_admission: EmbeddedAdmission, precomputes: Precomputes
     ) -> AdmissionTrajectoryPrediction:
 
-        prediction = AdmissionTrajectoryPrediction(admission=admission)
+        prediction = AdmissionImputationAndForecasting(admission=admission)
 
         if len(admission.observables) == 0:
             logging.debug("No observation to fit.")
@@ -197,18 +202,21 @@ class AutoODEICNN(InpatientModel):
 
         ode_stats = ODEMetrics()
         imputer_stats = ImputerMetrics()
+        imputed_obs = ()
         t = 0.0
         state_trajectory = tuple()
         f = self.components
         state = f.init()
+
         for obs_t, obs_val, obs_mask in admission.observables:
             # if time-diff is more than 1 seconds, we integrate.
             forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, precomputes=precomputes, u=jnp.array([]))
             ode_stats += ode_stats_
             forecasted_state = forecasted_state.squeeze()
-            state, imputer_stats_ = f.update(forecasted_state, obs_val, obs_mask)
+            (state, imputed_obs_), imputer_stats_ = f.update(forecasted_state, obs_val, obs_mask)
             imputer_stats += imputer_stats_
             state_trajectory += ((forecasted_state, state),)
+            imputed_obs += (imputed_obs_,)
             t = obs_t
 
         prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
@@ -220,6 +228,10 @@ class AutoODEICNN(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=state_trajectory))
+            prediction = prediction.add(imputed_observables=InpatientObservables(time=admission.observables.time,
+                                                                                 value=jnp.vstack(imputed_obs),
+                                                                                 mask=admission.observables.mask))
+
             prediction = prediction.add(trajectory=state_trajectory)
         return prediction
 
