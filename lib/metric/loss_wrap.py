@@ -98,6 +98,8 @@ class LeadPredictionLoss(NumericPredictionLoss):
 class ObsPredictionLoss(NumericPredictionLoss):
     prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
 
+class ImputationLoss(NumericPredictionLoss):
+    prediction_attribute: ClassVar[PredictionAttribute] = 'imputed_observables'
 
 class ProbObsPredictionLoss(ObsPredictionLoss):
     loss_key: ProbNumericLossLiteral = field(default=None, kw_only=True)

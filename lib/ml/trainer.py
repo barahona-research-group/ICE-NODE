@@ -30,7 +30,7 @@ from ..base import Config, Module
 from ..ehr import TVxEHR
 from ..metric.loss import BinaryLossLiteral, NumericLossLiteral, ProbNumericLossLiteral
 from ..metric.loss_wrap import (ProbObsPredictionLoss, AdjustedProbObsPredictionLoss,
-                                OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss)
+                                OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss, ImputationLoss)
 from ..metric.metrics import (MetricsCollection, Metric, )
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
@@ -1015,15 +1015,13 @@ class ProbTrainer(Trainer):
 
 class ImputationForecastingTrainer(Trainer):
     @cached_property
-    def obs_imputation_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
+    def obs_imputation_loss(self) -> ImputationLoss | Callable[[AdmissionsPrediction], float]:
         if self.config.obs_loss is None:
             return lambda p: 0.0
         if self.config.normalised_obs_loss:
-            obs_loss = ObsPredictionLoss(loss_key=self.config.obs_loss, per_column=True,
-                                         prediction_attribute='imputed_observables')
+            obs_loss = ImputationLoss(loss_key=self.config.obs_loss, per_column=True)
             return lambda p: jnp.nanmean(obs_loss(p))  # noqa
-        return ObsPredictionLoss(loss_key=self.config.obs_loss,
-                                 prediction_attribute='imputed_observables')  # noqa
+        return ImputationLoss(loss_key=self.config.obs_loss)  # noqa
 
     def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
         loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
