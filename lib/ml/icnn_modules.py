@@ -499,6 +499,40 @@ class ICNNObsDecoder(eqx.Module):
         return eqx.tree_at(lambda x: x.f_energy, self, self.f_energy.clip_negative_weights())
 
 
+class ResICNNObsDecoder(ICNNObsDecoder):
+    input_res: jnp.ndarray = eqx.static_field()
+    observables_offset: jnp.ndarray = eqx.static_field()
+
+    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
+                 depth: int,
+                 positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
+                 optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
+                 max_steps: int = 2 ** 9,
+                 lr: float = 1e-2,
+                 upper_bounded: bool = False,
+                 observables_offset: Optional[jnp.ndarray] = None,
+                 *,
+                 key: jr.PRNGKey):
+        super().__init__(observables_size=observables_size, state_size=state_size,
+                         hidden_size_multiplier=hidden_size_multiplier, depth=depth, positivity=positivity,
+                         optimiser_name=optimiser_name, max_steps=max_steps, lr=lr, upper_bounded=upper_bounded,
+                         key=key)
+        if observables_offset is not None:
+            assert observables_offset.shape == (observables_size,)
+            observables_offset = jnp.nan_to_num(observables_offset, nan=0.)
+            self.observables_offset = observables_offset
+        else:
+            self.observables_offset = jnp.zeros(observables_size)
+        self.input_res = self.full_optimise()[0]
+
+    @eqx.filter_jit
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        input, metrics = super().partial_input_optimise(input, fixed_mask)
+        input = input - self.input_res
+        input = input.at[self.state_size:].add(self.observables_offset)
+        return input, metrics
+
+
 class ICNNObsExtractor(ICNNObsDecoder):
 
     @eqx.filter_jit

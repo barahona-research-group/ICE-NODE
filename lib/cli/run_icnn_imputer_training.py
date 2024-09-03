@@ -12,7 +12,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNNImputerTrainer, \
-    StandardICNNImputerTrainer
+    StandardICNNImputerTrainer, ResICNNObsDecoder
 from ..utils import append_params_to_zip
 
 PROB_MODELS = ('ICNN_LN', 'ICNN_NLN', 'ICNN_KL', 'ICNN_NKL', 'ICNN_KLR', 'ICNN_NKLR', 'ICNN_JSD', 'ICNN_NJSD')
@@ -21,8 +21,10 @@ PROB_MODELS += tuple(f'ICNNB_{m.split("_")[1]}' for m in PROB_MODELS)
 DET_MODELS = ('ICNN_MSE', 'ICNN_NMSE')
 DET_MODELS += tuple(f'ICNNB_{m.split("_")[1]}' for m in DET_MODELS)
 
+RES_MODELS = ('RICNN_MSE', 'RICNN_NMSE')
+
 EXP_DIR = {
-    key: f'snapshots_{key.lower()}' for key in PROB_MODELS + DET_MODELS
+    key: f'snapshots_{key.lower()}' for key in PROB_MODELS + DET_MODELS + RES_MODELS
 }
 
 
@@ -33,23 +35,28 @@ def experiment_data(dataset_path: str):
     return obs_val, obs_mask, artificial_mask
 
 
-def experiment_model(exp: str, observables_size: int):
+def experiment_model(exp: str, observables: pd.DataFrame):
     pmodels = {
-        k: ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
-                                  max_steps=2 ** 9, lr=1e-2,
-                                  upper_bounded=k.startswith('ICNNB'),
-                                  positivity='softplus', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
+        k: lambda: ProbStackedICNNImputer(observables_size=observables.shape[1], state_size=0, optimiser_name='lamb',
+                                          max_steps=2 ** 9, lr=1e-2,
+                                          upper_bounded=k.startswith('ICNNB'),
+                                          positivity='softplus', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
         for k in PROB_MODELS}
-    # pmodels['ICNN_LN'] = ProbStackedICNNImputer(observables_size=observables_size, state_size=0, optimiser_name='lamb',
-    #                               max_steps=2 ** 9, lr=1e-2,
-    #                               positivity='clipped', hidden_size_multiplier=2, depth=5, key=jr.PRNGKey(0))
 
-    dmodels = {k: ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
-                                 max_steps=2 ** 9, lr=1e-2,
-                                 upper_bounded=k.startswith('ICNNB'),
-                                 positivity='softplus', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
+    dmodels = {k: lambda: ICNNObsDecoder(observables_size=observables.shape[1], state_size=0, optimiser_name='lamb',
+                                         max_steps=2 ** 9, lr=1e-2,
+                                         upper_bounded=k.startswith('ICNNB'),
+                                         positivity='softplus', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
                for k in DET_MODELS}
-    return (pmodels | dmodels)[exp]
+
+    rmodels = {k: lambda: ResICNNObsDecoder(observables_size=observables.shape[1],
+                                            state_size=0, optimiser_name='lamb',
+                                            observables_offset=jnp.nanmean(observables.to_numpy(), axis=0),
+                                            max_steps=2 ** 9, lr=1e-2,
+                                            upper_bounded=k.startswith('ICNNB'),
+                                            positivity='softplus', hidden_size_multiplier=3, depth=5, key=jr.PRNGKey(0))
+               for k in RES_MODELS}
+    return (pmodels | dmodels | rmodels)[exp]()
 
 
 def experiment_trainer(e: str):
@@ -70,7 +77,7 @@ def experiment_trainer(e: str):
     }
 
     d1 = {f'ICNNB_{k.split("_")[1]}': v for k, v in d0.items()}
-    
+
     return (d0 | d1)[e]
 
 
@@ -119,7 +126,7 @@ def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
 
 def run_eval(exp: str, dataset_path: str, experiments_dir: str):
     obs_val, obs_mask, artificial_mask = experiment_data(dataset_path)
-    model = experiment_model(exp, obs_val.shape[1])
+    model = experiment_model(exp, obs_val)
     split_ratio = 0.7
     seed = 0
     indices = jr.permutation(jr.PRNGKey(seed), len(obs_val))
