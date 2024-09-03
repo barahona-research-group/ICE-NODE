@@ -500,8 +500,8 @@ class ICNNObsDecoder(eqx.Module):
 
 
 class ResICNNObsDecoder(ICNNObsDecoder):
-    input_res: jnp.ndarray = eqx.static_field()
-    observables_offset: jnp.ndarray = eqx.static_field()
+    input_res: jnp.ndarray = eqx.field(static=True)
+    observables_offset: jnp.ndarray = eqx.field(static=True)
 
     def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
                  depth: int,
