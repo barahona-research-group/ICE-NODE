@@ -99,6 +99,7 @@ class ObsPredictionLoss(NumericPredictionLoss):
     prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
 
 class ImputationLoss(NumericPredictionLoss):
+    admission_attribute: ClassVar[PredictionAttribute] = 'observables'
     prediction_attribute: ClassVar[PredictionAttribute] = 'imputed_observables'
 
 class ProbObsPredictionLoss(ObsPredictionLoss):
