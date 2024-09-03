@@ -24,6 +24,7 @@ from blinker import signal
 
 from .artefacts import AdmissionsPrediction
 from .exp_ode_icnn import AutoKoopmanICNN
+from .in_models import ICENODEStateTrajectory
 from .koopman_modules import KoopmanOperator
 from .model import AbstractModel
 from ..base import Config, Module
