@@ -521,13 +521,14 @@ class ResICNNObsDecoder(ICNNObsDecoder):
                          hidden_size_multiplier=hidden_size_multiplier, depth=depth, positivity=positivity,
                          optimiser_name=optimiser_name, max_steps=max_steps, lr=lr, upper_bounded=upper_bounded,
                          key=key)
+        input_size = observables_size + state_size
         if observables_offset is not None:
             assert observables_offset.shape == (observables_size,)
             observables_offset = jnp.nan_to_num(observables_offset, nan=0.)
             self.observables_offset = observables_offset
         else:
             self.observables_offset = jnp.zeros(observables_size)
-        self.input_res = self.full_optimise()[0]
+        self.input_res = super().partial_input_optimise(jnp.zeros(input_size), jnp.zeros(input_size))[0]
 
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
