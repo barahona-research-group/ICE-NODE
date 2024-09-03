@@ -73,7 +73,9 @@ def experiment_trainer(e: str):
         'ICNN_NJSD': ProbICNNImputerTrainer(loss='jsd_gaussian', optimiser_name='adam',
                                             loss_feature_normalisation=True),
         'ICNN_MSE': StandardICNNImputerTrainer(optimiser_name='adam'),
-        'ICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='adam', loss_feature_normalisation=True)
+        'ICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='adam', loss_feature_normalisation=True),
+        'RICNN_MSE': StandardICNNImputerTrainer(optimiser_name='adam'),
+        'RICNN_NMSE': StandardICNNImputerTrainer(optimiser_name='adam', loss_feature_normalisation=True)
     }
 
     d1 = {f'ICNNB_{k.split("_")[1]}': v for k, v in d0.items()}
@@ -83,7 +85,7 @@ def experiment_trainer(e: str):
 
 def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
     obs_val, obs_mask, artificial_mask = experiment_data(dataset_path)
-    model = experiment_model(exp, obs_val.shape[1])
+    model = experiment_model(exp, obs_val)
     trainer = experiment_trainer(exp)
 
     split_ratio = 0.7
