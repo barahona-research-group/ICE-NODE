@@ -42,7 +42,7 @@
         },
         "outcome_loss": null
     },
-    "trainer_classname": "Trainer",
+    "trainer_classname": "ImputationForecastingTrainer",
     "warmup": {
         "_type": "WarmupConfig",
         "batch_size": 1,
