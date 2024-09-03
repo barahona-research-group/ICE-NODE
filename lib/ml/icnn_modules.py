@@ -719,11 +719,9 @@ class ProbICNNImputerTrainer(eqx.Module):
                                       key=jr.PRNGKey(self.seed))
 
     @eqx.filter_jit
-    def loss(self, diff_model: ProbStackedICNNImputer,
-             stat_model: ProbStackedICNNImputer,
+    def loss(self, model: ProbStackedICNNImputer,
              batch_X: jnp.ndarray, batch_M: jnp.ndarray,
              batch_M_art: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        model = eqx.combine(diff_model, stat_model)
         # Zero for artificially missig values
         batch_X_art = jnp.where(batch_M_art, batch_X, 0.)
         # Tune for artificially masked-out values, fix mask-in (batch_M_art) values.
@@ -805,14 +803,13 @@ class ProbICNNImputerTrainer(eqx.Module):
     @eqx.filter_jit
     def make_step(self, model: ProbStackedICNNImputer, optim, opt_state, batch_X: jnp.ndarray, batch_M: jnp.ndarray,
                   batch_M_art: jnp.ndarray):
-        diff_model, stat_model = model.partition()
-        (loss, aux), grads = eqx.filter_value_and_grad(self.loss, has_aux=True)(diff_model, stat_model,
+        (loss, aux), grads = eqx.filter_value_and_grad(self.loss, has_aux=True)(model,
                                                                                 batch_X, batch_M,
                                                                                 batch_M_art)
         updates, opt_state = optim.update(grads, opt_state,
-                                          params=eqx.filter(diff_model, eqx.is_inexact_array),
+                                          params=eqx.filter(model, eqx.is_inexact_array),
                                           value=loss, grad=grads,
-                                          value_fn=lambda m: self.loss(eqx.combine(m, diff_model), stat_model,
+                                          value_fn=lambda m: self.loss(eqx.combine(m, model),
                                                                        batch_X,
                                                                        batch_M,
                                                                        batch_M_art))
@@ -949,11 +946,9 @@ class StandardICNNImputerTrainer(ProbICNNImputerTrainer):
                               key=jr.PRNGKey(self.seed))
 
     @eqx.filter_jit
-    def loss(self, diff_model: ICNNObsDecoder,
-             stat_model: ICNNObsDecoder,
+    def loss(self, model: ICNNObsDecoder,
              batch_X: jnp.ndarray, batch_M: jnp.ndarray,
              batch_M_art: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
-        model = eqx.combine(diff_model, stat_model)
         # Zero for artificially missig values
         batch_X_art = jnp.where(batch_M_art, batch_X, 0.)
         # Tune for artificially masked-out values, fix mask-in (batch_M_art) values.
