@@ -15,6 +15,7 @@ from typing import List, Any, Dict, Tuple, Union, Optional, Callable
 
 import equinox as eqx
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import numpy as np
 import optax
 import optuna
@@ -289,7 +290,7 @@ class ParamsDiskWriter(AbstractReporter):
 
             model = self.load_trained_model(model, last_eval_step)
             with open(os.path.join(self.output_dir, 'optstate.pkl'), 'rb') as f:
-                opt_state = eqx.combine(pickle.load(f), opt_state)
+                opt_state = pickle.load(f)
 
             messenger['model'] = model
             messenger['optimizer'] = (opt, opt_state)
@@ -543,11 +544,12 @@ class Trainer(Module):
         grad_f = eqx.filter_value_and_grad(self.loss)
         value, grads = grad_f(model, patients)
         opt, opt_state = optimizer
+        grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
         updates, opt_state = opt.update(grads, opt_state,
                                         params=eqx.filter(model, eqx.is_inexact_array),
-                                        value=value, grad=grads,
-                                        value_fn=lambda m: self.loss(eqx.combine(m, model), patients))
-        model = eqx.apply_updates(model, updates)
+                                        value=value, grad=grads)
+        _, pdef = jtu.tree_flatten(model)
+        model = eqx.apply_updates(model, jtu.tree_unflatten(updates))
         model = self._post_update_params(model)
         return (opt, opt_state), model, value
 
@@ -663,7 +665,7 @@ class Trainer(Module):
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
         opt = _opts[self.config.optimizer.opt](self.config.optimizer.lr)
-        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+        opt_state = opt.init(jtu.tree_leaves(eqx.filter(model, eqx.is_inexact_array)))
         optimizer = (opt, opt_state)
 
         pyrng = random.Random(prng_seed)
