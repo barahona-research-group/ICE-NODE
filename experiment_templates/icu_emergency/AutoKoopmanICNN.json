@@ -36,10 +36,8 @@
     "normalised_obs_loss": true,
     "optimizer": {
       "_type": "OptimizerConfig",
-      "decay_rate": null,
       "lr": 0.001,
-      "opt": "adam",
-      "reverse_schedule": false
+      "opt": "adam"
     },
     "outcome_loss": null
   },
@@ -50,10 +48,8 @@
     "epochs": 0.03,
     "optimizer": {
       "_type": "OptimizerConfig",
-      "decay_rate": null,
       "lr": 0.001,
-      "opt": "adam",
-      "reverse_schedule": false
+      "opt": "adam"
     }
   }
 }
