@@ -14,10 +14,9 @@ from pathlib import Path
 from typing import List, Any, Dict, Tuple, Union, Optional, Callable
 
 import equinox as eqx
-import jax.example_libraries.optimizers as jopt
 import jax.numpy as jnp
-import jax.tree_util as jtu
 import numpy as np
+import optax
 import optuna
 import pandas as pd
 from blinker import signal
@@ -36,7 +35,10 @@ from ..metric.metrics import (MetricsCollection, Metric, )
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
                      append_params_to_zip, zip_members, translate_path)
 
-_opts = {'sgd': jopt.sgd, 'adam': jopt.adam}
+_opts = {'sgd': optax.sgd,
+         'adam': optax.adam,
+         'novograd': optax.novograd,
+         'lamb': optax.lamb}
 
 LRType = Union[float, Dict[str, float]]
 
@@ -250,7 +252,8 @@ class ParamsDiskWriter(AbstractReporter):
         tarname = os.path.join(self.output_dir, 'params.zip')
         name = f'step{step:04d}.eqx'
         append_params_to_zip(model, name, tarname)
-        optimizer.save(os.path.join(self.output_dir, 'optstate.pkl'))
+        with open(os.path.join(self.output_dir, 'optstate.pkl'), 'wb') as f:
+            pickle.dump(optimizer, f)
 
     def clear_files(self, sender):
         tarname = os.path.join(self.output_dir, 'params.zip')
@@ -285,8 +288,9 @@ class ParamsDiskWriter(AbstractReporter):
             optimizer = messenger['optimizer']
 
             model = self.load_trained_model(model, last_eval_step)
-            optimizer = optimizer.load(
-                os.path.join(self.output_dir, 'optstate.pkl'))
+            with open(os.path.join(self.output_dir, 'optstate.pkl'), 'rb') as f:
+                optimizer = pickle.load(f)
+
             messenger['model'] = model
             messenger['optimizer'] = optimizer
             messenger['step'] = last_eval_step
@@ -372,206 +376,6 @@ class OptunaReporter(AbstractReporter):
 class OptimizerConfig(Config):
     opt: str = 'adam'
     lr: LRType = 1e-3
-    decay_rate: Optional[LRType] = None
-    reverse_schedule: bool = False
-
-
-class Optimizer(Module):
-    config: OptimizerConfig
-    iters: int
-    opt_update: Callable
-    get_params: Callable
-    optstate: Any
-
-    def __init__(self,
-                 config: OptimizerConfig,
-                 model=None,
-                 iters=None,
-                 optstate=None):
-        super().__init__(config=config)
-        self.iters = iters
-        lr = self.lr_schedule(config, iters)
-
-        opt_init, self.opt_update, self.get_params = _opts[config.opt](lr)
-
-        if optstate is None and model is not None:
-            self.optstate = opt_init(model.params_list)
-        elif optstate is not None:
-            self.optstate = optstate
-        else:
-            raise ValueError('Either optstate or model must be provided')
-
-    @classmethod
-    def external_argnames(cls):
-        return ['iters', 'optstate', 'model']
-
-    def step(self, step, grads):
-        grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
-        optstate = self.opt_update(step, grads, self.optstate)
-        return eqx.tree_at(lambda x: x.optstate, self, optstate)
-
-    def __call__(self, model):
-        new_params = self.get_params(self.optstate)
-        param_part, other_part = eqx.partition(model, eqx.is_inexact_array)
-        _, pdef = jtu.tree_flatten(param_part)
-        params_part = jtu.tree_unflatten(pdef, new_params)
-        return eqx.combine(params_part, other_part)
-
-    def load(self, filename):
-        with open(filename, "rb") as optstate_file:
-            optstate = pickle.load(optstate_file)
-
-        optstate = jopt.pack_optimizer_state(optstate)
-        return Optimizer(config=self.config,
-                         optstate=optstate,
-                         iters=self.iters)
-
-    def save(self, filename):
-        optstate = jopt.unpack_optimizer_state(self.optstate)
-        with open(filename, "wb") as optstate_file:
-            pickle.dump(optstate, optstate_file)
-
-    @staticmethod
-    def lr_schedule(config, iters=None, reverse=False):
-        if config.decay_rate is None or iters is None:
-            return config.lr
-
-        schedule = jopt.exponential_decay(config.lr,
-                                          decay_steps=iters // 2,
-                                          decay_rate=config.decay_rate)
-        if reverse:
-            return lambda i: schedule(iters - i)
-
-        return schedule
-
-    @classmethod
-    def sample_opt(cls, trial: optuna.Trial):
-        return {
-            'lr': trial.suggest_categorical('lr', [2e-3, 5e-3]),
-            'opt': 'adam'
-        }
-
-
-class MultiLearningRateOptimizer(Optimizer):
-    grads_filter: Dict[str, Any]
-
-    def __init__(self,
-                 config: OptimizerConfig,
-                 model=None,
-                 iters=None,
-                 optstate=None,
-                 grads_filter=None):
-        Module.__init__(self, config=config)
-        self.iters = iters
-        lr = self.lr_schedule(config, iters)
-
-        self.get_params = {}
-        self.optstate = {}
-        self.opt_update = {}
-
-        opt = _opts[config.opt]
-        if model is not None:
-            if grads_filter is None:
-                self.grads_filter = model.params_list_mask(config.lr)
-            if optstate is None:
-                for k, lr in self.lr_schedule(config, iters).items():
-                    params = eqx.filter(model.params_list, self.grads_filter[k])
-                    opt_init, self.opt_update[k], self.get_params[k] = opt(lr)
-                    self.optstate[k] = opt_init(params)
-
-        elif optstate is not None and grads_filter is not None:
-            for k, lr in self.lr_schedule(config, iters).items():
-                opt_init, self.opt_update[k], self.get_params[k] = opt(lr)
-            self.optstate = optstate
-            self.grads_filter = grads_filter
-        else:
-            raise ValueError(
-                'Either (optstate AND grads_filter) or model must be provided')
-
-    def step(self, step, grads):
-        grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
-        updated_state = {}
-        for k, grads_filter in self.grads_filter.items():
-            grad_k = eqx.filter(grads, grads_filter)
-            updated_state[k] = self.opt_update[k](step, grad_k,
-                                                  self.optstate[k])
-
-        return eqx.tree_at(lambda x: x.optstate, self, updated_state)
-
-    def __call__(self, model):
-
-        param_part, other_part = eqx.partition(model, eqx.is_inexact_array)
-        _, pdef = jtu.tree_flatten(param_part)
-        new_params = []
-        for k, get_params in self.get_params.items():
-            new_params.append(get_params(self.optstate[k]))
-        new_params = eqx.combine(*new_params)
-        params_part = jtu.tree_unflatten(pdef, new_params)
-        return eqx.combine(params_part, other_part)
-
-    @staticmethod
-    def lr_schedule(config, iters=None, reverse=False):
-        assert isinstance(config.lr, dict), 'lr must be either float or dict'
-
-        if config.decay_rate is None or iters is None:
-            return config.lr
-
-        def schedule_gen(key):
-            lr = config.lr[key]
-            if isinstance(config.decay_rate, dict):
-                _decay_rate = config.decay_rate[key]
-            else:
-                _decay_rate = config.decay_rate
-
-            schedule = jopt.exponential_decay(lr,
-                                              decay_steps=iters // 2,
-                                              decay_rate=_decay_rate)
-            if reverse:
-                return lambda i: schedule(iters - i)
-
-            return schedule
-
-        return {k: schedule_gen(k) for k in config.lr.keys()}
-
-    def load(self, filename):
-        state_filename = filename + '.st'
-        filter_filname = filename + '.flt'
-
-        with open(filter_filname, "rb") as filter_file:
-            grads_filter = pickle.load(filter_file)
-
-        optstate = {}
-        for k in grads_filter.keys():
-            _filename = state_filename + '.' + k
-            with open(_filename, "rb") as optstate_file:
-                optstate_k = pickle.load(optstate_file)
-                optstate_k = jopt.pack_optimizer_state(optstate_k)
-                optstate[k] = optstate_k
-
-        return MultiLearningRateOptimizer(config=self.config,
-                                          optstate=optstate,
-                                          iters=self.iters,
-                                          grads_filter=grads_filter)
-
-    def save(self, filename):
-        state_filename = filename + '.st'
-        filter_filname = filename + '.flt'
-
-        for k, optstate_k in self.optstate.items():
-            _filename = state_filename + '.' + k
-            optstate_k = jopt.unpack_optimizer_state(optstate_k)
-            with open(_filename, "wb") as optstate_file:
-                pickle.dump(optstate_k, optstate_file)
-
-        with open(filter_filname, "wb") as filter_file:
-            pickle.dump(self.grads_filter, filter_file)
-
-
-def make_optimizer(config: OptimizerConfig, *args, **kwargs):
-    if isinstance(config.lr, dict):
-        return MultiLearningRateOptimizer(config, *args, **kwargs)
-    else:
-        return Optimizer(config, *args, **kwargs)
 
 
 class ReportingConfig(Config):
@@ -632,24 +436,20 @@ class TrainerReporting(Module):
 class WarmupConfig(Config):
     epochs: float = 0.1
     batch_size: int = 16
-    optimizer: OptimizerConfig = field(default_factory=lambda: OptimizerConfig(reverse_schedule=True))
+    optimizer: OptimizerConfig = field(default_factory=lambda: OptimizerConfig())
 
     def __init__(self,
                  epochs: float = 0.1,
                  batch_size: int = 16,
                  optimizer=None,
                  opt: str = None,
-                 lr: float = None,
-                 decay_rate: Optional[float] = None):
+                 lr: float = None):
         self.epochs = epochs
         self.batch_size = batch_size
         if optimizer is not None:
             self.optimizer = optimizer
         else:
-            self.optimizer = OptimizerConfig(opt=opt,
-                                             lr=lr,
-                                             decay_rate=decay_rate,
-                                             reverse_schedule=True)
+            self.optimizer = OptimizerConfig(opt=opt, lr=lr)
 
 
 class TrainerConfig(Config):
@@ -738,14 +538,18 @@ class Trainer(Module):
     def _post_update_params(self, model: AbstractModel):
         return model
 
-    def step_optimizer(self, step: int, optimizer: Optimizer,
+    def step_optimizer(self, optimizer: Tuple[optax.GradientTransformationExtraArgs, optax.OptState],
                        model: AbstractModel, patients: TVxEHR):
         grad_f = eqx.filter_value_and_grad(self.loss)
         value, grads = grad_f(model, patients)
-        optimizer = optimizer.step(step, grads)
-        new_model = optimizer(model)
-        new_model = self._post_update_params(new_model)
-        return optimizer, new_model, value
+        opt, opt_state = optimizer
+        updates, opt_state = opt.update(grads, opt_state,
+                                        params=eqx.filter(model, eqx.is_inexact_array),
+                                        value=value, grad=grads,
+                                        value_fn=lambda m: self.loss(eqx.combine(m, model), patients))
+        model = eqx.apply_updates(model, updates)
+        model = self._post_update_params(model)
+        return (opt, opt_state), model, value
 
     def __call__(self,
                  model: AbstractModel,
@@ -858,9 +662,10 @@ class Trainer(Module):
 
         batch_size = min(self.config.batch_size, n_train_admissions)
         iters = round(self.config.epochs * n_train_admissions / batch_size)
-        optimizer = make_optimizer(self.config.optimizer,
-                                   iters=iters,
-                                   model=model)
+        opt = _opts[self.config.optimizer.opt](self.config.optimizer.lr)
+        opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+        optimizer = (opt, opt_state)
+
         pyrng = random.Random(prng_seed)
         eval_steps = sorted(set(
             np.linspace(0, iters - 1, n_evals).astype(int)))
@@ -914,8 +719,7 @@ class Trainer(Module):
                     steps_until_eval = next_eval_step - step
 
                     batch = patients.device_batch(batch_split)
-                    optimizer, model, loss_val = self.step_optimizer(
-                        step, optimizer, model, batch)
+                    optimizer, model, loss_val = self.step_optimizer(optimizer, model, batch)
                     split_gen.set_description(
                         f'Loss: {loss_val:.4E} | {steps_until_eval} steps until eval.'
                     )
