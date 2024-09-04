@@ -101,7 +101,7 @@ def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
     train_batch_size = 256
     model_snapshot_frequency = 100
 
-    optim = optax.lamb(lr)
+    optim = optax.adam(lr)
     opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
     data_train = (obs_val_train, obs_mask_train, art_mask_train)
 
