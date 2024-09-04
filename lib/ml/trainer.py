@@ -246,14 +246,14 @@ class ParamsDiskWriter(AbstractReporter):
 
     def report_params_optimizer(self, sender, **kwargs):
         model = kwargs['model']
-        optimizer = kwargs['optimizer']
+        opt, opt_state = kwargs['optimizer']
         step = kwargs['step']
 
         tarname = os.path.join(self.output_dir, 'params.zip')
         name = f'step{step:04d}.eqx'
         append_params_to_zip(model, name, tarname)
         with open(os.path.join(self.output_dir, 'optstate.pkl'), 'wb') as f:
-            pickle.dump(optimizer, f)
+            pickle.dump(opt_state, f)
 
     def clear_files(self, sender):
         tarname = os.path.join(self.output_dir, 'params.zip')
@@ -285,14 +285,14 @@ class ParamsDiskWriter(AbstractReporter):
         last_eval_step = self.last_eval_step(self.output_dir)
         if last_eval_step is not None and last_eval_step > 0:
             model = messenger['model']
-            optimizer = messenger['optimizer']
+            opt, opt_state = messenger['optimizer']
 
             model = self.load_trained_model(model, last_eval_step)
             with open(os.path.join(self.output_dir, 'optstate.pkl'), 'rb') as f:
-                optimizer = pickle.load(f)
+                opt_state = pickle.load(f)
 
             messenger['model'] = model
-            messenger['optimizer'] = optimizer
+            messenger['optimizer'] = (opt, opt_state)
             messenger['step'] = last_eval_step
 
     def signal_slot_pairs(self, trainer_signals: TrainerSignals):
