@@ -289,7 +289,7 @@ class ParamsDiskWriter(AbstractReporter):
 
             model = self.load_trained_model(model, last_eval_step)
             with open(os.path.join(self.output_dir, 'optstate.pkl'), 'rb') as f:
-                opt_state = pickle.load(f)
+                opt_state = eqx.combine(pickle.load(f), opt_state)
 
             messenger['model'] = model
             messenger['optimizer'] = (opt, opt_state)
