@@ -543,10 +543,10 @@ class Trainer(Module):
                        model: AbstractModel, patients: TVxEHR):
         grad_f = eqx.filter_value_and_grad(self.loss)
         value, grads = grad_f(model, patients)
-        opt, opt_state = optimizer
         grads = jtu.tree_leaves(eqx.filter(grads, eqx.is_inexact_array))
+        opt, opt_state = optimizer
         updates, opt_state = opt.update(grads, opt_state,
-                                        params=eqx.filter(model, eqx.is_inexact_array),
+                                        params=jtu.tree_leaves(eqx.filter(model, eqx.is_inexact_array)),
                                         value=value, grad=grads)
         _, pdef = jtu.tree_flatten(eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, jtu.tree_unflatten(pdef, updates))
