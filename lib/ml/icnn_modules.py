@@ -532,6 +532,8 @@ class ResICNNObsDecoder(ICNNObsDecoder):
 
     @eqx.filter_jit
     def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        input = input + self.input_res
+        input = input.at[self.state_size:].add(-self.observables_offset)
         input, metrics = super().partial_input_optimise(input, fixed_mask)
         input = input - self.input_res
         input = input.at[self.state_size:].add(self.observables_offset)
