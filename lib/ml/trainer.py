@@ -549,7 +549,7 @@ class Trainer(Module):
                                         params=eqx.filter(model, eqx.is_inexact_array),
                                         value=value, grad=grads)
         _, pdef = jtu.tree_flatten(model)
-        model = eqx.apply_updates(model, jtu.tree_unflatten(updates))
+        model = eqx.apply_updates(model, jtu.tree_unflatten(pdef, updates))
         model = self._post_update_params(model)
         return (opt, opt_state), model, value
 
