@@ -750,10 +750,10 @@ class GRUODEBayes(InICENODELite):
     def __call__(self, admission: SegmentedAdmission,
                  embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> AdmissionGRUODEBayesPrediction:
         predictions = super().__call__(admission, embedded_admission, precomputes)
-        # move to a new type.
-        skeleton = jtu.tree_structure(AdmissionGRUODEBayesPrediction(admission=None), is_leaf=lambda x: x is None)
-        leaves = jtu.tree_leaves(predictions, is_leaf=lambda x: x is None)
-        return jtu.tree_unflatten(skeleton, leaves)
+        updated = AdmissionGRUODEBayesPrediction(admission=None)
+        for field in predictions.fields:
+            updated = eqx.tree_at(lambda x: getattr(x, field), updated, getattr(predictions, field))
+        return updated
 
 
 class InICENODELiteICNNImpute(InICENODELite):
