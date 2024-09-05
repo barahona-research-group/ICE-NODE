@@ -752,7 +752,9 @@ class GRUODEBayes(InICENODELite):
         predictions = super().__call__(admission, embedded_admission, precomputes)
         updated = AdmissionGRUODEBayesPrediction(admission=None)
         for field in predictions.fields:
-            updated = eqx.tree_at(lambda x: getattr(x, field), updated, getattr(predictions, field))
+            updated = eqx.tree_at(lambda x: getattr(x, field), updated, getattr(predictions, field),
+                                  is_leaf=lambda x: x is None)
+
         return updated
 
 
