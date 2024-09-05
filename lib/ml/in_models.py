@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import fields
 from typing import Tuple, Optional, Literal, Type, Self, Dict, Any, ClassVar, Callable
 
 import equinox as eqx
@@ -487,7 +486,8 @@ class InICENODE(InpatientModel):
             prediction = prediction.add(outcome=CodesVector(f.outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
             forecasted_states, imputed_states = zip(*state_trajectory)
-            icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
+            icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time,
+                                                                      forecasted_state=forecasted_states,
                                                                       imputed_state=imputed_states)
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.forecasted_observables(
@@ -725,9 +725,9 @@ class GRUODEBayes(InICENODELite):
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
-    def decode_state_trajectory_imputed_observables(self,
-                                                    admission: SegmentedAdmission | Admission,
-                                                    state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
+    def imputed_observables(self,
+                            admission: SegmentedAdmission | Admission,
+                            state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         f = self.components
         pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
@@ -747,17 +747,13 @@ class GRUODEBayes(InICENODELite):
                      key: jrandom.PRNGKey) -> DirectGRUStateProbabilisticImputer:
         return DirectGRUStateProbabilisticImputer(obs_size=observables_size, state_size=state_size, key=key)
 
-    def __call__(
-            self, admission: SegmentedAdmission,
-            embedded_admission: EmbeddedAdmission, precomputes: Precomputes
-    ) -> AdmissionGRUODEBayesPrediction:
+    def __call__(self, admission: SegmentedAdmission,
+                 embedded_admission: EmbeddedAdmission, precomputes: Precomputes) -> AdmissionGRUODEBayesPrediction:
         predictions = super().__call__(admission, embedded_admission, precomputes)
-        predictions = AdmissionGRUODEBayesPrediction(
-            **{k.name: getattr(predictions, k.name) for k in fields(predictions)})
-        if predictions.trajectory is not None:
-            predictions = predictions.add(imputed_observables=self.decode_state_trajectory_imputed_observables(
-                admission=admission, state_trajectory=predictions.trajectory))
-        return predictions
+        # move to a new type.
+        skeleton = jtu.tree_structure(AdmissionGRUODEBayesPrediction(admission=None), is_leaf=lambda x: x is None)
+        leaves = jtu.tree_leaves(predictions, is_leaf=lambda x: x is None)
+        return jtu.tree_unflatten(skeleton, leaves)
 
 
 class InICENODELiteICNNImpute(InICENODELite):
@@ -796,7 +792,7 @@ class InICENODELiteICNNImpute(InICENODELite):
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
-        return ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
+        return ICNNObsDecoder(observables_size=observables_size, state_size=config.state, optimiser_name='lamb',
                               max_steps=2 ** 9, lr=1e-2,
                               positivity='softplus', hidden_size_multiplier=3, depth=4, key=key)
 

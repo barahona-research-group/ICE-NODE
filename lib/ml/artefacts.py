@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Union, Tuple, Callable, Any, Iterable, Literal, Dict, List
 
 import equinox as eqx
+import jax.tree_util as jtu
 import numpy as np
 import tables as tbl
 
@@ -32,10 +33,10 @@ class AdmissionPrediction(VxData):
     model_behavioural_metrics: Optional[ModelBehaviouralMetrics] = None
 
     def add(self, **kwargs) -> AdmissionPrediction:
-        return eqx.combine(self, type(self)(admission=None, **kwargs),
-                           is_leaf=lambda x: x is None or isinstance(x, (Admission,
-                                                                         InpatientObservables, CodesVector,
-                                                                         ModelBehaviouralMetrics)))
+        updated = self
+        for key, value in kwargs.items():
+            updated = eqx.tree_at(lambda p: getattr(p, key), updated, value, is_leaf=lambda x: x is None)
+        return updated
 
     def has_nans(self):
         return tree_hasnan((self.observables, self.leading_observable, self.outcome))
@@ -105,7 +106,8 @@ class AdmissionsPrediction(VxData):
             adm_attr = attr
         return ((getattr(p.admission, adm_attr), getattr(p, attr)) for p in self if getattr(p, attr) is not None)
 
-    def list_attr(self, attr: str, adm_attr: Optional[str] = None) -> Tuple[Tuple[VxDataItem, ...], Tuple[VxDataItem, ...]]:
+    def list_attr(self, attr: str, adm_attr: Optional[str] = None) -> Tuple[
+        Tuple[VxDataItem, ...], Tuple[VxDataItem, ...]]:
         ground_truth, predictions = tuple(zip(*self.iter_attr(attr, adm_attr)))
         return ground_truth, predictions
 

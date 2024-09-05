@@ -25,7 +25,7 @@
     "model": {         
         "_type": "ICENODEConfig",         
         "lead_predictor": "monotonic",         
-        "state": 30,         
+        "state": 20,
         "dynamics": "mlp"     
     },     
     "model_classname": "InKoopman",     
