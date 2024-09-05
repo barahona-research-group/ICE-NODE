@@ -420,11 +420,18 @@ class InICENODE(InpatientModel):
             observables_size=observables_size,
             key=key)
 
-    def decode_state_trajectory_observables(self,
-                                            admission: SegmentedAdmission | Admission,
-                                            state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
+    def forecasted_observables(self,
+                               admission: SegmentedAdmission | Admission,
+                               state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
         f = self.components
         pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
+        return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
+
+    def imputed_observables(self,
+                            admission: SegmentedAdmission | Admission,
+                            state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
+        f = self.components
+        pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
         return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
 
     def __call__(
@@ -483,7 +490,9 @@ class InICENODE(InpatientModel):
             icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
                                                                       imputed_state=imputed_states)
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
-            prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+            prediction = prediction.add(observables=self.forecasted_observables(
+                admission=admission, state_trajectory=icenode_state_trajectory))
+            prediction = prediction.add(imputed_observables=self.imputed_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
             prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
             prediction = prediction.add(trajectory=icenode_state_trajectory)
@@ -669,10 +678,9 @@ class StochasticMechanisticICENODE(InICENODELite):
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsExtractor:
-        return ICNNObsExtractor(observables_size=observables_size, state_size=config.state,
-                                hidden_size_multiplier=3, depth=4,
-                                optax_optimiser_name='polyak_sgd',
-                                key=key)
+        return ICNNObsExtractor(observables_size=observables_size, state_size=0, optimiser_name='lamb',
+                                max_steps=2 ** 9, lr=1e-2,
+                                positivity='softplus', hidden_size_multiplier=3, depth=4, key=key)
 
 
 class DirectGRUStateProbabilisticImputer(eqx.Module):
@@ -709,17 +717,17 @@ class GRUODEBayes(InICENODELite):
     f_obs_dec: ProbMLP
     f_update: DirectGRUStateProbabilisticImputer
 
-    def decode_state_trajectory_observables(self,
-                                            admission: SegmentedAdmission | Admission,
-                                            state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
+    def forecasted_observables(self,
+                               admission: SegmentedAdmission | Admission,
+                               state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         f = self.components
         pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
     def decode_state_trajectory_imputed_observables(self,
-                                                     admission: SegmentedAdmission | Admission,
-                                                     state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
+                                                    admission: SegmentedAdmission | Admission,
+                                                    state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         f = self.components
         pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
@@ -788,10 +796,9 @@ class InICENODELiteICNNImpute(InICENODELite):
 
     @staticmethod
     def _make_obs_dec(config, observables_size, key) -> ICNNObsDecoder:
-        return ICNNObsDecoder(observables_size=observables_size, state_size=config.state,
-                              hidden_size_multiplier=3, depth=4,
-                              optax_optimiser_name='polyak_sgd',
-                              key=key)
+        return ICNNObsDecoder(observables_size=observables_size, state_size=0, optimiser_name='lamb',
+                              max_steps=2 ** 9, lr=1e-2,
+                              positivity='softplus', hidden_size_multiplier=3, depth=4, key=key)
 
 
 class InGRUJump(InICENODELite):
@@ -874,7 +881,7 @@ class InGRUJump(InICENODELite):
         forecasted_states, imputed_states = zip(*state_trajectory)
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
                                                               imputed_state=imputed_states)
-        prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+        prediction = prediction.add(observables=self.forecasted_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
         return prediction
@@ -952,7 +959,7 @@ class InGRU(InICENODELite):
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
                                                               forecasted_state=forecasted_states,
                                                               imputed_state=imputed_states)
-        prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+        prediction = prediction.add(observables=self.forecasted_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
         return prediction
@@ -1126,7 +1133,7 @@ class InRETAIN(InGRUJump):
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
                                                               forecasted_state=forecasted_states,
                                                               imputed_state=imputed_states)
-        prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+        prediction = prediction.add(observables=self.forecasted_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
 
@@ -1153,7 +1160,7 @@ class InKoopman(StochasticMechanisticICENODE):
         integrand_size = model_config.state + observables_size
         return KoopmanOperator(input_size=integrand_size,
                                control_size=interventions_size + demographics_size,
-                               koopman_size=model_config.state * 5,
+                               koopman_size=integrand_size * 2,
                                key=key)
 
     def precomputes(self, *args, **kwargs):
