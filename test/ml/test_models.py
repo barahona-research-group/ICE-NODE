@@ -6,7 +6,7 @@ import pytest
 from lib.ehr import CodingScheme
 from lib.ehr.coding_scheme import NumericScheme
 from lib.ehr.tvx_concepts import SegmentedAdmission
-from lib.metric.loss_wrap import ProbObsPredictionLoss, AdjustedProbObsPredictionLoss
+from lib.metric.loss_wrap import ProbObsPredictionLoss, ImputedProbObsPredictionLoss
 from lib.metric.metrics import ObsPredictionLoss
 from lib.ml.artefacts import AdmissionsPrediction, AdmissionPrediction
 from lib.ml.embeddings import InICENODEEmbeddingsConfig, InterventionsEmbeddingsConfig, EmbeddedAdmission
@@ -293,7 +293,7 @@ def test_inicenode_predictions(inicenode_predictions):
 def test_gru_ode_bayes_predictions(gru_ode_bayes_predictions):
     assert isinstance(gru_ode_bayes_predictions, AdmissionGRUODEBayesPrediction)
     assert gru_ode_bayes_predictions.leading_observable.value.shape == gru_ode_bayes_predictions.admission.leading_observable.value.shape
-    assert gru_ode_bayes_predictions.adjusted_observables.value.shape == gru_ode_bayes_predictions.admission.observables.value.shape
+    assert gru_ode_bayes_predictions.imputed_observables.value.shape == gru_ode_bayes_predictions.admission.observables.value.shape
 
 
 @pytest.mark.serial_test
@@ -353,7 +353,7 @@ def test_gru_ode_bayes_model_grad_apply(gru_ode_bayes_model: GRUODEBayes, segmen
                            precomputes=Precomputes())
         p = AdmissionsPrediction().add(subject_id='test_subj', prediction=prediction)
         loss1 = ProbObsPredictionLoss(loss_key='log_normal')(p)
-        loss2 = AdjustedProbObsPredictionLoss(loss_key='kl_gaussian')(p)
+        loss2 = ImputedProbObsPredictionLoss(loss_key='kl_gaussian')(p)
         return loss1 + loss2
 
     grad = eqx.filter_grad(forward)(gru_ode_bayes_model)
@@ -410,7 +410,7 @@ def test_koopman_model_grad_apply(koopman_model: InKoopman,
 #                                            segmented_admission: SegmentedAdmission,
 #                                            embedded_admission: EmbeddedAdmission) -> Tuple[
 #     Tuple[float, int], InpatientObservables]:
-#     init_state = inicenode_predictions.trajectory.adjusted_state
+#     init_state = inicenode_predictions.trajectory.imputed_state
 #     return intervention_uncertainty_weighting(f_obs_decoder=inicenode_model.f_obs_dec,
 #                                               f_ode_dyn=inicenode_model.f_dyn,
 #                                               initial_states=init_state,

@@ -221,10 +221,10 @@ class AutoODEICNN(InpatientModel):
 
         prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
         if len(state_trajectory) > 0:
-            forecasted_states, adjusted_states = zip(*state_trajectory)
+            forecasted_states, imputed_states = zip(*state_trajectory)
             state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
                                                               forecasted_state=forecasted_states,
-                                                              adjusted_state=adjusted_states)
+                                                              imputed_state=imputed_states)
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=state_trajectory))

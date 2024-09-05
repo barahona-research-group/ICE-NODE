@@ -30,7 +30,7 @@ from .model import AbstractModel
 from ..base import Config, Module
 from ..ehr import TVxEHR
 from ..metric.loss import BinaryLossLiteral, NumericLossLiteral, ProbNumericLossLiteral
-from ..metric.loss_wrap import (ProbObsPredictionLoss, AdjustedProbObsPredictionLoss,
+from ..metric.loss_wrap import (ProbObsPredictionLoss, ImputedProbObsPredictionLoss,
                                 OutcomePredictionLoss, ObsPredictionLoss, LeadPredictionLoss, ImputationLoss)
 from ..metric.metrics import (MetricsCollection, Metric, )
 from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
@@ -658,13 +658,14 @@ class TrainerConfig(Config):
     batch_size: int = 32
     outcome_loss: Optional[BinaryLossLiteral] = None
     obs_loss: Optional[NumericLossLiteral] = None
+    imputed_obs_loss: Optional[NumericLossLiteral] = None
     lead_loss: Optional[NumericLossLiteral | BinaryLossLiteral] = None
     normalised_obs_loss: bool = False
 
 
 class ProbTrainerConfig(TrainerConfig):
-    prob_obs_loss: Optional[ProbNumericLossLiteral] = None
-    prob_adjusted_obs_loss: Optional[ProbNumericLossLiteral] = None
+    obs_loss: Optional[ProbNumericLossLiteral] = None
+    imputed_obs_loss: Optional[ProbNumericLossLiteral] = None
 
 
 class LossMixer(Config):
@@ -672,23 +673,16 @@ class LossMixer(Config):
     l2: float = 0.0
     outcome: float = 1.0
     observables: float = 1.0
+    imputed_observables: float = 1.0
     leading_observable: float = 1.0
 
 
-class ProbLossMixer(Config):
-    l1: float = 0.0
-    l2: float = 0.0
-    outcome: float = 1.0
-    prob_observables: float = 1.0
-    prob_adjusted_observables: float = 1.0
-    leading_observable: float = 1.0
-
-
-class KoopmanLossMixer(Config):
+class KoopmanLossMixer(LossMixer):
     l1: float = 0.0
     l2: float = 0.0
     outcome: float = 1.0
     observables: float = 1.0
+    imputed_observables: float = 1.0
     leading_observable: float = 1.0
     reconstruction: float = 1.0
 
@@ -713,6 +707,15 @@ class Trainer(Module):
         return ObsPredictionLoss(loss_key=self.config.obs_loss)  # noqa
 
     @cached_property
+    def imputed_obs_loss(self) -> ImputationLoss | Callable[[AdmissionsPrediction], float]:
+        if self.config.obs_loss is None:
+            return lambda p: 0.0
+        if self.config.normalised_obs_loss:
+            obs_loss = ImputationLoss(loss_key=self.config.imputed_obs_loss, per_column=True)
+            return lambda p: jnp.nanmean(obs_loss(p))  # noqa
+        return ImputationLoss(loss_key=self.config.imputed_obs_loss)  # noqa
+
+    @cached_property
     def lead_loss(self) -> LeadPredictionLoss | Callable[[AdmissionsPrediction], float]:
         if self.config.lead_loss is None:
             return lambda p: 0.0
@@ -724,6 +727,7 @@ class Trainer(Module):
     def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
         loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
                 self.loss_mixer.observables * self.obs_loss(predictions) +
+                self.loss_mixer.imputed_observables * self.imputed_obs_loss(predictions) +
                 self.loss_mixer.leading_observable * self.lead_loss(predictions))
         if self.loss_mixer.l1 != 0.0:
             loss += model.l1() * self.loss_mixer.l1
@@ -981,31 +985,26 @@ class Trainer(Module):
 
 class ProbTrainer(Trainer):
     config: ProbTrainerConfig
-    loss_mixer: ProbLossMixer = field(default_factory=ProbLossMixer)
 
     @cached_property
-    def obs_loss(self) -> ObsPredictionLoss | Callable[[AdmissionsPrediction], float]:
-        raise NotImplementedError('Unsupported, use prob_obs_loss')
-
-    @cached_property
-    def prob_obs_loss(self) -> ProbObsPredictionLoss:
+    def obs_loss(self) -> ProbObsPredictionLoss:
         if self.config.prob_obs_loss is None:
             return lambda p: 0.0
-        return ProbObsPredictionLoss(loss_key=self.config.prob_obs_loss)
+        return ProbObsPredictionLoss(loss_key=self.config.obs_loss)
 
     @cached_property
-    def prob_adjusted_obs_loss(self) -> ProbObsPredictionLoss:
-        if self.config.prob_adjusted_obs_loss is None:
+    def imputed_obs_loss(self) -> ProbObsPredictionLoss:
+        if self.config.imputed_obs_loss is None:
             return lambda p: 0.0
-        return AdjustedProbObsPredictionLoss(loss_key=self.config.prob_adjusted_obs_loss)
+        return ImputedProbObsPredictionLoss(loss_key=self.config.imputed_obs_loss)
 
     def batch_predict(self, model: AbstractModel, patients: TVxEHR):
         return model.batch_predict(patients, leave_pbar=False)
 
     def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
         loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
-                self.loss_mixer.prob_observables * self.prob_obs_loss(predictions) +
-                self.loss_mixer.prob_adjusted_observables * self.prob_adjusted_obs_loss(predictions) +
+                self.loss_mixer.observables * self.obs_loss(predictions) +
+                self.loss_mixer.imputed_observables * self.imputed_obs_loss(predictions) +
                 self.loss_mixer.leading_observable * self.lead_loss(predictions))
         if self.loss_mixer.l1 != 0.0:
             loss += model.l1() * self.loss_mixer.l1
@@ -1014,34 +1013,12 @@ class ProbTrainer(Trainer):
         return loss
 
 
-class ImputationForecastingTrainer(Trainer):
-    @cached_property
-    def obs_imputation_loss(self) -> ImputationLoss | Callable[[AdmissionsPrediction], float]:
-        if self.config.obs_loss is None:
-            return lambda p: 0.0
-        if self.config.normalised_obs_loss:
-            obs_loss = ImputationLoss(loss_key=self.config.obs_loss, per_column=True)
-            return lambda p: jnp.nanmean(obs_loss(p))  # noqa
-        return ImputationLoss(loss_key=self.config.obs_loss)  # noqa
-
-    def loss_term(self, model: AbstractModel, predictions: AdmissionsPrediction):
-        loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
-                self.loss_mixer.observables * self.obs_loss(predictions) +
-                self.loss_mixer.leading_observable * self.lead_loss(predictions) +
-                self.loss_mixer.observables * self.obs_imputation_loss(predictions))
-        if self.loss_mixer.l1 != 0.0:
-            loss += model.l1() * self.loss_mixer.l1
-        if self.loss_mixer.l2 != 0.0:
-            loss += model.l2() * self.loss_mixer.l2
-        return loss
-
-
-class KoopmanTrainer(ImputationForecastingTrainer):
+class KoopmanTrainer(Trainer):
     loss_mixer: KoopmanLossMixer = field(default_factory=KoopmanLossMixer)
 
     def reconstruction_loss(self, koopman_operator: KoopmanOperator, predictions: AdmissionsPrediction) -> jnp.ndarray:
         def trajectory_loss(trajectory: ICENODEStateTrajectory) -> jnp.ndarray:
-            state = jnp.vstack((trajectory.adjusted_state, trajectory.forecasted_state))
+            state = jnp.vstack((trajectory.imputed_state, trajectory.forecasted_state))
             return eqx.filter_vmap(koopman_operator.compute_phi_loss)(state)
 
         trajs_loss = [trajectory_loss(prediction.trajectory) for prediction in predictions if
@@ -1055,7 +1032,7 @@ class KoopmanTrainer(ImputationForecastingTrainer):
     def loss_term(self, model: AutoKoopmanICNN, predictions: AdmissionsPrediction):
         loss = (self.loss_mixer.outcome * self.outcome_loss(predictions) +
                 self.loss_mixer.observables * self.obs_loss(predictions) +
-                self.loss_mixer.observables * self.obs_imputation_loss(predictions) +
+                self.loss_mixer.observables * self.imputed_obs_loss(predictions) +
                 self.loss_mixer.leading_observable * self.lead_loss(predictions) +
                 self.loss_mixer.reconstruction * self.reconstruction_loss(model.f_dyn, predictions))
         if self.loss_mixer.l1 != 0.0:

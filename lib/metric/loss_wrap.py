@@ -145,8 +145,8 @@ class ProbObsPredictionLoss(ObsPredictionLoss):
                              (predictions_mean_array, predictions_std_array), masks_array, 0)
 
 
-class AdjustedProbObsPredictionLoss(ProbObsPredictionLoss):
-    prediction_attribute: ClassVar[PredictionAttribute] = 'adjusted_observables'
+class ImputedProbObsPredictionLoss(ProbObsPredictionLoss):
+    prediction_attribute: ClassVar[PredictionAttribute] = 'imputed_observables'
     admission_attribute: ClassVar[PredictionAttribute] = 'observables'
 
 

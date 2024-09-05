@@ -19,6 +19,7 @@
         "l2": 0.0,
         "leading_observable": 1.0,
         "observables": 1.0,
+        "imputed_observables": 1.0,
         "outcome": 1.0
     },
     "model": {
@@ -43,6 +44,7 @@
         "epochs": 100,
         "lead_loss": "mse",
         "obs_loss": "mse",
+        "imputed_obs_loss": "mse",
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,

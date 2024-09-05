@@ -143,7 +143,7 @@ class ICENODEStateTrajectory(InpatientObservables):
         return self.value
 
     @property
-    def adjusted_state(self):
+    def imputed_state(self):
         return self.extra_layers[0]
 
     @staticmethod
@@ -156,10 +156,10 @@ class ICENODEStateTrajectory(InpatientObservables):
 
     @staticmethod
     def compile(time: jnp.ndarray, forecasted_state: Tuple[jnp.ndarray, ...],
-                adjusted_state: Tuple[jnp.ndarray, ...]) -> ICENODEStateTrajectory:
+                imputed_state: Tuple[jnp.ndarray, ...]) -> ICENODEStateTrajectory:
         forecasted_state = jnp.vstack(forecasted_state)
-        adjusted_state = jnp.vstack(adjusted_state)
-        return ICENODEStateTrajectory(time=time, value=forecasted_state, extra_layers=(adjusted_state,),
+        imputed_state = jnp.vstack(imputed_state)
+        return ICENODEStateTrajectory(time=time, value=forecasted_state, extra_layers=(imputed_state,),
                                       mask=jnp.ones_like(forecasted_state, dtype=bool))
 
 
@@ -171,11 +171,12 @@ class ICENODEMetrics(ModelBehaviouralMetrics):
 class AdmissionTrajectoryPrediction(AdmissionPrediction):
     trajectory: Optional[ICENODEStateTrajectory] = None
     model_behavioural_metrics: Optional[ICENODEMetrics] = None
+    imputed_observables: InpatientObservables = None
 
 
 class AdmissionGRUODEBayesPrediction(AdmissionTrajectoryPrediction):
     observables: Optional[ObservablesDistribution] = None
-    adjusted_observables: Optional[ObservablesDistribution] = None
+    imputed_observables: Optional[ObservablesDistribution] = None
 
 
 class DirectLeadPredictorWrapper(eqx.Module):
@@ -194,7 +195,7 @@ class DirectLeadPredictorWrapper(eqx.Module):
             raise ValueError(f"Unknown leading predictor type: {predictor}")
 
     def __call__(self, trajectory: ICENODEStateTrajectory, **kwargs) -> InpatientObservables:
-        leading_values = eqx.filter_vmap(self.predictor)(trajectory.adjusted_state)
+        leading_values = eqx.filter_vmap(self.predictor)(trajectory.imputed_state)
         return InpatientObservables(time=trajectory.time, value=leading_values,
                                     mask=jnp.ones_like(leading_values, dtype=bool))
 
@@ -478,9 +479,9 @@ class InICENODE(InpatientModel):
         if f.outcome_dec is not None:
             prediction = prediction.add(outcome=CodesVector(f.outcome_dec(state), admission.outcome.scheme))
         if len(state_trajectory) > 0:
-            forecasted_states, adjusted_states = zip(*state_trajectory)
+            forecasted_states, imputed_states = zip(*state_trajectory)
             icenode_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
-                                                                      adjusted_state=adjusted_states)
+                                                                      imputed_state=imputed_states)
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
@@ -716,11 +717,11 @@ class GRUODEBayes(InICENODELite):
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
-    def decode_state_trajectory_adjusted_observables(self,
+    def decode_state_trajectory_imputed_observables(self,
                                                      admission: SegmentedAdmission | Admission,
                                                      state_trajectory: ICENODEStateTrajectory) -> ObservablesDistribution:
         f = self.components
-        pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.adjusted_state)
+        pred_obs_mean, pred_obs_std = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
         return ObservablesDistribution.compile(time=state_trajectory.time, mean=pred_obs_mean, std=pred_obs_std,
                                                mask=admission.observables.mask)
 
@@ -746,7 +747,7 @@ class GRUODEBayes(InICENODELite):
         predictions = AdmissionGRUODEBayesPrediction(
             **{k.name: getattr(predictions, k.name) for k in fields(predictions)})
         if predictions.trajectory is not None:
-            predictions = predictions.add(adjusted_observables=self.decode_state_trajectory_adjusted_observables(
+            predictions = predictions.add(imputed_observables=self.decode_state_trajectory_imputed_observables(
                 admission=admission, state_trajectory=predictions.trajectory))
         return predictions
 
@@ -791,8 +792,6 @@ class InICENODELiteICNNImpute(InICENODELite):
                               hidden_size_multiplier=3, depth=4,
                               optax_optimiser_name='polyak_sgd',
                               key=key)
-
-        
 
 
 class InGRUJump(InICENODELite):
@@ -872,9 +871,9 @@ class InGRUJump(InICENODELite):
             state = f.update(f.obs_dec, forecasted_state, obs.value[i], obs.mask[i])
             state_trajectory += ((forecasted_state, state),)
 
-        forecasted_states, adjusted_states = zip(*state_trajectory)
+        forecasted_states, imputed_states = zip(*state_trajectory)
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=obs.time, forecasted_state=forecasted_states,
-                                                              adjusted_state=adjusted_states)
+                                                              imputed_state=imputed_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
@@ -949,10 +948,10 @@ class InGRU(InICENODELite):
             state = f.dyn(seq_e, state)
             state_trajectory += ((forecasted_state, state),)
 
-        forecasted_states, adjusted_states = zip(*state_trajectory)
+        forecasted_states, imputed_states = zip(*state_trajectory)
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
                                                               forecasted_state=forecasted_states,
-                                                              adjusted_state=adjusted_states)
+                                                              imputed_state=imputed_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
@@ -1077,10 +1076,10 @@ class InRETAIN(InGRUJump):
         #     state = self.f_dyn(seq_e, state)
         #     state_trajectory += ((forecasted_state, state),)
         #
-        # forecasted_states, adjusted_states = zip(*state_trajectory)
+        # forecasted_states, imputed_states = zip(*state_trajectory)
         # gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
         #                                                       forecasted_state=forecasted_states,
-        #                                                       adjusted_state=adjusted_states)
+        #                                                       imputed_state=imputed_states)
         # step 1 @RETAIN paper
 
         # v1, v2, ..., vT
@@ -1123,10 +1122,10 @@ class InRETAIN(InGRUJump):
             state_trajectory += ((forecasted_state, context),)
             # step 5 @RETAIN paper
 
-        forecasted_states, adjusted_states = zip(*state_trajectory)
+        forecasted_states, imputed_states = zip(*state_trajectory)
         gru_state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
                                                               forecasted_state=forecasted_states,
-                                                              adjusted_state=adjusted_states)
+                                                              imputed_state=imputed_states)
         prediction = prediction.add(observables=self.decode_state_trajectory_observables(
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=self.f_lead_dec(gru_state_trajectory))
@@ -1190,5 +1189,3 @@ class InKoopman(StochasticMechanisticICENODE):
                 }
             })
         return stats
-
-

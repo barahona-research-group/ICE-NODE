@@ -15,13 +15,13 @@
         "observables": null
     },
     "loss_mixer": {
-        "_type": "ProbLossMixer",
+        "_type": "LossMixer",
         "l1": 0.0,
         "l2": 0.0,
         "leading_observable": 1.0,
         "outcome": 1.0,
-        "prob_adjusted_observables": 1.0,
-        "prob_observables": 1.0
+        "imputed_observables": 1.0,
+        "observables": 1.0
     },
     "model": {
         "_type": "ICENODEConfig",
@@ -44,7 +44,8 @@
         "batch_size": 32,
         "epochs": 100,
         "lead_loss": "mse",
-        "obs_loss": null,
+        "imputed_obs_loss": "kl_gaussian",
+        "obs_loss": "log_normal",
         "optimizer": {
             "_type": "OptimizerConfig",
             "decay_rate": null,
@@ -52,10 +53,8 @@
             "opt": "adam",
             "reverse_schedule": false
         },
-        "outcome_loss": null,
-        "prob_adjusted_obs_loss": "kl_gaussian",
-        "prob_obs_loss": "log_normal"
+        "outcome_loss": null
     },
-    "trainer_classname": "ProbTrainer",
+    "trainer_classname": "Trainer",
     "warmup": null
 }
