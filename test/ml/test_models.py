@@ -273,12 +273,12 @@ def koopman_embedded_admission(
 
 @pytest.fixture
 @pytest.mark.usefixtures('jax_cpu_execution')
-def stochastic_mechanistic_icenode_predictions(koopman_model: StochasticMechanisticICENODE,
+def inkoopman_predictions(koopman_model: InKoopman,
                                                segmented_admission: SegmentedAdmission,
                                                koopman_embedded_admission: EmbeddedAdmission) -> AdmissionPrediction:
     return koopman_model(admission=segmented_admission,
                          embedded_admission=koopman_embedded_admission,
-                         precomputes=Precomputes())
+                         precomputes=koopman_model.precomputes())
 
 
 @pytest.mark.serial_test
@@ -322,6 +322,12 @@ def test_stochastic_icenode_predictions(stochastic_icenode_predictions: Admissio
 def test_stochastic_mechanistic_icenode_predictions(stochastic_mechanistic_icenode_predictions: AdmissionPrediction):
     assert isinstance(stochastic_mechanistic_icenode_predictions, AdmissionPrediction)
     assert stochastic_mechanistic_icenode_predictions.leading_observable.value.shape == stochastic_mechanistic_icenode_predictions.admission.leading_observable.value.shape
+
+@pytest.mark.serial_test
+@pytest.mark.usefixtures('jax_cpu_execution')
+def test_inkoopman_predictions(inkoopman_predictions: AdmissionPrediction):
+    assert isinstance(inkoopman_predictions, AdmissionPrediction)
+    assert inkoopman_predictions.leading_observable.value.shape == inkoopman_predictions.admission.leading_observable.value.shape
 
 
 @pytest.mark.serial_test
