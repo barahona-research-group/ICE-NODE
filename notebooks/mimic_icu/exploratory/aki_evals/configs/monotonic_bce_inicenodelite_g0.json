@@ -1,0 +1,58 @@
+{
+    "_type": "ExperimentConfig",
+    "continue_training": true,
+    "embeddings": {
+        "_type": "InICENODEEmbeddingsConfig",
+        "demographic": 10,
+        "dx_codes": 50,
+        "interventions": {
+            "_type": "InterventionsEmbeddingsConfig",
+            "hosp_procedures": 10,
+            "icu_inputs": 10,
+            "icu_procedures": 10,
+            "interventions": 20
+        },
+        "observables": null
+    },
+    "loss_mixer": {
+        "_type": "LossMixer",
+        "l1": 0.0,
+        "l2": 0.0,
+        "leading_observable": 1.0,
+        "observables": 1.0,
+        "outcome": 1.0
+    },
+    "model": {
+        "_type": "ICENODEConfig",
+        "dynamics": "mlp",
+        "lead_predictor": "monotonic",
+        "state": 50
+    },
+    "model_classname": "InICENODELite",
+    "model_snapshot_frequency": 10,
+    "reporting": {
+        "_type": "ReportingConfig",
+        "config_json": true,
+        "console": true,
+        "model_stats": false,
+        "output_dir": "/rds/general/user/am8520/home/GP/ehr-data/aki_out/seg/monotonic_bce_inicenodelite_g0",
+        "parameter_snapshots": true
+    },
+    "trainer": {
+        "_type": "TrainerConfig",
+        "batch_size": 64,
+        "epochs": 100,
+        "lead_loss": "bce",
+        "obs_loss": "mse",
+        "optimizer": {
+            "_type": "OptimizerConfig",
+            "decay_rate": null,
+            "lr": 0.001,
+            "opt": "adam",
+            "reverse_schedule": false
+        },
+        "outcome_loss": null
+    },
+    "trainer_classname": "Trainer",
+    "warmup": null
+}
