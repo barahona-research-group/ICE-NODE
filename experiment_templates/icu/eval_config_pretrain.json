@@ -30,6 +30,32 @@
                 ],
                 "per_column": false
             }
+        },
+        {
+            "classname": "PerColumnObsImputationLoss",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": true
+            }
+        },
+        {
+            "classname": "ObsImputationLossMetric",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": false
+            }
         }
     ]
 }
