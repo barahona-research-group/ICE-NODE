@@ -1,6 +1,7 @@
 #!/bin/bash
 
 git clone git@github.com:A-Alaa/ICE-NODE.git --branch $STUDY_TAG --single-branch  --depth 1 ICE-NODE
+cd ICE-NODE
 
 export JAX_PLATFORM_NAME=cpu
 export JAX_ENABLE_X64=True
