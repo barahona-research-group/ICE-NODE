@@ -16,11 +16,7 @@
     },
     "loss_mixer": {
         "_type": "LossMixer",
-        "l1": 0.0,
-        "l2": 0.0,
-        "leading_observable": 1.0,
-        "observables": 1.0,
-        "outcome": 1.0
+        "l1": 0.0
     },
     "model": {
         "_type": "ICENODEConfig",

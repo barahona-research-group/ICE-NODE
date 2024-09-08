@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from .delong import FastDeLongTest
 from .loss import (NumericLossLiteral, BinaryLossLiteral)
-from .loss_wrap import PredictionLoss, ObsPredictionLoss, OutcomePredictionLoss, LeadPredictionLoss
+from .loss_wrap import PredictionLoss, ObsPredictionLoss, OutcomePredictionLoss, LeadPredictionLoss, ImputationLoss
 from ..base import Module, Config, Array
 from ..ehr import (LeadingObservableExtractorConfig)
 from ..ml.artefacts import AdmissionPrediction, AdmissionsPrediction
@@ -241,7 +241,15 @@ class ObsPredictionLossMetric(LossMetric):
     prediction_loss_class: ClassVar[Type[PredictionLoss]] = ObsPredictionLoss
 
 
+class ObsImputationLossMetric(ObsPredictionLossMetric):
+    prediction_loss_class: ClassVar[Type[PredictionLoss]] = ImputationLoss
+
+
 class PerColumnObsPredictionLoss(ObsPredictionLossMetric):
+    config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig(per_column=True))
+
+
+class PerColumnObsImputationLoss(ObsImputationLossMetric):
     config: ObsPredictionLossConfig = field(default_factory=lambda: ObsPredictionLossConfig(per_column=True))
 
 
