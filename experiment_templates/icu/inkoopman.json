@@ -45,13 +45,11 @@
         "lead_loss": "mse",         
         "obs_loss": "mse",
         "imputed_obs_loss": "mse",         
-        "optimizer": {             
-            "_type": "OptimizerConfig",             
-            "decay_rate": null,             
-            "lr": 0.001,             
-            "opt": "adam",             
-            "reverse_schedule": false         
-        },         
+        "optimizer": {
+            "_type": "OptimizerConfig",
+            "lr": 0.001,
+            "opt": "adam"
+        },
         "outcome_loss": null     
     },     
     "trainer_classname": "Trainer",     
