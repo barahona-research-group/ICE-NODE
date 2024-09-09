@@ -189,9 +189,16 @@ class AutoODEICNN(InpatientModel):
         pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
         return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
 
+    def impute_state_trajectory_observables(self,
+                                            admission: SegmentedAdmission | Admission,
+                                            state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
+        f = self.components
+        pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
+        return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
+
     def __call__(
             self, admission: SegmentedAdmission,
-            embedded_admission: EmbeddedAdmission, precomputes: Precomputes
+            embedded_admission: EmbeddedAdmission, precomputes: Precomputes, training: bool = True
     ) -> AdmissionTrajectoryPrediction:
 
         prediction = AdmissionImputationAndForecasting(admission=admission)
@@ -228,9 +235,14 @@ class AutoODEICNN(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=state_trajectory))
-            prediction = prediction.add(imputed_observables=InpatientObservables(time=admission.observables.time,
-                                                                                 value=jnp.vstack(imputed_obs),
-                                                                                 mask=admission.observables.mask))
+            if training:
+                prediction = prediction.add(imputed_observables=self.decode_state_trajectory_observables(
+                    admission=admission, state_trajectory=state_trajectory))
+
+            else:
+                prediction = prediction.add(imputed_observables=InpatientObservables(time=admission.observables.time,
+                                                                                     value=jnp.vstack(imputed_obs),
+                                                                                     mask=admission.observables.mask))
 
             prediction = prediction.add(trajectory=state_trajectory)
         return prediction
