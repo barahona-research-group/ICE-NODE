@@ -9,6 +9,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import jax.tree_util as jtu
 import lineax
 import numpy as np
 import optax
@@ -439,6 +440,9 @@ class ICNNObsDecoder(eqx.Module):
         return self.partial_input_optimise(jnp.zeros(self.observables_size + self.state_size),
                                            jnp.zeros(self.observables_size + self.state_size))
 
+    def partition(self):
+        return eqx.partition(self, jtu.tree_map(lambda _: True, self))
+
     def solver(self, solver_name: str):
         if solver_name in ['adam', 'polyak_sgd', 'lamb', 'yogi']:
             return optx.BestSoFarMinimiser(solver=self.optax_solver(solver_name, self.lr))
@@ -497,6 +501,48 @@ class ICNNObsDecoder(eqx.Module):
 
     def clip_negative_weights(self):
         return eqx.tree_at(lambda x: x.f_energy, self, self.f_energy.clip_negative_weights())
+
+
+class ResICNNObsDecoder(ICNNObsDecoder):
+    input_res: jnp.ndarray = eqx.field(static=True)
+    observables_offset: jnp.ndarray = eqx.field(static=True)
+
+    def __init__(self, observables_size: int, state_size: int, hidden_size_multiplier: float,
+                 depth: int,
+                 positivity: Literal['abs', 'squared', 'softplus', 'clipped'] = 'abs',
+                 optimiser_name: Literal['adam', 'polyak_sgd', 'lamb', 'yogi', 'bfgs', 'nonlinear_cg'] = 'lamb',
+                 max_steps: int = 2 ** 9,
+                 lr: float = 1e-2,
+                 upper_bounded: bool = False,
+                 observables_offset: Optional[jnp.ndarray] = None,
+                 *,
+                 key: jr.PRNGKey):
+        super().__init__(observables_size=observables_size, state_size=state_size,
+                         hidden_size_multiplier=hidden_size_multiplier, depth=depth, positivity=positivity,
+                         optimiser_name=optimiser_name, max_steps=max_steps, lr=lr, upper_bounded=upper_bounded,
+                         key=key)
+        input_size = observables_size + state_size
+        if observables_offset is not None:
+            assert observables_offset.shape == (observables_size,)
+            observables_offset = jnp.nan_to_num(observables_offset, nan=0.)
+            self.observables_offset = observables_offset
+        else:
+            self.observables_offset = jnp.zeros(observables_size)
+        self.input_res = super().partial_input_optimise(jnp.zeros(input_size), jnp.zeros(input_size))[0]
+
+    @eqx.filter_jit
+    def partial_input_optimise(self, input: jnp.ndarray, fixed_mask: jnp.ndarray) -> Tuple[jnp.ndarray, ImputerMetrics]:
+        input = input + self.input_res
+        input = input.at[self.state_size:].add(-self.observables_offset)
+        input, metrics = super().partial_input_optimise(input, fixed_mask)
+        input = input - self.input_res
+        input = input.at[self.state_size:].add(self.observables_offset)
+        return input, metrics
+
+    def partition(self):
+        filter_spec = jtu.tree_map(lambda _: True, self)
+        return eqx.partition(self, eqx.tree_at(lambda x: (x.input_res, x.observables_offset), filter_spec,
+                                               replace=(False, False)))
 
 
 class ICNNObsExtractor(ICNNObsDecoder):
@@ -759,12 +805,14 @@ class ProbICNNImputerTrainer(eqx.Module):
     @eqx.filter_jit
     def make_step(self, model: ProbStackedICNNImputer, optim, opt_state, batch_X: jnp.ndarray, batch_M: jnp.ndarray,
                   batch_M_art: jnp.ndarray):
-        (loss, aux), grads = eqx.filter_value_and_grad(self.loss, has_aux=True)(model, batch_X, batch_M,
+        (loss, aux), grads = eqx.filter_value_and_grad(self.loss, has_aux=True)(model,
+                                                                                batch_X, batch_M,
                                                                                 batch_M_art)
         updates, opt_state = optim.update(grads, opt_state,
                                           params=eqx.filter(model, eqx.is_inexact_array),
                                           value=loss, grad=grads,
-                                          value_fn=lambda m: self.loss(eqx.combine(m, model), batch_X,
+                                          value_fn=lambda m: self.loss(eqx.combine(m, model),
+                                                                       batch_X,
                                                                        batch_M,
                                                                        batch_M_art))
 
