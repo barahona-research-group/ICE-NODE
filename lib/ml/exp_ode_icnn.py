@@ -236,7 +236,7 @@ class AutoODEICNN(InpatientModel):
             prediction = prediction.add(observables=self.decode_state_trajectory_observables(
                 admission=admission, state_trajectory=state_trajectory))
             if training:
-                prediction = prediction.add(imputed_observables=self.decode_state_trajectory_observables(
+                prediction = prediction.add(imputed_observables=self.impute_state_trajectory_observables(
                     admission=admission, state_trajectory=state_trajectory))
 
             else:
@@ -247,7 +247,8 @@ class AutoODEICNN(InpatientModel):
             prediction = prediction.add(trajectory=state_trajectory)
         return prediction
 
-    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
+    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False,
+                      training: bool = True) -> AdmissionsPrediction:
         total_int_days = inpatients.interval_days()
         precomputes = self.precomputes(inpatients)
         admissions_emb = {
@@ -274,7 +275,8 @@ class AutoODEICNN(InpatientModel):
                                           prediction=self(
                                               admission,
                                               admissions_emb[admission.admission_id],
-                                              precomputes=precomputes))
+                                              precomputes=precomputes,
+                                              training=training))
                     pbar.update(admission.interval_days)
             return results.filter_nans()
 
