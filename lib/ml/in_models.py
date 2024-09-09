@@ -495,7 +495,7 @@ class InICENODE(InpatientModel):
             prediction = prediction.add(imputed_observables=self.imputed_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
             prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
-            prediction = prediction.add(trajectory=icenode_state_trajectory)
+            # prediction = prediction.add(trajectory=icenode_state_trajectory)
         return prediction
 
     def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
