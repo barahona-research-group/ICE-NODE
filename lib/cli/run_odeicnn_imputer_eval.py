@@ -64,7 +64,7 @@ def load_data(data_dir: str):
     obs_mask1 = pd.read_csv(f'{data_dir}/missingness_mask1.csv', index_col=[0])
     meta1 = pd.read_csv(f'{data_dir}/missingness_meta1.csv', index_col=[0])
 
-    masked_tvx1_sample = SegmentedTVxEHR.load(f'{data_dir}/tvx_aki_phantom.h5')
+    masked_tvx1_sample = SegmentedTVxEHR.load(f'{data_dir}/masked_tvx1_sample.h5')
     sampled_masked_obs_val1 = pd.read_csv(f'{data_dir}/missingness_sampled_masked_val1.csv', index_col=[0])
     sampled_masked_obs_mask1 = pd.read_csv(f'{data_dir}/missingness_sampled_masked_mask1.csv', index_col=[0])
     sampled_masked_meta1 = pd.read_csv(f'{data_dir}/missingness_sampled_masked_meta1.csv', index_col=[0])
