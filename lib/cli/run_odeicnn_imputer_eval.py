@@ -109,7 +109,7 @@ def gen_model_stats(prediction_mask: pd.DataFrame,
     M_ = prediction_mask.to_numpy().astype(bool)
     Z_ = sampled_obs_val1.to_numpy()
 
-    Z_hat_df = predicted_values
+    Z_hat_df = sampled_obs_val1.copy()
     Z_hat = Z_hat_df.to_numpy()
 
     # Squared-Errors (per instance)
