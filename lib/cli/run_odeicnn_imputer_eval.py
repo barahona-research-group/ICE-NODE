@@ -10,7 +10,6 @@ import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 
-from lib.ehr.tvx_transformations import TrainingSplitGroups
 from lib.utils import translate_path, load_config
 from ..base import Config
 from ..db.models import create_tables
@@ -65,8 +64,7 @@ def load_data(data_dir: str):
     obs_mask1 = pd.read_csv(f'{data_dir}/missingness_mask1.csv', index_col=[0])
     meta1 = pd.read_csv(f'{data_dir}/missingness_meta1.csv', index_col=[0])
 
-    masked_tvx1_sample = SegmentedTVxEHR.load(f'{data_dir}/tvx_aki_phantom.h5')
-    masked_tvx1_sample = TrainingSplitGroups.subset(masked_tvx1_sample, tuple(masked_tvx1_sample.subject_ids[:2]))
+    masked_tvx1_sample = SegmentedTVxEHR.load(f'{data_dir}/masked_tvx1_sample.h5')
 
     sampled_masked_obs_val1 = pd.read_csv(f'{data_dir}/missingness_sampled_masked_val1.csv', index_col=[0])
     sampled_masked_obs_mask1 = pd.read_csv(f'{data_dir}/missingness_sampled_masked_mask1.csv', index_col=[0])
@@ -109,7 +107,7 @@ def gen_model_stats(prediction_mask: pd.DataFrame,
     M_ = prediction_mask.to_numpy().astype(bool)
     Z_ = sampled_obs_val1.to_numpy()
 
-    Z_hat_df = sampled_obs_val1.copy()
+    Z_hat_df = predicted_values
     Z_hat = Z_hat_df.to_numpy()
 
     # Squared-Errors (per instance)
