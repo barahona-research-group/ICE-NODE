@@ -88,7 +88,8 @@ def load_data(data_dir: str):
             'sampled_masked_obs_val1': sampled_masked_obs_val1,
             'features': features,
             'vars_n300': vars_n300,
-            'n_test_censored': n_test_censored}
+            'n_test_censored': n_test_censored,
+            'prediction_mask': prediction_mask}
 
 
 def gen_perdictions(features: List[str], model: AutoODEICNN, tvx_ehr: SegmentedTVxEHR):
