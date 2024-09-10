@@ -576,7 +576,7 @@ class StochasticInICENODELite(InICENODELite):
                                 out_size=model_config.state,
                                 activation=jnn.tanh,
                                 depth=2,
-                                width_size=model_config.state * 5,
+                                width_size=model_config.state,
                                 key=key)
         elif model_config.dynamics == "gru":
             f_dyn = GRUDynamics(model_config.state + interventions_size + demographics_size, model_config.state, key)
@@ -633,7 +633,7 @@ class StochasticMechanisticICENODE(InICENODELite):
                                 out_size=integrand_size,
                                 activation=jnn.tanh,
                                 depth=2,
-                                width_size=integrand_size * 4,
+                                width_size=integrand_size,
                                 key=key)
         elif model_config.dynamics == "gru":
             f_dyn = GRUDynamics(integrand_size + interventions_size + demographics_size, integrand_size, key)
