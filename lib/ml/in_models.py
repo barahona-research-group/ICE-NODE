@@ -369,7 +369,7 @@ class InICENODE(InpatientModel):
                                 out_size=model_config.state,
                                 activation=jnn.tanh,
                                 depth=2,
-                                width_size=model_config.state * 5,
+                                width_size=model_config.state,
                                 key=key)
         elif model_config.dynamics == "gru":
             f_dyn = GRUDynamics(model_config.state + interventions_size + demographics_size, model_config.state, key)
