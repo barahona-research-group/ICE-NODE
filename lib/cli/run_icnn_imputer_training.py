@@ -11,6 +11,7 @@ import optax
 import pandas as pd
 from tqdm import tqdm
 
+from lib.ml._ademamix import ademamix
 from lib.ml.icnn_modules import ProbStackedICNNImputer, ICNNObsDecoder, ProbICNNImputerTrainer, \
     StandardICNNImputerTrainer, ResICNNObsDecoder
 from ..utils import append_params_to_zip
@@ -101,7 +102,7 @@ def run_experiment(exp: str, dataset_path: str, experiments_dir: str):
     train_batch_size = 256
     model_snapshot_frequency = 100
 
-    optim = optax.adam(lr)
+    optim = ademamix(lr)
     opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
     data_train = (obs_val_train, obs_mask_train, art_mask_train)
 
