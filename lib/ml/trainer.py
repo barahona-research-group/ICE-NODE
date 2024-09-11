@@ -22,6 +22,7 @@ import optuna
 import pandas as pd
 from blinker import signal
 
+from ._ademamix import ademamix
 from .artefacts import AdmissionsPrediction
 from .exp_ode_icnn import AutoKoopmanICNN
 from .in_models import ICENODEStateTrajectory
@@ -39,7 +40,8 @@ from ..utils import (params_size, tree_hasnan, tqdm_constructor, write_config,
 _opts = {'sgd': optax.sgd,
          'adam': optax.adam,
          'novograd': optax.novograd,
-         'lamb': optax.lamb}
+         'lamb': optax.lamb,
+         'ademamix': ademamix}
 
 LRType = Union[float, Dict[str, float]]
 
