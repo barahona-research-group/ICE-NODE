@@ -103,7 +103,8 @@ def gen_model_stats(prediction_mask: pd.DataFrame,
                     sampled_obs_val1: pd.DataFrame,
                     sampled_masked_obs_val1: pd.DataFrame,
                     predicted_values: pd.DataFrame,
-                    vars_n300: pd.Series):
+                    vars_n300: pd.Series,
+                    tag: str = ''):
     M_ = prediction_mask.to_numpy().astype(bool)
     Z_ = sampled_obs_val1.to_numpy()
 
@@ -134,6 +135,15 @@ def gen_model_stats(prediction_mask: pd.DataFrame,
          'r2': [ProbICNNImputerTrainer.r_squared(Z_, Z_hat, M_).item()],
          'MICRO-AVG(r2)': [ProbICNNImputerTrainer.r_squared_micro_average(Z_, Z_hat, M_).item()],
          'MACRO-AVG(r2)*': [features_stats_300_df['r2'].mean()]})
+
+    features_stats_df_ = pd.melt(features_stats_df_, value_vars=['MSE', 'r2'],
+                                 var_name='metric', id_vars=['Feature'], value_name='value')
+
+    if len(tag) > 0:
+        all_models_stats_df.columns = [f'{c}.{tag}' for c in all_models_stats_df.columns]
+        features_stats_df_['metric'] = features_stats_df_['metric'] + '.' + tag
+
+    features_stats_df_['metric'] = features_stats_df_['Feature'] + '.' + features_stats_df_['metric'].astype(str)
     return {
         'all_models_X_test_se': X_test_se_melt,
         'all_models_features_stats_df': features_stats_df_,
@@ -154,16 +164,23 @@ class ImputerEvaluation(Evaluation):
         model = self.get_experiment(exp).load_model(tvx_ehr, 0)
         model = model.load_params_from_archive(os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
         predictions = gen_perdictions(features=data['features'], model=model, tvx_ehr=tvx_ehr)
-        results = gen_model_stats(prediction_mask=data['prediction_mask'],
-                                  sampled_obs_val1=data['sampled_obs_val1'],
-                                  sampled_masked_obs_val1=data['sampled_masked_obs_val1'],
-                                  predicted_values=predictions['odeicnn_forcs_df'],
-                                  vars_n300=data['vars_n300'])
-        stats = results['all_models_stats_df'].iloc[0].to_dict()
-        features_stats = pd.melt(results['all_models_features_stats_df'], value_vars=['MSE', 'r2'],
-                                 var_name='metric', id_vars=['Feature'], value_name='value')
-        features_stats['metric'] = features_stats['Feature'] + '.' + features_stats['metric'].astype(str)
-        features_stats = features_stats.set_index('metric')['value'].to_dict()
+        forc_results = gen_model_stats(prediction_mask=data['prediction_mask'],
+                                       sampled_obs_val1=data['sampled_obs_val1'],
+                                       sampled_masked_obs_val1=data['sampled_masked_obs_val1'],
+                                       predicted_values=predictions['odeicnn_forcs_df'],
+                                       vars_n300=data['vars_n300'], tag='forecast')
+        imps_results = gen_model_stats(prediction_mask=data['prediction_mask'],
+                                       sampled_obs_val1=data['sampled_obs_val1'],
+                                       sampled_masked_obs_val1=data['sampled_masked_obs_val1'],
+                                       predicted_values=predictions['odeicnn_imps_df'],
+                                       vars_n300=data['vars_n300'], tag='imputation')
+
+        stats = forc_results['all_models_stats_df'].iloc[0].to_dict() | \
+                imps_results['all_models_stats_df'].iloc[0].to_dict()
+
+        # features_stats =
+        features_stats = forc_results['all_models_features_stats_df'].set_index('metric')['value'].to_dict() | \
+                         imps_results['all_models_features_stats_df'].set_index('metric')['value'].to_dict()
         return {**stats, **features_stats}
 
     def start(self, tvx_ehr_path: str):
