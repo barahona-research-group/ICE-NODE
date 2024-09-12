@@ -150,31 +150,22 @@ class Evaluation(Module):
 
     def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr: TVxEHR):
         with Session(engine) as session, session.begin():
+            running_status = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
             experiment = get_or_create(engine, ExperimentModel, name=exp)
-            running_eval = session.query(EvaluationRunModel).filter(
-                EvaluationRunModel.experiment.has(name=exp), EvaluationRunModel.snapshot == snapshot).all()
-            running_eval = [eval for eval in running_eval if eval.status.name.startswith('RUNNING')]
-            running_eval = running_eval[0] if len(running_eval) > 0 else None
-            if running_eval is not None:
-                running_hours = (datetime.now() - (
-                        running_eval.updated_at or running_eval.created_at)).total_seconds() / 3600
-            else:
-                running_hours = None
 
-            if running_eval is not None and running_hours > self.config.max_duration:
-                if running_hours > self.config.max_duration:
+            running_eval = session.query(EvaluationRunModel).filter(EvaluationRunModel.experiment.has(name=exp),
+                                                                    EvaluationRunModel.snapshot == snapshot,
+                                                                    EvaluationRunModel.status.has(
+                                                                        name='RUNNING')).one_or_none()
+            running_hours = (
+                lambda: (datetime.now() - running_eval.updated_at or running_eval.created_at).total_seconds() / 3600)
+            if running_eval is not None and running_hours() > self.config.max_duration:
+                if running_hours() > self.config.max_duration:
                     logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
-                    name = running_eval.status.name
-                    if len(name.split("_")) > 1:
-                        count = int(name.split("_")[1]) + 1
-                    else:
-                        count = 1
-                    name = f'{name.split("_")[0]}_{count}'
-                    running_eval.status = get_or_create(engine, EvaluationStatusModel, name=name)
-            else:
-                new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot,
-                                              status=get_or_create(engine, EvaluationStatusModel, name='RUNNING'))
-                session.expunge(new_eval)
+                    session.delete(running_eval)
+                    running_eval = None
+            if running_eval is None:
+                new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot, status=running_status)
                 session.add(new_eval)
         self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr))
 
