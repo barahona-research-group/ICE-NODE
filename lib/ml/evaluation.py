@@ -157,11 +157,12 @@ class Evaluation(Module):
                                                                     EvaluationRunModel.snapshot == snapshot,
                                                                     EvaluationRunModel.status.has(
                                                                         name='RUNNING')).one_or_none()
-            running_hours = lambda: (datetime.now() - running_eval.created_at).total_seconds() / 3600
+            running_hours = lambda: (datetime.now() - running_eval.updated_at).total_seconds() / 3600
             if running_eval is not None and running_hours() > self.config.max_duration:
-                running_hours = (datetime.now() - running_eval.created_at).total_seconds() / 3600
+                running_hours = (datetime.now() - running_eval.updated_at).total_seconds() / 3600
                 if running_hours > self.config.max_duration:
                     logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
+                    running_eval.status = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
             else:
                 new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot, status=running_status)
                 session.add(new_eval)
