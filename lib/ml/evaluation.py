@@ -174,6 +174,7 @@ class Evaluation(Module):
             else:
                 new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot,
                                               status=get_or_create(engine, EvaluationStatusModel, name='RUNNING'))
+                session.expunge(new_eval)
                 session.add(new_eval)
         self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr))
 
