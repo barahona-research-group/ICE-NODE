@@ -158,7 +158,7 @@ class Evaluation(Module):
                                                                     EvaluationRunModel.status.has(
                                                                         name='RUNNING')).one_or_none()
             running_hours = (
-                lambda: (datetime.now() - running_eval.updated_at or running_eval.created_at).total_seconds() / 3600)
+                lambda: (datetime.now() - (running_eval.updated_at or running_eval.created_at)).total_seconds() / 3600)
             if running_eval is not None and running_hours() > self.config.max_duration:
                 if running_hours() > self.config.max_duration:
                     logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
