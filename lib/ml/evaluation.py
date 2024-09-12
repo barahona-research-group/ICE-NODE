@@ -152,12 +152,17 @@ class Evaluation(Module):
         with Session(engine) as session, session.begin():
             experiment = get_or_create(engine, ExperimentModel, name=exp)
             running_eval = session.query(EvaluationRunModel).filter(
-                EvaluationRunModel.experiment.has(name=exp), EvaluationRunModel.snapshot == snapshot,
-                EvaluationRunModel.status.name.contains('RUNNING')).one_or_none()
-            running_hours = lambda: (datetime.now() - (
+                EvaluationRunModel.experiment.has(name=exp), EvaluationRunModel.snapshot == snapshot).all()
+            running_eval = [eval for eval in running_eval if eval.status.name.contains('RUNNING')]
+            running_eval = running_eval[0] if len(running_eval) > 0 else None
+            if running_eval is not None:
+                running_hours = (datetime.now() - (
                         running_eval.updated_at or running_eval.created_at)).total_seconds() / 3600
-            if running_eval is not None and running_hours() > self.config.max_duration:
-                if running_hours() > self.config.max_duration:
+            else:
+                running_hours = None
+
+            if running_eval is not None and running_hours > self.config.max_duration:
+                if running_hours > self.config.max_duration:
                     logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
                     name = running_eval.status.name
                     if len(name.split("_")) > 1:
