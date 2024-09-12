@@ -153,7 +153,7 @@ class Evaluation(Module):
             experiment = get_or_create(engine, ExperimentModel, name=exp)
             running_eval = session.query(EvaluationRunModel).filter(
                 EvaluationRunModel.experiment.has(name=exp), EvaluationRunModel.snapshot == snapshot).all()
-            running_eval = [eval for eval in running_eval if eval.status.name.contains('RUNNING')]
+            running_eval = [eval for eval in running_eval if eval.status.name.startswith('RUNNING')]
             running_eval = running_eval[0] if len(running_eval) > 0 else None
             if running_eval is not None:
                 running_hours = (datetime.now() - (
