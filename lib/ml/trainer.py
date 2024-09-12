@@ -463,7 +463,7 @@ class TrainerConfig(Config):
     obs_loss: Optional[NumericLossLiteral] = None
     imputed_obs_loss: Optional[NumericLossLiteral] = None
     lead_loss: Optional[NumericLossLiteral | BinaryLossLiteral] = None
-    normalised_obs_loss: bool = False
+    normalised_obs_loss: bool = True
 
 
 class ProbTrainerConfig(TrainerConfig):
