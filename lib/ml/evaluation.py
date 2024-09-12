@@ -149,26 +149,31 @@ class Evaluation(Module):
         return metrics(predictions).as_df(snapshot).iloc[0].to_dict()
 
     def run_evaluation(self, engine: Engine, exp: str, snapshot: str, tvx_ehr: TVxEHR):
-        with Session(engine) as session, session.begin():
-            running_status = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
-            experiment = get_or_create(engine, ExperimentModel, name=exp)
+        # Look for a RUNNING job, if exists and took too long, delete it.
 
+        with Session(engine) as session, session.begin():
             running_eval = session.query(EvaluationRunModel).filter(EvaluationRunModel.experiment.has(name=exp),
                                                                     EvaluationRunModel.snapshot == snapshot,
                                                                     EvaluationRunModel.status.has(
                                                                         name='RUNNING')).one_or_none()
-            running_hours = (
-                lambda: (datetime.now() - (running_eval.updated_at or running_eval.created_at)).total_seconds() / 3600)
-            if running_eval is not None and running_hours() > self.config.max_duration:
-                if running_hours() > self.config.max_duration:
+            if running_eval is not None:
+                if running_eval.status.name == 'FINISHED':
+                    logging.info(f'Evaluation {exp} {snapshot} already finished.')
+                    return
+                if (datetime.now() - running_eval.created_at).total_seconds() / 3600 > self.config.max_duration:
                     logging.info(f'Evaluation {exp} {snapshot} took too long. Restart.')
                     session.delete(running_eval)
-                    running_eval = None
-            if running_eval is None:
-                new_eval = EvaluationRunModel(experiment=experiment, snapshot=snapshot, status=running_status)
-                session.add(new_eval)
-        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr))
+                else:
+                    logging.info(f'Evaluation {exp} {snapshot} already running.')
+                    return
 
+        with Session(engine) as session, session.begin():
+            running_status_model = get_or_create(engine, EvaluationStatusModel, name='RUNNING')
+            experiment_model = get_or_create(engine, ExperimentModel, name=exp)
+            new_eval = EvaluationRunModel(experiment=experiment_model, snapshot=snapshot, status=running_status_model)
+            session.add(new_eval)
+
+        self.save_metrics(engine, exp, snapshot, self.evaluate(exp, snapshot, tvx_ehr))
         with Session(engine) as session, session.begin():
             finished_status = get_or_create(engine, EvaluationStatusModel, name='FINISHED')
             new_eval = session.query(EvaluationRunModel).filter(EvaluationRunModel.experiment.has(name=exp),
