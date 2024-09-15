@@ -152,7 +152,7 @@ def run_eval(exp: str, dataset_path: str, experiments_dir: str):
         X_test_imp_df.to_csv(f'{experiment_dir}/pred_X_test_imp.csv')
         X_test_std_df.to_csv(f'{experiment_dir}/pred_X_test_std.csv')
 
-    elif exp in DET_MODELS:
+    elif exp in DET_MODELS + RES_MODELS:
         with jax.default_device(jax.devices("cpu")[0]):
             obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
             X_test_imp, _ = eqx.filter_vmap(model.partial_input_optimise)(obs_test, art_mask_test)
