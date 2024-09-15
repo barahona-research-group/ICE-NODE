@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Tuple
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+import equinox as eqx
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -188,6 +189,7 @@ class Evaluation(Module):
 
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
+                eqx.clear_caches()
                 jax.clear_caches()
                 jax.clear_backends()
                 logging.info(f'Running {exp}, {snapshot}')
