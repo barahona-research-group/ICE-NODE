@@ -135,14 +135,15 @@ def run_eval(exp: str, dataset_path: str, experiments_dir: str):
     indices = jr.permutation(jr.PRNGKey(seed), len(obs_val))
     test_idx = indices[int(split_ratio * len(indices)):]
 
-    obs_val_test = jnp.array(obs_val.iloc[test_idx].to_numpy())
-    art_mask_test = jnp.array(artificial_mask.iloc[test_idx].to_numpy())
+
     experiment_dir = f'{experiments_dir}/{EXP_DIR[exp]}'
 
     model = model.load_params_from_archive(f'{experiment_dir}/params.zip', 'step9999.eqx')
 
     if exp in PROB_MODELS:
         with jax.default_device(jax.devices("cpu")[0]):
+            obs_val_test = jnp.array(obs_val.iloc[test_idx].to_numpy())
+            art_mask_test = jnp.array(artificial_mask.iloc[test_idx].to_numpy())
             obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
             (X_test_imp, X_test_std), _ = eqx.filter_vmap(model.prob_partial_input_optimise)(obs_test, art_mask_test)
 
@@ -152,8 +153,10 @@ def run_eval(exp: str, dataset_path: str, experiments_dir: str):
         X_test_imp_df.to_csv(f'{experiment_dir}/pred_X_test_imp.csv')
         X_test_std_df.to_csv(f'{experiment_dir}/pred_X_test_std.csv')
 
-    elif exp in DET_MODELS:
+    elif exp in DET_MODELS + RES_MODELS:
         with jax.default_device(jax.devices("cpu")[0]):
+            obs_val_test = jnp.array(obs_val.iloc[test_idx].to_numpy())
+            art_mask_test = jnp.array(artificial_mask.iloc[test_idx].to_numpy())
             obs_test = jnp.where(art_mask_test, obs_val_test, 0.)
             X_test_imp, _ = eqx.filter_vmap(model.partial_input_optimise)(obs_test, art_mask_test)
 
