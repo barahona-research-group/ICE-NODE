@@ -21,7 +21,7 @@ import pandas as pd
 import tables as tb
 
 from ..base import VxData, VxDataView
-from ..utils import load_config
+from ..utils import load_config, tqdm_constructor
 
 NumericalTypeHint = Literal['B', 'N', 'O', 'C']  # Binary, Numerical, Ordinal, Categorical
 
@@ -693,17 +693,17 @@ class HierarchicalScheme(CodingScheme):
         Returns:
             Set[str]: A set of codes that match the regex query, including their successor codes.
         """
-        codes = filter(
-            lambda c: re.findall(query, self.desc[c], flags=regex_flags),
-            self.codes)
+        codes = [len(re.findall(query, self.desc[c], flags=regex_flags)) > 0 for c in
+                 tqdm_constructor(self.codes, leave=False)]
+        codes = [c for c, b in zip(self.codes, codes) if b]
 
-        dag_codes = filter(
-            lambda c: re.findall(query, self.dag_desc[c], flags=regex_flags),
-            self.dag_codes)
+        dag_codes = [len(re.findall(query, self.dag_desc[c], flags=regex_flags)) > 0 for c in
+                     tqdm_constructor(self.dag_codes, leave=False)]
+        dag_codes = [c for c, b in zip(self.dag_codes, dag_codes) if b]
 
         all_codes = set(map(self.code2dag.get, codes)) | set(dag_codes)
 
-        for c in list(all_codes):
+        for c in tqdm_constructor(list(all_codes), leave=False):
             all_codes.update(self.code_successors_dfs(c, include_itself=False))
 
         return all_codes
