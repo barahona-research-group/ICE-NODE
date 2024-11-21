@@ -1,0 +1,44 @@
+{
+    "_type": "ExperimentConfig",
+    "continue_training": true,
+    "embeddings": null,
+    "loss_mixer": {
+        "_type": "LossMixer",
+        "l1": 0.0,
+        "l2": 0.0,
+        "leading_observable": 1.0,
+        "observables": 0.0,
+        "imputed_observables": 0.0,
+        "outcome": 0.0
+    },
+    "model": {
+        "_type": "InRectilinearConfig",
+        "lead_predictor": "monotonic"
+    },
+    "model_classname": "InRectilinear",
+    "model_snapshot_frequency": 10,
+    "reporting": {
+        "_type": "ReportingConfig",
+        "config_json": true,
+        "console": true,
+        "model_stats": false,
+        "output_dir": "test",
+        "parameter_snapshots": true
+    },
+    "trainer": {
+        "_type": "TrainerConfig",
+        "batch_size": 64,
+        "epochs": 100,
+        "lead_loss": "mse",
+        "obs_loss": null,
+        "imputed_obs_loss": null,
+        "optimizer": {
+            "_type": "OptimizerConfig",
+            "lr": 0.001,
+            "opt": "adam"
+        },
+        "outcome_loss": "balanced_focal_bce"
+    },
+    "trainer_classname": "Trainer",
+    "warmup": null
+}

@@ -22,6 +22,7 @@ from .icnn_modules import ImputerMetrics, ICNNObsExtractor, ICNNObsDecoder
 from .koopman_modules import KoopmanOperator, KoopmanPrecomputes
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
+from .rectilinear_modules import RectilinearImputer
 from ..ehr import (Admission, InpatientObservables, CodesVector, TVxEHR)
 from ..ehr.coding_scheme import GroupingData
 from ..ehr.tvx_concepts import SegmentedAdmission, ObservablesDistribution
@@ -961,6 +962,72 @@ class InGRU(InICENODELite):
             admission=admission, state_trajectory=gru_state_trajectory))
         prediction = prediction.add(leading_observable=f.lead_dec(gru_state_trajectory))
         return prediction
+
+
+# Baseline Lead-predictor based on RectiLinear imputations (LOCF: Last-observation-carried-forward).
+
+class InRectilinearConfig(ModelConfig):
+    lead_predictor: Literal["monotonic", "mlp"] = "monotonic"
+
+
+class InRectilinear(InpatientModel):
+    f_lead_dec: DirectLeadPredictorWrapper
+    imputer: RectilinearImputer = eqx.static_field()
+    config: InRectilinearConfig = eqx.static_field()
+
+    def __init__(self, config: InRectilinearConfig,
+                 lead_times: Tuple[float, ...],
+                 observables_size: Optional[int] = None, *,
+                 key: "jax.random.PRNGKey"):
+        self.f_lead_dec = DirectLeadPredictorWrapper(observables_size, lead_times, config.lead_predictor, key=key)
+        self.config = config
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InRectilinearConfig,
+                     embeddings_config: AdmissionSequentialEmbeddingsConfig, seed: int = 0) -> Self:
+        key = jrandom.PRNGKey(seed)
+        return cls(config=config,
+                   lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
+
+    def __call__(
+            self, admission: Admission,
+            embedded_admission: None, precomputes: Precomputes) -> AdmissionPrediction:
+        prediction = AdmissionPrediction(admission=admission)
+        predicted_obs = self.imputer(admission).observables
+        prediction = prediction.add(observables=predicted_obs)
+        prediction = prediction.add(imputed_observables=predicted_obs)
+
+        leading_values = eqx.filter_vmap(self.f_lead_dec.predictor)(predicted_obs)
+        prediction = prediction.add(
+            leading_observable=InpatientObservables(time=predicted_obs.time, value=leading_values,
+                                                    mask=jnp.ones_like(leading_values, dtype=bool)))
+        return prediction
+
+    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
+        total_int_days = inpatients.interval_days()
+        precomputes = self.precomputes(inpatients)
+
+        r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+        bar_format = '{l_bar}{bar}' + r_bar
+        with tqdm_constructor(total=total_int_days,
+                              bar_format=bar_format,
+                              unit='longitudinal-days',
+                              leave=leave_pbar) as pbar:
+            results = AdmissionsPrediction()
+            for i, subject_id in enumerate(inpatients.subjects.keys()):
+                pbar.set_description(
+                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
+                inpatient = inpatients.subjects[subject_id]
+                for admission in inpatient.admissions:
+                    results = results.add(subject_id=subject_id,
+                                          prediction=self(
+                                              admission,
+                                              embedded_admission=None,
+                                              precomputes=precomputes))
+                    pbar.update(admission.interval_days)
+            return results.filter_nans()
 
 
 class InRETAINConfig(ModelConfig):
