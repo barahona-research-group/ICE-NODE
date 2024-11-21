@@ -982,6 +982,9 @@ class InRectilinear(InpatientModel):
         self.f_lead_dec = DirectLeadPredictorWrapper(observables_size, lead_times, config.lead_predictor, key=key)
         self.config = config
 
+    def dyn_params_list(self):
+        return []
+
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: InRectilinearConfig,
                      embeddings_config: AdmissionSequentialEmbeddingsConfig, seed: int = 0) -> Self:
