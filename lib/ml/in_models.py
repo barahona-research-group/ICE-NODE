@@ -1006,7 +1006,7 @@ class InRectilinear(InpatientModel):
         prediction = prediction.add(observables=predicted_obs)
         prediction = prediction.add(imputed_observables=predicted_obs)
 
-        leading_values = eqx.filter_vmap(self.f_lead_dec.predictor)(predicted_obs)
+        leading_values = eqx.filter_vmap(self.f_lead_dec.predictor)(predicted_obs.value)
         prediction = prediction.add(
             leading_observable=InpatientObservables(time=predicted_obs.time, value=leading_values,
                                                     mask=jnp.ones_like(leading_values, dtype=bool)))
