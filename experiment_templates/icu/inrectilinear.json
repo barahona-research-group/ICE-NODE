@@ -37,7 +37,7 @@
             "lr": 0.001,
             "opt": "adam"
         },
-        "outcome_loss": "balanced_focal_bce"
+        "outcome_loss": null
     },
     "trainer_classname": "Trainer",
     "warmup": null
