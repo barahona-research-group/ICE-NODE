@@ -964,6 +964,28 @@ class InGRU(InICENODELite):
         return prediction
 
 
+class NeuralODESolverGhost(NeuralODESolver):
+    f: None = None
+
+    @staticmethod
+    def from_mlp(mlp: None = None, second: float = 1 / 3600.0, dt0: float = 60.0):
+        return NeuralODESolverGhost()
+
+    @eqx.filter_jit
+    def __call__(self, x0, t0: float, t1: float, saveat: None = None,
+                 u: None = None,
+                 precomputes: None = None,
+                 key: None = None) -> Tuple[jnp.ndarray, ODEMetrics]:
+        return x0, ODEMetrics(n_steps=jnp.array(1), n_hours=jnp.array(t1 - t0))
+
+
+class InNaiveSequentialGRU(InICENODELite):
+    @staticmethod
+    def _make_dyn(model_config: ICENODEConfig,
+                  embeddings_config: AdmissionEmbeddingsConfig, *,
+                  key: jrandom.PRNGKey, **kwargs) -> NeuralODESolver:
+        return NeuralODESolverGhost.from_mlp()
+
 
 # Baseline Lead-predictor based on RectiLinear imputations (LOCF: Last-observation-carried-forward).
 
