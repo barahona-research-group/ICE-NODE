@@ -5,7 +5,6 @@ import equinox as eqx
 
 from lib.ml.model import AbstractModel
 from .artefacts import AdmissionsPrediction, AdmissionPrediction
-from .in_models import AdmissionTrajectoryPrediction
 from ..base import np_module, Array
 from ..ehr import (TVxEHR, Admission, InpatientObservables)
 from ..utils import tqdm_constructor
