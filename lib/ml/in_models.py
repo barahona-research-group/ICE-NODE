@@ -964,6 +964,7 @@ class InGRU(InICENODELite):
         return prediction
 
 
+
 # Baseline Lead-predictor based on RectiLinear imputations (LOCF: Last-observation-carried-forward).
 
 class InRectilinearConfig(ModelConfig):
@@ -978,9 +979,11 @@ class InRectilinear(InpatientModel):
     def __init__(self, config: InRectilinearConfig,
                  lead_times: Tuple[float, ...],
                  observables_size: Optional[int] = None, *,
+                 imputer: RectilinearImputer,
                  key: "jax.random.PRNGKey"):
         self.f_lead_dec = DirectLeadPredictorWrapper(observables_size, lead_times, config.lead_predictor, key=key)
         self.config = config
+        self.imputer = imputer
 
     def dyn_params_list(self):
         return []
@@ -992,6 +995,7 @@ class InRectilinear(InpatientModel):
         return cls(config=config,
                    lead_times=tuple(tvx_ehr.config.leading_observable.leading_hours),
                    observables_size=len(tvx_ehr.scheme.obs),
+                   imputer=RectilinearImputer.from_tvx_ehr(tvx_ehr),
                    key=key)
 
     def __call__(
