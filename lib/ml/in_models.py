@@ -1001,7 +1001,7 @@ class InRectilinear(InpatientModel):
     def __call__(
             self, admission: Admission,
             embedded_admission: None, precomputes: Precomputes) -> AdmissionPrediction:
-        prediction = AdmissionPrediction(admission=admission)
+        prediction = AdmissionTrajectoryPrediction(admission=admission)
         predicted_obs = self.imputer(admission).observables
         prediction = prediction.add(observables=predicted_obs)
         prediction = prediction.add(imputed_observables=predicted_obs)
