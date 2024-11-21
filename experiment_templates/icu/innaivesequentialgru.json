@@ -5,7 +5,13 @@
         "_type": "InICENODEEmbeddingsConfig",
         "demographic": 10,
         "dx_codes": 50,
-        "interventions": null
+        "interventions": {
+            "_type": "InterventionsEmbeddingsConfig",
+            "hosp_procedures": 10,
+            "icu_inputs": 10,
+            "icu_procedures": 10,
+            "interventions": 20
+        }
     },
     "loss_mixer": {
         "_type": "LossMixer",
