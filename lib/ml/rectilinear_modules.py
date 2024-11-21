@@ -25,7 +25,7 @@ class ZeroImputer(AbstractModel):
         return np_module(x).zeros_like(x)
 
     def __call__(self, admission: Admission) -> AdmissionPrediction:
-        prediction = AdmissionTrajectoryPrediction(admission=admission)
+        prediction = AdmissionPrediction(admission=admission)
         obs = admission.observables
         imputed_obs = InpatientObservables(time=obs.time, value=self._apply_imputation(obs.value, obs.mask),
                                            mask=obs.mask)
