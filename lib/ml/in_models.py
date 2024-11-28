@@ -493,8 +493,8 @@ class InICENODE(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.forecasted_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
-            prediction = prediction.add(imputed_observables=self.imputed_observables(
-                admission=admission, state_trajectory=icenode_state_trajectory))
+            # prediction = prediction.add(imputed_observables=self.imputed_observables(
+            #     admission=admission, state_trajectory=icenode_state_trajectory))
             prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
             # prediction = prediction.add(trajectory=icenode_state_trajectory)
         return prediction
