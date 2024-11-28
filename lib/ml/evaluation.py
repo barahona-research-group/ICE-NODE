@@ -148,7 +148,7 @@ class Evaluation(Module):
         model = model.load_params_from_archive(os.path.join(self.experiment_dir[exp], 'params.zip'), snapshot)
         subjects_list = tvx_ehr.subject_ids # list of subject_ids
         # randomly select at most 1000 subjects.
-        subjects_list = random.sample(subjects_list, min(500, len(subjects_list)))
+        subjects_list = random.sample(subjects_list, min(1000, len(subjects_list)))
         predictions = model.batch_predict(tvx_ehr.device_batch(subjects_list))
         return metrics(predictions).as_df(snapshot).iloc[0].to_dict()
 
