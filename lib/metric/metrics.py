@@ -1,5 +1,5 @@
 """Performance metrics and loss functions."""
-
+import logging
 import warnings
 from abc import abstractmethod
 from dataclasses import field, dataclass
@@ -184,9 +184,11 @@ class Metric(Module):
     estimands: Tuple[str, ...] = field(default_factory=tuple)
 
     def __call__(self, predictions: AdmissionsPrediction) -> MetricsOutput:
+        logging.info(f'Evaluating {type(self).__name__}...')
         time_now = datetime.now()
         values = self.apply(predictions)
         eval_time = (datetime.now() - time_now).total_seconds()
+        logging.info(f'Done evaluating {type(self).__name__} in {eval_time} seconds.')
         return MetricsOutput(name=type(self).__name__, estimands=self.estimands, values=values, time_elapsed=eval_time)
 
     @abstractmethod
