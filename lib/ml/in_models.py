@@ -528,7 +528,7 @@ class InICENODE(InpatientModel):
                                               admissions_emb[admission.admission_id],
                                               precomputes=precomputes))
                     pbar.update(admission.interval_days)
-            return results.filter_nans()
+            return results#.filter_nans()
 
 
 class InICENODELite(InICENODE):
