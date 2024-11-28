@@ -976,7 +976,7 @@ class NeuralODESolverGhost(NeuralODESolver):
                  u: None = None,
                  precomputes: None = None,
                  key: None = None) -> Tuple[jnp.ndarray, ODEMetrics]:
-        return x0, ODEMetrics(n_steps=jnp.array(1), n_hours=jnp.array(t1 - t0))
+        return x0, ODEMetrics()
 
 
 class InNaiveSequentialGRU(InICENODELite):
