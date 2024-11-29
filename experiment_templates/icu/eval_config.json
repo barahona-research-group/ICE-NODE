@@ -49,6 +49,19 @@
                 ],
                 "per_column": false
             }
+        },
+        {
+            "classname": "ObsPredictionLossMetric",
+            "config": {
+                "_type": "ObsPredictionLossConfig",
+                "loss_keys": [
+                    "mse",
+                    "mae",
+                    "rms",
+                    "r2"
+                ],
+                "per_column": false
+            }
         }
     ]
 }
