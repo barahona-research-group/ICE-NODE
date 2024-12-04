@@ -397,7 +397,86 @@ class AutoICEKoopman(InpatientModel):
                  admission_emb: None,
                  precomputes: Precomputes,
                  training: bool = True) -> AdmissionTrajectoryPrediction:
-        return AutoODEICNN.__call__(self, admission, None, precomputes, training)
+
+        prediction = AdmissionImputationAndForecasting(admission=admission)
+
+        if len(admission.observables) == 0:
+            logging.debug("No observation to fit.")
+            return prediction
+
+        ode_stats = ODEMetrics()
+        imputer_stats = ImputerMetrics()
+        imputed_obs = ()
+        t = 0.0
+        state_trajectory = tuple()
+        f = self.components
+        state = f.init()
+
+        for obs_t, obs_val, obs_mask in admission.observables:
+            # if time-diff is more than 1 seconds, we integrate.
+            forecasted_state, ode_stats_ = f.dyn(state, t0=t, t1=obs_t, precomputes=precomputes, u=jnp.array([]))
+            ode_stats += ode_stats_
+            forecasted_state = forecasted_state.squeeze()
+            state, imputer_stats_ = f.update(f.obs_dec, forecasted_state, obs_val, obs_mask)
+            imputed_obs_ = f.obs_dec(forecasted_state)
+            imputer_stats += imputer_stats_
+            state_trajectory += ((forecasted_state, state),)
+            imputed_obs += (imputed_obs_,)
+            t = obs_t
+
+        prediction = prediction.add(model_behavioural_metrics=ICENODEMetrics(ode=ode_stats, imputer=imputer_stats))
+        if len(state_trajectory) > 0:
+            forecasted_states, imputed_states = zip(*state_trajectory)
+            state_trajectory = ICENODEStateTrajectory.compile(time=admission.observables.time,
+                                                              forecasted_state=forecasted_states,
+                                                              imputed_state=imputed_states)
+            # TODO: test --> assert len(obs.time) == len(forecasted_states)
+            prediction = prediction.add(observables=self.decode_state_trajectory_observables(
+                admission=admission, state_trajectory=state_trajectory))
+            if training:
+                prediction = prediction.add(imputed_observables=self.impute_state_trajectory_observables(
+                    admission=admission, state_trajectory=state_trajectory))
+
+            else:
+                prediction = prediction.add(imputed_observables=InpatientObservables(time=admission.observables.time,
+                                                                                     value=jnp.vstack(imputed_obs),
+                                                                                     mask=admission.observables.mask))
+
+            prediction = prediction.add(trajectory=state_trajectory)
+        return prediction
+
+    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False,
+                      training: bool = True) -> AdmissionsPrediction:
+        total_int_days = inpatients.interval_days()
+        precomputes = self.precomputes(inpatients)
+        admissions_emb = {
+            admission.admission_id: self.f_emb(admission, inpatients.admission_demographics[admission.admission_id])
+            for i, subject in tqdm_constructor(inpatients.subjects.items(),
+                                               desc="Embedding",
+                                               unit='subject',
+                                               leave=leave_pbar) for admission in subject.admissions
+        }
+
+        r_bar = '| {n:.2f}/{total:.2f} [{elapsed}<{remaining}, ' '{rate_fmt}{postfix}]'
+        bar_format = '{l_bar}{bar}' + r_bar
+        with tqdm_constructor(total=total_int_days,
+                              bar_format=bar_format,
+                              unit='longitudinal-days',
+                              leave=leave_pbar) as pbar:
+            results = AdmissionsPrediction()
+            for i, subject_id in enumerate(inpatients.subjects.keys()):
+                pbar.set_description(
+                    f"Subject: {subject_id} ({i + 1}/{len(inpatients)})")
+                inpatient = inpatients.subjects[subject_id]
+                for admission in inpatient.admissions:
+                    results = results.add(subject_id=subject_id,
+                                          prediction=self(
+                                              admission,
+                                              admissions_emb[admission.admission_id],
+                                              precomputes=precomputes,
+                                              training=training))
+                    pbar.update(admission.interval_days)
+            return results.filter_nans()
 
     def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
         return AutoODEICNN.batch_predict(self, inpatients, leave_pbar=leave_pbar, training=False)
