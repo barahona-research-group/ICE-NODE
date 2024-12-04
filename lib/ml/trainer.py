@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Any, Dict, Tuple, Union, Optional, Callable
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
@@ -755,6 +756,11 @@ class Trainer(Module):
                                                 step=step,
                                                 model=model,
                                                 optimizer=optimizer)
+
+                    eqx.clear_caches()
+                    jax.clear_caches()
+                    jax.clear_backends()
+
                 if step in eval_steps and len(val_split) > 0:
                     elapsed_time = (datetime.now() - timenow).total_seconds()
                     timenow = datetime.now()
