@@ -509,3 +509,17 @@ class AutoICEKoopman(InpatientModel):
     @eqx.filter_jit
     def pathwise_params_stats(self):
         return AutoKoopmanICNN.pathwise_params_stats(self)
+
+    def decode_state_trajectory_observables(self,
+                                            admission: SegmentedAdmission | Admission,
+                                            state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
+        f = self.components
+        pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.forecasted_state)
+        return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
+
+    def impute_state_trajectory_observables(self,
+                                            admission: SegmentedAdmission | Admission,
+                                            state_trajectory: ICENODEStateTrajectory) -> InpatientObservables:
+        f = self.components
+        pred_obs = eqx.filter_vmap(f.obs_dec)(state_trajectory.imputed_state)
+        return InpatientObservables(time=state_trajectory.time, value=pred_obs, mask=admission.observables.mask)
