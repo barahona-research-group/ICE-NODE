@@ -347,6 +347,8 @@ class AutoICEKoopman(InpatientModel):
     f_emb: AdmissionEmbedding
     f_dyn: KoopmanOperator
     f_init: CompiledShift
+    f_update: DirectGRUStateImputer
+    f_obs_dec: CompiledMLP
 
     config: KoopmanICNNConfig = eqx.static_field()
 
