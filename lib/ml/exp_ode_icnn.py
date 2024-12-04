@@ -402,10 +402,6 @@ class AutoICEKoopman(InpatientModel):
     def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
         return AutoODEICNN.batch_predict(self, inpatients, leave_pbar=leave_pbar, training=False)
 
-    @property
-    def dyn_params_list(self):
-        return jtu.tree_leaves(eqx.filter(self.f_dyn, eqx.is_inexact_array))
-
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: KoopmanICNNConfig,
                      embeddings_config: AdmissionEmbeddingsConfig,
@@ -422,3 +418,15 @@ class AutoICEKoopman(InpatientModel):
                                  dyn=self.f_dyn,
                                  update=self.f_update,
                                  init=self._f_init)
+
+    def precomputes(self, *args, **kwargs):
+        A, A_eig = self.f_dyn.compute_A()
+        return KoopmanPrecomputes(A=A, A_eig=A_eig)
+
+    @property
+    def dyn_params_list(self):
+        return jtu.tree_leaves(eqx.filter((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N), eqx.is_inexact_array))
+
+    @eqx.filter_jit
+    def pathwise_params_stats(self):
+        return AutoKoopmanICNN.pathwise_params_stats(self)
