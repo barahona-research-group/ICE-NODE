@@ -403,6 +403,20 @@ class AutoICEKoopman(InpatientModel):
         return AutoODEICNN.batch_predict(self, inpatients, leave_pbar=leave_pbar, training=False)
 
     @property
+    def dyn_params_list(self):
+        return jtu.tree_leaves(eqx.filter(self.f_dyn, eqx.is_inexact_array))
+
+    @classmethod
+    def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: KoopmanICNNConfig,
+                     embeddings_config: AdmissionEmbeddingsConfig,
+                     seed: int = 0) -> Self:
+        key = jr.PRNGKey(seed)
+        return cls(config=config,
+                   observables_size=len(tvx_ehr.scheme.obs),
+                   key=key)
+
+
+    @property
     def components(self) -> ODEICNNComponents:
         return ODEICNNComponents(emb=lambda x: None,
                                  obs_dec=self.f_obs_dec,
