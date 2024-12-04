@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Tuple, Optional, Self, Callable
+from typing import Tuple, Optional, Self, Callable, Any
 
 import equinox as eqx
 import jax
@@ -344,7 +344,7 @@ class CompiledShift(eqx.Module):
 
 
 class AutoICEKoopman(InpatientModel):
-    f_emb: AdmissionEmbedding
+    f_emb: Callable[[Any], None]
     f_dyn: KoopmanOperator
     f_init: CompiledShift
     f_update: DirectGRUStateImputer
@@ -358,7 +358,7 @@ class AutoICEKoopman(InpatientModel):
         InpatientModel.__init__(self, config=config)
 
         (icnn_key, dyn_key) = jr.split(key, 2)
-        self.f_emb = None
+        self.f_emb = lambda x: None
         self.f_init = self._make_init(embeddings_config=None, state_size=config.state)
         self.f_update = self._make_update(state_size=config.state, observables_size=observables_size, key=dyn_key)
         self.f_obs_dec = self._make_obs_dec(config=config, observables_size=observables_size, key=icnn_key)
@@ -416,7 +416,6 @@ class AutoICEKoopman(InpatientModel):
         return cls(config=config,
                    observables_size=len(tvx_ehr.scheme.obs),
                    key=key)
-
 
     @property
     def components(self) -> ODEICNNComponents:
