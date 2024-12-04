@@ -362,7 +362,6 @@ class AutoICEKoopman(InpatientModel):
         self.f_init = self._make_init(embeddings_config=None, state_size=config.state)
         self.f_update = self._make_update(state_size=config.state, observables_size=observables_size, key=dyn_key)
         self.f_obs_dec = self._make_obs_dec(config=config, observables_size=observables_size, key=icnn_key)
-        # self.f_icnn = self._make_icnn(config=config, observables_size=observables_size, key=icnn_key)
         self.f_dyn = self._make_dyn(model_config=config, observables_size=observables_size, key=dyn_key)
 
     def _make_dyn(self, model_config: KoopmanICNNConfig, *,
@@ -379,8 +378,7 @@ class AutoICEKoopman(InpatientModel):
 
     @eqx.filter_jit
     def _f_init(self) -> jnp.ndarray:
-        state_size = self.f_init.shift.shape[0]
-        return self.f_init(jnp.zeros(state_size))
+        return self.f_init(jnp.zeros_like(self.f_init.shift))
 
     @staticmethod
     def _make_update(state_size: int, observables_size: int, key: jr.PRNGKey) -> DirectGRUStateImputer:
