@@ -374,7 +374,7 @@ class AutoICEKoopman(InpatientModel):
     @staticmethod
     def _make_init(embeddings_config: None,
                    state_size: int, **kwargs) -> CompiledShift:
-        return CompiledShift(jnp.zeros_like(state_size))
+        return CompiledShift(jnp.zeros(state_size))
 
     @eqx.filter_jit
     def _f_init(self) -> jnp.ndarray:
