@@ -17,7 +17,7 @@ from .embeddings import (AdmissionEmbedding, EmbeddedAdmission)
 from .embeddings import (AdmissionEmbeddingsConfig)
 from .icnn_modules import ImputerMetrics, ICNNObsDecoder
 from .in_models import DynamicsLiteral, ICENODEStateTrajectory, AdmissionTrajectoryPrediction, \
-    GRUDynamics
+    GRUDynamics, DirectGRUStateImputer
 from .koopman_modules import KoopmanOperator, KoopmanPrecomputes
 from .model import (InpatientModel, ModelConfig,
                     Precomputes)
@@ -330,3 +330,82 @@ class AutoKoopmanICNN(AutoODEICNN):
                 }
             })
         return stats
+
+
+class CompiledShift(eqx.Module):
+    shift: jnp.ndarray
+
+    def __init__(self, shift: jnp.ndarray):
+        self.shift = shift
+
+    @eqx.filter_jit
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return x + self.shift
+
+
+class AutoICEKoopman(InpatientModel):
+    f_emb: AdmissionEmbedding
+    f_dyn: KoopmanOperator
+    f_init: CompiledShift
+
+    config: KoopmanICNNConfig = eqx.static_field()
+
+    def __init__(self, config: KoopmanICNNConfig,
+                 observables_size: int,
+                 key: "jax.random.PRNGKey"):
+        InpatientModel.__init__(self, config=config)
+
+        (icnn_key, dyn_key) = jr.split(key, 2)
+        self.f_emb = None
+        self.f_init = self._make_init(embeddings_config=None, state_size=config.state)
+        self.f_update = self._make_update(state_size=config.state, observables_size=observables_size, key=dyn_key)
+        self.f_obs_dec = self._make_obs_dec(config=config, observables_size=observables_size, key=icnn_key)
+        # self.f_icnn = self._make_icnn(config=config, observables_size=observables_size, key=icnn_key)
+        self.f_dyn = self._make_dyn(model_config=config, observables_size=observables_size, key=dyn_key)
+
+    def _make_dyn(self, model_config: KoopmanICNNConfig, *,
+                  key: jr.PRNGKey, **kwargs) -> KoopmanOperator:
+        return KoopmanOperator(input_size=model_config.state,
+                               koopman_size=model_config.koopman_size,
+                               phi_depth=3,
+                               key=key)
+
+    @staticmethod
+    def _make_init(embeddings_config: None,
+                   state_size: int, **kwargs) -> CompiledShift:
+        return CompiledShift(jnp.zeros_like(state_size))
+
+    @eqx.filter_jit
+    def _f_init(self) -> jnp.ndarray:
+        state_size = self.f_init.shift.shape[0]
+        return self.f_init(jnp.zeros(state_size))
+
+    @staticmethod
+    def _make_update(state_size: int, observables_size: int, key: jr.PRNGKey) -> DirectGRUStateImputer:
+        return DirectGRUStateImputer(state_size, observables_size, key=key)
+
+    @staticmethod
+    def _make_obs_dec(config, observables_size, key) -> CompiledMLP:
+        return CompiledMLP(config.state,
+                           observables_size,
+                           observables_size * 5,
+                           activation=jnp.tanh,
+                           depth=1,
+                           key=key)
+
+    def __call__(self, admission: SegmentedAdmission,
+                 admission_emb: None,
+                 precomputes: Precomputes,
+                 training: bool = True) -> AdmissionTrajectoryPrediction:
+        return AutoODEICNN.__call__(self, admission, None, precomputes, training)
+
+    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
+        return AutoODEICNN.batch_predict(self, inpatients, leave_pbar=leave_pbar, training=False)
+
+    @property
+    def components(self) -> ODEICNNComponents:
+        return ODEICNNComponents(emb=lambda x: None,
+                                 obs_dec=self.f_obs_dec,
+                                 dyn=self.f_dyn,
+                                 update=self.f_update,
+                                 init=self._f_init)
