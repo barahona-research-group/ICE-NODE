@@ -506,6 +506,9 @@ class AutoICEKoopman(InpatientModel):
     def dyn_params_list(self):
         return jtu.tree_leaves(eqx.filter((self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N), eqx.is_inexact_array))
 
+    def weights(self) -> Tuple[jnp.ndarray, ...]:
+        return super().weights() + (self.f_dyn.R, self.f_dyn.Q, self.f_dyn.N)
+
     @eqx.filter_jit
     def pathwise_params_stats(self):
         return AutoKoopmanICNN.pathwise_params_stats(self)
