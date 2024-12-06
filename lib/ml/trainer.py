@@ -42,6 +42,7 @@ _opts = {'sgd': optax.sgd,
          'adam': optax.adam,
          'novograd': optax.novograd,
          'lamb': optax.lamb,
+         'yogi': optax.yogi,
          'ademamix': ademamix}
 
 LRType = Union[float, Dict[str, float]]
