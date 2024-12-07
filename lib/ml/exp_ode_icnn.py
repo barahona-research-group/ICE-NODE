@@ -478,9 +478,6 @@ class AutoICEKoopman(InpatientModel):
                     pbar.update(admission.interval_days)
             return results.filter_nans()
 
-    def batch_predict(self, inpatients: SegmentedTVxEHR, leave_pbar: bool = False) -> AdmissionsPrediction:
-        return AutoODEICNN.batch_predict(self, inpatients, leave_pbar=leave_pbar, training=False)
-
     @classmethod
     def from_tvx_ehr(cls, tvx_ehr: TVxEHR, config: KoopmanICNNConfig,
                      embeddings_config: AdmissionEmbeddingsConfig,
