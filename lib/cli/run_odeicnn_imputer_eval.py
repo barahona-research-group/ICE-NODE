@@ -191,6 +191,7 @@ class ImputerEvaluation(Evaluation):
 
         for exp, snapshot in self.generate_experiment_params_pairs():
             try:
+                eqx.clear_caches()
                 jax.clear_caches()
                 jax.clear_backends()
                 logging.info(f'Running {exp}, {snapshot}')
