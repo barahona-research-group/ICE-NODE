@@ -129,11 +129,11 @@ class CompiledGRU(eqx.nn.GRUCell):
 
 class indexable_empty_array(jnp.ndarray):
     def __getitem__(self, item):
-        return self
+        return jnp.ndarray([])
 
 
 def empty_if_none(x):
-    return x if x is not None else indexable_empty_array([])
+    return x if x is not None else indexable_empty_array()
 
 
 class InpatientModelConfig(ModelConfig):
