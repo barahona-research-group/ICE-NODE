@@ -1,0 +1,70 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/24.7.17 Chrome/128.0.6613.36 Electron/32.0.1 Safari/537.36" version="24.7.17">
+  <diagram name="koopman_vs_odeint" id="gg5-LvrDOh2d9Lv5O6co">
+    <mxGraphModel dx="2074" dy="1390" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="1" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="VjynQuDDot_FeFhZayVt-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-15" target="VjynQuDDot_FeFhZayVt-4" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-3" value="&lt;span style=&quot;text-wrap: nowrap;&quot;&gt;\(\boldsymbol{y}(t)\)&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="250" y="280" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-18" target="VjynQuDDot_FeFhZayVt-6" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-4" value="&lt;span style=&quot;text-wrap: nowrap;&quot;&gt;\(\boldsymbol{y}(t + \Delta t)\)&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="650" y="280" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-9" target="VjynQuDDot_FeFhZayVt-6" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;dashed=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-5" target="VjynQuDDot_FeFhZayVt-12" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-5" value="&lt;span style=&quot;text-wrap: nowrap;&quot;&gt;\(\boldsymbol{h}(t)\)&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" parent="1" vertex="1">
+          <mxGeometry x="250" y="430" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-6" value="&lt;span style=&quot;text-wrap: nowrap;&quot;&gt;\(\boldsymbol{h}(t + \Delta t)\)&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;" parent="1" vertex="1">
+          <mxGeometry x="650" y="430" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-5" target="VjynQuDDot_FeFhZayVt-9" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="460" as="sourcePoint" />
+            <mxPoint x="650" y="460" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-9" value="&lt;div&gt;&lt;span style=&quot;background-color: initial;&quot;&gt;\(\int_{t}^{t+\Delta t} f_\texttt{dyn}(\boldsymbol{h}(\tau))\,d\tau \)&lt;/span&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="400" y="430" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-12" value="\(g(\boldsymbol{h}(t))\)" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="230" y="370" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;dashed=1;endArrow=open;endFill=0;" parent="1" source="VjynQuDDot_FeFhZayVt-3" target="VjynQuDDot_FeFhZayVt-15" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="310" y="310" as="sourcePoint" />
+            <mxPoint x="650" y="310" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-15" value="\( \exp(\Delta t \boldsymbol{K}_\texttt{dyn}) \boldsymbol{y}(t) \)" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="400" y="280" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;endArrow=open;endFill=0;dashed=1;" parent="1" source="VjynQuDDot_FeFhZayVt-4" target="VjynQuDDot_FeFhZayVt-18" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="340" as="sourcePoint" />
+            <mxPoint x="680" y="430" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-18" value="\(g^{-1}(\boldsymbol{y}(t+\Delta t))\)" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;" parent="1" vertex="1">
+          <mxGeometry x="630" y="370" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="VjynQuDDot_FeFhZayVt-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;dashed=1;endArrow=open;endFill=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" parent="1" source="VjynQuDDot_FeFhZayVt-12" target="VjynQuDDot_FeFhZayVt-3" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="280" y="370" as="sourcePoint" />
+            <mxPoint x="280" y="350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
