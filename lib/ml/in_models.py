@@ -127,7 +127,7 @@ class CompiledGRU(eqx.nn.GRUCell):
         return super().__call__(h, x)
 
 
-class indexable_empty_array(jnp.array):
+class indexable_empty_array:
 
     def __getitem__(self, item):
         return jnp.array([])
