@@ -44,10 +44,8 @@
         "obs_loss": null,
         "optimizer": {
             "_type": "OptimizerConfig",
-            "decay_rate": null,
             "lr": 0.001,
-            "opt": "adam",
-            "reverse_schedule": false
+            "opt": "adam"
         },
         "outcome_loss": null
     },
