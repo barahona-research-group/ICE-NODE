@@ -482,8 +482,7 @@ class InICENODE(InpatientModel):
                 state_trajectory += ((forecasted_state, state),)
                 t = obs_t
             key, subkey = jrandom.split(key)
-            state, stats = f.dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes,
-                                 key=subkey)
+            state, stats = f.dyn(state, t0=t, t1=segment_t1, u=segment_force, precomputes=precomputes, key=subkey)
             ode_stats += stats
             state = state.squeeze()
             t = segment_t1
@@ -499,8 +498,8 @@ class InICENODE(InpatientModel):
             # TODO: test --> assert len(obs.time) == len(forecasted_states)
             prediction = prediction.add(observables=self.forecasted_observables(
                 admission=admission, state_trajectory=icenode_state_trajectory))
-            # prediction = prediction.add(imputed_observables=self.imputed_observables(
-            #     admission=admission, state_trajectory=icenode_state_trajectory))
+            prediction = prediction.add(imputed_observables=self.imputed_observables(
+                admission=admission, state_trajectory=icenode_state_trajectory))
             prediction = prediction.add(leading_observable=f.lead_dec(icenode_state_trajectory))
             # prediction = prediction.add(trajectory=icenode_state_trajectory)
         return prediction
