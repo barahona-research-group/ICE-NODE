@@ -3,9 +3,9 @@ from abc import ABCMeta, abstractmethod
 from dataclasses import field
 from functools import cached_property
 from typing import Optional, Callable, ClassVar, List
-import jax
+
 import jax.numpy as jnp
-import equinox as eqx
+
 from .loss import NumericLossLiteral, NUMERIC_LOSS, BinaryLossLiteral, PROB_BINARY_LOSS, ProbNumericLossLiteral, \
     ProbLossSignature, PROB_NUMERIC_LOSS, LOGITS_BINARY_LOSS
 from ..base import Array, np_module, VxDataItem, Module, Config
@@ -28,9 +28,6 @@ class PredictionLoss(Module, metaclass=ABCMeta):
         return 1.0
 
     def aggregate_loss(self, predictions: AdmissionsPrediction) -> Array | float:
-        eqx.clear_caches()
-        jax.clear_caches()
-        jax.clear_backends()
         weights = [self.item_weight(gt) for gt in
                    predictions.list_attr(self.prediction_attribute, self.admission_attribute)[0]]
         weights = [w / sum(weights) for w in weights]
@@ -101,9 +98,11 @@ class LeadPredictionLoss(NumericPredictionLoss):
 class ObsPredictionLoss(NumericPredictionLoss):
     prediction_attribute: ClassVar[PredictionAttribute] = 'observables'
 
+
 class ImputationLoss(NumericPredictionLoss):
     admission_attribute: ClassVar[PredictionAttribute] = 'observables'
     prediction_attribute: ClassVar[PredictionAttribute] = 'imputed_observables'
+
 
 class ProbObsPredictionLoss(ObsPredictionLoss):
     loss_key: ProbNumericLossLiteral = field(default=None, kw_only=True)

@@ -758,10 +758,6 @@ class Trainer(Module):
                                                 model=model,
                                                 optimizer=optimizer)
 
-                    eqx.clear_caches()
-                    jax.clear_caches()
-                    jax.clear_backends()
-
                 if step in eval_steps and len(val_split) > 0:
                     elapsed_time = (datetime.now() - timenow).total_seconds()
                     timenow = datetime.now()
