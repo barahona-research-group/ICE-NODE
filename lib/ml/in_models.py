@@ -127,7 +127,7 @@ class CompiledGRU(eqx.nn.GRUCell):
         return super().__call__(h, x)
 
 
-class indexable_empty_array(jax.Array):
+class indexable_empty_array(jnp.ndarray):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
