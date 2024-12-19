@@ -534,10 +534,10 @@ class InICENODE(InpatientModel):
                                               precomputes=precomputes))
                     pbar.update(admission.interval_days)
 
-                # if i % 200 == 0:
-                #     eqx.clear_caches()
-                #     jax.clear_caches()
-                #     jax.clear_backends()
+                if i % 50 == 0:
+                    eqx.clear_caches()
+                    jax.clear_caches()
+                    jax.clear_backends()
             return results.filter_nans()
 
 
